@@ -32,7 +32,11 @@ export interface NodeResolveInput {
   battleState?: BattleStateV1;
   playerStats: PermanentStats;
   enemyStats?: Record<string, PermanentStats>;
+  enemyNames?: Record<string, string>;
   rewardSeed?: string;
+  encounterRewards?: {
+    clueChance?: { itemId: string; probability: number };
+  };
 
   // 플레이어 현재 상태
   playerHp: number;
@@ -56,6 +60,8 @@ export interface NodeResolveOutput {
   itemsBought?: Array<{ itemId: string; qty: number }>;
   hpDelta?: number;
   staminaDelta?: number;
+  combatOutcome?: string;
+  selectedChoiceId?: string;
 }
 
 @Injectable()
@@ -99,14 +105,23 @@ export class NodeResolverService {
       battleState: input.battleState,
       playerStats: input.playerStats,
       enemyStats: input.enemyStats,
+      enemyNames: input.enemyNames,
       isBoss: input.nodeMeta?.isBoss ?? false,
       rewardSeed: input.rewardSeed ?? input.battleState.rng.seed,
+      encounterRewards: input.encounterRewards,
     });
+
+    // combatOutcome 추출: nodeOutcome이 NODE_ENDED이면 VICTORY (패배/도주는 별도 처리)
+    let combatOutcome: string | undefined;
+    if (result.nodeOutcome === 'NODE_ENDED') {
+      combatOutcome = 'VICTORY';
+    }
 
     return {
       serverResult: result.serverResult,
       nodeOutcome: result.nodeOutcome,
       nextBattleState: result.nextBattleState,
+      combatOutcome,
     };
   }
 
@@ -128,10 +143,20 @@ export class NodeResolverService {
       nodeState: state,
     });
 
+    // EVENT 종료 시 마지막 선택 ID 추출 (분기용)
+    let selectedChoiceId: string | undefined;
+    if (result.nodeOutcome === 'NODE_ENDED' && result.nextNodeState) {
+      const ns = result.nextNodeState as { choicesMade?: string[] };
+      if (ns.choicesMade && ns.choicesMade.length > 0) {
+        selectedChoiceId = ns.choicesMade[ns.choicesMade.length - 1];
+      }
+    }
+
     return {
       serverResult: result.serverResult,
       nodeOutcome: result.nodeOutcome,
       nextNodeState: result.nextNodeState as unknown as Record<string, unknown>,
+      selectedChoiceId,
     };
   }
 

@@ -64,3 +64,9 @@ export type NodeOutcome = (typeof NODE_OUTCOME)[number];
 
 export const STATUS_EVENT_SUBKIND = ['APPLIED', 'TICKED', 'REMOVED'] as const;
 export type StatusEventSubkind = (typeof STATUS_EVENT_SUBKIND)[number];
+
+export const ROUTE_TAG = ['GUILD', 'GUARD', 'SOLO'] as const;
+export type RouteTag = (typeof ROUTE_TAG)[number];
+
+export const EDGE_CONDITION_TYPE = ['DEFAULT', 'CHOICE', 'COMBAT_OUTCOME'] as const;
+export type EdgeConditionType = (typeof EDGE_CONDITION_TYPE)[number];

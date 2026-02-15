@@ -6,7 +6,6 @@ import {
   Post,
   Query,
   UseGuards,
-  UsePipes,
 } from '@nestjs/common';
 import { AuthGuard } from '../common/guards/auth.guard.js';
 import { UserId } from '../common/decorators/user-id.decorator.js';
@@ -25,11 +24,10 @@ export class TurnsController {
   constructor(private readonly turnsService: TurnsService) {}
 
   @Post()
-  @UsePipes(new ZodValidationPipe(SubmitTurnBodySchema))
   async submitTurn(
     @Param('runId') runId: string,
     @UserId() userId: string,
-    @Body() body: SubmitTurnBody,
+    @Body(new ZodValidationPipe(SubmitTurnBodySchema)) body: SubmitTurnBody,
   ) {
     return this.turnsService.submitTurn(runId, userId, body);
   }

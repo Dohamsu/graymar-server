@@ -33,6 +33,7 @@ export interface CombatTurnInput {
   battleState: BattleStateV1;
   playerStats: PermanentStats;
   enemyStats: Record<string, PermanentStats>;
+  enemyNames?: Record<string, string>;
 }
 
 export interface CombatTurnOutput {
@@ -73,6 +74,9 @@ export class CombatService {
       input.battleState.rng.cursor,
     );
 
+    // 적 ID → 이름 매핑 (LLM 컨텍스트용)
+    const eName = (id: string) => input.enemyNames?.[id] ?? id;
+
     // deep clone battle state
     const next: BattleStateV1 = JSON.parse(JSON.stringify(input.battleState));
     next.phase = 'TURN';
@@ -110,7 +114,7 @@ export class CombatService {
       const unit = input.actionPlan.units[i];
       this.applyPlayerUnit(
         unit, next, playerSnap, input.enemyStats, rng, forced, events,
-        enemyDiffMap, playerStatusDeltas,
+        enemyDiffMap, playerStatusDeltas, eName,
       );
       if (unit.type === 'ATTACK_MELEE' || unit.type === 'ATTACK_RANGED') {
         directDamageToEnemy = true;
@@ -147,14 +151,14 @@ export class CombatService {
         events.push({
           id: `flee_${input.turnNo}`,
           kind: 'BATTLE',
-          text: 'Flee successful',
+          text: '도주에 성공했다',
           tags: ['FLEE'],
         });
       } else {
         events.push({
           id: `flee_fail_${input.turnNo}`,
           kind: 'BATTLE',
-          text: 'Flee failed',
+          text: '도주에 실패했다',
           tags: ['FLEE_FAIL'],
         });
       }
@@ -186,7 +190,7 @@ export class CombatService {
         for (const unit of aiUnits) {
           this.applyEnemyUnit(
             enemyId, unit, next, enemySnap, playerSnap, rng, events,
-            playerStatusDeltas,
+            playerStatusDeltas, eName,
           );
         }
       }
@@ -201,7 +205,7 @@ export class CombatService {
         events.push({
           id: `downed_resist_${input.turnNo}`,
           kind: 'BATTLE',
-          text: 'Resisted being downed',
+          text: '쓰러지는 것을 버텨냈다',
           tags: ['DOWNED_RESIST'],
         });
       } else {
@@ -210,7 +214,7 @@ export class CombatService {
         events.push({
           id: `downed_${input.turnNo}`,
           kind: 'BATTLE',
-          text: 'Player downed',
+          text: '쓰러졌다',
           tags: ['DOWNED'],
         });
       }
@@ -267,7 +271,7 @@ export class CombatService {
       events.push({
         id: `combat_end_${input.turnNo}`,
         kind: 'BATTLE',
-        text: `Combat ended: ${combatOutcome}`,
+        text: `전투 종료: ${combatOutcome === 'VICTORY' ? '승리' : combatOutcome === 'DEFEAT' ? '패배' : combatOutcome === 'FLEE_SUCCESS' ? '도주 성공' : combatOutcome}`,
         tags: ['COMBAT_END', combatOutcome],
       });
     }
@@ -316,7 +320,7 @@ export class CombatService {
         : ['ATTACK_MELEE', 'ATTACK_RANGED', 'DEFEND', 'EVADE', 'MOVE', 'USE_ITEM', 'FLEE'],
       targetLabels: next.enemies
         .filter((e) => e.hp > 0)
-        .map((e) => ({ id: e.id, name: e.id, hint: `HP: ${e.hp}` })),
+        .map((e) => ({ id: e.id, name: eName(e.id), hint: `HP: ${e.hp}` })),
       actionSlots: { base: 2, bonusAvailable: bonusTriggered, max: 3 },
       toneHint: battleEnded ? 'triumph' : downed ? 'danger' : 'tense',
     };
@@ -339,7 +343,7 @@ export class CombatService {
       version: 'server_result_v1',
       turnNo: input.turnNo,
       node: { ...input.node, state: battleEnded ? 'NODE_ENDED' : 'NODE_ACTIVE' },
-      summary: { short: summaryParts.join(', ') },
+      summary: { short: summaryParts.join(', '), display: summaryParts.join(', ') },
       events,
       diff,
       ui,
@@ -367,6 +371,7 @@ export class CombatService {
     events: Event[],
     enemyDiffMap: Map<string, { hpDelta: ValueDelta; statusDeltas: StatusDelta[] }>,
     playerStatusDeltas: StatusDelta[],
+    eName: (id: string) => string,
   ): void {
     switch (unit.type) {
       case 'ATTACK_MELEE':
@@ -391,7 +396,7 @@ export class CombatService {
           events.push({
             id: `miss_${target.id}_${rng.cursor}`,
             kind: 'BATTLE',
-            text: `Attack missed ${target.id}`,
+            text: `${eName(target.id)}에 대한 공격이 빗나갔다`,
             tags: ['MISS'],
           });
           return;
@@ -410,7 +415,7 @@ export class CombatService {
         events.push({
           id: `dmg_${target.id}_${rng.cursor}`,
           kind: 'DAMAGE',
-          text: `${dmgResult.damage} damage to ${target.id}${dmgResult.isCrit ? ' (CRIT)' : ''}`,
+          text: `${eName(target.id)}에게 ${dmgResult.damage} 피해${dmgResult.isCrit ? ' (치명타!)' : ''}`,
           tags: dmgResult.isCrit ? ['CRIT'] : [],
           data: { damage: dmgResult.damage, isCrit: dmgResult.isCrit, targetId: target.id },
         });
@@ -423,7 +428,7 @@ export class CombatService {
         events.push({
           id: `defend_${rng.cursor}`,
           kind: 'BATTLE',
-          text: 'Defending stance',
+          text: '방어 태세를 취했다',
           tags: ['DEFEND'],
         });
         break;
@@ -434,7 +439,7 @@ export class CombatService {
         events.push({
           id: `evade_${rng.cursor}`,
           kind: 'MOVE',
-          text: 'Evading',
+          text: '회피 동작을 취했다',
           tags: ['EVADE'],
         });
         break;
@@ -454,7 +459,7 @@ export class CombatService {
         events.push({
           id: `move_${rng.cursor}`,
           kind: 'MOVE',
-          text: `Player moved ${dir}`,
+          text: `${dir === 'FORWARD' ? '전방' : dir === 'LEFT' ? '좌측' : '후방'}으로 이동했다`,
           tags: ['MOVE'],
         });
         break;
@@ -467,8 +472,8 @@ export class CombatService {
       case 'USE_ITEM':
         events.push({
           id: `item_${rng.cursor}`,
-          kind: 'SYSTEM',
-          text: 'Item used',
+          kind: 'BATTLE',
+          text: '아이템을 사용했다',
           tags: ['USE_ITEM'],
         });
         break;
@@ -476,8 +481,8 @@ export class CombatService {
       case 'INTERACT':
         events.push({
           id: `interact_${rng.cursor}`,
-          kind: 'SYSTEM',
-          text: 'Interaction',
+          kind: 'BATTLE',
+          text: '상호작용을 시도했다',
           tags: ['INTERACT'],
         });
         break;
@@ -493,6 +498,7 @@ export class CombatService {
     rng: Rng,
     events: Event[],
     playerStatusDeltas: StatusDelta[],
+    eName: (id: string) => string,
   ): void {
     const enemy = next.enemies.find((e) => e.id === enemyId);
     if (!enemy || enemy.hp <= 0) return;
@@ -505,7 +511,7 @@ export class CombatService {
           events.push({
             id: `enemy_miss_${enemyId}_${rng.cursor}`,
             kind: 'BATTLE',
-            text: `${enemyId} attack missed`,
+            text: `${eName(enemyId)}의 공격이 빗나갔다`,
             tags: ['ENEMY_MISS'],
           });
           return;
@@ -517,7 +523,7 @@ export class CombatService {
         events.push({
           id: `enemy_dmg_${enemyId}_${rng.cursor}`,
           kind: 'DAMAGE',
-          text: `${enemyId} deals ${dmgResult.damage} damage${dmgResult.isCrit ? ' (CRIT)' : ''}`,
+          text: `${eName(enemyId)}이(가) ${dmgResult.damage} 피해를 입혔다${dmgResult.isCrit ? ' (치명타!)' : ''}`,
           tags: ['ENEMY_ATTACK', ...(dmgResult.isCrit ? ['CRIT'] : [])],
           data: { damage: dmgResult.damage, isCrit: dmgResult.isCrit, sourceId: enemyId },
         });
@@ -535,7 +541,7 @@ export class CombatService {
         events.push({
           id: `enemy_move_${enemyId}_${rng.cursor}`,
           kind: 'MOVE',
-          text: `${enemyId} moved ${dir}`,
+          text: `${eName(enemyId)}이(가) ${dir === 'FORWARD' ? '전방' : '후방'}으로 이동했다`,
           tags: ['ENEMY_MOVE'],
         });
         break;
@@ -545,7 +551,7 @@ export class CombatService {
         events.push({
           id: `enemy_defend_${enemyId}_${rng.cursor}`,
           kind: 'BATTLE',
-          text: `${enemyId} is defending`,
+          text: `${eName(enemyId)}이(가) 방어 태세를 취했다`,
           tags: ['ENEMY_DEFEND'],
         });
         break;

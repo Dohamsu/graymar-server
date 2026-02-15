@@ -17,6 +17,8 @@ import { ShopNodeService } from './nodes/shop-node.service.js';
 import { ExitNodeService } from './nodes/exit-node.service.js';
 import { RewardsService } from './rewards/rewards.service.js';
 import { InventoryService } from './rewards/inventory.service.js';
+import { RunPlannerService } from './planner/run-planner.service.js';
+import { NodeTransitionService } from './nodes/node-transition.service.js';
 
 const providers = [
   // Layer 3
@@ -44,6 +46,9 @@ const providers = [
   // Layer 9
   RewardsService,
   InventoryService,
+  // Layer 10 — Planner & Transition
+  RunPlannerService,
+  NodeTransitionService,
 ];
 
 @Module({

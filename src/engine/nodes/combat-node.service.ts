@@ -17,8 +17,12 @@ export interface CombatNodeInput {
   battleState: BattleStateV1;
   playerStats: PermanentStats;
   enemyStats: Record<string, PermanentStats>;
+  enemyNames?: Record<string, string>;
   isBoss: boolean;
   rewardSeed: string;
+  encounterRewards?: {
+    clueChance?: { itemId: string; probability: number };
+  };
 }
 
 export interface CombatNodeOutput {
@@ -45,6 +49,7 @@ export class CombatNodeService {
       battleState: input.battleState,
       playerStats: input.playerStats,
       enemyStats: input.enemyStats,
+      enemyNames: input.enemyNames,
     });
 
     let nodeOutcome: NodeOutcome = 'ONGOING';
@@ -57,6 +62,7 @@ export class CombatNodeService {
           enemies: Object.keys(input.enemyStats),
           isBoss: input.isBoss,
           seed: input.rewardSeed,
+          encounterRewards: input.encounterRewards,
         });
         // 보상을 serverResult에 반영
         if (rewards) {
@@ -66,7 +72,7 @@ export class CombatNodeService {
             combatResult.serverResult.events.push({
               id: `loot_${item.itemId}`,
               kind: 'LOOT',
-              text: `Obtained ${item.itemId} x${item.qty}`,
+              text: `${item.itemId} x${item.qty} 획득`,
               tags: ['LOOT'],
               data: { itemId: item.itemId, qty: item.qty },
             });
@@ -75,7 +81,7 @@ export class CombatNodeService {
             combatResult.serverResult.events.push({
               id: `gold_${input.turnNo}`,
               kind: 'GOLD',
-              text: `Obtained ${rewards.gold} gold`,
+              text: `${rewards.gold} 골드 획득`,
               tags: ['GOLD'],
               data: { gold: rewards.gold },
             });

@@ -136,7 +136,8 @@ export type ServerResultV1 = {
     state: NodeState;
   };
   summary: {
-    short: string;
+    short: string;       // LLM 컨텍스트용 팩트 포맷 ([장소], [상황] 등)
+    display?: string;    // 유저 표시용 fallback (LLM 실패 시 표시)
   };
   events: Event[];
   diff: DiffBundle;
