@@ -8,12 +8,16 @@ export const SubmitTurnBodySchema = z.object({
   }),
   idempotencyKey: z.string().min(1).max(80),
   expectedNextTurnNo: z.number().int().min(0),
-  client: z.object({
-    version: z.string().optional(),
-  }).optional(),
-  options: z.object({
-    skipLlm: z.boolean().optional(),
-  }).optional(),
+  client: z
+    .object({
+      version: z.string().optional(),
+    })
+    .optional(),
+  options: z
+    .object({
+      skipLlm: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export type SubmitTurnBody = z.infer<typeof SubmitTurnBodySchema>;

@@ -48,7 +48,7 @@ describe('StatsService', () => {
   describe('buildSnapshot — PERCENT modifier', () => {
     it('ATK +20% → 18 (15 * 1.2 = 18)', () => {
       const mods: StatModifier[] = [
-        { stat: 'atk', op: 'PERCENT', value: 0.20, priority: 300 },
+        { stat: 'atk', op: 'PERCENT', value: 0.2, priority: 300 },
       ];
       const snap = service.buildSnapshot(DEFAULT_PERMANENT_STATS, mods);
       expect(snap.atk).toBe(18);
@@ -69,9 +69,9 @@ describe('StatsService', () => {
       // BUFF: ATK +20% @300 → (15+10)*1.2 = 30
       // DEBUFF: ATK -10% @400 → 30*0.9 = 27
       const mods: StatModifier[] = [
-        { stat: 'atk', op: 'PERCENT', value: -0.10, priority: 400 },
+        { stat: 'atk', op: 'PERCENT', value: -0.1, priority: 400 },
         { stat: 'atk', op: 'FLAT', value: 10, priority: 200 },
-        { stat: 'atk', op: 'PERCENT', value: 0.20, priority: 300 },
+        { stat: 'atk', op: 'PERCENT', value: 0.2, priority: 300 },
       ];
       const snap = service.buildSnapshot(DEFAULT_PERMANENT_STATS, mods);
       expect(snap.atk).toBe(27);
@@ -114,7 +114,7 @@ describe('StatsService', () => {
       const mods = service.getPositionModifiers('SIDE');
       expect(mods).toHaveLength(1);
       expect(mods[0].stat).toBe('def');
-      expect(mods[0].value).toBe(-0.10);
+      expect(mods[0].value).toBe(-0.1);
     });
 
     it('BACK → DEF -20% + CRIT +10', () => {
@@ -122,14 +122,14 @@ describe('StatsService', () => {
       expect(mods).toHaveLength(2);
       const defMod = mods.find((m) => m.stat === 'def');
       const critMod = mods.find((m) => m.stat === 'crit');
-      expect(defMod?.value).toBe(-0.20);
+      expect(defMod?.value).toBe(-0.2);
       expect(critMod?.value).toBe(10);
     });
 
     it('BACK 보정 적용 → DEF 감소, CRIT 증가', () => {
       const posMods = service.getPositionModifiers('BACK');
       const snap = service.buildSnapshot(DEFAULT_PERMANENT_STATS, posMods);
-      expect(snap.def).toBe(8);  // 10 * 0.8 = 8
+      expect(snap.def).toBe(8); // 10 * 0.8 = 8
       expect(snap.crit).toBe(15); // 5 + 10 = 15
     });
   });

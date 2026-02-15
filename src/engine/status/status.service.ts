@@ -13,8 +13,8 @@ export interface StatusDefinition {
   stackable: boolean;
   maxStacks: number;
   baseDuration: number;
-  dotPercentOfMaxHP: number;  // DOT일 때만 유효
-  modifiers: StatModifier[];  // 적용 시 부여되는 modifier
+  dotPercentOfMaxHP: number; // DOT일 때만 유효
+  modifiers: StatModifier[]; // 적용 시 부여되는 modifier
 }
 
 const STATUS_REGISTRY: Record<string, StatusDefinition> = {
@@ -63,9 +63,7 @@ const STATUS_REGISTRY: Record<string, StatusDefinition> = {
     maxStacks: 1,
     baseDuration: 2,
     dotPercentOfMaxHP: 0,
-    modifiers: [
-      { stat: 'atk', op: 'PERCENT', value: -0.15, priority: 400 },
-    ],
+    modifiers: [{ stat: 'atk', op: 'PERCENT', value: -0.15, priority: 400 }],
   },
   FORTIFY: {
     id: 'FORTIFY',
@@ -75,8 +73,8 @@ const STATUS_REGISTRY: Record<string, StatusDefinition> = {
     baseDuration: 2,
     dotPercentOfMaxHP: 0,
     modifiers: [
-      { stat: 'def', op: 'PERCENT', value: 0.20, priority: 300 },
-      { stat: 'takenDmgMult', op: 'PERCENT', value: -0.10, priority: 300 },
+      { stat: 'def', op: 'PERCENT', value: 0.2, priority: 300 },
+      { stat: 'takenDmgMult', op: 'PERCENT', value: -0.1, priority: 300 },
     ],
   },
 };
@@ -96,7 +94,12 @@ export class StatusService {
     attackerAcc: number,
     targetResist: number,
     rng: Rng,
-  ): { applied: boolean; statuses: StatusInstance[]; event?: Event; delta?: StatusDelta } {
+  ): {
+    applied: boolean;
+    statuses: StatusInstance[];
+    event?: Event;
+    delta?: StatusDelta;
+  } {
     const def = STATUS_REGISTRY[statusId];
     if (!def) return { applied: false, statuses: targetStatuses };
 
@@ -207,7 +210,11 @@ export class StatusService {
             stacks: status.stacks,
           },
         });
-        deltas.push({ statusId: status.id, op: 'TICKED', stacks: status.stacks });
+        deltas.push({
+          statusId: status.id,
+          op: 'TICKED',
+          stacks: status.stacks,
+        });
       }
 
       // duration 감소

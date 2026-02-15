@@ -9,7 +9,7 @@ import type {
 export class MockProvider implements LlmProvider {
   readonly name = 'mock';
 
-  async generate(request: LlmProviderRequest): Promise<LlmProviderResponse> {
+  generate(request: LlmProviderRequest): Promise<LlmProviderResponse> {
     const start = Date.now();
 
     // 마지막 user 메시지에서 [상황 요약] 이후 텍스트를 추출
@@ -19,13 +19,13 @@ export class MockProvider implements LlmProvider {
 
     const text = lastUserMsg?.content ?? 'No narrative available.';
 
-    return {
+    return Promise.resolve({
       text,
       model: 'mock-v1',
       promptTokens: 0,
       completionTokens: 0,
       latencyMs: Date.now() - start,
-    };
+    });
   }
 
   isAvailable(): boolean {

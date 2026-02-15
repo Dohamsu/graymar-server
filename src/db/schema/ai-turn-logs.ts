@@ -1,4 +1,11 @@
-import { integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { runSessions } from './run-sessions.js';
 
 export const aiTurnLogs = pgTable('ai_turn_logs', {

@@ -40,6 +40,11 @@ export class TurnsController {
     @Query() rawQuery: Record<string, unknown>,
   ) {
     const query: GetTurnQuery = GetTurnQuerySchema.parse(rawQuery);
-    return this.turnsService.getTurnDetail(runId, parseInt(turnNo, 10), userId, query);
+    return this.turnsService.getTurnDetail(
+      runId,
+      parseInt(turnNo, 10),
+      userId,
+      query,
+    );
   }
 }

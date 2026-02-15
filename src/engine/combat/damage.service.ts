@@ -52,7 +52,9 @@ export class DamageService {
     // 승수 적용
     const finalDamage = Math.max(
       1,
-      Math.floor(baseDamage * variance * critMult * forcedMult * attacker.damageMult),
+      Math.floor(
+        baseDamage * variance * critMult * forcedMult * attacker.damageMult,
+      ),
     );
 
     return {

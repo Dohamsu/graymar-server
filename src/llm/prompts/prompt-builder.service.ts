@@ -39,9 +39,7 @@ export class PromptBuilderService {
 
     // L3: Recent summaries
     if (ctx.recentSummaries.length > 0) {
-      memoryParts.push(
-        `[최근 서술]\n${ctx.recentSummaries.join('\n---\n')}`,
-      );
+      memoryParts.push(`[최근 서술]\n${ctx.recentSummaries.join('\n---\n')}`);
     }
 
     if (memoryParts.length > 0) {
@@ -54,9 +52,13 @@ export class PromptBuilderService {
     // 플레이어 행동 (가장 중요 — 서술에 반드시 반영)
     if (rawInput && inputType !== 'SYSTEM') {
       if (inputType === 'ACTION') {
-        factsParts.push(`[플레이어 행동] 당신은 "${rawInput}"을(를) 시도했습니다. 이 행동을 서술에 반드시 반영하세요.`);
+        factsParts.push(
+          `[플레이어 행동] 당신은 "${rawInput}"을(를) 시도했습니다. 이 행동을 서술에 반드시 반영하세요.`,
+        );
       } else if (inputType === 'CHOICE') {
-        factsParts.push(`[플레이어 선택] 당신은 "${rawInput}"을(를) 선택했습니다.`);
+        factsParts.push(
+          `[플레이어 선택] 당신은 "${rawInput}"을(를) 선택했습니다.`,
+        );
       }
     }
 
@@ -87,7 +89,9 @@ export class PromptBuilderService {
 
     // choices
     if (sr.choices.length > 0) {
-      const choiceTexts = sr.choices.map((c) => `- ${c.label}${c.hint ? ` (${c.hint})` : ''}`);
+      const choiceTexts = sr.choices.map(
+        (c) => `- ${c.label}${c.hint ? ` (${c.hint})` : ''}`,
+      );
       factsParts.push(`[제시된 선택지]\n${choiceTexts.join('\n')}`);
     }
 

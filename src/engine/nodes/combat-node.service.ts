@@ -2,11 +2,17 @@
 
 import { Injectable } from '@nestjs/common';
 import type { BattleStateV1 } from '../../db/types/index.js';
-import type { ActionPlan, ServerResultV1, ChoiceItem } from '../../db/types/index.js';
+import type { ActionPlan, ServerResultV1 } from '../../db/types/index.js';
 import type { PermanentStats } from '../../db/types/index.js';
 import type { CombatOutcome, NodeOutcome } from '../../db/types/index.js';
-import { CombatService, type CombatTurnOutput } from '../combat/combat.service.js';
-import { RewardsService, type RewardResult } from '../rewards/rewards.service.js';
+import {
+  CombatService,
+  type CombatTurnOutput,
+} from '../combat/combat.service.js';
+import {
+  RewardsService,
+  type RewardResult,
+} from '../rewards/rewards.service.js';
 
 export interface CombatNodeInput {
   turnNo: number;
@@ -23,6 +29,7 @@ export interface CombatNodeInput {
   encounterRewards?: {
     clueChance?: { itemId: string; probability: number };
   };
+  inventory?: Array<{ itemId: string; qty: number }>;
 }
 
 export interface CombatNodeOutput {
@@ -41,16 +48,19 @@ export class CombatNodeService {
   ) {}
 
   resolve(input: CombatNodeInput): CombatNodeOutput {
-    const combatResult: CombatTurnOutput = this.combatService.resolveCombatTurn({
-      turnNo: input.turnNo,
-      node: { id: input.nodeId, type: 'COMBAT', index: input.nodeIndex },
-      envTags: input.envTags,
-      actionPlan: input.actionPlan,
-      battleState: input.battleState,
-      playerStats: input.playerStats,
-      enemyStats: input.enemyStats,
-      enemyNames: input.enemyNames,
-    });
+    const combatResult: CombatTurnOutput = this.combatService.resolveCombatTurn(
+      {
+        turnNo: input.turnNo,
+        node: { id: input.nodeId, type: 'COMBAT', index: input.nodeIndex },
+        envTags: input.envTags,
+        actionPlan: input.actionPlan,
+        battleState: input.battleState,
+        playerStats: input.playerStats,
+        enemyStats: input.enemyStats,
+        enemyNames: input.enemyNames,
+        inventory: input.inventory,
+      },
+    );
 
     let nodeOutcome: NodeOutcome = 'ONGOING';
     let rewards: RewardResult | undefined;

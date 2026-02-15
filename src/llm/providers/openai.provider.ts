@@ -16,8 +16,9 @@ export class OpenAIProvider implements LlmProvider {
   private getClient(): import('openai').default {
     if (!this.client) {
       // Dynamic import 대신 require 사용 — openai는 CommonJS 호환
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       const OpenAI = require('openai').default;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
       this.client = new OpenAI({
         apiKey: this.config.openaiApiKey,
         timeout: this.config.timeoutMs,

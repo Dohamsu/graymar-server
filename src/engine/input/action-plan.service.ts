@@ -3,11 +3,17 @@
 import { Injectable } from '@nestjs/common';
 import type { ActionPlan, ActionUnit } from '../../db/types/index.js';
 import type { ParsedIntent } from '../../db/types/index.js';
-import type { ActionTypeCombat, PolicyResult, ParsedBy } from '../../db/types/index.js';
+import type { ActionTypeCombat, PolicyResult } from '../../db/types/index.js';
 
 const COMBAT_ACTION_SET = new Set<string>([
-  'ATTACK_MELEE', 'ATTACK_RANGED', 'DEFEND', 'EVADE',
-  'MOVE', 'USE_ITEM', 'FLEE', 'INTERACT',
+  'ATTACK_MELEE',
+  'ATTACK_RANGED',
+  'DEFEND',
+  'EVADE',
+  'MOVE',
+  'USE_ITEM',
+  'FLEE',
+  'INTERACT',
 ]);
 
 @Injectable()
@@ -39,6 +45,9 @@ export class ActionPlanService {
         type: combatIntents[i],
         targetId: intent.targets[0],
         direction: intent.direction as ActionUnit['direction'],
+        ...(combatIntents[i] === 'USE_ITEM' && intent.itemHint
+          ? { meta: { itemHint: intent.itemHint } }
+          : {}),
       });
       staminaCost += 1;
     }
@@ -54,6 +63,9 @@ export class ActionPlanService {
         type: combatIntents[2],
         targetId: intent.targets[0],
         direction: intent.direction as ActionUnit['direction'],
+        ...(combatIntents[2] === 'USE_ITEM' && intent.itemHint
+          ? { meta: { itemHint: intent.itemHint } }
+          : {}),
       });
       staminaCost += 2;
       bonusUsed = true;
@@ -78,7 +90,7 @@ export class ActionPlanService {
       },
       staminaCost,
       policyResult,
-      parsedBy: intent.source as ParsedBy,
+      parsedBy: intent.source,
     };
   }
 }

@@ -39,7 +39,12 @@ export class LlmCallerService {
         attempts++;
         try {
           const response = await primary.generate(request);
-          return { success: true, response, providerUsed: primary.name, attempts };
+          return {
+            success: true,
+            response,
+            providerUsed: primary.name,
+            attempts,
+          };
         } catch (retryErr) {
           this.logger.warn(
             `Primary "${primary.name}" attempt ${attempts} failed: ${String(retryErr)}`,
@@ -86,9 +91,15 @@ export class LlmCallerService {
 
     // PERMANENT: auth, invalid model, content policy
     if (status === 401 || status === 403) return 'PERMANENT';
-    if (message.includes('invalid_model') || message.includes('model_not_found'))
+    if (
+      message.includes('invalid_model') ||
+      message.includes('model_not_found')
+    )
       return 'PERMANENT';
-    if (message.includes('content_policy') || message.includes('content_filter'))
+    if (
+      message.includes('content_policy') ||
+      message.includes('content_filter')
+    )
       return 'PERMANENT';
 
     // RETRYABLE: timeout, rate limit, server error, overloaded

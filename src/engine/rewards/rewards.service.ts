@@ -22,7 +22,7 @@ export interface RewardResult {
 /** v1 드랍 테이블 (간단한 인메모리 정의) */
 interface DropEntry {
   itemId: string;
-  chance: number;  // 0~1
+  chance: number; // 0~1
   qtyMin: number;
   qtyMax: number;
 }
@@ -52,7 +52,7 @@ export class RewardsService {
 
     if (input.isBoss) {
       // 보스: 적 별 개별 롤
-      for (const enemyId of input.enemies) {
+      for (let i = 0; i < input.enemies.length; i++) {
         gold += rng.range(30, 60);
         exp += rng.range(20, 40);
         this.rollDropTable(BOSS_DROP_TABLE, rng, items);
@@ -68,7 +68,7 @@ export class RewardsService {
     if (input.encounterRewards?.clueChance) {
       const { itemId, probability } = input.encounterRewards.clueChance;
       if (rng.next() < probability) {
-        const existing = items.find(i => i.itemId === itemId);
+        const existing = items.find((i) => i.itemId === itemId);
         if (existing) {
           existing.qty += 1;
         } else {
@@ -90,7 +90,11 @@ export class RewardsService {
     return { goldLost: Math.floor(currentGold * 0.1) };
   }
 
-  private rollDropTable(table: DropEntry[], rng: Rng, items: ItemStack[]): void {
+  private rollDropTable(
+    table: DropEntry[],
+    rng: Rng,
+    items: ItemStack[],
+  ): void {
     for (const entry of table) {
       if (rng.next() < entry.chance) {
         const qty = rng.range(entry.qtyMin, entry.qtyMax);

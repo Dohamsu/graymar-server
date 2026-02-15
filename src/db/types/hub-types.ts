@@ -21,7 +21,7 @@ export type Rumor = {
   text: string;
   sourceNpcId?: string;
   factionId?: string;
-  reliability: number;     // 0.0~1.0
+  reliability: number; // 0.0~1.0
   discovered: boolean;
 };
 

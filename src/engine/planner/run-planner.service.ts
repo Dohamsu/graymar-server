@@ -3,7 +3,11 @@
 import { Injectable } from '@nestjs/common';
 import type { NodeType } from '../../db/types/index.js';
 import type { NodeMeta } from '../../db/types/index.js';
-import type { PlannedNodeV2, RouteContext, EdgeCondition } from '../../db/types/index.js';
+import type {
+  PlannedNodeV2,
+  RouteContext,
+  EdgeCondition,
+} from '../../db/types/index.js';
 import type { RouteTag } from '../../db/types/index.js';
 import { InternalError } from '../../common/errors/game-errors.js';
 
@@ -23,18 +27,78 @@ export class RunPlannerService {
    */
   planGraymarVerticalSlice(): PlannedNode[] {
     return [
-      { nodeIndex: 0, nodeType: 'EVENT', nodeMeta: { isIntro: true, eventId: 'S0_ARRIVE' }, environmentTags: ['HARBOR', 'NIGHT'] },
-      { nodeIndex: 1, nodeType: 'EVENT', nodeMeta: { eventId: 'S1_GET_ANGLE' }, environmentTags: ['HARBOR', 'NIGHT'] },
-      { nodeIndex: 2, nodeType: 'COMBAT', nodeMeta: { isBoss: false, eventId: 'ENC_DOCK_AMBUSH' }, environmentTags: ['OPEN', 'COVER_CRATE'] },
-      { nodeIndex: 3, nodeType: 'EVENT', nodeMeta: { eventId: 'S2_PROVE_TAMPER' }, environmentTags: ['HARBOR', 'NIGHT'] },
-      { nodeIndex: 4, nodeType: 'REST', nodeMeta: {}, environmentTags: ['HARBOR', 'INN'] },
-      { nodeIndex: 5, nodeType: 'SHOP', nodeMeta: { shopId: 'HARBOR_SHOP' }, environmentTags: ['HARBOR', 'MARKET'] },
-      { nodeIndex: 6, nodeType: 'EVENT', nodeMeta: { eventId: 'S3_TRACE_ROUTE' }, environmentTags: ['HARBOR', 'EAST_DOCK'] },
-      { nodeIndex: 7, nodeType: 'COMBAT', nodeMeta: { isBoss: false, eventId: 'ENC_WAREHOUSE_INFILTRATION' }, environmentTags: ['COVER_CRATE', 'NARROW'] },
-      { nodeIndex: 8, nodeType: 'EVENT', nodeMeta: { eventId: 'S4_CONFRONT' }, environmentTags: ['HARBOR', 'GUARD_POST'] },
-      { nodeIndex: 9, nodeType: 'COMBAT', nodeMeta: { isBoss: true, eventId: 'ENC_GUARD_CONFRONTATION' }, environmentTags: ['OPEN', 'COVER_WALL'] },
-      { nodeIndex: 10, nodeType: 'EVENT', nodeMeta: { eventId: 'S5_RESOLVE' }, environmentTags: ['HARBOR', 'TOWN_HALL'] },
-      { nodeIndex: 11, nodeType: 'EXIT', nodeMeta: {}, environmentTags: ['HARBOR'] },
+      {
+        nodeIndex: 0,
+        nodeType: 'EVENT',
+        nodeMeta: { isIntro: true, eventId: 'S0_ARRIVE' },
+        environmentTags: ['HARBOR', 'NIGHT'],
+      },
+      {
+        nodeIndex: 1,
+        nodeType: 'EVENT',
+        nodeMeta: { eventId: 'S1_GET_ANGLE' },
+        environmentTags: ['HARBOR', 'NIGHT'],
+      },
+      {
+        nodeIndex: 2,
+        nodeType: 'COMBAT',
+        nodeMeta: { isBoss: false, eventId: 'ENC_DOCK_AMBUSH' },
+        environmentTags: ['OPEN', 'COVER_CRATE'],
+      },
+      {
+        nodeIndex: 3,
+        nodeType: 'EVENT',
+        nodeMeta: { eventId: 'S2_PROVE_TAMPER' },
+        environmentTags: ['HARBOR', 'NIGHT'],
+      },
+      {
+        nodeIndex: 4,
+        nodeType: 'REST',
+        nodeMeta: {},
+        environmentTags: ['HARBOR', 'INN'],
+      },
+      {
+        nodeIndex: 5,
+        nodeType: 'SHOP',
+        nodeMeta: { shopId: 'HARBOR_SHOP' },
+        environmentTags: ['HARBOR', 'MARKET'],
+      },
+      {
+        nodeIndex: 6,
+        nodeType: 'EVENT',
+        nodeMeta: { eventId: 'S3_TRACE_ROUTE' },
+        environmentTags: ['HARBOR', 'EAST_DOCK'],
+      },
+      {
+        nodeIndex: 7,
+        nodeType: 'COMBAT',
+        nodeMeta: { isBoss: false, eventId: 'ENC_WAREHOUSE_INFILTRATION' },
+        environmentTags: ['COVER_CRATE', 'NARROW'],
+      },
+      {
+        nodeIndex: 8,
+        nodeType: 'EVENT',
+        nodeMeta: { eventId: 'S4_CONFRONT' },
+        environmentTags: ['HARBOR', 'GUARD_POST'],
+      },
+      {
+        nodeIndex: 9,
+        nodeType: 'COMBAT',
+        nodeMeta: { isBoss: true, eventId: 'ENC_GUARD_CONFRONTATION' },
+        environmentTags: ['OPEN', 'COVER_WALL'],
+      },
+      {
+        nodeIndex: 10,
+        nodeType: 'EVENT',
+        nodeMeta: { eventId: 'S5_RESOLVE' },
+        environmentTags: ['HARBOR', 'TOWN_HALL'],
+      },
+      {
+        nodeIndex: 11,
+        nodeType: 'EXIT',
+        nodeMeta: {},
+        environmentTags: ['HARBOR'],
+      },
     ];
   }
 
@@ -51,7 +115,10 @@ export class RunPlannerService {
   /**
    * 현재 노드의 엣지를 priority순 평가하여 다음 노드 ID를 결정한다.
    */
-  resolveNextNodeId(currentGraphNodeId: string, context: RouteContext): string | null {
+  resolveNextNodeId(
+    currentGraphNodeId: string,
+    context: RouteContext,
+  ): string | null {
     const node = this.findNode(currentGraphNodeId);
     if (!node || node.edges.length === 0) return null;
 
@@ -112,7 +179,10 @@ export class RunPlannerService {
 
   // ── 내부 메서드 ──
 
-  private evaluateCondition(condition: EdgeCondition, context: RouteContext): boolean {
+  private evaluateCondition(
+    condition: EdgeCondition,
+    context: RouteContext,
+  ): boolean {
     switch (condition.type) {
       case 'DEFAULT':
         return true;
@@ -147,21 +217,39 @@ export class RunPlannerService {
         nodeType: 'EVENT',
         nodeMeta: { isIntro: true, eventId: 'S0_ARRIVE' },
         environmentTags: ['HARBOR', 'NIGHT'],
-        edges: [{ targetNodeId: 'common_s1', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'common_s1',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'common_s1',
         nodeType: 'EVENT',
         nodeMeta: { eventId: 'S1_GET_ANGLE' },
         environmentTags: ['HARBOR', 'NIGHT'],
-        edges: [{ targetNodeId: 'common_combat_dock', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'common_combat_dock',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'common_combat_dock',
         nodeType: 'COMBAT',
         nodeMeta: { isBoss: false, eventId: 'ENC_DOCK_AMBUSH' },
         environmentTags: ['OPEN', 'COVER_CRATE'],
-        edges: [{ targetNodeId: 'common_s2', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'common_s2',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'common_s2',
@@ -169,9 +257,21 @@ export class RunPlannerService {
         nodeMeta: { eventId: 'S2_PROVE_TAMPER' },
         environmentTags: ['HARBOR', 'NIGHT'],
         edges: [
-          { targetNodeId: 'guild_rest', condition: { type: 'CHOICE', choiceId: 'guild_ally' }, priority: 1 },
-          { targetNodeId: 'guard_event_s3', condition: { type: 'CHOICE', choiceId: 'guard_ally' }, priority: 2 },
-          { targetNodeId: 'solo_event_s3', condition: { type: 'CHOICE', choiceId: 'solo_path' }, priority: 3 },
+          {
+            targetNodeId: 'guild_rest',
+            condition: { type: 'CHOICE', choiceId: 'guild_ally' },
+            priority: 1,
+          },
+          {
+            targetNodeId: 'guard_event_s3',
+            condition: { type: 'CHOICE', choiceId: 'guard_ally' },
+            priority: 2,
+          },
+          {
+            targetNodeId: 'solo_event_s3',
+            condition: { type: 'CHOICE', choiceId: 'solo_path' },
+            priority: 3,
+          },
         ],
       },
 
@@ -181,42 +281,78 @@ export class RunPlannerService {
         nodeType: 'REST',
         nodeMeta: {},
         environmentTags: ['INDOOR', 'SAFE'],
-        edges: [{ targetNodeId: 'guild_shop', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'guild_shop',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'guild_shop',
         nodeType: 'SHOP',
         nodeMeta: { shopId: 'SHOP_GUILD_ARMS' },
         environmentTags: ['INDOOR', 'MARKET'],
-        edges: [{ targetNodeId: 'guild_event_s3', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'guild_event_s3',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'guild_event_s3',
         nodeType: 'EVENT',
         nodeMeta: { eventId: 'S3_GUILD' },
         environmentTags: ['HARBOR', 'EAST_DOCK'],
-        edges: [{ targetNodeId: 'guild_combat', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'guild_combat',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'guild_combat',
         nodeType: 'COMBAT',
         nodeMeta: { isBoss: false, eventId: 'ENC_WHARF_RAID' },
         environmentTags: ['OPEN', 'COVER_CRATE', 'NIGHT'],
-        edges: [{ targetNodeId: 'guild_event_s4', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'guild_event_s4',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'guild_event_s4',
         nodeType: 'EVENT',
         nodeMeta: { eventId: 'S4_GUILD' },
         environmentTags: ['HARBOR', 'GUARD_POST'],
-        edges: [{ targetNodeId: 'guild_boss', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'guild_boss',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'guild_boss',
         nodeType: 'COMBAT',
         nodeMeta: { isBoss: true, eventId: 'ENC_GUILD_BOSS' },
         environmentTags: ['OPEN', 'COVER_WALL', 'NIGHT'],
-        edges: [{ targetNodeId: 'merge_s5', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'merge_s5',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
 
       // ── 경비대 루트 (6노드) ──
@@ -225,42 +361,78 @@ export class RunPlannerService {
         nodeType: 'EVENT',
         nodeMeta: { eventId: 'S3_GUARD' },
         environmentTags: ['INDOOR', 'GUARD_POST'],
-        edges: [{ targetNodeId: 'guard_shop', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'guard_shop',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'guard_shop',
         nodeType: 'SHOP',
         nodeMeta: { shopId: 'SHOP_GUARD_SUPPLY' },
         environmentTags: ['INDOOR', 'GUARD_POST'],
-        edges: [{ targetNodeId: 'guard_combat', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'guard_combat',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'guard_combat',
         nodeType: 'COMBAT',
         nodeMeta: { isBoss: false, eventId: 'ENC_BARRACKS' },
         environmentTags: ['INDOOR', 'NARROW'],
-        edges: [{ targetNodeId: 'guard_event_s4', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'guard_event_s4',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'guard_event_s4',
         nodeType: 'EVENT',
         nodeMeta: { eventId: 'S4_GUARD' },
         environmentTags: ['INDOOR', 'GUARD_POST'],
-        edges: [{ targetNodeId: 'guard_rest', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'guard_rest',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'guard_rest',
         nodeType: 'REST',
         nodeMeta: {},
         environmentTags: ['INDOOR', 'SAFE'],
-        edges: [{ targetNodeId: 'guard_boss', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'guard_boss',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'guard_boss',
         nodeType: 'COMBAT',
         nodeMeta: { isBoss: true, eventId: 'ENC_GUARD_BOSS' },
         environmentTags: ['OPEN', 'COVER_WALL', 'AFTERNOON'],
-        edges: [{ targetNodeId: 'merge_s5', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'merge_s5',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
 
       // ── 독자 루트 (6노드) ──
@@ -269,42 +441,78 @@ export class RunPlannerService {
         nodeType: 'EVENT',
         nodeMeta: { eventId: 'S3_SOLO' },
         environmentTags: ['NARROW', 'NIGHT'],
-        edges: [{ targetNodeId: 'solo_combat', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'solo_combat',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'solo_combat',
         nodeType: 'COMBAT',
         nodeMeta: { isBoss: false, eventId: 'ENC_ALLEY' },
         environmentTags: ['NARROW', 'COVER_WALL', 'NIGHT'],
-        edges: [{ targetNodeId: 'solo_rest', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'solo_rest',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'solo_rest',
         nodeType: 'REST',
         nodeMeta: {},
         environmentTags: ['INDOOR'],
-        edges: [{ targetNodeId: 'solo_shop', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'solo_shop',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'solo_shop',
         nodeType: 'SHOP',
         nodeMeta: { shopId: 'SHOP_BLACK_MARKET' },
         environmentTags: ['NARROW', 'NIGHT'],
-        edges: [{ targetNodeId: 'solo_event_s4', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'solo_event_s4',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'solo_event_s4',
         nodeType: 'EVENT',
         nodeMeta: { eventId: 'S4_SOLO' },
         environmentTags: ['INDOOR', 'NARROW', 'NIGHT'],
-        edges: [{ targetNodeId: 'solo_boss', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'solo_boss',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'solo_boss',
         nodeType: 'COMBAT',
         nodeMeta: { isBoss: true, eventId: 'ENC_SOLO_BOSS' },
         environmentTags: ['INDOOR', 'NARROW', 'NIGHT'],
-        edges: [{ targetNodeId: 'merge_s5', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'merge_s5',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
 
       // ── 합류 구간 (2노드) ──
@@ -313,7 +521,13 @@ export class RunPlannerService {
         nodeType: 'EVENT',
         nodeMeta: { eventId: 'S5_RESOLVE' }, // 실제 eventId는 전환 시 S5_RESOLVE_{routeTag}로 동적 설정
         environmentTags: ['HARBOR', 'TOWN_HALL'],
-        edges: [{ targetNodeId: 'merge_exit', condition: { type: 'DEFAULT' }, priority: 1 }],
+        edges: [
+          {
+            targetNodeId: 'merge_exit',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
       },
       {
         nodeId: 'merge_exit',

@@ -14,6 +14,12 @@ export class GameError extends Error {
   }
 }
 
+export class BadRequestError extends GameError {
+  constructor(message = 'Bad request', details?: Record<string, unknown>) {
+    super('BAD_REQUEST', message, HttpStatus.BAD_REQUEST, details);
+  }
+}
+
 export class NotFoundError extends GameError {
   constructor(message = 'Not found', details?: Record<string, unknown>) {
     super('NOT_FOUND', message, HttpStatus.NOT_FOUND, details);

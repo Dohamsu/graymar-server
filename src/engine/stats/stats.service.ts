@@ -12,8 +12,8 @@ export interface StatsSnapshot {
   def: number;
   acc: number;
   eva: number;
-  crit: number;       // % 정수 (0~50 clamp)
-  critDmg: number;    // 정수 (150=1.5x), 최대 250
+  crit: number; // % 정수 (0~50 clamp)
+  critDmg: number; // 정수 (150=1.5x), 최대 250
   resist: number;
   speed: number;
   // 승수 (곱연산)
@@ -66,10 +66,10 @@ export class StatsService {
 
     for (const mod of sorted) {
       if (mod.op === 'FLAT') {
-        (snap[mod.stat] as number) += mod.value;
+        snap[mod.stat] += mod.value;
       } else {
         // PERCENT: 현재 값 기준 곱연산
-        (snap[mod.stat] as number) *= 1 + mod.value;
+        snap[mod.stat] *= 1 + mod.value;
       }
     }
 
@@ -92,9 +92,9 @@ export class StatsService {
   getPositionModifiers(angle: Angle): StatModifier[] {
     const mods: StatModifier[] = [];
     if (angle === 'SIDE') {
-      mods.push({ stat: 'def', op: 'PERCENT', value: -0.10, priority: 950 });
+      mods.push({ stat: 'def', op: 'PERCENT', value: -0.1, priority: 950 });
     } else if (angle === 'BACK') {
-      mods.push({ stat: 'def', op: 'PERCENT', value: -0.20, priority: 950 });
+      mods.push({ stat: 'def', op: 'PERCENT', value: -0.2, priority: 950 });
       mods.push({ stat: 'crit', op: 'FLAT', value: 10, priority: 950 });
     }
     return mods;

@@ -14,17 +14,86 @@ interface KeywordEntry {
 }
 
 const KEYWORD_MAP: KeywordEntry[] = [
-  { type: 'ATTACK_MELEE', keywords: ['베다', '베어', '휘두르', '찌르', '찌른', '공격', '때리', '때린', '칼', '검', '도끼', '창'] },
-  { type: 'ATTACK_RANGED', keywords: ['쏜다', '쏘', '발사', '활', '석궁', '화살', '던지', '던진'] },
-  { type: 'EVADE', keywords: ['구르', '피한', '피하', '회피', '몸을 낮', '닷지', '굴러', '빠져'] },
-  { type: 'DEFEND', keywords: ['막는', '막아', '방패', '받아친', '방어', '지킨', '버틴'] },
-  { type: 'MOVE', keywords: ['오른쪽', '왼쪽', '뒤로', '앞으로', '이동', '다가', '물러', '기둥', '숨'] },
-  { type: 'FLEE', keywords: ['도망', '도주', '달아나', '뛰어', '탈출', '빠져나'] },
-  { type: 'USE_ITEM', keywords: ['포션', '아이템', '사용', '먹'] },
+  {
+    type: 'ATTACK_MELEE',
+    keywords: [
+      '베다',
+      '베어',
+      '휘두르',
+      '찌르',
+      '찌른',
+      '공격',
+      '때리',
+      '때린',
+      '칼',
+      '검',
+      '도끼',
+      '창',
+    ],
+  },
+  {
+    type: 'ATTACK_RANGED',
+    keywords: ['쏜다', '쏘', '발사', '활', '석궁', '화살', '던지', '던진'],
+  },
+  {
+    type: 'EVADE',
+    keywords: [
+      '구르',
+      '피한',
+      '피하',
+      '회피',
+      '몸을 낮',
+      '닷지',
+      '굴러',
+      '빠져',
+    ],
+  },
+  {
+    type: 'DEFEND',
+    keywords: ['막는', '막아', '방패', '받아친', '방어', '지킨', '버틴'],
+  },
+  {
+    type: 'MOVE',
+    keywords: [
+      '오른쪽',
+      '왼쪽',
+      '뒤로',
+      '앞으로',
+      '이동',
+      '다가',
+      '물러',
+      '기둥',
+      '숨',
+    ],
+  },
+  {
+    type: 'FLEE',
+    keywords: ['도망', '도주', '달아나', '뛰어', '탈출', '빠져나'],
+  },
+  {
+    type: 'USE_ITEM',
+    keywords: [
+      '포션',
+      '아이템',
+      '사용',
+      '먹',
+      '치료제',
+      '강장제',
+      '연막',
+      '독침',
+    ],
+  },
   { type: 'INTERACT', keywords: ['환경', '문', '닫', '열', '밟'] },
   { type: 'TALK', keywords: ['묻', '설득', '협박', '대화', '이야기', '말'] },
   { type: 'SEARCH', keywords: ['조사', '살핀', '둘러', '탐색', '찾'] },
   { type: 'OBSERVE', keywords: ['관찰', '지켜', '주시', '감시'] },
+];
+
+const ITEM_HINT_MAP: Array<{ hint: string; keywords: string[] }> = [
+  { hint: 'healing', keywords: ['치료제', '포션', '힐', '치료'] },
+  { hint: 'stamina', keywords: ['강장제', '기력', '스태미나'] },
+  { hint: 'smoke', keywords: ['연막', '연막탄'] },
+  { hint: 'poison', keywords: ['독침', '독'] },
 ];
 
 @Injectable()
@@ -54,12 +123,30 @@ export class RuleParserService {
     if (text.includes('오른쪽') || text.includes('우측')) direction = 'RIGHT';
     else if (text.includes('왼쪽') || text.includes('좌측')) direction = 'LEFT';
     else if (text.includes('뒤로') || text.includes('후방')) direction = 'BACK';
-    else if (text.includes('앞으로') || text.includes('전방')) direction = 'FORWARD';
+    else if (text.includes('앞으로') || text.includes('전방'))
+      direction = 'FORWARD';
+
+    // 아이템 힌트 추출 (USE_ITEM 매칭 시)
+    let itemHint: string | undefined;
+    if (matched.includes('USE_ITEM')) {
+      for (const entry of ITEM_HINT_MAP) {
+        for (const kw of entry.keywords) {
+          if (text.includes(kw)) {
+            itemHint = entry.hint;
+            break;
+          }
+        }
+        if (itemHint) break;
+      }
+    }
 
     // 제약 조건 추출
-    if (text.includes('조심') || text.includes('신중')) constraints.push('careful');
-    if (text.includes('빨리') || text.includes('급히')) constraints.push('fast');
-    if (text.includes('몰래') || text.includes('조용')) constraints.push('stealth');
+    if (text.includes('조심') || text.includes('신중'))
+      constraints.push('careful');
+    if (text.includes('빨리') || text.includes('급히'))
+      constraints.push('fast');
+    if (text.includes('몰래') || text.includes('조용'))
+      constraints.push('stealth');
 
     // 타겟 추출 (간단한 패턴)
     const enemyMatch = text.match(/적\s*(\d+)|enemy[_-]?(\d+)|(\w+)에게/);
@@ -87,13 +174,15 @@ export class RuleParserService {
       intents: matched.length > 0 ? matched : ['OBSERVE'],
       targets,
       constraints,
-      riskLevel: matched.length > 2 ? 'HIGH' : matched.length > 1 ? 'MED' : 'LOW',
+      riskLevel:
+        matched.length > 2 ? 'HIGH' : matched.length > 1 ? 'MED' : 'LOW',
       illegalFlags: [],
       source,
       confidence,
       primary: matched[0],
       modifiers: matched.slice(1) as string[],
       direction,
+      itemHint,
     };
   }
 }

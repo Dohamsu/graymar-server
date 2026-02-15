@@ -48,20 +48,21 @@ export class ExitNodeService {
       });
     }
 
-    const choices: ChoiceItem[] = nodeOutcome === 'ONGOING'
-      ? [
-          {
-            id: 'return',
-            label: '허브로 귀환한다 (여정 종료)',
-            action: { type: 'CHOICE', payload: { choiceId: 'return' } },
-          },
-          {
-            id: 'continue',
-            label: '탐색을 계속한다',
-            action: { type: 'CHOICE', payload: { choiceId: 'continue' } },
-          },
-        ]
-      : [];
+    const choices: ChoiceItem[] =
+      nodeOutcome === 'ONGOING'
+        ? [
+            {
+              id: 'return',
+              label: '허브로 귀환한다 (여정 종료)',
+              action: { type: 'CHOICE', payload: { choiceId: 'return' } },
+            },
+            {
+              id: 'continue',
+              label: '탐색을 계속한다',
+              action: { type: 'CHOICE', payload: { choiceId: 'continue' } },
+            },
+          ]
+        : [];
 
     const diff: DiffBundle = {
       player: {
@@ -98,11 +99,12 @@ export class ExitNodeService {
         state: nodeOutcome === 'ONGOING' ? 'NODE_ACTIVE' : 'NODE_ENDED',
       },
       summary: (() => {
-        const short = nodeOutcome === 'RUN_ENDED'
-          ? '[상황] 허브 귀환 선택. 런 종료.'
-          : nodeOutcome === 'NODE_ENDED'
-            ? '[상황] 탐색 계속 선택. 다음 구간으로 이동.'
-            : '[상황] 출구 노드 도달. 귀환 또는 계속 탐색 선택 대기.';
+        const short =
+          nodeOutcome === 'RUN_ENDED'
+            ? '[상황] 허브 귀환 선택. 런 종료.'
+            : nodeOutcome === 'NODE_ENDED'
+              ? '[상황] 탐색 계속 선택. 다음 구간으로 이동.'
+              : '[상황] 출구 노드 도달. 귀환 또는 계속 탐색 선택 대기.';
         return { short, display: toDisplayText(short) };
       })(),
       events,

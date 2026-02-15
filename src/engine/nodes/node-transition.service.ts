@@ -8,7 +8,11 @@ import {
   nodeInstances,
   battleStates,
 } from '../../db/schema/index.js';
-import type { BattleStateV1, ServerResultV1, RunState } from '../../db/types/index.js';
+import type {
+  BattleStateV1,
+  ServerResultV1,
+  RunState,
+} from '../../db/types/index.js';
 import type { NodeType, ToneHint } from '../../db/types/index.js';
 import type { RouteContext } from '../../db/types/index.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
@@ -51,12 +55,22 @@ export class NodeTransitionService {
   ): Promise<NodeTransitionResult | null> {
     // Legacy fallback: graphNodeId가 없으면 기존 선형 전환
     if (!currentGraphNodeId) {
-      return this.advanceLegacy(runId, currentNodeIndex, turnNo, seed, playerHp, playerStamina);
+      return this.advanceLegacy(
+        runId,
+        currentNodeIndex,
+        turnNo,
+        seed,
+        playerHp,
+        playerStamina,
+      );
     }
 
     // DAG 기반 전환
     const routeContext = context ?? {};
-    const nextGraphNodeId = this.planner.resolveNextNodeId(currentGraphNodeId, routeContext);
+    const nextGraphNodeId = this.planner.resolveNextNodeId(
+      currentGraphNodeId,
+      routeContext,
+    );
     if (!nextGraphNodeId) return null; // EXIT 이후
 
     const nodeDef = this.planner.findNode(nextGraphNodeId);
@@ -69,7 +83,8 @@ export class NodeTransitionService {
     // 분기점(common_s2)에서 routeTag 결정
     let routeTag = routeContext.routeTag;
     if (currentGraphNodeId === 'common_s2') {
-      routeTag = this.planner.resolveRouteTag(routeContext.lastChoiceId) ?? routeTag;
+      routeTag =
+        this.planner.resolveRouteTag(routeContext.lastChoiceId) ?? routeTag;
     }
 
     // merge_s5 진입 시 eventId를 루트별로 동적 설정
@@ -131,7 +146,7 @@ export class NodeTransitionService {
       })
       .where(eq(runSessions.id, runId));
 
-    const nodeType = nodeDef.nodeType as NodeType;
+    const nodeType = nodeDef.nodeType;
 
     // 새로 INSERT한 노드의 ID를 조회
     const newNode = await this.db.query.nodeInstances.findFirst({
@@ -204,7 +219,7 @@ export class NodeTransitionService {
       .set({ currentNodeIndex: nextIndex, updatedAt: new Date() })
       .where(eq(runSessions.id, runId));
 
-    const nodeType = nextNode.nodeType as NodeType;
+    const nodeType = nextNode.nodeType;
 
     let battleState: BattleStateV1 | undefined;
     if (nodeType === 'COMBAT') {
@@ -228,7 +243,7 @@ export class NodeTransitionService {
       nextNode.nodeMeta as Record<string, unknown> | null,
       nextNode.environmentTags ?? [],
       battleState,
-      nextNode.nodeState as Record<string, unknown> | null,
+      nextNode.nodeState,
     );
 
     return {
@@ -260,7 +275,8 @@ export class NodeTransitionService {
     const enemies: BattleStateV1['enemies'] = [];
     for (const enemyEntry of encounter.enemies) {
       const enemyDef = this.content.getEnemy(enemyEntry.ref);
-      if (!enemyDef) throw new InternalError(`Enemy not found: ${enemyEntry.ref}`);
+      if (!enemyDef)
+        throw new InternalError(`Enemy not found: ${enemyEntry.ref}`);
 
       for (let i = 0; i < enemyEntry.count; i++) {
         // 해당 인스턴스의 포지셔닝 찾기
@@ -270,8 +286,11 @@ export class NodeTransitionService {
 
         // overrides 적용 (첫 번째 인스턴스에만 적용, count가 1일 때)
         const overrides = enemyEntry.overrides;
-        const hp = (i === 0 && overrides?.hp) ? overrides.hp : enemyDef.hp;
-        const personality = (i === 0 && overrides?.personality) ? overrides.personality : enemyDef.personality;
+        const hp = i === 0 && overrides?.hp ? overrides.hp : enemyDef.hp;
+        const personality =
+          i === 0 && overrides?.personality
+            ? overrides.personality
+            : enemyDef.personality;
 
         enemies.push({
           id: `${enemyEntry.ref}_${i}`,
@@ -341,16 +360,29 @@ export class NodeTransitionService {
     // SHOP 노드 — nodeState의 catalog에서 선택지 생성
     let shopChoices: ServerResultV1['choices'] | undefined;
     if (nodeType === 'SHOP' && nodeState) {
-      const catalog = (nodeState as { catalog?: Array<{ itemId: string; name: string; price: number; stock: number; description?: string }> }).catalog;
+      const catalog = (
+        nodeState as {
+          catalog?: Array<{
+            itemId: string;
+            name: string;
+            price: number;
+            stock: number;
+            description?: string;
+          }>;
+        }
+      ).catalog;
       if (catalog) {
         shopChoices = [
           ...catalog
-            .filter(c => c.stock > 0)
-            .map(c => ({
+            .filter((c) => c.stock > 0)
+            .map((c) => ({
               id: `buy_${c.itemId}`,
               label: `${c.name} (${c.price} 골드)`,
               hint: c.description,
-              action: { type: 'CHOICE' as const, payload: { choiceId: `buy_${c.itemId}` } },
+              action: {
+                type: 'CHOICE' as const,
+                payload: { choiceId: `buy_${c.itemId}` },
+              },
             })),
           {
             id: 'leave',
@@ -361,32 +393,42 @@ export class NodeTransitionService {
       }
     }
 
-    const choices = eventChoices && eventChoices.length > 0
-      ? eventChoices
-      : shopChoices && shopChoices.length > 0
-        ? shopChoices
-        : nodeType === 'EXIT'
-          ? [
-              {
-                id: 'return',
-                label: '허브로 귀환한다 (런 종료)',
-                action: { type: 'CHOICE' as const, payload: { choiceId: 'return' } },
-              },
-            ]
-          : nodeType === 'REST'
+    const choices =
+      eventChoices && eventChoices.length > 0
+        ? eventChoices
+        : shopChoices && shopChoices.length > 0
+          ? shopChoices
+          : nodeType === 'EXIT'
             ? [
                 {
-                  id: 'long_rest',
-                  label: '충분히 쉰다 (HP +25%, 스태미나 +2)',
-                  action: { type: 'CHOICE' as const, payload: { choiceId: 'long_rest' } },
-                },
-                {
-                  id: 'short_rest',
-                  label: '간단히 쉰다 (HP +10%, 스태미나 +1)',
-                  action: { type: 'CHOICE' as const, payload: { choiceId: 'short_rest' } },
+                  id: 'return',
+                  label: '허브로 귀환한다 (런 종료)',
+                  action: {
+                    type: 'CHOICE' as const,
+                    payload: { choiceId: 'return' },
+                  },
                 },
               ]
-            : [];
+            : nodeType === 'REST'
+              ? [
+                  {
+                    id: 'long_rest',
+                    label: '충분히 쉰다 (HP +25%, 스태미나 +2)',
+                    action: {
+                      type: 'CHOICE' as const,
+                      payload: { choiceId: 'long_rest' },
+                    },
+                  },
+                  {
+                    id: 'short_rest',
+                    label: '간단히 쉰다 (HP +10%, 스태미나 +1)',
+                    action: {
+                      type: 'CHOICE' as const,
+                      payload: { choiceId: 'short_rest' },
+                    },
+                  },
+                ]
+              : [];
 
     // COMBAT 노드일 경우 적 정보 요약
     let combatSummary = '';
@@ -409,35 +451,59 @@ export class NodeTransitionService {
         state: 'NODE_ACTIVE',
       },
       summary: {
-        short: eventNarrative ?? ((summaryMap[nodeType] ?? '[상황] 다음 구간으로 이동.') + combatSummary),
-        display: toDisplayText(eventNarrative ?? ((summaryMap[nodeType] ?? '[상황] 다음 구간으로 이동.') + combatSummary)),
+        short:
+          eventNarrative ??
+          (summaryMap[nodeType] ?? '[상황] 다음 구간으로 이동.') +
+            combatSummary,
+        display: toDisplayText(
+          eventNarrative ??
+            (summaryMap[nodeType] ?? '[상황] 다음 구간으로 이동.') +
+              combatSummary,
+        ),
       },
-      events: [{
-        id: `enter_${nodeIndex}`,
-        kind: 'SYSTEM',
-        text: ({
-          COMBAT: '전투가 시작된다!',
-          EVENT: '새로운 상황이 펼쳐진다.',
-          REST: '휴식을 취할 수 있는 장소에 도착했다.',
-          SHOP: '상점에 도착했다.',
-          EXIT: '여정의 끝이 보인다.',
-        } as Record<string, string>)[nodeType] ?? '다음 구간으로 이동했다.',
-        tags: ['NODE_ENTER'],
-      }],
+      events: [
+        {
+          id: `enter_${nodeIndex}`,
+          kind: 'SYSTEM',
+          text:
+            (
+              {
+                COMBAT: '전투가 시작된다!',
+                EVENT: '새로운 상황이 펼쳐진다.',
+                REST: '휴식을 취할 수 있는 장소에 도착했다.',
+                SHOP: '상점에 도착했다.',
+                EXIT: '여정의 끝이 보인다.',
+              } as Record<string, string>
+            )[nodeType] ?? '다음 구간으로 이동했다.',
+          tags: ['NODE_ENTER'],
+        },
+      ],
       diff: {
-        player: { hp: { from: 0, to: 0, delta: 0 }, stamina: { from: 0, to: 0, delta: 0 }, status: [] },
+        player: {
+          hp: { from: 0, to: 0, delta: 0 },
+          stamina: { from: 0, to: 0, delta: 0 },
+          status: [],
+        },
         enemies: [],
         inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
-        meta: { battle: { phase: nodeType === 'COMBAT' ? 'START' : 'NONE' }, position: { env: envTags } },
+        meta: {
+          battle: { phase: nodeType === 'COMBAT' ? 'START' : 'NONE' },
+          position: { env: envTags },
+        },
       },
       ui: {
-        availableActions: nodeType === 'COMBAT'
-          ? ['ATTACK_MELEE', 'DEFEND', 'EVADE', 'FLEE']
-          : ['CHOICE'],
+        availableActions:
+          nodeType === 'COMBAT'
+            ? ['ATTACK_MELEE', 'DEFEND', 'EVADE', 'FLEE']
+            : ['CHOICE'],
         targetLabels: battleState
           ? battleState.enemies.map((e) => {
               const def = this.content.getEnemy(e.id.replace(/_\d+$/, ''));
-              return { id: e.id, name: def?.name ?? e.id, hint: `HP:${e.hp} ${e.distance}/${e.angle}` };
+              return {
+                id: e.id,
+                name: def?.name ?? e.id,
+                hint: `HP:${e.hp} ${e.distance}/${e.angle}`,
+              };
             })
           : [],
         actionSlots: { base: 2, bonusAvailable: false, max: 3 },

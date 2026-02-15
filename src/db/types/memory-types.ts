@@ -3,14 +3,14 @@
 export type ThemeMemory = {
   key: string;
   value: string;
-  importance: number;    // 0.0~1.0
+  importance: number; // 0.0~1.0
   tags: string[];
 };
 
 export type NodeFact = {
   key: string;
   value: string;
-  importance: number;    // 0.0~1.0
+  importance: number; // 0.0~1.0
   tags: string[];
   scope: 'THEME' | 'NODE' | 'STEP';
 };

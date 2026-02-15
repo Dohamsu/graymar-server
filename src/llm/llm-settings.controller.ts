@@ -25,24 +25,40 @@ export class LlmSettingsController {
   @Patch()
   updateSettings(@Body() body: LlmConfigPatch) {
     // provider 유효성 검증
-    if (body.provider && !VALID_PROVIDERS.includes(body.provider as any)) {
+    if (
+      body.provider &&
+      !VALID_PROVIDERS.includes(
+        body.provider as (typeof VALID_PROVIDERS)[number],
+      )
+    ) {
       throw new BadRequestException(
         `Invalid provider "${body.provider}". Valid: ${VALID_PROVIDERS.join(', ')}`,
       );
     }
-    if (body.fallbackProvider && !VALID_PROVIDERS.includes(body.fallbackProvider as any)) {
+    if (
+      body.fallbackProvider &&
+      !VALID_PROVIDERS.includes(
+        body.fallbackProvider as (typeof VALID_PROVIDERS)[number],
+      )
+    ) {
       throw new BadRequestException(
         `Invalid fallbackProvider "${body.fallbackProvider}". Valid: ${VALID_PROVIDERS.join(', ')}`,
       );
     }
 
     // temperature 범위 검증
-    if (body.temperature !== undefined && (body.temperature < 0 || body.temperature > 2)) {
+    if (
+      body.temperature !== undefined &&
+      (body.temperature < 0 || body.temperature > 2)
+    ) {
       throw new BadRequestException('temperature must be between 0 and 2');
     }
 
     // maxTokens 범위 검증
-    if (body.maxTokens !== undefined && (body.maxTokens < 1 || body.maxTokens > 16384)) {
+    if (
+      body.maxTokens !== undefined &&
+      (body.maxTokens < 1 || body.maxTokens > 16384)
+    ) {
       throw new BadRequestException('maxTokens must be between 1 and 16384');
     }
 
@@ -61,10 +77,11 @@ export class LlmSettingsController {
       }
     }
 
-    const updated = this.configService.update(body);
+    this.configService.update(body);
 
     return {
-      message: 'LLM settings updated. Changes apply to the next LLM worker cycle.',
+      message:
+        'LLM settings updated. Changes apply to the next LLM worker cycle.',
       ...this.configService.getPublic(),
     };
   }

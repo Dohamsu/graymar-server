@@ -28,7 +28,9 @@ describe('PolicyService', () => {
     it('전투 노드 + 전투 행동 → ALLOW', () => {
       const result = service.check(
         makeIntent({ intents: ['ATTACK_MELEE'] }),
-        'COMBAT', 'NODE_ACTIVE', 5,
+        'COMBAT',
+        'NODE_ACTIVE',
+        5,
       );
       expect(result.result).toBe('ALLOW');
     });
@@ -36,7 +38,9 @@ describe('PolicyService', () => {
     it('비전투 노드 + 비전투 행동 → ALLOW', () => {
       const result = service.check(
         makeIntent({ intents: ['TALK'] }),
-        'EVENT', 'NODE_ACTIVE', 5,
+        'EVENT',
+        'NODE_ACTIVE',
+        5,
       );
       expect(result.result).toBe('ALLOW');
     });
@@ -44,10 +48,7 @@ describe('PolicyService', () => {
 
   describe('DENY', () => {
     it('NODE_ENDED → DENY', () => {
-      const result = service.check(
-        makeIntent(),
-        'COMBAT', 'NODE_ENDED', 5,
-      );
+      const result = service.check(makeIntent(), 'COMBAT', 'NODE_ENDED', 5);
       expect(result.result).toBe('DENY');
       expect(result.reason).toBeDefined();
     });
@@ -55,7 +56,9 @@ describe('PolicyService', () => {
     it('illegalFlags 있으면 → DENY', () => {
       const result = service.check(
         makeIntent({ illegalFlags: ['CHEAT'] }),
-        'COMBAT', 'NODE_ACTIVE', 5,
+        'COMBAT',
+        'NODE_ACTIVE',
+        5,
       );
       expect(result.result).toBe('DENY');
       expect(result.reason).toContain('Illegal');
@@ -66,7 +69,9 @@ describe('PolicyService', () => {
     it('비전투 노드 + 전투 행동 → TRANSFORM to OBSERVE', () => {
       const result = service.check(
         makeIntent({ intents: ['ATTACK_MELEE'] }),
-        'EVENT', 'NODE_ACTIVE', 5,
+        'EVENT',
+        'NODE_ACTIVE',
+        5,
       );
       expect(result.result).toBe('TRANSFORM');
       expect(result.transformedIntents?.intents).toEqual(['OBSERVE']);
@@ -76,7 +81,9 @@ describe('PolicyService', () => {
     it('REST 노드 + FLEE → TRANSFORM', () => {
       const result = service.check(
         makeIntent({ intents: ['FLEE'] }),
-        'REST', 'NODE_ACTIVE', 5,
+        'REST',
+        'NODE_ACTIVE',
+        5,
       );
       expect(result.result).toBe('TRANSFORM');
     });
@@ -89,7 +96,9 @@ describe('PolicyService', () => {
           intents: ['ATTACK_MELEE', 'DEFEND', 'EVADE'],
           confidence: 0.9,
         }),
-        'COMBAT', 'NODE_ACTIVE', 5,
+        'COMBAT',
+        'NODE_ACTIVE',
+        5,
       );
       expect(result.result).toBe('PARTIAL');
       expect(result.transformedIntents?.intents).toHaveLength(2);
@@ -101,7 +110,9 @@ describe('PolicyService', () => {
     it('NODE_ENDED는 다른 조건보다 먼저 체크', () => {
       const result = service.check(
         makeIntent({ intents: ['ATTACK_MELEE'], illegalFlags: ['CHEAT'] }),
-        'EVENT', 'NODE_ENDED', 5,
+        'EVENT',
+        'NODE_ENDED',
+        5,
       );
       // NODE_ENDED가 최우선
       expect(result.result).toBe('DENY');

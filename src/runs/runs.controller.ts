@@ -4,6 +4,7 @@ import {
   Post,
   Param,
   Query,
+  Body,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -12,6 +13,7 @@ import { AuthGuard } from '../common/guards/auth.guard.js';
 import { UserId } from '../common/decorators/user-id.decorator.js';
 import { RunsService } from './runs.service.js';
 import { GetRunQuerySchema, type GetRunQuery } from './dto/get-run.dto.js';
+import { CreateRunBodySchema } from './dto/create-run.dto.js';
 
 @Controller('v1/runs')
 @UseGuards(AuthGuard)
@@ -20,8 +22,12 @@ export class RunsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  async createRun(@UserId() userId: string) {
-    return this.runsService.createRun(userId);
+  async createRun(
+    @UserId() userId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    const { presetId } = CreateRunBodySchema.parse(body);
+    return this.runsService.createRun(userId, presetId);
   }
 
   @Get(':runId')

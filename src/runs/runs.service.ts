@@ -14,15 +14,14 @@ import {
 import { users } from '../db/schema/users.js';
 import { playerProfiles } from '../db/schema/player-profiles.js';
 import {
+  BadRequestError,
   ForbiddenError,
   NotFoundError,
 } from '../common/errors/game-errors.js';
 import type { GetRunQuery } from './dto/get-run.dto.js';
 import { RunPlannerService } from '../engine/planner/run-planner.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
-import { DEFAULT_PERMANENT_STATS } from '../db/types/index.js';
-import type { BattleStateV1, ServerResultV1, RunState } from '../db/types/index.js';
-import { toDisplayText } from '../common/text-utils.js';
+import type { ServerResultV1, RunState } from '../db/types/index.js';
 
 @Injectable()
 export class RunsService {
@@ -32,7 +31,13 @@ export class RunsService {
     private readonly content: ContentLoaderService,
   ) {}
 
-  async createRun(userId: string) {
+  async createRun(userId: string, presetId: string) {
+    // 0. 프리셋 검증
+    const preset = this.content.getPreset(presetId);
+    if (!preset) {
+      throw new BadRequestError(`Unknown presetId: ${presetId}`);
+    }
+
     // 1. User upsert
     const existingUser = await this.db.query.users.findFirst({
       where: eq(users.id, userId),
@@ -44,33 +49,41 @@ export class RunsService {
       });
     }
 
-    // 2. PlayerProfile upsert
+    // 2. PlayerProfile upsert — 매 런마다 프리셋 스탯으로 갱신
+    const presetStats = {
+      maxHP: preset.stats.MaxHP,
+      maxStamina: preset.stats.MaxStamina,
+      atk: preset.stats.ATK,
+      def: preset.stats.DEF,
+      acc: preset.stats.ACC,
+      eva: preset.stats.EVA,
+      crit: preset.stats.CRIT,
+      critDmg: Math.round(preset.stats.CRIT_DMG * 100),
+      resist: preset.stats.RESIST,
+      speed: preset.stats.SPEED,
+    };
+
     let profile = await this.db.query.playerProfiles.findFirst({
       where: eq(playerProfiles.userId, userId),
     });
     if (!profile) {
-      const defaults = this.content.getPlayerDefaults();
-      const [created] = await this.db.insert(playerProfiles).values({
-        userId,
-        permanentStats: {
-          maxHP: defaults.stats.MaxHP,
-          maxStamina: defaults.stats.MaxStamina,
-          atk: defaults.stats.ATK,
-          def: defaults.stats.DEF,
-          acc: defaults.stats.ACC,
-          eva: defaults.stats.EVA,
-          crit: defaults.stats.CRIT,
-          critDmg: Math.round(defaults.stats.CRIT_DMG * 100),
-          resist: defaults.stats.RESIST,
-          speed: defaults.stats.SPEED,
-        },
-        storyProgress: { actLevel: 1, cluePoints: 0, revealedTruths: [] },
-      }).returning();
+      const [created] = await this.db
+        .insert(playerProfiles)
+        .values({
+          userId,
+          permanentStats: presetStats,
+          storyProgress: { actLevel: 1, cluePoints: 0, revealedTruths: [] },
+        })
+        .returning();
       profile = created;
+    } else {
+      await this.db
+        .update(playerProfiles)
+        .set({ permanentStats: presetStats })
+        .where(eq(playerProfiles.userId, userId));
     }
 
     const seed = randomUUID();
-    const defaults = this.content.getPlayerDefaults();
 
     // DAG 그래프에서 시작 노드 조회
     const startNodeId = this.planner.getStartNodeId();
@@ -79,35 +92,43 @@ export class RunsService {
       throw new Error(`Start node not found: ${startNodeId}`);
     }
 
-    // 초기 RunState
+    // 초기 RunState — 프리셋 기반
     const initialRunState: RunState = {
-      gold: defaults.scenario.startingGold,
-      hp: defaults.hp,
-      maxHp: defaults.stats.MaxHP,
-      stamina: defaults.stamina,
-      maxStamina: defaults.stats.MaxStamina,
-      inventory: [],
+      gold: preset.startingGold,
+      hp: preset.stats.MaxHP,
+      maxHp: preset.stats.MaxHP,
+      stamina: preset.stats.MaxStamina,
+      maxStamina: preset.stats.MaxStamina,
+      inventory: preset.startingItems.map((si) => ({
+        itemId: si.itemId,
+        qty: si.qty,
+      })),
     };
 
     // 3~6. 트랜잭션: run + nodes + memory + 첫 턴
     const result = await this.db.transaction(async (tx) => {
       // 3. run_sessions INSERT (runState + graphNodeId 포함)
-      const [run] = await tx.insert(runSessions).values({
-        userId,
-        status: 'RUN_ACTIVE',
-        runType: 'CAPITAL',
-        actLevel: 1,
-        chapterIndex: 0,
-        currentNodeIndex: 0,
-        currentTurnNo: 0,
-        seed,
-        runState: initialRunState,
-        currentGraphNodeId: startNodeId,
-        routeTag: null,
-      }).returning();
+      const [run] = await tx
+        .insert(runSessions)
+        .values({
+          userId,
+          status: 'RUN_ACTIVE',
+          runType: 'CAPITAL',
+          actLevel: 1,
+          chapterIndex: 0,
+          currentNodeIndex: 0,
+          currentTurnNo: 0,
+          seed,
+          runState: initialRunState,
+          currentGraphNodeId: startNodeId,
+          presetId,
+          routeTag: null,
+        })
+        .returning();
 
       // 4. 첫 노드만 INSERT (이후 노드는 lazy 생성)
-      const startEventId = (startNodeDef.nodeMeta.eventId as string) ?? 'default';
+      const startEventId =
+        (startNodeDef.nodeMeta.eventId as string) ?? 'default';
       await tx.insert(nodeInstances).values({
         runId: run.id,
         nodeIndex: 0,
@@ -131,19 +152,22 @@ export class RunsService {
         theme: [
           {
             key: 'location',
-            value: '그레이마르 항만 — 왕국 남서부 최대 무역항. 세 세력(항만 노동 길드, 해관청, 밀수 조직)이 이권을 다툰다.',
+            value:
+              '그레이마르 항만 — 왕국 남서부 최대 무역항. 세 세력(항만 노동 길드, 해관청, 밀수 조직)이 이권을 다툰다.',
             importance: 1.0,
             tags: ['LOCATION', 'THEME'],
           },
           {
             key: 'quest',
-            value: '사라진 공물 장부 — 길드가 해관청에 바친 공물 내역이 담긴 장부가 도난당했다. 장부에는 뒷거래 기록도 포함되어 있어, 공개되면 길드 간부 다수가 처형당할 수 있다.',
+            value:
+              '사라진 공물 장부 — 길드가 해관청에 바친 공물 내역이 담긴 장부가 도난당했다. 장부에는 뒷거래 기록도 포함되어 있어, 공개되면 길드 간부 다수가 처형당할 수 있다.',
             importance: 1.0,
             tags: ['QUEST', 'THEME'],
           },
           {
             key: 'npc_client',
-            value: '의뢰인 로넨 — 항만 노동 길드의 말단 서기관. 장부 관리 책임자였으나 도난 사실을 상부에 보고하지 못해 쫓기는 처지. 용병에게 의뢰하는 이유: 길드 내부에 배신자가 있어 동료를 믿을 수 없다.',
+            value:
+              '의뢰인 로넨 — 항만 노동 길드의 말단 서기관. 장부 관리 책임자였으나 도난 사실을 상부에 보고하지 못해 쫓기는 처지. 용병에게 의뢰하는 이유: 길드 내부에 배신자가 있어 동료를 믿을 수 없다.',
             importance: 0.9,
             tags: ['NPC', 'THEME'],
           },
@@ -155,7 +179,7 @@ export class RunsService {
           },
           {
             key: 'protagonist',
-            value: '이름 없는 용병 — 변경 지대에서 이름을 날린 전직 병사. 그레이마르에는 일거리를 찾아 며칠 전 도착했다.',
+            value: `이름 없는 용병 — ${preset.protagonistTheme} 그레이마르에는 일거리를 찾아 며칠 전 도착했다.`,
             importance: 0.8,
             tags: ['PROTAGONIST', 'THEME'],
           },
@@ -183,13 +207,14 @@ export class RunsService {
         summary: {
           short: [
             '[배경] 그레이마르 항만 — 왕국 남서부 최대 무역항. 밤안개가 부두를 뒤덮고, 정박한 화물선들의 삭구가 바람에 삐걱댄다. 부두 끝 등대만이 희미한 불빛을 던지고, 순찰 교대 시각이라 인적이 드물다. 소금과 생선 냄새, 축축한 밧줄 냄새가 뒤섞인 공기.',
-            '[주인공] 변경 지대에서 이름을 날린 전직 병사. 일거리를 찾아 며칠 전 그레이마르에 도착했으나 아직 마땅한 의뢰를 잡지 못했다. 허름한 선술집에서 나와 부두를 걷고 있다.',
+            `[주인공] ${preset.protagonistTheme} 일거리를 찾아 며칠 전 그레이마르에 도착했으나 아직 마땅한 의뢰를 잡지 못했다. 허름한 선술집에서 나와 부두를 걷고 있다.`,
             '[사건] 어둠 속에서 한 남자가 주인공에게 다가온다. 낡은 외투에 잉크 얼룩이 묻은 서기관 로넨 — 항만 노동 길드의 장부 관리 책임자. 초조한 눈빛으로 주변을 살피며, 낮고 급한 목소리로 말한다:',
             '"용병을 찾고 있었소. 당신이 변경에서 싸운 자라는 소문을 들었소."',
             '"길드의 공물 장부가 사라졌소. 해관청에 바친 상납금 내역이 전부 적힌 장부요. 그런데 그 안에는… 공식 기록에 없는 뒷거래 내역도 있소. 밀수 조직과의 거래, 간부들의 횡령. 이게 해관청 손에 들어가면 길드 간부 절반이 교수대에 서게 되오."',
             '"길드 안에 배신자가 있소. 내부 사람은 믿을 수 없소. 그래서 외부 사람이 필요한 거요." 로넨이 금화가 든 주머니를 내밀며 말했다. "이건 선불이오. 장부를 되찾아주면 나머지를 치르겠소. 하지만 서두르시오 — 이 도시엔 그 장부를 원하는 자들이 너무 많소."',
           ].join('\n'),
-          display: '밤의 그레이마르 항만. 서기관 로넨이 사라진 공물 장부의 추적을 의뢰한다.',
+          display:
+            '밤의 그레이마르 항만. 서기관 로넨이 사라진 공물 장부의 추적을 의뢰한다.',
         },
         events: [
           {
@@ -218,10 +243,17 @@ export class RunsService {
           },
         ],
         diff: {
-          player: { hp: { from: 0, to: 0, delta: 0 }, stamina: { from: 0, to: 0, delta: 0 }, status: [] },
+          player: {
+            hp: { from: 0, to: 0, delta: 0 },
+            stamina: { from: 0, to: 0, delta: 0 },
+            status: [],
+          },
           enemies: [],
           inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
-          meta: { battle: { phase: 'NONE' }, position: { env: ['HARBOR', 'NIGHT', 'FOG'] } },
+          meta: {
+            battle: { phase: 'NONE' },
+            position: { env: ['HARBOR', 'NIGHT', 'FOG'] },
+          },
         },
         ui: {
           availableActions: ['CHOICE'],
@@ -295,7 +327,12 @@ export class RunsService {
       runState: result.run.runState ?? initialRunState,
       memory: {
         theme: [
-          { key: 'location', value: '그레이마르 항만 도시', importance: 1.0, tags: ['LOCATION', 'THEME'] },
+          {
+            key: 'location',
+            value: '그레이마르 항만 도시',
+            importance: 1.0,
+            tags: ['LOCATION', 'THEME'],
+          },
         ],
         storySummary: null,
       },
@@ -338,10 +375,7 @@ export class RunsService {
       .from(turns)
       .where(
         query.turnsBefore
-          ? and(
-              eq(turns.runId, runId),
-              lt(turns.turnNo, query.turnsBefore),
-            )
+          ? and(eq(turns.runId, runId), lt(turns.turnNo, query.turnsBefore))
           : eq(turns.runId, runId),
       )
       .orderBy(desc(turns.turnNo))
@@ -360,7 +394,9 @@ export class RunsService {
 
     // 페이지 정보
     const hasMore = recentTurns.length === query.turnsLimit;
-    const nextCursor = hasMore ? recentTurns[recentTurns.length - 1]?.turnNo : undefined;
+    const nextCursor = hasMore
+      ? recentTurns[recentTurns.length - 1]?.turnNo
+      : undefined;
 
     return {
       run: {

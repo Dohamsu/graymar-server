@@ -18,8 +18,13 @@ export class ClaudeProvider implements LlmProvider {
 
   constructor(private readonly config: LlmConfig) {}
 
-  async generate(_request: LlmProviderRequest): Promise<LlmProviderResponse> {
-    throw new Error('Claude provider is not yet implemented. Install @anthropic-ai/sdk and implement generate().');
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  generate(_request: LlmProviderRequest): Promise<LlmProviderResponse> {
+    return Promise.reject(
+      new Error(
+        'Claude provider is not yet implemented. Install @anthropic-ai/sdk and implement generate().',
+      ),
+    );
   }
 
   isAvailable(): boolean {
