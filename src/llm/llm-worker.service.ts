@@ -1,6 +1,12 @@
 // 정본: design/server_api_system.md §14 — DB Polling LLM Worker
 
-import { Inject, Injectable, type OnModuleInit, type OnModuleDestroy, Logger } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  type OnModuleInit,
+  type OnModuleDestroy,
+  Logger,
+} from '@nestjs/common';
 import { and, eq, lt, or, isNull } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { turns, recentSummaries } from '../db/schema/index.js';
@@ -34,7 +40,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         this.logger.error('LLM Worker poll error', err),
       );
     }, POLL_INTERVAL_MS);
-    this.logger.log(`LLM Worker started (id=${WORKER_ID}, provider=${this.configService.get().provider})`);
+    this.logger.log(
+      `LLM Worker started (id=${WORKER_ID}, provider=${this.configService.get().provider})`,
+    );
   }
 
   onModuleDestroy(): void {
@@ -84,12 +92,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         llmLockOwner: WORKER_ID,
         llmAttempts: (pending.llmAttempts ?? 0) + 1,
       })
-      .where(
-        and(
-          eq(turns.id, pending.id),
-          eq(turns.llmStatus, 'PENDING'),
-        ),
-      );
+      .where(and(eq(turns.id, pending.id), eq(turns.llmStatus, 'PENDING')));
 
     const serverResult = pending.serverResult;
     if (!serverResult) {

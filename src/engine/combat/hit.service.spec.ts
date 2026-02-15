@@ -4,9 +4,19 @@ import type { StatsSnapshot } from '../stats/stats.service.js';
 
 function makeSnap(overrides: Partial<StatsSnapshot> = {}): StatsSnapshot {
   return {
-    maxHP: 100, maxStamina: 5, atk: 15, def: 10, acc: 5, eva: 3,
-    crit: 5, critDmg: 150, resist: 5, speed: 5,
-    damageMult: 1.0, hitMult: 1.0, takenDmgMult: 1.0,
+    maxHP: 100,
+    maxStamina: 5,
+    atk: 15,
+    def: 10,
+    acc: 5,
+    eva: 3,
+    crit: 5,
+    critDmg: 150,
+    resist: 5,
+    speed: 5,
+    damageMult: 1.0,
+    hitMult: 1.0,
+    takenDmgMult: 1.0,
     ...overrides,
   };
 }
@@ -20,7 +30,6 @@ describe('HitService', () => {
 
   it('d20=1 → 자동 실패 (autoFail)', () => {
     // 특정 seed에서 d20=1이 나오는 cursor를 찾기
-    const rng = new Rng('auto-fail-search', 0);
     let cursor = -1;
     for (let i = 0; i < 10000; i++) {
       const testRng = new Rng('hit-d20-1', i);

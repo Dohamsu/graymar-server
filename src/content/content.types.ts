@@ -104,3 +104,15 @@ export type PlayerDefaults = {
     startingItems: string[];
   };
 };
+
+export type PresetDefinition = {
+  presetId: string;
+  name: string;
+  subtitle: string;
+  description: string;
+  playstyleHint: string;
+  protagonistTheme: string;
+  stats: PlayerDefaults['stats'];
+  startingGold: number;
+  startingItems: Array<{ itemId: string; qty: number }>;
+};

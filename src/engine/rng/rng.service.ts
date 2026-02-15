@@ -25,14 +25,14 @@ export class Rng {
   private hashSeed(seed: string): bigint {
     let h = 0n;
     for (let i = 0; i < seed.length; i++) {
-      h = ((h << 5n) - h + BigInt(seed.charCodeAt(i))) & 0xFFFFFFFFFFFFFFFFn;
+      h = ((h << 5n) - h + BigInt(seed.charCodeAt(i))) & 0xffffffffffffffffn;
     }
     return h === 0n ? 1n : h;
   }
 
   /** 상태만 진행 (생성자 fast-forward용) */
   private advanceState(): void {
-    this.state = (this.state + 0x9E3779B97F4A7C15n) & 0xFFFFFFFFFFFFFFFFn;
+    this.state = (this.state + 0x9e3779b97f4a7c15n) & 0xffffffffffffffffn;
   }
 
   /** splitmix64 원시 호출 — 0~2^64 범위 */
@@ -41,14 +41,14 @@ export class Rng {
     this._consumed++;
     this.advanceState();
     let z = this.state;
-    z = ((z ^ (z >> 30n)) * 0xBF58476D1CE4E5B9n) & 0xFFFFFFFFFFFFFFFFn;
-    z = ((z ^ (z >> 27n)) * 0x94D049BB133111EBn) & 0xFFFFFFFFFFFFFFFFn;
-    return (z ^ (z >> 31n)) & 0xFFFFFFFFFFFFFFFFn;
+    z = ((z ^ (z >> 30n)) * 0xbf58476d1ce4e5b9n) & 0xffffffffffffffffn;
+    z = ((z ^ (z >> 27n)) * 0x94d049bb133111ebn) & 0xffffffffffffffffn;
+    return (z ^ (z >> 31n)) & 0xffffffffffffffffn;
   }
 
   /** 0.0 ~ 1.0 실수 */
   next(): number {
-    return Number(this.nextRaw()) / Number(0xFFFFFFFFFFFFFFFFn);
+    return Number(this.nextRaw()) / Number(0xffffffffffffffffn);
   }
 
   /** 1~20 정수 (d20 판정) */

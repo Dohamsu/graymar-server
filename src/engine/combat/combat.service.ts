@@ -24,6 +24,7 @@ import { StatusService } from '../status/status.service.js';
 import { HitService } from './hit.service.js';
 import { DamageService } from './damage.service.js';
 import { EnemyAiService } from './enemy-ai.service.js';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
 
 export interface CombatTurnInput {
   turnNo: number;
@@ -34,6 +35,7 @@ export interface CombatTurnInput {
   playerStats: PermanentStats;
   enemyStats: Record<string, PermanentStats>;
   enemyNames?: Record<string, string>;
+  inventory?: Array<{ itemId: string; qty: number }>;
 }
 
 export interface CombatTurnOutput {
@@ -66,6 +68,7 @@ export class CombatService {
     private readonly hitService: HitService,
     private readonly damageService: DamageService,
     private readonly enemyAiService: EnemyAiService,
+    private readonly contentLoader: ContentLoaderService,
   ) {}
 
   resolveCombatTurn(input: CombatTurnInput): CombatTurnOutput {
@@ -78,12 +81,22 @@ export class CombatService {
     const eName = (id: string) => input.enemyNames?.[id] ?? id;
 
     // deep clone battle state
-    const next: BattleStateV1 = JSON.parse(JSON.stringify(input.battleState));
+    const next: BattleStateV1 = JSON.parse(
+      JSON.stringify(input.battleState),
+    ) as BattleStateV1;
     next.phase = 'TURN';
 
     const events: Event[] = [];
     const playerStatusDeltas: StatusDelta[] = [];
-    const enemyDiffMap = new Map<string, { hpDelta: ValueDelta; statusDeltas: StatusDelta[]; distance?: Distance; angle?: Angle }>();
+    const enemyDiffMap = new Map<
+      string,
+      {
+        hpDelta: ValueDelta;
+        statusDeltas: StatusDelta[];
+        distance?: Distance;
+        angle?: Angle;
+      }
+    >();
 
     // init enemy diff map
     for (const enemy of next.enemies) {
@@ -97,24 +110,53 @@ export class CombatService {
     const staminaBefore = next.player.stamina;
 
     // §3.1: 스태미나 적용
-    const staminaAfter = Math.max(0, staminaBefore - input.actionPlan.staminaCost);
+    const staminaAfter = Math.max(
+      0,
+      staminaBefore - input.actionPlan.staminaCost,
+    );
     const forced = staminaBefore === 0 && input.actionPlan.staminaCost > 0;
     next.player.stamina = staminaAfter;
 
     // 플레이어 스탯 스냅샷
     const playerMods = this.statusService.getModifiers(next.player.status);
-    const playerSnap = this.statsService.buildSnapshot(input.playerStats, playerMods);
+    const playerSnap = this.statsService.buildSnapshot(
+      input.playerStats,
+      playerMods,
+    );
 
     // §3.2: 플레이어 ActionUnit 순차 실행 (최대 3 슬롯)
     const maxUnits = Math.min(input.actionPlan.units.length, 3);
     let bonusTriggered = false;
     let directDamageToEnemy = false;
 
+    // inventory deep clone (아이템 소비 추적용)
+    const inventoryItems = input.inventory
+      ? (JSON.parse(JSON.stringify(input.inventory)) as Array<{
+          itemId: string;
+          qty: number;
+        }>)
+      : [];
+    const inventoryDiff: {
+      itemsRemoved: Array<{ itemId: string; qty: number }>;
+    } = { itemsRemoved: [] };
+
     for (let i = 0; i < maxUnits; i++) {
       const unit = input.actionPlan.units[i];
+      const unitStaminaCost = i < 2 ? 1 : 2;
       this.applyPlayerUnit(
-        unit, next, playerSnap, input.enemyStats, rng, forced, events,
-        enemyDiffMap, playerStatusDeltas, eName,
+        unit,
+        next,
+        playerSnap,
+        input.enemyStats,
+        rng,
+        forced,
+        events,
+        enemyDiffMap,
+        playerStatusDeltas,
+        eName,
+        inventoryItems,
+        inventoryDiff,
+        unitStaminaCost,
       );
       if (unit.type === 'ATTACK_MELEE' || unit.type === 'ATTACK_RANGED') {
         directDamageToEnemy = true;
@@ -128,7 +170,8 @@ export class CombatService {
       for (const enemy of next.enemies) {
         const eDiff = enemyDiffMap.get(enemy.id);
         if (eDiff && enemy.hp > 0) {
-          const hpPercent = enemy.hp / Math.max(1, (input.enemyStats[enemy.id]?.maxHP ?? 100));
+          const hpPercent =
+            enemy.hp / Math.max(1, input.enemyStats[enemy.id]?.maxHP ?? 100);
           if (hpPercent <= 0.3) {
             bonusTriggered = true;
             break;
@@ -144,8 +187,16 @@ export class CombatService {
     }
 
     // FLEE 체크
-    if (input.actionPlan.units.some((u) => u.type === 'FLEE') && combatOutcome === 'ONGOING') {
-      const fleeResult = this.checkFlee(next, playerSnap, rng);
+    if (
+      input.actionPlan.units.some((u) => u.type === 'FLEE') &&
+      combatOutcome === 'ONGOING'
+    ) {
+      const fleeResult = this.checkFlee(
+        next,
+        playerSnap,
+        rng,
+        (next as Record<string, unknown>).fleeBonusValue as number | undefined,
+      );
       if (fleeResult) {
         combatOutcome = 'FLEE_SUCCESS';
         events.push({
@@ -178,19 +229,32 @@ export class CombatService {
         if (!enemy || enemy.hp <= 0) continue;
         if (this.statusService.isStunned(enemy.status)) continue;
 
-        const enemySnap = this.buildEnemySnap(input.enemyStats[enemyId], enemy.status);
-        const aiUnits = this.enemyAiService.selectActions({
-          enemyId,
-          personality: enemy.personality,
-          distance: enemy.distance,
-          hp: enemy.hp,
-          maxHp: input.enemyStats[enemyId]?.maxHP ?? 100,
-        }, rng);
+        const enemySnap = this.buildEnemySnap(
+          input.enemyStats[enemyId],
+          enemy.status,
+        );
+        const aiUnits = this.enemyAiService.selectActions(
+          {
+            enemyId,
+            personality: enemy.personality,
+            distance: enemy.distance,
+            hp: enemy.hp,
+            maxHp: input.enemyStats[enemyId]?.maxHP ?? 100,
+          },
+          rng,
+        );
 
         for (const unit of aiUnits) {
           this.applyEnemyUnit(
-            enemyId, unit, next, enemySnap, playerSnap, rng, events,
-            playerStatusDeltas, eName,
+            enemyId,
+            unit,
+            next,
+            enemySnap,
+            playerSnap,
+            rng,
+            events,
+            playerStatusDeltas,
+            eName,
           );
         }
       }
@@ -237,7 +301,11 @@ export class CombatService {
       for (const enemy of next.enemies) {
         if (enemy.hp <= 0) continue;
         const eMaxHP = input.enemyStats[enemy.id]?.maxHP ?? 100;
-        const eTick = this.statusService.tickStatuses(enemy.status, eMaxHP, 1.0);
+        const eTick = this.statusService.tickStatuses(
+          enemy.status,
+          eMaxHP,
+          1.0,
+        );
         enemy.hp = Math.max(0, enemy.hp - eTick.totalDotDamage);
         enemy.status = eTick.statuses;
         events.push(...eTick.events);
@@ -301,7 +369,11 @@ export class CombatService {
     const diff: DiffBundle = {
       player: playerDiff,
       enemies: enemyDiffs,
-      inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
+      inventory: {
+        itemsAdded: [],
+        itemsRemoved: inventoryDiff.itemsRemoved,
+        goldDelta: 0,
+      },
       meta: {
         battle: {
           phase: next.phase === 'END' ? 'END' : 'TURN',
@@ -317,7 +389,15 @@ export class CombatService {
     const ui: UIBundle = {
       availableActions: battleEnded
         ? []
-        : ['ATTACK_MELEE', 'ATTACK_RANGED', 'DEFEND', 'EVADE', 'MOVE', 'USE_ITEM', 'FLEE'],
+        : [
+            'ATTACK_MELEE',
+            'ATTACK_RANGED',
+            'DEFEND',
+            'EVADE',
+            'MOVE',
+            'USE_ITEM',
+            'FLEE',
+          ],
       targetLabels: next.enemies
         .filter((e) => e.hp > 0)
         .map((e) => ({ id: e.id, name: eName(e.id), hint: `HP: ${e.hp}` })),
@@ -342,8 +422,14 @@ export class CombatService {
     const serverResult: ServerResultV1 = {
       version: 'server_result_v1',
       turnNo: input.turnNo,
-      node: { ...input.node, state: battleEnded ? 'NODE_ENDED' : 'NODE_ACTIVE' },
-      summary: { short: summaryParts.join(', '), display: summaryParts.join(', ') },
+      node: {
+        ...input.node,
+        state: battleEnded ? 'NODE_ENDED' : 'NODE_ACTIVE',
+      },
+      summary: {
+        short: summaryParts.join(', '),
+        display: summaryParts.join(', '),
+      },
       events,
       diff,
       ui,
@@ -369,9 +455,15 @@ export class CombatService {
     rng: Rng,
     forced: boolean,
     events: Event[],
-    enemyDiffMap: Map<string, { hpDelta: ValueDelta; statusDeltas: StatusDelta[] }>,
+    enemyDiffMap: Map<
+      string,
+      { hpDelta: ValueDelta; statusDeltas: StatusDelta[] }
+    >,
     playerStatusDeltas: StatusDelta[],
     eName: (id: string) => string,
+    inventoryItems: Array<{ itemId: string; qty: number }>,
+    inventoryDiff: { itemsRemoved: Array<{ itemId: string; qty: number }> },
+    unitStaminaCost: number,
   ): void {
     switch (unit.type) {
       case 'ATTACK_MELEE':
@@ -382,15 +474,36 @@ export class CombatService {
         if (!target || target.hp <= 0) return;
 
         const eStat = enemyStats[target.id];
-        const positionMods = this.statsService.getPositionModifiers(target.angle);
-        const eMods = [...this.statusService.getModifiers(target.status), ...positionMods];
+        const positionMods = this.statsService.getPositionModifiers(
+          target.angle,
+        );
+        const eMods = [
+          ...this.statusService.getModifiers(target.status),
+          ...positionMods,
+        ];
         const eSnap = this.statsService.buildSnapshot(
-          eStat ?? { maxHP: 100, maxStamina: 5, atk: 10, def: 10, acc: 5, eva: 3, crit: 5, critDmg: 150, resist: 5, speed: 5 },
+          eStat ?? {
+            maxHP: 100,
+            maxStamina: 5,
+            atk: 10,
+            def: 10,
+            acc: 5,
+            eva: 3,
+            crit: 5,
+            critDmg: 150,
+            resist: 5,
+            speed: 5,
+          },
           eMods,
         );
 
         // hitRoll (항상 소비)
-        const hitResult = this.hitService.rollHit(playerSnap, eSnap.eva, rng, forced);
+        const hitResult = this.hitService.rollHit(
+          playerSnap,
+          eSnap.eva,
+          rng,
+          forced,
+        );
 
         if (!hitResult.hit) {
           events.push({
@@ -403,8 +516,12 @@ export class CombatService {
         }
 
         // varianceRoll + critRoll (hit시에만)
-        const dmgResult = this.damageService.rollDamage(playerSnap, eSnap.def, rng, forced);
-        const hpBefore = target.hp;
+        const dmgResult = this.damageService.rollDamage(
+          playerSnap,
+          eSnap.def,
+          rng,
+          forced,
+        );
         target.hp = Math.max(0, target.hp - dmgResult.damage);
 
         const eDiff = enemyDiffMap.get(target.id);
@@ -417,14 +534,21 @@ export class CombatService {
           kind: 'DAMAGE',
           text: `${eName(target.id)}에게 ${dmgResult.damage} 피해${dmgResult.isCrit ? ' (치명타!)' : ''}`,
           tags: dmgResult.isCrit ? ['CRIT'] : [],
-          data: { damage: dmgResult.damage, isCrit: dmgResult.isCrit, targetId: target.id },
+          data: {
+            damage: dmgResult.damage,
+            isCrit: dmgResult.isCrit,
+            targetId: target.id,
+          },
         });
         break;
       }
 
       case 'DEFEND': {
         // v1: stamina +1 + event
-        next.player.stamina = Math.min(playerSnap.maxStamina, next.player.stamina + 1);
+        next.player.stamina = Math.min(
+          playerSnap.maxStamina,
+          next.player.stamina + 1,
+        );
         events.push({
           id: `defend_${rng.cursor}`,
           kind: 'BATTLE',
@@ -469,14 +593,165 @@ export class CombatService {
         // FLEE는 메인 루프에서 처리
         break;
 
-      case 'USE_ITEM':
-        events.push({
-          id: `item_${rng.cursor}`,
-          kind: 'BATTLE',
-          text: '아이템을 사용했다',
-          tags: ['USE_ITEM'],
-        });
+      case 'USE_ITEM': {
+        const itemHint = unit.meta?.itemHint as string | undefined;
+        const resolvedItemId = this.resolveItemFromHint(
+          itemHint,
+          inventoryItems,
+        );
+
+        if (!resolvedItemId) {
+          next.player.stamina = Math.min(
+            playerSnap.maxStamina,
+            next.player.stamina + unitStaminaCost,
+          );
+          events.push({
+            id: `item_fail_${rng.cursor}`,
+            kind: 'SYSTEM',
+            text: '사용할 아이템이 없다',
+            tags: ['USE_ITEM', 'FAIL'],
+          });
+          break;
+        }
+
+        const itemDef = this.contentLoader.getItem(resolvedItemId);
+        if (!itemDef?.combat) {
+          next.player.stamina = Math.min(
+            playerSnap.maxStamina,
+            next.player.stamina + unitStaminaCost,
+          );
+          events.push({
+            id: `item_fail_${rng.cursor}`,
+            kind: 'SYSTEM',
+            text: '전투에서 사용할 수 없는 아이템이다',
+            tags: ['USE_ITEM', 'FAIL'],
+          });
+          break;
+        }
+
+        // 아이템 소비
+        const invSlot = inventoryItems.find((i) => i.itemId === resolvedItemId);
+        if (invSlot) {
+          invSlot.qty -= 1;
+          const existingRemoved = inventoryDiff.itemsRemoved.find(
+            (i) => i.itemId === resolvedItemId,
+          );
+          if (existingRemoved) {
+            existingRemoved.qty += 1;
+          } else {
+            inventoryDiff.itemsRemoved.push({ itemId: resolvedItemId, qty: 1 });
+          }
+        }
+
+        // 효과 적용
+        switch (itemDef.combat.effect) {
+          case 'HEAL_HP': {
+            const healValue = itemDef.combat.value ?? 0;
+            const hpBefore = next.player.hp;
+            next.player.hp = Math.min(
+              playerSnap.maxHP,
+              next.player.hp + healValue,
+            );
+            const healed = next.player.hp - hpBefore;
+            events.push({
+              id: `item_heal_${rng.cursor}`,
+              kind: 'SYSTEM',
+              text: `${itemDef.name}을(를) 사용했다. HP ${healed} 회복.`,
+              tags: ['USE_ITEM', 'HEAL'],
+              data: { itemId: resolvedItemId, healed },
+            });
+            break;
+          }
+          case 'RESTORE_STAMINA': {
+            const restoreValue = itemDef.combat.value ?? 0;
+            const staBefore = next.player.stamina;
+            next.player.stamina = Math.min(
+              playerSnap.maxStamina,
+              next.player.stamina + restoreValue,
+            );
+            const restored = next.player.stamina - staBefore;
+            events.push({
+              id: `item_stamina_${rng.cursor}`,
+              kind: 'SYSTEM',
+              text: `${itemDef.name}을(를) 사용했다. 기력 ${restored} 회복.`,
+              tags: ['USE_ITEM', 'STAMINA'],
+              data: { itemId: resolvedItemId, restored },
+            });
+            break;
+          }
+          case 'APPLY_STATUS': {
+            const statusId = itemDef.combat.status;
+            if (!statusId) break;
+            const target = unit.targetId
+              ? next.enemies.find((e) => e.id === unit.targetId)
+              : next.enemies.find((e) => e.hp > 0);
+            if (!target || target.hp <= 0) {
+              events.push({
+                id: `item_status_notarget_${rng.cursor}`,
+                kind: 'SYSTEM',
+                text: `${itemDef.name}을(를) 사용했지만 대상이 없다.`,
+                tags: ['USE_ITEM', 'FAIL'],
+              });
+              break;
+            }
+            const eSnap = this.buildEnemySnap(
+              enemyStats[target.id],
+              target.status,
+            );
+            const applyResult = this.statusService.tryApplyStatus(
+              statusId,
+              'PLAYER',
+              'PLAYER',
+              target.status,
+              playerSnap.acc,
+              eSnap.resist,
+              rng,
+            );
+            target.status = applyResult.statuses;
+            const eDiff = enemyDiffMap.get(target.id);
+            if (applyResult.applied) {
+              if (applyResult.delta && eDiff)
+                eDiff.statusDeltas.push(applyResult.delta);
+              events.push({
+                id: `item_status_${rng.cursor}`,
+                kind: 'SYSTEM',
+                text: `${itemDef.name}을(를) 사용했다. ${eName(target.id)}에게 ${statusId} 부여.`,
+                tags: ['USE_ITEM', 'STATUS'],
+                data: { itemId: resolvedItemId, statusId, targetId: target.id },
+              });
+            } else {
+              events.push({
+                id: `item_status_resist_${rng.cursor}`,
+                kind: 'SYSTEM',
+                text: `${itemDef.name}을(를) 사용했지만 ${eName(target.id)}이(가) 저항했다.`,
+                tags: ['USE_ITEM', 'RESIST'],
+                data: { itemId: resolvedItemId, statusId, targetId: target.id },
+              });
+            }
+            break;
+          }
+          case 'FLEE_BONUS': {
+            const bonusValue = itemDef.combat.value ?? 5;
+            (next as Record<string, unknown>).fleeBonusValue = bonusValue;
+            events.push({
+              id: `item_flee_${rng.cursor}`,
+              kind: 'SYSTEM',
+              text: `${itemDef.name}을(를) 사용했다. 도주가 유리해졌다.`,
+              tags: ['USE_ITEM', 'FLEE_BONUS'],
+              data: { itemId: resolvedItemId, bonusValue },
+            });
+            break;
+          }
+          default:
+            events.push({
+              id: `item_unknown_${rng.cursor}`,
+              kind: 'SYSTEM',
+              text: `${itemDef.name}을(를) 사용했다.`,
+              tags: ['USE_ITEM'],
+            });
+        }
         break;
+      }
 
       case 'INTERACT':
         events.push({
@@ -506,7 +781,11 @@ export class CombatService {
     switch (unit.type) {
       case 'ATTACK_MELEE':
       case 'ATTACK_RANGED': {
-        const hitResult = this.hitService.rollHit(enemySnap, playerSnap.eva, rng);
+        const hitResult = this.hitService.rollHit(
+          enemySnap,
+          playerSnap.eva,
+          rng,
+        );
         if (!hitResult.hit) {
           events.push({
             id: `enemy_miss_${enemyId}_${rng.cursor}`,
@@ -516,8 +795,11 @@ export class CombatService {
           });
           return;
         }
-        const dmgResult = this.damageService.rollDamage(enemySnap, playerSnap.def, rng);
-        const hpBefore = next.player.hp;
+        const dmgResult = this.damageService.rollDamage(
+          enemySnap,
+          playerSnap.def,
+          rng,
+        );
         next.player.hp = Math.max(0, next.player.hp - dmgResult.damage);
 
         events.push({
@@ -525,7 +807,11 @@ export class CombatService {
           kind: 'DAMAGE',
           text: `${eName(enemyId)}이(가) ${dmgResult.damage} 피해를 입혔다${dmgResult.isCrit ? ' (치명타!)' : ''}`,
           tags: ['ENEMY_ATTACK', ...(dmgResult.isCrit ? ['CRIT'] : [])],
-          data: { damage: dmgResult.damage, isCrit: dmgResult.isCrit, sourceId: enemyId },
+          data: {
+            damage: dmgResult.damage,
+            isCrit: dmgResult.isCrit,
+            sourceId: enemyId,
+          },
         });
         break;
       }
@@ -562,19 +848,63 @@ export class CombatService {
     }
   }
 
-  /** FLEE 판정: d20 + SPEED >= 12 + engaged_count * 2 */
-  private checkFlee(next: BattleStateV1, playerSnap: StatsSnapshot, rng: Rng): boolean {
+  /** FLEE 판정: d20 + SPEED + fleeBonus >= 12 + engaged_count * 2 */
+  private checkFlee(
+    next: BattleStateV1,
+    playerSnap: StatsSnapshot,
+    rng: Rng,
+    fleeBonus?: number,
+  ): boolean {
     const roll = rng.d20();
     const engagedCount = next.enemies.filter(
       (e) => e.hp > 0 && e.distance === 'ENGAGED',
     ).length;
-    return roll + playerSnap.speed >= 12 + engagedCount * 2;
+    return roll + playerSnap.speed + (fleeBonus ?? 0) >= 12 + engagedCount * 2;
   }
 
-  private buildEnemySnap(base: PermanentStats | undefined, statuses: StatusInstance[]): StatsSnapshot {
+  private resolveItemFromHint(
+    hint: string | undefined,
+    inventory: Array<{ itemId: string; qty: number }>,
+  ): string | null {
+    const HINT_MAP: Record<string, string[]> = {
+      healing: ['ITEM_SUPERIOR_HEALING', 'ITEM_MINOR_HEALING'],
+      stamina: ['ITEM_STAMINA_TONIC'],
+      smoke: ['ITEM_SMOKE_BOMB'],
+      poison: ['ITEM_POISON_NEEDLE'],
+    };
+
+    if (hint && HINT_MAP[hint]) {
+      for (const itemId of HINT_MAP[hint]) {
+        if (inventory.some((i) => i.itemId === itemId && i.qty > 0))
+          return itemId;
+      }
+    }
+
+    // fallback: 첫 번째 CONSUMABLE
+    for (const item of inventory) {
+      if (item.qty <= 0) continue;
+      const def = this.contentLoader.getItem(item.itemId);
+      if (def?.type === 'CONSUMABLE' && def.combat) return item.itemId;
+    }
+
+    return null;
+  }
+
+  private buildEnemySnap(
+    base: PermanentStats | undefined,
+    statuses: StatusInstance[],
+  ): StatsSnapshot {
     const defaultStats: PermanentStats = {
-      maxHP: 100, maxStamina: 5, atk: 10, def: 10, acc: 5, eva: 3,
-      crit: 5, critDmg: 150, resist: 5, speed: 5,
+      maxHP: 100,
+      maxStamina: 5,
+      atk: 10,
+      def: 10,
+      acc: 5,
+      eva: 3,
+      crit: 5,
+      critDmg: 150,
+      resist: 5,
+      speed: 5,
     };
     const mods = this.statusService.getModifiers(statuses);
     return this.statsService.buildSnapshot(base ?? defaultStats, mods);

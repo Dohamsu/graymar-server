@@ -1,4 +1,12 @@
-import { index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { RUN_STATUS, RUN_TYPE } from '../types/index.js';
 import type { RunState } from '../types/index.js';
 import { users } from './users.js';
@@ -10,7 +18,9 @@ export const runSessions = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id),
-    status: text('status', { enum: RUN_STATUS }).notNull().default('RUN_ACTIVE'),
+    status: text('status', { enum: RUN_STATUS })
+      .notNull()
+      .default('RUN_ACTIVE'),
     runType: text('run_type', { enum: RUN_TYPE }).notNull(),
     actLevel: integer('act_level').notNull().default(1),
     chapterIndex: integer('chapter_index').notNull().default(0),
@@ -19,6 +29,7 @@ export const runSessions = pgTable(
     seed: text('seed').notNull(),
     runState: jsonb('run_state').$type<RunState>(),
     currentGraphNodeId: text('current_graph_node_id'),
+    presetId: text('preset_id'),
     routeTag: text('route_tag'),
     startedAt: timestamp('started_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),

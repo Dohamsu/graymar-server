@@ -47,6 +47,9 @@ export interface NodeResolveInput {
   inventoryCount: number;
   inventoryMax: number;
 
+  // 인벤토리 (COMBAT USE_ITEM용)
+  inventory?: Array<{ itemId: string; qty: number }>;
+
   // 노드 상태 (EVENT, SHOP)
   nodeState?: Record<string, unknown>;
 }
@@ -87,13 +90,17 @@ export class NodeResolverService {
       case 'EXIT':
         return this.resolveExit(input);
       default:
-        throw new InternalError(`Unknown node type: ${input.nodeType}`);
+        throw new InternalError(
+          `Unknown node type: ${input.nodeType as string}`,
+        );
     }
   }
 
   private resolveCombat(input: NodeResolveInput): NodeResolveOutput {
     if (!input.battleState || !input.actionPlan || !input.enemyStats) {
-      throw new InternalError('COMBAT node requires battleState, actionPlan, and enemyStats');
+      throw new InternalError(
+        'COMBAT node requires battleState, actionPlan, and enemyStats',
+      );
     }
 
     const result = this.combatNode.resolve({
@@ -109,6 +116,7 @@ export class NodeResolverService {
       isBoss: input.nodeMeta?.isBoss ?? false,
       rewardSeed: input.rewardSeed ?? input.battleState.rng.seed,
       encounterRewards: input.encounterRewards,
+      inventory: input.inventory,
     });
 
     // combatOutcome 추출: nodeOutcome이 NODE_ENDED이면 VICTORY (패배/도주는 별도 처리)

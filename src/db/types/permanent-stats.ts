@@ -7,8 +7,8 @@ export type PermanentStats = {
   def: number;
   acc: number;
   eva: number;
-  crit: number;       // % (정수)
-  critDmg: number;    // 1.5 → 150 (정수 저장, /100으로 사용)
+  crit: number; // % (정수)
+  critDmg: number; // 1.5 → 150 (정수 저장, /100으로 사용)
   resist: number;
   speed: number;
 };
@@ -27,7 +27,7 @@ export const DEFAULT_PERMANENT_STATS: PermanentStats = {
 };
 
 export type StoryProgress = {
-  actLevel: number;       // 1~6
+  actLevel: number; // 1~6
   cluePoints: number;
   revealedTruths: string[];
 };

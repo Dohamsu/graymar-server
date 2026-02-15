@@ -1,10 +1,6 @@
 // Placeholder auth guard: x-user-id 헤더 기반 (추후 JWT로 교체)
 
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import type { Request } from 'express';
 import { UnauthorizedError } from '../errors/game-errors.js';
 

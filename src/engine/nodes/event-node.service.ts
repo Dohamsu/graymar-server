@@ -15,9 +15,9 @@ import type { NodeOutcome } from '../../db/types/index.js';
 
 export interface EventNodeState {
   eventId: string;
-  stage: number;         // 현재 단계
-  maxStage: number;      // 종료 단계
-  choicesMade: string[];  // 이미 선택한 choiceId 목록
+  stage: number; // 현재 단계
+  maxStage: number; // 종료 단계
+  choicesMade: string[]; // 이미 선택한 choiceId 목록
 }
 
 export interface EventNodeInput {
@@ -89,18 +89,25 @@ export class EventNodeService {
               {
                 id: `choice_${next.stage}_a`,
                 label: '계속 진행한다',
-                action: { type: 'CHOICE', payload: { choiceId: `choice_${next.stage}_a` } },
+                action: {
+                  type: 'CHOICE',
+                  payload: { choiceId: `choice_${next.stage}_a` },
+                },
               },
               {
                 id: `choice_${next.stage}_b`,
                 label: '주변을 살핀다',
-                action: { type: 'CHOICE', payload: { choiceId: `choice_${next.stage}_b` } },
+                action: {
+                  type: 'CHOICE',
+                  payload: { choiceId: `choice_${next.stage}_b` },
+                },
               },
             ]
           : [];
 
-    const narrative = content?.narrative
-      ?? (nodeOutcome === 'NODE_ENDED'
+    const narrative =
+      content?.narrative ??
+      (nodeOutcome === 'NODE_ENDED'
         ? `[상황] 이벤트(${next.eventId}) 종료. 다음 노드로 전이 예정.`
         : `[상황] 이벤트(${next.eventId}) ${next.stage}단계. 선택 대기.`);
 

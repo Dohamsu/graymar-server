@@ -32,7 +32,8 @@ export class EventContentProvider {
     return {
       narrative: s.narrative,
       choices: s.choices.map((c, i) => {
-        const id = c.choiceId ?? `${eventId}_${stage}_${String.fromCharCode(97 + i)}`;
+        const id =
+          c.choiceId ?? `${eventId}_${stage}_${String.fromCharCode(97 + i)}`;
         return {
           id,
           label: c.label,
@@ -118,9 +119,21 @@ export class EventContentProvider {
           '[선택지 맥락] 길드(하를런) = 현장 무력 / 경비대 = 공권력 / 독자 = 자유롭지만 위험.',
         ].join('\n'),
         choices: [
-          { label: '하를런과 손잡겠다', hint: '노동 길드의 힘을 빌림', choiceId: 'guild_ally' },
-          { label: '경비대에 보고하겠다', hint: '공권력 활용', choiceId: 'guard_ally' },
-          { label: '혼자 해결하겠다', hint: '위험하지만 자유로움', choiceId: 'solo_path' },
+          {
+            label: '하를런과 손잡겠다',
+            hint: '노동 길드의 힘을 빌림',
+            choiceId: 'guild_ally',
+          },
+          {
+            label: '경비대에 보고하겠다',
+            hint: '공권력 활용',
+            choiceId: 'guard_ally',
+          },
+          {
+            label: '혼자 해결하겠다',
+            hint: '위험하지만 자유로움',
+            choiceId: 'solo_path',
+          },
         ],
         toneHint: 'tense',
       },

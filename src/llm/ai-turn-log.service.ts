@@ -33,7 +33,10 @@ export class AiTurnLogService {
         error: entry.error ? { error: entry.error } : null,
       });
     } catch (err) {
-      this.logger.error(`Failed to log AI turn: run=${entry.runId} turn=${entry.turnNo}`, err);
+      this.logger.error(
+        `Failed to log AI turn: run=${entry.runId} turn=${entry.turnNo}`,
+        err,
+      );
     }
   }
 }

@@ -11,12 +11,12 @@ import {
 import type { ServerResultV1 } from '../db/types/index.js';
 
 export interface LlmContext {
-  theme: unknown[];          // L0: 절대 삭제 금지
-  storySummary: string | null;  // L1
-  nodeFacts: unknown[];      // L2
+  theme: unknown[]; // L0: 절대 삭제 금지
+  storySummary: string | null; // L1
+  nodeFacts: unknown[]; // L2
   recentSummaries: string[]; // L3
-  currentEvents: unknown[];  // L4: 이번 턴 events
-  summary: string;           // 이번 턴 summary.short
+  currentEvents: unknown[]; // L4: 이번 턴 events
+  summary: string; // 이번 턴 summary.short
 }
 
 @Injectable()

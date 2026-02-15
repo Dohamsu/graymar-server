@@ -30,7 +30,7 @@ export interface ShopNodeInput {
   turnNo: number;
   nodeId: string;
   nodeIndex: number;
-  choiceId?: string;       // "buy_<itemId>" or "leave"
+  choiceId?: string; // "buy_<itemId>" or "leave"
   nodeState: ShopNodeState;
   playerGold: number;
   inventoryCount: number;
@@ -48,7 +48,9 @@ export interface ShopNodeOutput {
 @Injectable()
 export class ShopNodeService {
   resolve(input: ShopNodeInput): ShopNodeOutput {
-    const next: ShopNodeState = JSON.parse(JSON.stringify(input.nodeState));
+    const next: ShopNodeState = JSON.parse(
+      JSON.stringify(input.nodeState),
+    ) as ShopNodeState;
     const events: Event[] = [];
     let goldSpent = 0;
     const itemsBought: Array<{ itemId: string; qty: number }> = [];
@@ -111,23 +113,30 @@ export class ShopNodeService {
     }
 
     // 선택지 생성
-    const choices: ChoiceItem[] = nodeOutcome === 'ONGOING'
-      ? [
-          ...next.catalog
-            .filter((c) => c.stock > 0)
-            .map((c) => ({
-              id: `buy_${c.itemId}`,
-              label: `${c.name} (${c.price} 골드)`,
-              hint: c.description,
-              action: { type: 'CHOICE' as const, payload: { choiceId: `buy_${c.itemId}` } },
-            })),
-          {
-            id: 'leave',
-            label: '상점을 떠난다',
-            action: { type: 'CHOICE' as const, payload: { choiceId: 'leave' } },
-          },
-        ]
-      : [];
+    const choices: ChoiceItem[] =
+      nodeOutcome === 'ONGOING'
+        ? [
+            ...next.catalog
+              .filter((c) => c.stock > 0)
+              .map((c) => ({
+                id: `buy_${c.itemId}`,
+                label: `${c.name} (${c.price} 골드)`,
+                hint: c.description,
+                action: {
+                  type: 'CHOICE' as const,
+                  payload: { choiceId: `buy_${c.itemId}` },
+                },
+              })),
+            {
+              id: 'leave',
+              label: '상점을 떠난다',
+              action: {
+                type: 'CHOICE' as const,
+                payload: { choiceId: 'leave' },
+              },
+            },
+          ]
+        : [];
 
     const diff: DiffBundle = {
       player: {
@@ -168,11 +177,12 @@ export class ShopNodeService {
         state: nodeOutcome === 'ONGOING' ? 'NODE_ACTIVE' : 'NODE_ENDED',
       },
       summary: (() => {
-        const short = nodeOutcome === 'NODE_ENDED'
-          ? '[상황] 상점 이용 완료. 주인공이 상점을 떠남.'
-          : goldSpent > 0
-            ? `[상황] 물품 구매 완료. ${goldSpent} 골드 지출. 추가 거래 가능.`
-            : '[상황] 상점 진입. 물품 목록 확인 중.';
+        const short =
+          nodeOutcome === 'NODE_ENDED'
+            ? '[상황] 상점 이용 완료. 주인공이 상점을 떠남.'
+            : goldSpent > 0
+              ? `[상황] 물품 구매 완료. ${goldSpent} 골드 지출. 추가 거래 가능.`
+              : '[상황] 상점 진입. 물품 목록 확인 중.';
         return { short, display: toDisplayText(short) };
       })(),
       events,
@@ -182,6 +192,12 @@ export class ShopNodeService {
       flags,
     };
 
-    return { nextNodeState: next, serverResult, nodeOutcome, goldSpent, itemsBought };
+    return {
+      nextNodeState: next,
+      serverResult,
+      nodeOutcome,
+      goldSpent,
+      itemsBought,
+    };
   }
 }

@@ -4,9 +4,19 @@ import type { StatsSnapshot } from '../stats/stats.service.js';
 
 function makeSnap(overrides: Partial<StatsSnapshot> = {}): StatsSnapshot {
   return {
-    maxHP: 100, maxStamina: 5, atk: 15, def: 10, acc: 5, eva: 3,
-    crit: 5, critDmg: 150, resist: 5, speed: 5,
-    damageMult: 1.0, hitMult: 1.0, takenDmgMult: 1.0,
+    maxHP: 100,
+    maxStamina: 5,
+    atk: 15,
+    def: 10,
+    acc: 5,
+    eva: 3,
+    crit: 5,
+    critDmg: 150,
+    resist: 5,
+    speed: 5,
+    damageMult: 1.0,
+    hitMult: 1.0,
+    takenDmgMult: 1.0,
     ...overrides,
   };
 }

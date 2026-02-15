@@ -1,5 +1,17 @@
-import { integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import type { AvailableRun, HubEvent, NpcRelation, Rumor } from '../types/index.js';
+import {
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
+import type {
+  AvailableRun,
+  HubEvent,
+  NpcRelation,
+  Rumor,
+} from '../types/index.js';
 import { users } from './users.js';
 
 export const hubStates = pgTable('hub_states', {

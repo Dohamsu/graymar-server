@@ -2,7 +2,11 @@
 
 import { Injectable } from '@nestjs/common';
 import type { ParsedIntent } from '../../db/types/index.js';
-import type { ActionTypeCombat, NodeType, PolicyResult } from '../../db/types/index.js';
+import type {
+  ActionTypeCombat,
+  NodeType,
+  PolicyResult,
+} from '../../db/types/index.js';
 
 export interface PolicyCheckResult {
   result: PolicyResult;
@@ -21,7 +25,8 @@ export class PolicyService {
     intent: ParsedIntent,
     nodeType: NodeType,
     nodeState: 'NODE_ACTIVE' | 'NODE_ENDED',
-    currentStamina: number,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _currentStamina: number,
   ): PolicyCheckResult {
     // 불변 규칙: NODE_ENDED에서 전투 계속 불가
     if (nodeState === 'NODE_ENDED') {
@@ -30,8 +35,14 @@ export class PolicyService {
 
     // 비전투 노드에서 전투 행동 시도
     const combatActions: ActionTypeCombat[] = [
-      'ATTACK_MELEE', 'ATTACK_RANGED', 'DEFEND', 'EVADE',
-      'MOVE', 'USE_ITEM', 'FLEE', 'INTERACT',
+      'ATTACK_MELEE',
+      'ATTACK_RANGED',
+      'DEFEND',
+      'EVADE',
+      'MOVE',
+      'USE_ITEM',
+      'FLEE',
+      'INTERACT',
     ];
 
     if (nodeType !== 'COMBAT') {

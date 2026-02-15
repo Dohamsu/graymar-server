@@ -27,8 +27,14 @@ import { NodeTransitionService } from '../engine/nodes/node-transition.service.j
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { InventoryService } from '../engine/rewards/inventory.service.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
-import type { ActionPlan, ParsedIntent, PermanentStats, RunState, RouteContext } from '../db/types/index.js';
-import type { NodeType, InputType, LlmStatus } from '../db/types/index.js';
+import type {
+  ActionPlan,
+  ParsedIntent,
+  PermanentStats,
+  RunState,
+  RouteContext,
+} from '../db/types/index.js';
+import type { NodeType, LlmStatus } from '../db/types/index.js';
 
 @Injectable()
 export class TurnsService {
@@ -100,9 +106,12 @@ export class TurnsService {
     const playerStats = profile?.permanentStats ?? DEFAULT_PERMANENT_STATS;
 
     // RunState 로드 (골드/HP/스태미나/인벤토리)
-    const runState = (run.runState as RunState | null) ?? {
-      gold: 0, hp: playerStats.maxHP, maxHp: playerStats.maxHP,
-      stamina: playerStats.maxStamina, maxStamina: playerStats.maxStamina,
+    const runState = run.runState ?? {
+      gold: 0,
+      hp: playerStats.maxHP,
+      maxHp: playerStats.maxHP,
+      stamina: playerStats.maxStamina,
+      maxStamina: playerStats.maxStamina,
       inventory: [],
     };
 
@@ -116,7 +125,8 @@ export class TurnsService {
         ),
       });
       battleState = bs?.state ?? null;
-      if (!battleState) throw new InternalError('BattleState not found for COMBAT node');
+      if (!battleState)
+        throw new InternalError('BattleState not found for COMBAT node');
     }
 
     // 7. 입력 파이프라인
@@ -127,7 +137,8 @@ export class TurnsService {
         where: and(eq(turns.runId, runId), eq(turns.turnNo, run.currentTurnNo)),
         columns: { serverResult: true },
       });
-      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)?.choices;
+      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)
+        ?.choices;
       const matched = prevChoices?.find((c) => c.id === body.input.choiceId);
       if (matched) rawInput = matched.label;
     }
@@ -159,9 +170,18 @@ export class TurnsService {
           policyCheck.reason ?? 'Policy denied',
         );
         return this.commitTurn(
-          run, currentNode, expectedTurnNo, body, rawInput,
-          parsedIntent, policyResult, transformedIntent, undefined,
-          denyResult, battleState, body.options?.skipLlm,
+          run,
+          currentNode,
+          expectedTurnNo,
+          body,
+          rawInput,
+          parsedIntent,
+          policyResult,
+          transformedIntent,
+          undefined,
+          denyResult,
+          battleState,
+          body.options?.skipLlm,
         );
       }
 
@@ -175,9 +195,12 @@ export class TurnsService {
     }
 
     // 8. 노드 리졸브 — encounter 보상 + 컨텐츠 기반 적 스탯
-    let encounterRewards: { clueChance?: { itemId: string; probability: number } } | undefined;
+    let encounterRewards:
+      | { clueChance?: { itemId: string; probability: number } }
+      | undefined;
     if (currentNode.nodeType === 'COMBAT' && currentNode.nodeMeta) {
-      const encId = (currentNode.nodeMeta as Record<string, unknown>).eventId as string | undefined;
+      const encId = (currentNode.nodeMeta as Record<string, unknown>)
+        .eventId as string | undefined;
       if (encId) {
         const enc = this.content.getEncounter(encId);
         if (enc?.rewards?.clueChance) {
@@ -187,9 +210,21 @@ export class TurnsService {
     }
 
     // encounter overrides 참조용
-    let encounterEnemies: Array<{ ref: string; count: number; overrides?: { name?: string; hp?: number; stats?: Record<string, number>; personality?: string } }> | undefined;
+    let encounterEnemies:
+      | Array<{
+          ref: string;
+          count: number;
+          overrides?: {
+            name?: string;
+            hp?: number;
+            stats?: Record<string, number>;
+            personality?: string;
+          };
+        }>
+      | undefined;
     if (currentNode.nodeType === 'COMBAT' && currentNode.nodeMeta) {
-      const encId = (currentNode.nodeMeta as Record<string, unknown>).eventId as string | undefined;
+      const encId = (currentNode.nodeMeta as Record<string, unknown>)
+        .eventId as string | undefined;
       if (encId) {
         const enc = this.content.getEncounter(encId);
         if (enc) encounterEnemies = enc.enemies as typeof encounterEnemies;
@@ -204,7 +239,9 @@ export class TurnsService {
         const def = this.content.getEnemy(enemyId);
 
         // encounter overrides 찾기 (해당 ref의 첫 번째 entry에서 overrides 적용)
-        let overrides: { hp?: number; stats?: Record<string, number> } | undefined;
+        let overrides:
+          | { hp?: number; stats?: Record<string, number> }
+          | undefined;
         if (encounterEnemies) {
           let refIdx = 0;
           for (const entry of encounterEnemies) {
@@ -235,8 +272,16 @@ export class TurnsService {
         } else {
           // fallback
           enemyStats[e.id] = {
-            maxHP: 80, maxStamina: 5, atk: 12, def: 8, acc: 5, eva: 3,
-            crit: 5, critDmg: 150, resist: 5, speed: 5,
+            maxHP: 80,
+            maxStamina: 5,
+            atk: 12,
+            def: 8,
+            acc: 5,
+            eva: 3,
+            crit: 5,
+            critDmg: 150,
+            resist: 5,
+            speed: 5,
           };
         }
       }
@@ -276,6 +321,7 @@ export class TurnsService {
       playerStamina: battleState?.player?.stamina ?? runState.stamina,
       playerMaxStamina: runState.maxStamina,
       playerGold: runState.gold,
+      inventory: runState.inventory,
       inventoryCount: runState.inventory.length,
       inventoryMax: InventoryService.DEFAULT_MAX_SLOTS,
       nodeState: currentNode.nodeState ?? undefined,
@@ -284,16 +330,23 @@ export class TurnsService {
     // 9. runState 업데이트 계산
     const updatedRunState: RunState = { ...runState };
     // 골드 변경 (SHOP 구매, 전투 보상 등)
-    const goldDelta = resolveResult.goldDelta
-      ?? resolveResult.serverResult.diff.inventory.goldDelta
-      ?? 0;
+    const goldDelta =
+      resolveResult.goldDelta ??
+      resolveResult.serverResult.diff.inventory.goldDelta ??
+      0;
     updatedRunState.gold = Math.max(0, updatedRunState.gold + goldDelta);
     // HP/스태미나 변경 (REST 등)
     if (resolveResult.hpDelta) {
-      updatedRunState.hp = Math.min(updatedRunState.maxHp, Math.max(0, updatedRunState.hp + resolveResult.hpDelta));
+      updatedRunState.hp = Math.min(
+        updatedRunState.maxHp,
+        Math.max(0, updatedRunState.hp + resolveResult.hpDelta),
+      );
     }
     if (resolveResult.staminaDelta) {
-      updatedRunState.stamina = Math.min(updatedRunState.maxStamina, Math.max(0, updatedRunState.stamina + resolveResult.staminaDelta));
+      updatedRunState.stamina = Math.min(
+        updatedRunState.maxStamina,
+        Math.max(0, updatedRunState.stamina + resolveResult.staminaDelta),
+      );
     }
     // 전투 후 HP/스태미나 동기화
     if (resolveResult.nextBattleState?.player) {
@@ -301,32 +354,52 @@ export class TurnsService {
       updatedRunState.stamina = resolveResult.nextBattleState.player.stamina;
     }
     // 인벤토리: 아이템 추가
-    for (const added of resolveResult.serverResult.diff.inventory.itemsAdded ?? []) {
-      const existing = updatedRunState.inventory.find(i => i.itemId === added.itemId);
+    for (const added of resolveResult.serverResult.diff.inventory.itemsAdded ??
+      []) {
+      const existing = updatedRunState.inventory.find(
+        (i) => i.itemId === added.itemId,
+      );
       if (existing) {
         existing.qty += added.qty;
       } else {
-        updatedRunState.inventory.push({ itemId: added.itemId, qty: added.qty });
+        updatedRunState.inventory.push({
+          itemId: added.itemId,
+          qty: added.qty,
+        });
       }
     }
     // 인벤토리: 아이템 제거
-    for (const removed of resolveResult.serverResult.diff.inventory.itemsRemoved ?? []) {
-      const existing = updatedRunState.inventory.find(i => i.itemId === removed.itemId);
+    for (const removed of resolveResult.serverResult.diff.inventory
+      .itemsRemoved ?? []) {
+      const existing = updatedRunState.inventory.find(
+        (i) => i.itemId === removed.itemId,
+      );
       if (existing) {
         existing.qty -= removed.qty;
         if (existing.qty <= 0) {
-          updatedRunState.inventory = updatedRunState.inventory.filter(i => i.itemId !== removed.itemId);
+          updatedRunState.inventory = updatedRunState.inventory.filter(
+            (i) => i.itemId !== removed.itemId,
+          );
         }
       }
     }
 
     // 10. 원자 커밋
     const response = await this.commitTurn(
-      run, currentNode, expectedTurnNo, body, rawInput,
-      parsedIntent, policyResult, transformedIntent, actionPlan ? [actionPlan] : undefined,
-      resolveResult.serverResult, resolveResult.nextBattleState ?? battleState,
+      run,
+      currentNode,
+      expectedTurnNo,
+      body,
+      rawInput,
+      parsedIntent,
+      policyResult,
+      transformedIntent,
+      actionPlan ? [actionPlan] : undefined,
+      resolveResult.serverResult,
+      resolveResult.nextBattleState ?? battleState,
       body.options?.skipLlm,
-      resolveResult.nodeOutcome, resolveResult.nextNodeState,
+      resolveResult.nodeOutcome,
+      resolveResult.nextNodeState,
       updatedRunState,
     );
 
@@ -334,8 +407,10 @@ export class TurnsService {
     if (resolveResult.nodeOutcome === 'NODE_ENDED') {
       // S2 분기용 choiceId 추출 (nodeState.choicesMade에서 의미론적 ID 검색)
       const branchIds = ['guild_ally', 'guard_ally', 'solo_path'];
-      const choicesMade = (resolveResult.nextNodeState?.choicesMade as string[] | undefined) ?? [];
-      const branchChoice = choicesMade.find(c => branchIds.includes(c));
+      const choicesMade =
+        (resolveResult.nextNodeState?.choicesMade as string[] | undefined) ??
+        [];
+      const branchChoice = choicesMade.find((c) => branchIds.includes(c));
 
       // branchChoiceId를 runState에 기록
       if (branchChoice) {
@@ -368,7 +443,10 @@ export class TurnsService {
 
       if (transition) {
         // routeTag가 갱신되었으면 runState에도 반영
-        if (transition.routeTag && transition.routeTag !== updatedRunState.routeTag) {
+        if (
+          transition.routeTag &&
+          transition.routeTag !== updatedRunState.routeTag
+        ) {
           updatedRunState.routeTag = transition.routeTag;
           await this.db
             .update(runSessions)
@@ -413,7 +491,7 @@ export class TurnsService {
         };
       } else {
         // 다음 노드가 없으면 RUN_ENDED
-        response.meta!.nodeOutcome = 'RUN_ENDED';
+        response.meta.nodeOutcome = 'RUN_ENDED';
         await this.db
           .update(runSessions)
           .set({ status: 'RUN_ENDED', updatedAt: new Date() })
@@ -451,7 +529,7 @@ export class TurnsService {
         turnNo,
         nodeInstanceId: currentNode.id,
         nodeType: currentNode.nodeType as NodeType,
-        inputType: body.input.type as InputType,
+        inputType: body.input.type,
         rawInput,
         idempotencyKey: body.idempotencyKey,
         parsedBy: parsedIntent?.source ?? null,
@@ -524,7 +602,12 @@ export class TurnsService {
     };
   }
 
-  async getTurnDetail(runId: string, turnNo: number, userId: string, query: GetTurnQuery) {
+  async getTurnDetail(
+    runId: string,
+    turnNo: number,
+    userId: string,
+    query: GetTurnQuery,
+  ) {
     const run = await this.db.query.runSessions.findFirst({
       where: eq(runSessions.id, runId),
     });
@@ -590,14 +673,20 @@ export class TurnsService {
         state: 'NODE_ACTIVE',
       },
       summary: { short: reason, display: reason },
-      events: [{
-        id: `deny_${turnNo}`,
-        kind: 'SYSTEM',
-        text: reason,
-        tags: ['POLICY_DENY'],
-      }],
+      events: [
+        {
+          id: `deny_${turnNo}`,
+          kind: 'SYSTEM',
+          text: reason,
+          tags: ['POLICY_DENY'],
+        },
+      ],
       diff: {
-        player: { hp: { from: 0, to: 0, delta: 0 }, stamina: { from: 0, to: 0, delta: 0 }, status: [] },
+        player: {
+          hp: { from: 0, to: 0, delta: 0 },
+          stamina: { from: 0, to: 0, delta: 0 },
+          status: [],
+        },
         enemies: [],
         inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
         meta: { battle: { phase: 'NONE' }, position: { env: [] } },

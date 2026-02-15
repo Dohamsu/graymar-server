@@ -28,7 +28,10 @@ export class GameExceptionFilter implements ExceptionFilter {
       const body = exception.getResponse();
       res.status(status).json({
         code: 'HTTP_ERROR',
-        message: typeof body === 'string' ? body : (body as Record<string, unknown>).message ?? 'Unknown error',
+        message:
+          typeof body === 'string'
+            ? body
+            : ((body as Record<string, unknown>).message ?? 'Unknown error'),
         details: typeof body === 'object' ? body : null,
       });
       return;

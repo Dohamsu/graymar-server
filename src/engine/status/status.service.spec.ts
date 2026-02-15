@@ -30,7 +30,13 @@ describe('StatusService', () => {
       for (let i = 0; i < 100; i++) {
         const rng = new Rng('apply-high', i);
         const result = service.tryApplyStatus(
-          'BLEED', 'player', 'PLAYER', [], 20, 0, rng,
+          'BLEED',
+          'player',
+          'PLAYER',
+          [],
+          20,
+          0,
+          rng,
         );
         if (result.applied) applied++;
       }
@@ -43,7 +49,13 @@ describe('StatusService', () => {
       for (let i = 0; i < 100; i++) {
         const rng = new Rng('apply-low', i);
         const result = service.tryApplyStatus(
-          'BLEED', 'player', 'PLAYER', [], 0, 30, rng,
+          'BLEED',
+          'player',
+          'PLAYER',
+          [],
+          0,
+          30,
+          rng,
         );
         if (result.applied) applied++;
       }
@@ -55,7 +67,13 @@ describe('StatusService', () => {
       // 확실한 성공을 위해 높은 ACC
       const rng = new Rng('apply-add', 0);
       const result = service.tryApplyStatus(
-        'BLEED', 'player', 'PLAYER', [], 100, 0, rng,
+        'BLEED',
+        'player',
+        'PLAYER',
+        [],
+        100,
+        0,
+        rng,
       );
       if (result.applied) {
         expect(result.statuses).toHaveLength(1);
@@ -69,26 +87,52 @@ describe('StatusService', () => {
 
     it('stackable=true → stacks 증가, duration 갱신', () => {
       const existing: StatusInstance[] = [
-        { id: 'BLEED', sourceId: 'PLAYER', applierId: 'player', duration: 1, stacks: 2, power: 1 },
+        {
+          id: 'BLEED',
+          sourceId: 'PLAYER',
+          applierId: 'player',
+          duration: 1,
+          stacks: 2,
+          power: 1,
+        },
       ];
       const rng = new Rng('stack', 0);
       const result = service.tryApplyStatus(
-        'BLEED', 'player', 'PLAYER', existing, 100, 0, rng,
+        'BLEED',
+        'player',
+        'PLAYER',
+        existing,
+        100,
+        0,
+        rng,
       );
       if (result.applied) {
         const bleed = result.statuses.find((s) => s.id === 'BLEED');
-        expect(bleed?.stacks).toBe(3);  // 2 + 1
+        expect(bleed?.stacks).toBe(3); // 2 + 1
         expect(bleed?.duration).toBe(3); // max(1, 3) = 3
       }
     });
 
     it('stackable maxStacks 제한', () => {
       const existing: StatusInstance[] = [
-        { id: 'BLEED', sourceId: 'PLAYER', applierId: 'player', duration: 3, stacks: 5, power: 1 },
+        {
+          id: 'BLEED',
+          sourceId: 'PLAYER',
+          applierId: 'player',
+          duration: 3,
+          stacks: 5,
+          power: 1,
+        },
       ];
       const rng = new Rng('max-stack', 0);
       const result = service.tryApplyStatus(
-        'BLEED', 'player', 'PLAYER', existing, 100, 0, rng,
+        'BLEED',
+        'player',
+        'PLAYER',
+        existing,
+        100,
+        0,
+        rng,
       );
       if (result.applied) {
         const bleed = result.statuses.find((s) => s.id === 'BLEED');
@@ -100,11 +144,24 @@ describe('StatusService', () => {
   describe('tryApplyStatus — STUN 면역', () => {
     it('STUN_IMMUNE 있으면 STUN 적용 실패', () => {
       const existing: StatusInstance[] = [
-        { id: 'STUN_IMMUNE', sourceId: 'PLAYER', applierId: 'system', duration: 2, stacks: 1, power: 1 },
+        {
+          id: 'STUN_IMMUNE',
+          sourceId: 'PLAYER',
+          applierId: 'system',
+          duration: 2,
+          stacks: 1,
+          power: 1,
+        },
       ];
       const rng = new Rng('stun-immune', 0);
       const result = service.tryApplyStatus(
-        'STUN', 'player', 'PLAYER', existing, 100, 0, rng,
+        'STUN',
+        'player',
+        'PLAYER',
+        existing,
+        100,
+        0,
+        rng,
       );
       expect(result.applied).toBe(false);
     });
@@ -114,7 +171,13 @@ describe('StatusService', () => {
       for (let i = 0; i < 50; i++) {
         const rng = new Rng('stun-ok', i);
         const result = service.tryApplyStatus(
-          'STUN', 'player', 'PLAYER', [], 100, 0, rng,
+          'STUN',
+          'player',
+          'PLAYER',
+          [],
+          100,
+          0,
+          rng,
         );
         if (result.applied) applied++;
       }
@@ -125,7 +188,14 @@ describe('StatusService', () => {
   describe('tickStatuses — DOT 처리', () => {
     it('BLEED tick → 결정적 DOT 피해', () => {
       const statuses: StatusInstance[] = [
-        { id: 'BLEED', sourceId: 'PLAYER', applierId: 'player', duration: 3, stacks: 2, power: 1 },
+        {
+          id: 'BLEED',
+          sourceId: 'PLAYER',
+          applierId: 'player',
+          duration: 3,
+          stacks: 2,
+          power: 1,
+        },
       ];
       const result = service.tickStatuses(statuses, 100, 1.0);
 
@@ -140,7 +210,14 @@ describe('StatusService', () => {
 
     it('POISON tick → DOT + TAKEN_DMG_MULT 반영', () => {
       const statuses: StatusInstance[] = [
-        { id: 'POISON', sourceId: 'PLAYER', applierId: 'player', duration: 2, stacks: 1, power: 1 },
+        {
+          id: 'POISON',
+          sourceId: 'PLAYER',
+          applierId: 'player',
+          duration: 2,
+          stacks: 1,
+          power: 1,
+        },
       ];
 
       // TAKEN_DMG_MULT = 1.5
@@ -152,7 +229,14 @@ describe('StatusService', () => {
 
     it('DOT 최소 피해 1 보장', () => {
       const statuses: StatusInstance[] = [
-        { id: 'BLEED', sourceId: 'PLAYER', applierId: 'player', duration: 2, stacks: 1, power: 1 },
+        {
+          id: 'BLEED',
+          sourceId: 'PLAYER',
+          applierId: 'player',
+          duration: 2,
+          stacks: 1,
+          power: 1,
+        },
       ];
       // maxHP 1 → rawDot = floor(1 * 0.03 * 1 * 1) = 0 → min 1
       const result = service.tickStatuses(statuses, 1, 1.0);
@@ -161,20 +245,32 @@ describe('StatusService', () => {
 
     it('duration 0이면 제거 + REMOVED 이벤트', () => {
       const statuses: StatusInstance[] = [
-        { id: 'WEAKEN', sourceId: 'PLAYER', applierId: 'player', duration: 1, stacks: 1, power: 1 },
+        {
+          id: 'WEAKEN',
+          sourceId: 'PLAYER',
+          applierId: 'player',
+          duration: 1,
+          stacks: 1,
+          power: 1,
+        },
       ];
       const result = service.tickStatuses(statuses, 100, 1.0);
 
       expect(result.statuses.find((s) => s.id === 'WEAKEN')).toBeUndefined();
-      const removeEvent = result.events.find((e) =>
-        e.tags.includes('REMOVED'),
-      );
+      const removeEvent = result.events.find((e) => e.tags.includes('REMOVED'));
       expect(removeEvent).toBeDefined();
     });
 
     it('STUN 제거 시 STUN_IMMUNE 2턴 부여', () => {
       const statuses: StatusInstance[] = [
-        { id: 'STUN', sourceId: 'PLAYER', applierId: 'enemy', duration: 1, stacks: 1, power: 1 },
+        {
+          id: 'STUN',
+          sourceId: 'PLAYER',
+          applierId: 'enemy',
+          duration: 1,
+          stacks: 1,
+          power: 1,
+        },
       ];
       const result = service.tickStatuses(statuses, 100, 1.0);
 
@@ -186,8 +282,22 @@ describe('StatusService', () => {
 
     it('tick은 RNG를 사용하지 않는다 (결정적)', () => {
       const statuses: StatusInstance[] = [
-        { id: 'BLEED', sourceId: 'PLAYER', applierId: 'p', duration: 3, stacks: 2, power: 1 },
-        { id: 'POISON', sourceId: 'PLAYER', applierId: 'p', duration: 2, stacks: 1, power: 1 },
+        {
+          id: 'BLEED',
+          sourceId: 'PLAYER',
+          applierId: 'p',
+          duration: 3,
+          stacks: 2,
+          power: 1,
+        },
+        {
+          id: 'POISON',
+          sourceId: 'PLAYER',
+          applierId: 'p',
+          duration: 2,
+          stacks: 1,
+          power: 1,
+        },
       ];
       const r1 = service.tickStatuses(statuses, 100, 1.0);
       const r2 = service.tickStatuses(statuses, 100, 1.0);
@@ -198,7 +308,14 @@ describe('StatusService', () => {
   describe('getModifiers', () => {
     it('WEAKEN → ATK -15% modifier', () => {
       const statuses: StatusInstance[] = [
-        { id: 'WEAKEN', sourceId: 'PLAYER', applierId: 'e', duration: 2, stacks: 1, power: 1 },
+        {
+          id: 'WEAKEN',
+          sourceId: 'PLAYER',
+          applierId: 'e',
+          duration: 2,
+          stacks: 1,
+          power: 1,
+        },
       ];
       const mods = service.getModifiers(statuses);
       expect(mods.length).toBe(1);
@@ -209,12 +326,19 @@ describe('StatusService', () => {
 
     it('FORTIFY → DEF +20%, TAKEN_DMG_MULT -10%', () => {
       const statuses: StatusInstance[] = [
-        { id: 'FORTIFY', sourceId: 'PLAYER', applierId: 'p', duration: 2, stacks: 1, power: 1 },
+        {
+          id: 'FORTIFY',
+          sourceId: 'PLAYER',
+          applierId: 'p',
+          duration: 2,
+          stacks: 1,
+          power: 1,
+        },
       ];
       const mods = service.getModifiers(statuses);
       expect(mods.length).toBe(2);
-      expect(mods.find((m) => m.stat === 'def')?.value).toBe(0.20);
-      expect(mods.find((m) => m.stat === 'takenDmgMult')?.value).toBe(-0.10);
+      expect(mods.find((m) => m.stat === 'def')?.value).toBe(0.2);
+      expect(mods.find((m) => m.stat === 'takenDmgMult')?.value).toBe(-0.1);
     });
 
     it('빈 배열 → modifier 없음', () => {
@@ -226,14 +350,28 @@ describe('StatusService', () => {
   describe('isStunned', () => {
     it('STUN 있으면 true', () => {
       const statuses: StatusInstance[] = [
-        { id: 'STUN', sourceId: 'PLAYER', applierId: 'e', duration: 1, stacks: 1, power: 1 },
+        {
+          id: 'STUN',
+          sourceId: 'PLAYER',
+          applierId: 'e',
+          duration: 1,
+          stacks: 1,
+          power: 1,
+        },
       ];
       expect(service.isStunned(statuses)).toBe(true);
     });
 
     it('STUN 없으면 false', () => {
       const statuses: StatusInstance[] = [
-        { id: 'BLEED', sourceId: 'PLAYER', applierId: 'e', duration: 3, stacks: 1, power: 1 },
+        {
+          id: 'BLEED',
+          sourceId: 'PLAYER',
+          applierId: 'e',
+          duration: 3,
+          stacks: 1,
+          power: 1,
+        },
       ];
       expect(service.isStunned(statuses)).toBe(false);
     });

@@ -19,8 +19,13 @@ export class GeminiProvider implements LlmProvider {
 
   constructor(private readonly config: LlmConfig) {}
 
-  async generate(_request: LlmProviderRequest): Promise<LlmProviderResponse> {
-    throw new Error('Gemini provider is not yet implemented. Install @google/genai and implement generate().');
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  generate(_request: LlmProviderRequest): Promise<LlmProviderResponse> {
+    return Promise.reject(
+      new Error(
+        'Gemini provider is not yet implemented. Install @google/genai and implement generate().',
+      ),
+    );
   }
 
   isAvailable(): boolean {
