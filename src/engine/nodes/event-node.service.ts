@@ -1,6 +1,8 @@
 // 정본: design/node_resolve_rules_v1.md §5 — EVENT 노드
 
 import { Injectable } from '@nestjs/common';
+import { EventContentProvider } from '../../content/event-content.provider.js';
+import { toDisplayText } from '../../common/text-utils.js';
 import type {
   ServerResultV1,
   Event,
@@ -36,9 +38,15 @@ export interface EventNodeOutput {
 
 @Injectable()
 export class EventNodeService {
+  constructor(private readonly eventContent: EventContentProvider) {}
+
   resolve(input: EventNodeInput): EventNodeOutput {
     const next: EventNodeState = { ...input.nodeState };
     const events: Event[] = [];
+
+    // maxStage를 컨텐츠 기반으로 갱신
+    const contentMaxStage = this.eventContent.getMaxStage(next.eventId);
+    next.maxStage = contentMaxStage;
 
     // CHOICE 입력 처리
     if (input.inputType === 'CHOICE' && input.choiceId) {
@@ -48,40 +56,55 @@ export class EventNodeService {
       events.push({
         id: `event_choice_${input.turnNo}`,
         kind: 'QUEST',
-        text: `Choice made: ${input.choiceId}`,
+        text: `선택: ${input.choiceId}`,
         tags: ['EVENT_CHOICE'],
         data: { choiceId: input.choiceId, stage: next.stage },
       });
     } else if (input.inputType === 'ACTION') {
-      // FREEFORM → 매칭 실패 시 선택지 재제시
       events.push({
         id: `event_freeform_${input.turnNo}`,
         kind: 'SYSTEM',
-        text: 'Please select from the available choices.',
+        text: '선택지 중에서 골라주세요.',
         tags: ['FREEFORM_REDIRECT'],
       });
     }
 
     // 종료 판정
-    const nodeOutcome: NodeOutcome =
+    let nodeOutcome: NodeOutcome =
       next.stage >= next.maxStage ? 'NODE_ENDED' : 'ONGOING';
 
-    // 다음 선택지 생성
+    // 컨텐츠 기반 선택지/내러티브
+    const content = this.eventContent.getContent(next.eventId, next.stage);
+
+    // 선택지가 비었으면 자동 종료 (S5_RESOLVE 등 마지막 내러티브 전용)
+    if (nodeOutcome === 'ONGOING' && content && content.choices.length === 0) {
+      nodeOutcome = 'NODE_ENDED';
+    }
+
     const choices: ChoiceItem[] =
-      nodeOutcome === 'ONGOING'
-        ? [
-            {
-              id: `choice_${next.stage}_a`,
-              label: 'Continue',
-              action: { type: 'CHOICE', payload: { choiceId: `choice_${next.stage}_a` } },
-            },
-            {
-              id: `choice_${next.stage}_b`,
-              label: 'Investigate further',
-              action: { type: 'CHOICE', payload: { choiceId: `choice_${next.stage}_b` } },
-            },
-          ]
-        : [];
+      nodeOutcome === 'ONGOING' && content
+        ? content.choices
+        : nodeOutcome === 'ONGOING'
+          ? [
+              {
+                id: `choice_${next.stage}_a`,
+                label: '계속 진행한다',
+                action: { type: 'CHOICE', payload: { choiceId: `choice_${next.stage}_a` } },
+              },
+              {
+                id: `choice_${next.stage}_b`,
+                label: '주변을 살핀다',
+                action: { type: 'CHOICE', payload: { choiceId: `choice_${next.stage}_b` } },
+              },
+            ]
+          : [];
+
+    const narrative = content?.narrative
+      ?? (nodeOutcome === 'NODE_ENDED'
+        ? `[상황] 이벤트(${next.eventId}) 종료. 다음 노드로 전이 예정.`
+        : `[상황] 이벤트(${next.eventId}) ${next.stage}단계. 선택 대기.`);
+
+    const toneHint = content?.toneHint ?? 'neutral';
 
     const diff: DiffBundle = {
       player: {
@@ -101,7 +124,7 @@ export class EventNodeService {
       availableActions: nodeOutcome === 'ONGOING' ? ['CHOICE'] : [],
       targetLabels: [],
       actionSlots: { base: 2, bonusAvailable: false, max: 3 },
-      toneHint: 'neutral',
+      toneHint: toneHint as UIBundle['toneHint'],
     };
 
     const flags: ResultFlags = {
@@ -121,9 +144,8 @@ export class EventNodeService {
         state: nodeOutcome === 'ONGOING' ? 'NODE_ACTIVE' : 'NODE_ENDED',
       },
       summary: {
-        short: nodeOutcome === 'NODE_ENDED'
-          ? 'Event concluded.'
-          : `Event stage ${next.stage}: awaiting choice.`,
+        short: narrative,
+        display: toDisplayText(narrative),
       },
       events,
       diff,

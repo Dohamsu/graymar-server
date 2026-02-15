@@ -9,6 +9,7 @@ import type {
   UIBundle,
   ResultFlags,
 } from '../../db/types/index.js';
+import { toDisplayText } from '../../common/text-utils.js';
 import type { NodeOutcome } from '../../db/types/index.js';
 
 export interface RestNodeInput {
@@ -63,7 +64,7 @@ export class RestNodeService {
     events.push({
       id: `rest_${input.turnNo}`,
       kind: 'SYSTEM',
-      text: `${choice === 'long_rest' ? 'Long' : 'Short'} rest: +${hpRecovered} HP, +${staminaRecovered} stamina`,
+      text: `${choice === 'long_rest' ? '충분한' : '간단한'} 휴식: HP +${hpRecovered}, 스태미나 +${staminaRecovered}`,
       tags: ['REST', choice.toUpperCase()],
       data: { hpRecovered, staminaRecovered },
     });
@@ -82,8 +83,8 @@ export class RestNodeService {
     const choices: ChoiceItem[] =
       nodeOutcome === 'ONGOING'
         ? [
-            { id: 'short_rest', label: 'Short Rest', hint: 'HP +10%, Stamina +1', action: { type: 'CHOICE', payload: { choiceId: 'short_rest' } } },
-            { id: 'long_rest', label: 'Long Rest', hint: 'HP +25%, Stamina +2', action: { type: 'CHOICE', payload: { choiceId: 'long_rest' } } },
+            { id: 'short_rest', label: '간단히 쉰다', hint: 'HP +10%, 스태미나 +1', action: { type: 'CHOICE', payload: { choiceId: 'short_rest' } } },
+            { id: 'long_rest', label: '충분히 쉰다', hint: 'HP +25%, 스태미나 +2', action: { type: 'CHOICE', payload: { choiceId: 'long_rest' } } },
           ]
         : [];
 
@@ -110,11 +111,12 @@ export class RestNodeService {
         index: input.nodeIndex,
         state: nodeOutcome === 'ONGOING' ? 'NODE_ACTIVE' : 'NODE_ENDED',
       },
-      summary: {
-        short: nodeOutcome === 'NODE_ENDED'
-          ? `Rested. Recovered ${hpRecovered} HP, ${staminaRecovered} stamina.`
-          : 'Choose how to rest.',
-      },
+      summary: (() => {
+        const short = nodeOutcome === 'NODE_ENDED'
+          ? `[상황] ${choice === 'long_rest' ? '충분한' : '간단한'} 휴식 완료. [결과] HP +${hpRecovered}, 스태미나 +${staminaRecovered} 회복.`
+          : '[상황] 휴식 장소 도착. 휴식 방법 선택 대기.';
+        return { short, display: toDisplayText(short) };
+      })(),
       events,
       diff,
       ui,

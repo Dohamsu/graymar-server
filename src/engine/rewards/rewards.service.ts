@@ -8,6 +8,9 @@ export interface RewardInput {
   enemies: string[];
   isBoss: boolean;
   seed: string;
+  encounterRewards?: {
+    clueChance?: { itemId: string; probability: number };
+  };
 }
 
 export interface RewardResult {
@@ -25,14 +28,13 @@ interface DropEntry {
 }
 
 const BASIC_DROP_TABLE: DropEntry[] = [
-  { itemId: 'health_potion', chance: 0.3, qtyMin: 1, qtyMax: 1 },
-  { itemId: 'stamina_herb', chance: 0.2, qtyMin: 1, qtyMax: 2 },
+  { itemId: 'ITEM_MINOR_HEALING', chance: 0.3, qtyMin: 1, qtyMax: 1 },
+  { itemId: 'ITEM_STAMINA_TONIC', chance: 0.2, qtyMin: 1, qtyMax: 1 },
 ];
 
 const BOSS_DROP_TABLE: DropEntry[] = [
-  { itemId: 'health_potion', chance: 0.6, qtyMin: 1, qtyMax: 2 },
-  { itemId: 'rare_weapon', chance: 0.25, qtyMin: 1, qtyMax: 1 },
-  { itemId: 'gold_ingot', chance: 0.15, qtyMin: 1, qtyMax: 1 },
+  { itemId: 'ITEM_MINOR_HEALING', chance: 0.6, qtyMin: 1, qtyMax: 2 },
+  { itemId: 'ITEM_POISON_NEEDLE', chance: 0.25, qtyMin: 1, qtyMax: 1 },
 ];
 
 @Injectable()
@@ -60,6 +62,19 @@ export class RewardsService {
       gold = rng.range(10, 25) * input.enemies.length;
       exp = rng.range(5, 15) * input.enemies.length;
       this.rollDropTable(BASIC_DROP_TABLE, rng, items);
+    }
+
+    // encounter 보상: 단서 아이템 드랍
+    if (input.encounterRewards?.clueChance) {
+      const { itemId, probability } = input.encounterRewards.clueChance;
+      if (rng.next() < probability) {
+        const existing = items.find(i => i.itemId === itemId);
+        if (existing) {
+          existing.qty += 1;
+        } else {
+          items.push({ itemId, qty: 1 });
+        }
+      }
     }
 
     return { gold, items, exp };

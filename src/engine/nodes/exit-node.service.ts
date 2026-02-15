@@ -9,6 +9,7 @@ import type {
   UIBundle,
   ResultFlags,
 } from '../../db/types/index.js';
+import { toDisplayText } from '../../common/text-utils.js';
 import type { NodeOutcome } from '../../db/types/index.js';
 
 export interface ExitNodeInput {
@@ -34,7 +35,7 @@ export class ExitNodeService {
       events.push({
         id: `exit_return_${input.turnNo}`,
         kind: 'SYSTEM',
-        text: 'Returning to hub. Run ended.',
+        text: '허브로 귀환한다. 여정이 끝났다.',
         tags: ['EXIT', 'RUN_ENDED'],
       });
     } else if (input.choiceId === 'continue') {
@@ -42,7 +43,7 @@ export class ExitNodeService {
       events.push({
         id: `exit_continue_${input.turnNo}`,
         kind: 'SYSTEM',
-        text: 'Decided to continue exploring.',
+        text: '탐색을 계속하기로 했다.',
         tags: ['EXIT', 'CONTINUE'],
       });
     }
@@ -51,12 +52,12 @@ export class ExitNodeService {
       ? [
           {
             id: 'return',
-            label: 'Return to hub (End Run)',
+            label: '허브로 귀환한다 (여정 종료)',
             action: { type: 'CHOICE', payload: { choiceId: 'return' } },
           },
           {
             id: 'continue',
-            label: 'Continue exploring',
+            label: '탐색을 계속한다',
             action: { type: 'CHOICE', payload: { choiceId: 'continue' } },
           },
         ]
@@ -96,13 +97,14 @@ export class ExitNodeService {
         index: input.nodeIndex,
         state: nodeOutcome === 'ONGOING' ? 'NODE_ACTIVE' : 'NODE_ENDED',
       },
-      summary: {
-        short: nodeOutcome === 'RUN_ENDED'
-          ? 'Returned to the hub. Run complete.'
+      summary: (() => {
+        const short = nodeOutcome === 'RUN_ENDED'
+          ? '[상황] 허브 귀환 선택. 런 종료.'
           : nodeOutcome === 'NODE_ENDED'
-            ? 'Continuing the journey.'
-            : 'At the exit. Choose to return or continue.',
-      },
+            ? '[상황] 탐색 계속 선택. 다음 구간으로 이동.'
+            : '[상황] 출구 노드 도달. 귀환 또는 계속 탐색 선택 대기.';
+        return { short, display: toDisplayText(short) };
+      })(),
       events,
       diff,
       ui,

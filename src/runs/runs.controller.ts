@@ -1,9 +1,12 @@
 import {
   Controller,
   Get,
+  Post,
   Param,
   Query,
   UseGuards,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { AuthGuard } from '../common/guards/auth.guard.js';
 import { UserId } from '../common/decorators/user-id.decorator.js';
@@ -14,6 +17,12 @@ import { GetRunQuerySchema, type GetRunQuery } from './dto/get-run.dto.js';
 @UseGuards(AuthGuard)
 export class RunsController {
   constructor(private readonly runsService: RunsService) {}
+
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  async createRun(@UserId() userId: string) {
+    return this.runsService.createRun(userId);
+  }
 
   @Get(':runId')
   async getRun(

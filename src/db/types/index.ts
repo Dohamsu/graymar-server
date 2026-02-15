@@ -7,3 +7,4 @@ export * from './node-meta.js';
 export * from './permanent-stats.js';
 export * from './hub-types.js';
 export * from './memory-types.js';
+export * from './graph-types.js';

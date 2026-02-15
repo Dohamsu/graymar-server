@@ -9,6 +9,7 @@ import type {
   UIBundle,
   ResultFlags,
 } from '../../db/types/index.js';
+import { toDisplayText } from '../../common/text-utils.js';
 import type { NodeOutcome } from '../../db/types/index.js';
 
 export interface ShopItem {
@@ -58,7 +59,7 @@ export class ShopNodeService {
       events.push({
         id: `shop_leave_${input.turnNo}`,
         kind: 'SYSTEM',
-        text: 'Left the shop.',
+        text: '상점을 떠났다.',
         tags: ['SHOP_LEAVE'],
       });
     } else if (input.choiceId?.startsWith('buy_')) {
@@ -69,28 +70,28 @@ export class ShopNodeService {
         events.push({
           id: `shop_invalid_${input.turnNo}`,
           kind: 'SYSTEM',
-          text: 'Item not found.',
+          text: '물품을 찾을 수 없다.',
           tags: ['SHOP_ERROR'],
         });
       } else if (catalogItem.stock <= 0) {
         events.push({
           id: `shop_oos_${input.turnNo}`,
           kind: 'SYSTEM',
-          text: `${catalogItem.name} is out of stock.`,
+          text: `${catalogItem.name}이(가) 품절이다.`,
           tags: ['SHOP_ERROR'],
         });
       } else if (input.playerGold < catalogItem.price) {
         events.push({
           id: `shop_poor_${input.turnNo}`,
           kind: 'SYSTEM',
-          text: `Not enough gold (need ${catalogItem.price}, have ${input.playerGold}).`,
+          text: `골드가 부족하다 (필요: ${catalogItem.price}, 보유: ${input.playerGold}).`,
           tags: ['SHOP_ERROR'],
         });
       } else if (input.inventoryCount >= input.inventoryMax) {
         events.push({
           id: `shop_inv_full_${input.turnNo}`,
           kind: 'SYSTEM',
-          text: 'Inventory is full.',
+          text: '소지품이 가득 찼다.',
           tags: ['SHOP_ERROR'],
         });
       } else {
@@ -102,7 +103,7 @@ export class ShopNodeService {
         events.push({
           id: `shop_buy_${input.turnNo}`,
           kind: 'GOLD',
-          text: `Purchased ${catalogItem.name} for ${catalogItem.price} gold.`,
+          text: `${catalogItem.name}을(를) ${catalogItem.price} 골드에 구매했다.`,
           tags: ['SHOP_BUY'],
           data: { itemId, price: catalogItem.price, name: catalogItem.name },
         });
@@ -116,13 +117,13 @@ export class ShopNodeService {
             .filter((c) => c.stock > 0)
             .map((c) => ({
               id: `buy_${c.itemId}`,
-              label: `${c.name} (${c.price}g)`,
+              label: `${c.name} (${c.price} 골드)`,
               hint: c.description,
               action: { type: 'CHOICE' as const, payload: { choiceId: `buy_${c.itemId}` } },
             })),
           {
             id: 'leave',
-            label: 'Leave shop',
+            label: '상점을 떠난다',
             action: { type: 'CHOICE' as const, payload: { choiceId: 'leave' } },
           },
         ]
@@ -166,13 +167,14 @@ export class ShopNodeService {
         index: input.nodeIndex,
         state: nodeOutcome === 'ONGOING' ? 'NODE_ACTIVE' : 'NODE_ENDED',
       },
-      summary: {
-        short: nodeOutcome === 'NODE_ENDED'
-          ? 'Left the shop.'
+      summary: (() => {
+        const short = nodeOutcome === 'NODE_ENDED'
+          ? '[상황] 상점 이용 완료. 주인공이 상점을 떠남.'
           : goldSpent > 0
-            ? `Purchased item for ${goldSpent} gold.`
-            : 'Browsing the shop.',
-      },
+            ? `[상황] 물품 구매 완료. ${goldSpent} 골드 지출. 추가 거래 가능.`
+            : '[상황] 상점 진입. 물품 목록 확인 중.';
+        return { short, display: toDisplayText(short) };
+      })(),
       events,
       diff,
       ui,

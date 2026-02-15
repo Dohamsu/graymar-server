@@ -31,3 +31,14 @@ export type StoryProgress = {
   cluePoints: number;
   revealedTruths: string[];
 };
+
+export interface RunState {
+  gold: number;
+  hp: number;
+  maxHp: number;
+  stamina: number;
+  maxStamina: number;
+  inventory: Array<{ itemId: string; qty: number }>;
+  routeTag?: string;
+  branchChoiceId?: string;
+}
