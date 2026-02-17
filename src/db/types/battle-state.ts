@@ -28,7 +28,9 @@ export type BattleStateV1 = {
   };
   enemies: Array<{
     id: string;
+    name?: string;
     hp: number;
+    maxHp?: number;
     status: StatusInstance[];
     personality: AiPersonality;
     distance: Distance;

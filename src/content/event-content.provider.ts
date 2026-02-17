@@ -13,7 +13,12 @@ export interface EventContent {
 
 interface EventStageContent {
   narrative: string;
-  choices: Array<{ label: string; hint?: string; choiceId?: string }>;
+  choices: Array<{
+    label: string;
+    hint?: string;
+    choiceId?: string;
+    reaction?: string;
+  }>;
   toneHint: string;
 }
 
@@ -52,6 +57,27 @@ export class EventContentProvider {
     return this.contentMap.get(eventId)?.length ?? 2;
   }
 
+  /**
+   * 선택지에 대한 반응 텍스트를 반환한다.
+   * stage: 선택지가 제시된 단계 (increment 전)
+   */
+  getReaction(
+    eventId: string,
+    stage: number,
+    choiceId: string,
+  ): string | undefined {
+    const stages = this.contentMap.get(eventId);
+    if (!stages || stage >= stages.length) return undefined;
+    const s = stages[stage];
+    for (let i = 0; i < s.choices.length; i++) {
+      const c = s.choices[i];
+      const id =
+        c.choiceId ?? `${eventId}_${stage}_${String.fromCharCode(97 + i)}`;
+      if (id === choiceId) return c.reaction;
+    }
+    return undefined;
+  }
+
   private initContent() {
     // ── 공통 구간 ──
 
@@ -64,8 +90,16 @@ export class EventContentProvider {
           '[대사 요점] 로넨: 용병을 찾고 있었다 / 장부에 뒷거래 기록이 있어 유출되면 간부 처형 / 내부를 못 믿어 외부인이 필요 / 선불금 제시.',
         ].join('\n'),
         choices: [
-          { label: '의뢰를 수락한다', hint: '골드 보상 약속' },
-          { label: '자세히 물어본다', hint: '추가 정보 획득' },
+          {
+            label: '의뢰를 수락한다',
+            hint: '골드 보상 약속',
+            reaction: '당신은 로넨의 의뢰를 수락했다.',
+          },
+          {
+            label: '자세히 물어본다',
+            hint: '추가 정보 획득',
+            reaction: '당신은 의뢰에 대해 좀 더 캐물었다.',
+          },
         ],
         toneHint: 'mysterious',
       },
@@ -76,8 +110,18 @@ export class EventContentProvider {
           '[단서] 하를런 보스 — 길드 내 실력자, 밀수 루트 파악 가능성.',
         ].join('\n'),
         choices: [
-          { label: '하를런 보스를 찾아간다', hint: '노동 길드 방문' },
-          { label: '먼저 부두를 둘러본다', hint: '주변 탐색' },
+          {
+            label: '하를런 보스를 찾아간다',
+            hint: '노동 길드 방문',
+            reaction:
+              '당신은 하를런 보스를 찾아가기로 했다. 길드 쪽으로 발걸음을 옮겼다.',
+          },
+          {
+            label: '먼저 부두를 둘러본다',
+            hint: '주변 탐색',
+            reaction:
+              '당신은 서두르지 않고 부두 주변을 먼저 살피며 발걸음을 옮겼다.',
+          },
         ],
         toneHint: 'neutral',
       },
@@ -92,8 +136,16 @@ export class EventContentProvider {
           '[단서] 장부 조작의 흔적 → 내부자 소행 가능성.',
         ].join('\n'),
         choices: [
-          { label: '장부에 대해 캔다', hint: '핵심 단서 방향' },
-          { label: '최근 선적에 대해 물어본다', hint: '보조 정보' },
+          {
+            label: '장부에 대해 캔다',
+            hint: '핵심 단서 방향',
+            reaction: '당신은 장부의 조작 흔적에 대해 추궁했다.',
+          },
+          {
+            label: '최근 선적에 대해 물어본다',
+            hint: '보조 정보',
+            reaction: '당신은 최근 선적 기록에 대해 물었다.',
+          },
         ],
         toneHint: 'tense',
       },
@@ -104,8 +156,16 @@ export class EventContentProvider {
           '[긴장] 밖에서 발소리가 들린다. 위험이 다가오는 분위기.',
         ].join('\n'),
         choices: [
-          { label: '부두로 나간다', hint: '전투 가능성' },
-          { label: '뒷문으로 빠진다', hint: '우회 경로' },
+          {
+            label: '부두로 나간다',
+            hint: '전투 가능성',
+            reaction: '당신은 위험을 감수하고 부두로 향했다.',
+          },
+          {
+            label: '뒷문으로 빠진다',
+            hint: '우회 경로',
+            reaction: '당신은 뒷문을 통해 조용히 빠져나갔다.',
+          },
         ],
         toneHint: 'tense',
       },
@@ -123,16 +183,22 @@ export class EventContentProvider {
             label: '하를런과 손잡겠다',
             hint: '노동 길드의 힘을 빌림',
             choiceId: 'guild_ally',
+            reaction:
+              '당신은 하를런의 길드와 손잡기로 결심했다. 현장의 무력이 필요한 법이다.',
           },
           {
             label: '경비대에 보고하겠다',
             hint: '공권력 활용',
             choiceId: 'guard_ally',
+            reaction:
+              '당신은 경비대에 보고하기로 했다. 공권력의 힘을 빌리는 편이 낫다.',
           },
           {
             label: '혼자 해결하겠다',
             hint: '위험하지만 자유로움',
             choiceId: 'solo_path',
+            reaction:
+              '당신은 누구의 힘도 빌리지 않기로 했다. 위험하지만 자유로운 길이다.',
           },
         ],
         toneHint: 'tense',
@@ -144,8 +210,16 @@ export class EventContentProvider {
           '[대사 요점] 동맹: 그곳을 조사하면 답을 찾을 수 있다.',
         ].join('\n'),
         choices: [
-          { label: '즉시 동쪽 부두로 향한다', hint: '빠른 진행' },
-          { label: '더 준비한 후 움직인다', hint: '신중한 접근' },
+          {
+            label: '즉시 동쪽 부두로 향한다',
+            hint: '빠른 진행',
+            reaction: '당신은 지체 없이 동쪽 부두로 향했다.',
+          },
+          {
+            label: '더 준비한 후 움직인다',
+            hint: '신중한 접근',
+            reaction: '당신은 좀 더 준비를 갖추기로 했다.',
+          },
         ],
         toneHint: 'tense',
       },
@@ -162,8 +236,16 @@ export class EventContentProvider {
           '[작전] 합동 급습 계획.',
         ].join('\n'),
         choices: [
-          { label: '급습 계획에 동의한다', hint: '길드와 합동 작전' },
-          { label: '먼저 정찰하겠다고 한다', hint: '신중한 접근' },
+          {
+            label: '급습 계획에 동의한다',
+            hint: '길드와 합동 작전',
+            reaction: '당신은 급습 계획에 동의했다.',
+          },
+          {
+            label: '먼저 정찰하겠다고 한다',
+            hint: '신중한 접근',
+            reaction: '당신은 먼저 정찰하겠다고 제안했다.',
+          },
         ],
         toneHint: 'tense',
       },
@@ -173,8 +255,16 @@ export class EventContentProvider {
           '[대사 요점] 하를런: 이 경로로 들어오는 화물에 증거가 있다 / 준비되면 출발하라.',
         ].join('\n'),
         choices: [
-          { label: '출발한다', hint: '전투 진행' },
-          { label: '장비를 확인한다', hint: '준비 확인' },
+          {
+            label: '출발한다',
+            hint: '전투 진행',
+            reaction: '당신은 출발을 결정했다.',
+          },
+          {
+            label: '장비를 확인한다',
+            hint: '준비 확인',
+            reaction: '당신은 장비를 한 번 더 점검했다.',
+          },
         ],
         toneHint: 'tense',
       },
@@ -189,8 +279,16 @@ export class EventContentProvider {
           '[단서] 마이렐 단 경 = 도시 수비대 야간 책임자 = 흑막.',
         ].join('\n'),
         choices: [
-          { label: '마이렐 경을 찾아간다', hint: '직접 대면' },
-          { label: '더 많은 증거를 확보한다', hint: '철저한 준비' },
+          {
+            label: '마이렐 경을 찾아간다',
+            hint: '직접 대면',
+            reaction: '당신은 마이렐 경을 직접 찾아가기로 했다.',
+          },
+          {
+            label: '더 많은 증거를 확보한다',
+            hint: '철저한 준비',
+            reaction: '당신은 증거를 더 모으기로 했다.',
+          },
         ],
         toneHint: 'danger',
       },
@@ -202,8 +300,16 @@ export class EventContentProvider {
           '[긴장] 최종 전투 또는 협상의 기로.',
         ].join('\n'),
         choices: [
-          { label: '전투를 준비한다', hint: '최종 전투' },
-          { label: '협상을 시도한다', hint: '평화적 해결 시도' },
+          {
+            label: '전투를 준비한다',
+            hint: '최종 전투',
+            reaction: '당신은 전투 태세를 갖추었다.',
+          },
+          {
+            label: '협상을 시도한다',
+            hint: '평화적 해결 시도',
+            reaction: '당신은 먼저 협상을 시도하기로 했다.',
+          },
         ],
         toneHint: 'danger',
       },
@@ -221,8 +327,16 @@ export class EventContentProvider {
           '[단서] 마이렐 경의 관여 정황.',
         ].join('\n'),
         choices: [
-          { label: '문서를 분석한다', hint: '핵심 증거 확보' },
-          { label: '마이렐 경의 동선을 추적한다', hint: '행동 패턴 파악' },
+          {
+            label: '문서를 분석한다',
+            hint: '핵심 증거 확보',
+            reaction: '당신은 문서 분석에 착수했다.',
+          },
+          {
+            label: '마이렐 경의 동선을 추적한다',
+            hint: '행동 패턴 파악',
+            reaction: '당신은 마이렐 경의 행적을 추적하기로 했다.',
+          },
         ],
         toneHint: 'tense',
       },
@@ -232,8 +346,16 @@ export class EventContentProvider {
           '[증거] 위조된 항만세 장부 + 마이렐의 개인 메모.',
         ].join('\n'),
         choices: [
-          { label: '증거를 확보하고 보고한다', hint: '공식 절차 진행' },
-          { label: '더 조사한다', hint: '추가 증거 수집' },
+          {
+            label: '증거를 확보하고 보고한다',
+            hint: '공식 절차 진행',
+            reaction: '당신은 증거를 챙기고 보고하기로 했다.',
+          },
+          {
+            label: '더 조사한다',
+            hint: '추가 증거 수집',
+            reaction: '당신은 좀 더 깊이 조사하기로 했다.',
+          },
         ],
         toneHint: 'mysterious',
       },
@@ -247,8 +369,16 @@ export class EventContentProvider {
           '[대사 요점] 벨론: 마이렐은 내 부하였다 / 직접 체포 영장을 발부하겠다 / 순순히 응하지 않을 것.',
         ].join('\n'),
         choices: [
-          { label: '벨론 대위와 함께 체포에 나선다', hint: '공식 체포' },
-          { label: '먼저 마이렐의 충성 부하를 무력화한다', hint: '사전 작업' },
+          {
+            label: '벨론 대위와 함께 체포에 나선다',
+            hint: '공식 체포',
+            reaction: '당신은 벨론 대위와 함께 체포에 나섰다.',
+          },
+          {
+            label: '먼저 마이렐의 충성 부하를 무력화한다',
+            hint: '사전 작업',
+            reaction: '당신은 먼저 마이렐의 부하를 처리하기로 했다.',
+          },
         ],
         toneHint: 'danger',
       },
@@ -259,8 +389,16 @@ export class EventContentProvider {
           '[긴장] 최종 전투 또는 마지막 설득의 기회.',
         ].join('\n'),
         choices: [
-          { label: '전투를 준비한다', hint: '최종 전투' },
-          { label: '마지막 설득을 시도한다', hint: '평화적 해결 시도' },
+          {
+            label: '전투를 준비한다',
+            hint: '최종 전투',
+            reaction: '당신은 전투 태세를 갖추었다.',
+          },
+          {
+            label: '마지막 설득을 시도한다',
+            hint: '평화적 해결 시도',
+            reaction: '당신은 마지막 설득을 시도하기로 했다.',
+          },
         ],
         toneHint: 'danger',
       },
@@ -277,8 +415,16 @@ export class EventContentProvider {
           '[거래] 정보 대가로 골드 요구.',
         ].join('\n'),
         choices: [
-          { label: '정보를 산다', hint: '골드 소모, 양쪽 정보 획득' },
-          { label: '흥정한다', hint: '가격 절충 시도' },
+          {
+            label: '정보를 산다',
+            hint: '골드 소모, 양쪽 정보 획득',
+            reaction: '당신은 정보 대가를 지불했다.',
+          },
+          {
+            label: '흥정한다',
+            hint: '가격 절충 시도',
+            reaction: '당신은 가격을 깎아보기로 했다.',
+          },
         ],
         toneHint: 'mysterious',
       },
@@ -289,8 +435,16 @@ export class EventContentProvider {
           '[경고] 독자 행동의 위험성 강조.',
         ].join('\n'),
         choices: [
-          { label: '밀수 경로를 추적한다', hint: '단독 행동' },
-          { label: '먼저 장비를 보충한다', hint: '준비 우선' },
+          {
+            label: '밀수 경로를 추적한다',
+            hint: '단독 행동',
+            reaction: '당신은 밀수 경로를 따라가기로 했다.',
+          },
+          {
+            label: '먼저 장비를 보충한다',
+            hint: '준비 우선',
+            reaction: '당신은 먼저 장비를 보충하기로 했다.',
+          },
         ],
         toneHint: 'mysterious',
       },
@@ -304,8 +458,16 @@ export class EventContentProvider {
           '[판단] 이 증거로 양쪽 모두를 무너뜨릴 수 있다.',
         ].join('\n'),
         choices: [
-          { label: '문서를 모두 가져간다', hint: '최대 증거 확보' },
-          { label: '핵심 문서만 선별한다', hint: '은밀한 탈출' },
+          {
+            label: '문서를 모두 가져간다',
+            hint: '최대 증거 확보',
+            reaction: '당신은 모든 문서를 챙겼다.',
+          },
+          {
+            label: '핵심 문서만 선별한다',
+            hint: '은밀한 탈출',
+            reaction: '당신은 핵심 문서만 골라 챙겼다.',
+          },
         ],
         toneHint: 'tense',
       },
@@ -316,8 +478,16 @@ export class EventContentProvider {
           '[긴장] 양면 적 — 도주 또는 전투 선택.',
         ].join('\n'),
         choices: [
-          { label: '전투를 준비한다', hint: '양쪽 모두와 싸움' },
-          { label: '도주를 시도한다', hint: '위험한 도주' },
+          {
+            label: '전투를 준비한다',
+            hint: '양쪽 모두와 싸움',
+            reaction: '당신은 전투 태세를 갖추었다.',
+          },
+          {
+            label: '도주를 시도한다',
+            hint: '위험한 도주',
+            reaction: '당신은 탈출을 시도하기로 했다.',
+          },
         ],
         toneHint: 'danger',
       },
@@ -334,9 +504,21 @@ export class EventContentProvider {
           '[선택] 진실 공개 vs 길드 타협 vs 은폐 — 항만의 운명을 결정.',
         ].join('\n'),
         choices: [
-          { label: '진실을 공개한다', hint: '정의로운 선택. 길드 신뢰 획득' },
-          { label: '길드와 타협한다', hint: '길드에 유리한 조건으로 합의' },
-          { label: '은폐하고 빚을 진다', hint: '위험하지만 실리적' },
+          {
+            label: '진실을 공개한다',
+            hint: '정의로운 선택. 길드 신뢰 획득',
+            reaction: '당신은 진실을 공개하기로 결심했다.',
+          },
+          {
+            label: '길드와 타협한다',
+            hint: '길드에 유리한 조건으로 합의',
+            reaction: '당신은 길드와 타협하기로 했다.',
+          },
+          {
+            label: '은폐하고 빚을 진다',
+            hint: '위험하지만 실리적',
+            reaction: '당신은 은폐를 선택했다.',
+          },
         ],
         toneHint: 'calm',
       },
@@ -360,9 +542,21 @@ export class EventContentProvider {
           '[선택] 공식 보고 vs 상부 타협 vs 증거 파기.',
         ].join('\n'),
         choices: [
-          { label: '공식 보고한다', hint: '정의로운 절차. 경비대 신뢰 획득' },
-          { label: '상부와 타협한다', hint: '정치적 해결' },
-          { label: '증거를 파기한다', hint: '위험한 선택' },
+          {
+            label: '공식 보고한다',
+            hint: '정의로운 절차. 경비대 신뢰 획득',
+            reaction: '당신은 공식 보고를 선택했다.',
+          },
+          {
+            label: '상부와 타협한다',
+            hint: '정치적 해결',
+            reaction: '당신은 상부와 타협하기로 했다.',
+          },
+          {
+            label: '증거를 파기한다',
+            hint: '위험한 선택',
+            reaction: '당신은 증거를 파기하기로 했다.',
+          },
         ],
         toneHint: 'calm',
       },
@@ -385,9 +579,21 @@ export class EventContentProvider {
           '[선택] 양쪽 공개(혼란) vs 매각(골드) vs 침묵(비밀 보유).',
         ].join('\n'),
         choices: [
-          { label: '양쪽에 공개한다', hint: '혼란을 초래하지만 진실을 밝힘' },
-          { label: '증거를 매각한다', hint: '높은 골드 보상' },
-          { label: '침묵한다', hint: '비밀을 안고 떠남' },
+          {
+            label: '양쪽에 공개한다',
+            hint: '혼란을 초래하지만 진실을 밝힘',
+            reaction: '당신은 양쪽 모두에게 공개하기로 했다.',
+          },
+          {
+            label: '증거를 매각한다',
+            hint: '높은 골드 보상',
+            reaction: '당신은 증거를 팔기로 했다.',
+          },
+          {
+            label: '침묵한다',
+            hint: '비밀을 안고 떠남',
+            reaction: '당신은 침묵을 택했다.',
+          },
         ],
         toneHint: 'calm',
       },
@@ -410,8 +616,16 @@ export class EventContentProvider {
           '[상황] 보급 경로 추적 끝에 도착. 수상한 불빛, 비밀 화물 운반, 감시하는 눈들.',
         ].join('\n'),
         choices: [
-          { label: '동쪽 부두의 창고로 잠입한다', hint: '은밀한 접근' },
-          { label: '증거를 더 모은다', hint: '안전한 접근' },
+          {
+            label: '동쪽 부두의 창고로 잠입한다',
+            hint: '은밀한 접근',
+            reaction: '당신은 창고로 잠입하기로 했다.',
+          },
+          {
+            label: '증거를 더 모은다',
+            hint: '안전한 접근',
+            reaction: '당신은 증거를 더 모으기로 했다.',
+          },
         ],
         toneHint: 'tense',
       },
@@ -421,8 +635,16 @@ export class EventContentProvider {
           '[증거] 변조된 선적 기록 + 동쪽 부두 자물쇠 인장 = 내부자 소행 확인.',
         ].join('\n'),
         choices: [
-          { label: '증거를 가지고 나간다', hint: '탈출' },
-          { label: '더 깊이 조사한다', hint: '추가 발견 가능' },
+          {
+            label: '증거를 가지고 나간다',
+            hint: '탈출',
+            reaction: '당신은 증거를 챙기고 빠져나갔다.',
+          },
+          {
+            label: '더 깊이 조사한다',
+            hint: '추가 발견 가능',
+            reaction: '당신은 더 깊이 조사하기로 했다.',
+          },
         ],
         toneHint: 'mysterious',
       },
@@ -435,8 +657,16 @@ export class EventContentProvider {
           '[판단] 장부 은폐의 흑막. 진실의 순간 도래.',
         ].join('\n'),
         choices: [
-          { label: '직접 대면한다', hint: '정면 대결' },
-          { label: '증거를 먼저 제시한다', hint: '외교적 접근' },
+          {
+            label: '직접 대면한다',
+            hint: '정면 대결',
+            reaction: '당신은 직접 대면하기로 했다.',
+          },
+          {
+            label: '증거를 먼저 제시한다',
+            hint: '외교적 접근',
+            reaction: '당신은 증거를 먼저 제시하기로 했다.',
+          },
         ],
         toneHint: 'danger',
       },
@@ -447,8 +677,16 @@ export class EventContentProvider {
           '[긴장] 무장한 수비대원들 등장. 최종 전투 또는 협상.',
         ].join('\n'),
         choices: [
-          { label: '전투를 준비한다', hint: '최종 전투' },
-          { label: '협상을 시도한다', hint: '평화적 해결 시도' },
+          {
+            label: '전투를 준비한다',
+            hint: '최종 전투',
+            reaction: '당신은 전투 태세를 갖추었다.',
+          },
+          {
+            label: '협상을 시도한다',
+            hint: '평화적 해결 시도',
+            reaction: '당신은 협상을 시도하기로 했다.',
+          },
         ],
         toneHint: 'danger',
       },
@@ -461,9 +699,21 @@ export class EventContentProvider {
           '[선택] 진실 공개 vs 타협 vs 은폐 — 항만의 미래를 결정.',
         ].join('\n'),
         choices: [
-          { label: '진실을 공개한다', hint: '정의로운 선택' },
-          { label: '타협한다', hint: '현실적 선택' },
-          { label: '은폐한다', hint: '위험한 선택' },
+          {
+            label: '진실을 공개한다',
+            hint: '정의로운 선택',
+            reaction: '당신은 진실을 공개하기로 결심했다.',
+          },
+          {
+            label: '타협한다',
+            hint: '현실적 선택',
+            reaction: '당신은 타협을 선택했다.',
+          },
+          {
+            label: '은폐한다',
+            hint: '위험한 선택',
+            reaction: '당신은 은폐를 선택했다.',
+          },
         ],
         toneHint: 'calm',
       },

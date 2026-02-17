@@ -194,6 +194,15 @@ export class TurnsService {
       );
     }
 
+    // 전투 CHOICE → ActionPlan 직접 매핑
+    if (
+      body.input.type === 'CHOICE' &&
+      currentNode.nodeType === 'COMBAT' &&
+      body.input.choiceId
+    ) {
+      actionPlan = this.mapCombatChoiceToActionPlan(body.input.choiceId);
+    }
+
     // 8. 노드 리졸브 — encounter 보상 + 컨텐츠 기반 적 스탯
     let encounterRewards:
       | { clueChance?: { itemId: string; probability: number } }
@@ -656,6 +665,94 @@ export class TurnsService {
     }
 
     return response;
+  }
+
+  private mapCombatChoiceToActionPlan(choiceId: string): ActionPlan {
+    // 콤보
+    if (choiceId.startsWith('combo_')) return this.parseComboChoiceToActionPlan(choiceId);
+    // 환경 활용
+    if (choiceId === 'env_action') {
+      return {
+        units: [{ type: 'INTERACT', meta: { envAction: true } }],
+        consumedSlots: { base: 2, used: 1, bonusUsed: false },
+        staminaCost: 1,
+        policyResult: 'ALLOW',
+        parsedBy: 'RULE',
+      };
+    }
+    // 전투 회피
+    if (choiceId === 'combat_avoid') {
+      return {
+        units: [{ type: 'FLEE', meta: { isAvoid: true } }],
+        consumedSlots: { base: 2, used: 1, bonusUsed: false },
+        staminaCost: 1,
+        policyResult: 'ALLOW',
+        parsedBy: 'RULE',
+      };
+    }
+    // 기존 단일 액션
+    const unit = this.parseCombatChoiceId(choiceId);
+    return {
+      units: [unit],
+      consumedSlots: { base: 2, used: 1, bonusUsed: false },
+      staminaCost: 1,
+      policyResult: 'ALLOW',
+      parsedBy: 'RULE',
+    };
+  }
+
+  private parseComboChoiceToActionPlan(choiceId: string): ActionPlan {
+    if (choiceId.startsWith('combo_double_attack_')) {
+      const targetId = choiceId.replace('combo_double_attack_', '');
+      return {
+        units: [{ type: 'ATTACK_MELEE', targetId }, { type: 'ATTACK_MELEE', targetId }],
+        consumedSlots: { base: 2, used: 2, bonusUsed: false },
+        staminaCost: 2,
+        policyResult: 'ALLOW',
+        parsedBy: 'RULE',
+      };
+    }
+    if (choiceId.startsWith('combo_attack_defend_')) {
+      const targetId = choiceId.replace('combo_attack_defend_', '');
+      return {
+        units: [{ type: 'ATTACK_MELEE', targetId }, { type: 'DEFEND' }],
+        consumedSlots: { base: 2, used: 2, bonusUsed: false },
+        staminaCost: 2,
+        policyResult: 'ALLOW',
+        parsedBy: 'RULE',
+      };
+    }
+    // fallback
+    return {
+      units: [{ type: 'DEFEND' }],
+      consumedSlots: { base: 2, used: 1, bonusUsed: false },
+      staminaCost: 1,
+      policyResult: 'ALLOW',
+      parsedBy: 'RULE',
+    };
+  }
+
+  private parseCombatChoiceId(
+    choiceId: string,
+  ): import('../db/types/index.js').ActionUnit {
+    if (choiceId.startsWith('attack_melee_')) {
+      return {
+        type: 'ATTACK_MELEE',
+        targetId: choiceId.replace('attack_melee_', ''),
+      };
+    }
+    if (choiceId === 'defend') return { type: 'DEFEND' };
+    if (choiceId === 'evade') return { type: 'EVADE' };
+    if (choiceId === 'flee') return { type: 'FLEE' };
+    if (choiceId === 'move_forward')
+      return { type: 'MOVE', direction: 'FORWARD' };
+    if (choiceId === 'move_back') return { type: 'MOVE', direction: 'BACK' };
+    if (choiceId.startsWith('use_item_')) {
+      const itemId = choiceId.replace('use_item_', '');
+      return { type: 'USE_ITEM', meta: { itemHint: itemId } };
+    }
+    // fallback
+    return { type: 'DEFEND' };
   }
 
   private buildDenyResult(
