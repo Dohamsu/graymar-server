@@ -50,8 +50,25 @@ export class EventNodeService {
 
     // CHOICE 입력 처리
     if (input.inputType === 'CHOICE' && input.choiceId) {
+      // 반응 텍스트 조회 (stage increment 전)
+      const reaction = this.eventContent.getReaction(
+        next.eventId,
+        input.nodeState.stage,
+        input.choiceId,
+      );
+
       next.choicesMade = [...next.choicesMade, input.choiceId];
       next.stage += 1;
+
+      // 선택 반응 표시 (SYSTEM 이벤트 → 노드 전이 시에도 필터되지 않음)
+      if (reaction) {
+        events.push({
+          id: `event_reaction_${input.turnNo}`,
+          kind: 'SYSTEM',
+          text: reaction,
+          tags: ['EVENT_REACTION'],
+        });
+      }
 
       events.push({
         id: `event_choice_${input.turnNo}`,

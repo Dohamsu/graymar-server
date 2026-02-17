@@ -6,6 +6,8 @@ export interface EdgeCondition {
   type: EdgeConditionType;
   choiceId?: string;
   combatOutcome?: string;
+  /** RANDOM 조건에서 사용. 가중치 비율 (예: weight=60 → 60%) */
+  weight?: number;
 }
 
 export interface EdgeDefinition {
@@ -26,4 +28,6 @@ export interface RouteContext {
   lastChoiceId?: string;
   combatOutcome?: string;
   routeTag?: string;
+  /** RANDOM 엣지 평가용 시드 (0~1 사이 값) */
+  randomSeed?: number;
 }

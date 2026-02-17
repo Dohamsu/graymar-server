@@ -67,6 +67,10 @@ export class NodeTransitionService {
 
     // DAG 기반 전환
     const routeContext = context ?? {};
+    // RANDOM 엣지 평가용: seed + nodeIndex로 결정론적 난수 생성
+    if (routeContext.randomSeed === undefined) {
+      routeContext.randomSeed = this.deterministicRandom(seed, currentNodeIndex);
+    }
     const nextGraphNodeId = this.planner.resolveNextNodeId(
       currentGraphNodeId,
       routeContext,
@@ -193,6 +197,16 @@ export class NodeTransitionService {
     };
   }
 
+  /** seed + index → 결정론적 0~1 난수 (simple hash) */
+  private deterministicRandom(seed: string, index: number): number {
+    let hash = 0;
+    const str = `${seed}_node_${index}`;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash % 10000) / 10000;
+  }
+
   /**
    * Legacy: 기존 선형 전환 (currentNodeIndex + 1)
    */
@@ -292,9 +306,12 @@ export class NodeTransitionService {
             ? overrides.personality
             : enemyDef.personality;
 
+        const suffix = enemyEntry.count > 1 ? ` ${String.fromCharCode(65 + i)}` : '';
         enemies.push({
           id: `${enemyEntry.ref}_${i}`,
+          name: `${enemyDef.name}${suffix}`,
           hp,
+          maxHp: hp,
           status: [],
           personality,
           distance: pos?.distance ?? enemyDef.defaultDistance,
@@ -393,7 +410,7 @@ export class NodeTransitionService {
       }
     }
 
-    const choices =
+    let choices: ServerResultV1['choices'] =
       eventChoices && eventChoices.length > 0
         ? eventChoices
         : shopChoices && shopChoices.length > 0
@@ -430,6 +447,89 @@ export class NodeTransitionService {
                 ]
               : [];
 
+    // COMBAT 노드 초기 선택지 생성
+    if (nodeType === 'COMBAT' && battleState) {
+      const aliveEnemies = battleState.enemies.filter((e) => e.hp > 0);
+      const combatChoices: ServerResultV1['choices'] = [];
+
+      for (const e of aliveEnemies) {
+        if (e.distance === 'ENGAGED' || e.distance === 'CLOSE') {
+          const name = e.name ?? e.id;
+          combatChoices.push({
+            id: `attack_melee_${e.id}`,
+            label: `${name}에게 근접 공격`,
+            action: {
+              type: 'CHOICE',
+              payload: { choiceId: `attack_melee_${e.id}` },
+            },
+          });
+        }
+      }
+      combatChoices.push(
+        {
+          id: 'defend',
+          label: '방어 태세',
+          action: { type: 'CHOICE', payload: { choiceId: 'defend' } },
+        },
+        {
+          id: 'evade',
+          label: '회피',
+          action: { type: 'CHOICE', payload: { choiceId: 'evade' } },
+        },
+      );
+
+      // 콤보 선택지 (스태미나 >= 2)
+      if (battleState.player.stamina >= 2) {
+        for (const e of aliveEnemies) {
+          if (e.distance === 'ENGAGED' || e.distance === 'CLOSE') {
+            const name = e.name ?? e.id;
+            combatChoices.push({
+              id: `combo_double_attack_${e.id}`,
+              label: `${name}에게 연속 공격`,
+              hint: '2회 연속 공격 (기력 2)',
+              action: { type: 'CHOICE', payload: { choiceId: `combo_double_attack_${e.id}` } },
+            });
+            combatChoices.push({
+              id: `combo_attack_defend_${e.id}`,
+              label: `${name} 공격 후 방어`,
+              hint: '공격 + 방어 태세 (기력 2)',
+              action: { type: 'CHOICE', payload: { choiceId: `combo_attack_defend_${e.id}` } },
+            });
+          }
+        }
+      }
+
+      // 환경 활용
+      const envLabel = envTags.includes('COVER_CRATE') ? '화물 상자를 적에게 던진다'
+        : envTags.includes('COVER_WALL') ? '벽의 잔해를 무너뜨린다'
+        : envTags.includes('NARROW') ? '좁은 통로를 이용해 가둔다'
+        : envTags.includes('INDOOR') ? '실내 구조물을 활용한다'
+        : '주변 환경을 활용한다';
+      combatChoices.push({
+        id: 'env_action',
+        label: envLabel,
+        hint: '확률 기반 광역 공격',
+        action: { type: 'CHOICE', payload: { choiceId: 'env_action' } },
+      });
+
+      // 전투 회피
+      combatChoices.push({
+        id: 'combat_avoid',
+        label: '전투 회피 시도',
+        hint: '기민함으로 전투를 피한다',
+        action: { type: 'CHOICE', payload: { choiceId: 'combat_avoid' } },
+      });
+
+      // 도주
+      combatChoices.push({
+        id: 'flee',
+        label: '도주 시도',
+        action: { type: 'CHOICE', payload: { choiceId: 'flee' } },
+      });
+
+      choices = combatChoices;
+    }
+
     // COMBAT 노드일 경우 적 정보 요약
     let combatSummary = '';
     if (battleState && nodeType === 'COMBAT') {
@@ -461,23 +561,7 @@ export class NodeTransitionService {
               combatSummary,
         ),
       },
-      events: [
-        {
-          id: `enter_${nodeIndex}`,
-          kind: 'SYSTEM',
-          text:
-            (
-              {
-                COMBAT: '전투가 시작된다!',
-                EVENT: '새로운 상황이 펼쳐진다.',
-                REST: '휴식을 취할 수 있는 장소에 도착했다.',
-                SHOP: '상점에 도착했다.',
-                EXIT: '여정의 끝이 보인다.',
-              } as Record<string, string>
-            )[nodeType] ?? '다음 구간으로 이동했다.',
-          tags: ['NODE_ENTER'],
-        },
-      ],
+      events: [],
       diff: {
         player: {
           hp: { from: 0, to: 0, delta: 0 },

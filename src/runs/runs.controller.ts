@@ -26,8 +26,13 @@ export class RunsController {
     @UserId() userId: string,
     @Body() body: Record<string, unknown>,
   ) {
-    const { presetId } = CreateRunBodySchema.parse(body);
-    return this.runsService.createRun(userId, presetId);
+    const { presetId, gender } = CreateRunBodySchema.parse(body);
+    return this.runsService.createRun(userId, presetId, gender);
+  }
+
+  @Get()
+  async getActiveRun(@UserId() userId: string) {
+    return this.runsService.getActiveRun(userId);
   }
 
   @Get(':runId')

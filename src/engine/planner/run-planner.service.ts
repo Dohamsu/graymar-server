@@ -7,6 +7,7 @@ import type {
   PlannedNodeV2,
   RouteContext,
   EdgeCondition,
+  EdgeDefinition,
 } from '../../db/types/index.js';
 import type { RouteTag } from '../../db/types/index.js';
 import { InternalError } from '../../common/errors/game-errors.js';
@@ -122,6 +123,12 @@ export class RunPlannerService {
     const node = this.findNode(currentGraphNodeId);
     if (!node || node.edges.length === 0) return null;
 
+    // RANDOM 엣지가 있으면 가중치 기반 선택
+    const randomEdges = node.edges.filter((e) => e.condition.type === 'RANDOM');
+    if (randomEdges.length > 0) {
+      return this.pickRandomEdge(randomEdges, context.randomSeed ?? Math.random());
+    }
+
     const sortedEdges = [...node.edges].sort((a, b) => a.priority - b.priority);
 
     for (const edge of sortedEdges) {
@@ -131,6 +138,19 @@ export class RunPlannerService {
     }
 
     throw new InternalError(`No matching edge for node ${currentGraphNodeId}`);
+  }
+
+  private pickRandomEdge(
+    edges: EdgeDefinition[],
+    seed: number,
+  ): string {
+    const totalWeight = edges.reduce((sum, e) => sum + (e.condition.weight ?? 1), 0);
+    let roll = seed * totalWeight;
+    for (const edge of edges) {
+      roll -= edge.condition.weight ?? 1;
+      if (roll <= 0) return edge.targetNodeId;
+    }
+    return edges[edges.length - 1].targetNodeId;
   }
 
   /**
@@ -211,7 +231,10 @@ export class RunPlannerService {
    */
   getGraymarGraph(): PlannedNodeV2[] {
     return [
-      // ── 공통 구간 (4노드) ──
+      // ── 공통 구간 (4노드, 순서 랜덤 분기) ──
+      //
+      // 경로 A (50%): s0 → s1(이벤트) → combat → s2
+      // 경로 B (50%): s0 → combat → s1(이벤트) → s2
       {
         nodeId: 'common_s0',
         nodeType: 'EVENT',
@@ -220,11 +243,17 @@ export class RunPlannerService {
         edges: [
           {
             targetNodeId: 'common_s1',
-            condition: { type: 'DEFAULT' },
+            condition: { type: 'RANDOM', weight: 50 },
             priority: 1,
+          },
+          {
+            targetNodeId: 'common_combat_dock_early',
+            condition: { type: 'RANDOM', weight: 50 },
+            priority: 2,
           },
         ],
       },
+      // 경로 A: 이벤트 먼저
       {
         nodeId: 'common_s1',
         nodeType: 'EVENT',
@@ -243,6 +272,33 @@ export class RunPlannerService {
         nodeType: 'COMBAT',
         nodeMeta: { isBoss: false, eventId: 'ENC_DOCK_AMBUSH' },
         environmentTags: ['OPEN', 'COVER_CRATE'],
+        edges: [
+          {
+            targetNodeId: 'common_s2',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
+      },
+      // 경로 B: 전투 먼저
+      {
+        nodeId: 'common_combat_dock_early',
+        nodeType: 'COMBAT',
+        nodeMeta: { isBoss: false, eventId: 'ENC_DOCK_AMBUSH' },
+        environmentTags: ['OPEN', 'COVER_CRATE'],
+        edges: [
+          {
+            targetNodeId: 'common_s1_late',
+            condition: { type: 'DEFAULT' },
+            priority: 1,
+          },
+        ],
+      },
+      {
+        nodeId: 'common_s1_late',
+        nodeType: 'EVENT',
+        nodeMeta: { eventId: 'S1_GET_ANGLE' },
+        environmentTags: ['HARBOR', 'NIGHT'],
         edges: [
           {
             targetNodeId: 'common_s2',

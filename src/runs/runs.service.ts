@@ -31,7 +31,7 @@ export class RunsService {
     private readonly content: ContentLoaderService,
   ) {}
 
-  async createRun(userId: string, presetId: string) {
+  async createRun(userId: string, presetId: string, gender: 'male' | 'female' = 'male') {
     // 0. 프리셋 검증
     const preset = this.content.getPreset(presetId);
     if (!preset) {
@@ -122,6 +122,7 @@ export class RunsService {
           runState: initialRunState,
           currentGraphNodeId: startNodeId,
           presetId,
+          gender,
           routeTag: null,
         })
         .returning();
@@ -220,7 +221,7 @@ export class RunsService {
           {
             id: 'enter_0',
             kind: 'SYSTEM',
-            text: '그레이마르 항만 — 밤안개가 부두를 감싸고 있다.',
+            text: '그레이마르 항만 — 모험이 시작됩니다.',
             tags: ['RUN_START', 'NODE_ENTER'],
           },
           {
@@ -341,6 +342,25 @@ export class RunsService {
     };
   }
 
+  async getActiveRun(userId: string) {
+    const run = await this.db.query.runSessions.findFirst({
+      where: and(
+        eq(runSessions.userId, userId),
+        eq(runSessions.status, 'RUN_ACTIVE'),
+      ),
+      orderBy: desc(runSessions.updatedAt),
+    });
+    if (!run) return null;
+    return {
+      runId: run.id,
+      presetId: run.presetId,
+      gender: run.gender ?? 'male',
+      currentTurnNo: run.currentTurnNo,
+      currentNodeIndex: run.currentNodeIndex,
+      startedAt: run.startedAt,
+    };
+  }
+
   async getRun(runId: string, userId: string, query: GetRunQuery) {
     // run 조회
     const run = await this.db.query.runSessions.findFirst({
@@ -409,6 +429,8 @@ export class RunsService {
         currentTurnNo: run.currentTurnNo,
         seed: run.seed,
         startedAt: run.startedAt,
+        presetId: run.presetId,
+        gender: run.gender ?? 'male',
       },
       currentNode: currentNode
         ? {
@@ -436,6 +458,7 @@ export class RunsService {
         rawInput: t.rawInput,
         summary: t.serverResult?.summary?.short ?? '',
         llmStatus: t.llmStatus,
+        llmOutput: t.llmOutput,
         createdAt: t.createdAt,
       })),
       page: {

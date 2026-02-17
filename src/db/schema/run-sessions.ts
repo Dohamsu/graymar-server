@@ -30,6 +30,7 @@ export const runSessions = pgTable(
     runState: jsonb('run_state').$type<RunState>(),
     currentGraphNodeId: text('current_graph_node_id'),
     presetId: text('preset_id'),
+    gender: text('gender', { enum: ['male', 'female'] as const }).default('male'),
     routeTag: text('route_tag'),
     startedAt: timestamp('started_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),

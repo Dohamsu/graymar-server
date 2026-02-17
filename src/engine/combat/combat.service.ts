@@ -186,31 +186,44 @@ export class CombatService {
       combatOutcome = 'VICTORY';
     }
 
-    // FLEE 체크
+    // FLEE 체크 (기존 도주 + 전투 회피)
     if (
       input.actionPlan.units.some((u) => u.type === 'FLEE') &&
       combatOutcome === 'ONGOING'
     ) {
-      const fleeResult = this.checkFlee(
-        next,
-        playerSnap,
-        rng,
-        (next as Record<string, unknown>).fleeBonusValue as number | undefined,
+      const isAvoid = input.actionPlan.units.some(
+        (u) => u.type === 'FLEE' && u.meta?.isAvoid === true,
       );
-      if (fleeResult) {
+
+      let fleeSuccess: boolean;
+      if (isAvoid) {
+        // 전투 회피: d20 + SPEED + EVA >= 10 + 생존 적 수
+        const roll = rng.d20();
+        const enemyCount = next.enemies.filter((e) => e.hp > 0).length;
+        fleeSuccess = roll + playerSnap.speed + playerSnap.eva >= 10 + enemyCount;
+      } else {
+        fleeSuccess = this.checkFlee(
+          next,
+          playerSnap,
+          rng,
+          (next as Record<string, unknown>).fleeBonusValue as number | undefined,
+        );
+      }
+
+      if (fleeSuccess) {
         combatOutcome = 'FLEE_SUCCESS';
         events.push({
-          id: `flee_${input.turnNo}`,
+          id: `${isAvoid ? 'avoid' : 'flee'}_${input.turnNo}`,
           kind: 'BATTLE',
-          text: '도주에 성공했다',
-          tags: ['FLEE'],
+          text: isAvoid ? '전투를 회피했다!' : '도주에 성공했다',
+          tags: isAvoid ? ['AVOID'] : ['FLEE'],
         });
       } else {
         events.push({
-          id: `flee_fail_${input.turnNo}`,
+          id: `${isAvoid ? 'avoid' : 'flee'}_fail_${input.turnNo}`,
           kind: 'BATTLE',
-          text: '도주에 실패했다',
-          tags: ['FLEE_FAIL'],
+          text: isAvoid ? '전투 회피에 실패했다' : '도주에 실패했다',
+          tags: isAvoid ? ['AVOID_FAIL'] : ['FLEE_FAIL'],
         });
       }
     }
@@ -433,7 +446,9 @@ export class CombatService {
       events,
       diff,
       ui,
-      choices: [] as ChoiceItem[],
+      choices: battleEnded
+        ? ([] as ChoiceItem[])
+        : this.buildCombatChoices(next, playerSnap, inventoryItems, input.envTags, input.enemyStats),
       flags,
     };
 
@@ -446,6 +461,138 @@ export class CombatService {
   }
 
   // ---- private helpers ----
+
+  private buildCombatChoices(
+    next: BattleStateV1,
+    _playerSnap: StatsSnapshot,
+    inventoryItems: Array<{ itemId: string; qty: number }>,
+    envTags: string[],
+    _enemyStats: Record<string, PermanentStats>,
+  ): ChoiceItem[] {
+    const choices: ChoiceItem[] = [];
+    const aliveEnemies = next.enemies.filter((e) => e.hp > 0);
+
+    // 1) 근접 공격 — 적별로 선택지 (ENGAGED/CLOSE만)
+    for (const e of aliveEnemies) {
+      if (e.distance === 'ENGAGED' || e.distance === 'CLOSE') {
+        const name = e.name ?? e.id;
+        choices.push({
+          id: `attack_melee_${e.id}`,
+          label: `${name}에게 근접 공격`,
+          action: {
+            type: 'CHOICE',
+            payload: { choiceId: `attack_melee_${e.id}` },
+          },
+        });
+      }
+    }
+
+    // 2) 방어
+    choices.push({
+      id: 'defend',
+      label: '방어 태세',
+      action: { type: 'CHOICE', payload: { choiceId: 'defend' } },
+    });
+
+    // 3) 회피
+    choices.push({
+      id: 'evade',
+      label: '회피',
+      action: { type: 'CHOICE', payload: { choiceId: 'evade' } },
+    });
+
+    // 4) 이동 (적과 거리에 따라)
+    const hasEngaged = aliveEnemies.some((e) => e.distance === 'ENGAGED');
+    const hasFar = aliveEnemies.some(
+      (e) => e.distance === 'FAR' || e.distance === 'MID',
+    );
+    if (hasFar) {
+      choices.push({
+        id: 'move_forward',
+        label: '전방으로 이동',
+        action: { type: 'CHOICE', payload: { choiceId: 'move_forward' } },
+      });
+    }
+    if (hasEngaged) {
+      choices.push({
+        id: 'move_back',
+        label: '후방으로 이동',
+        action: { type: 'CHOICE', payload: { choiceId: 'move_back' } },
+      });
+    }
+
+    // 5) 아이템 사용 (인벤토리에 전투용 아이템이 있을 때)
+    for (const item of inventoryItems) {
+      if (item.qty <= 0) continue;
+      const def = this.contentLoader.getItem(item.itemId);
+      if (def?.type === 'CONSUMABLE' && def.combat) {
+        choices.push({
+          id: `use_item_${item.itemId}`,
+          label: `${def.name} 사용`,
+          hint: def.description,
+          action: {
+            type: 'CHOICE',
+            payload: { choiceId: `use_item_${item.itemId}` },
+          },
+        });
+      }
+    }
+
+    // 6) 콤보 선택지 (스태미나 >= 2)
+    if (next.player.stamina >= 2) {
+      for (const e of aliveEnemies) {
+        if (e.distance === 'ENGAGED' || e.distance === 'CLOSE') {
+          const name = e.name ?? e.id;
+          choices.push({
+            id: `combo_double_attack_${e.id}`,
+            label: `${name}에게 연속 공격`,
+            hint: '2회 연속 공격 (기력 2)',
+            action: { type: 'CHOICE', payload: { choiceId: `combo_double_attack_${e.id}` } },
+          });
+          choices.push({
+            id: `combo_attack_defend_${e.id}`,
+            label: `${name} 공격 후 방어`,
+            hint: '공격 + 방어 태세 (기력 2)',
+            action: { type: 'CHOICE', payload: { choiceId: `combo_attack_defend_${e.id}` } },
+          });
+        }
+      }
+    }
+
+    // 7) 환경 활용
+    const envLabel = this.getEnvActionLabel(envTags);
+    choices.push({
+      id: 'env_action',
+      label: envLabel,
+      hint: '주변 환경을 이용한 확률 기반 광역 공격',
+      action: { type: 'CHOICE', payload: { choiceId: 'env_action' } },
+    });
+
+    // 8) 전투 회피
+    choices.push({
+      id: 'combat_avoid',
+      label: '전투 회피 시도',
+      hint: '기민함으로 전투를 피한다 (확률)',
+      action: { type: 'CHOICE', payload: { choiceId: 'combat_avoid' } },
+    });
+
+    // 9) 도주
+    choices.push({
+      id: 'flee',
+      label: '도주 시도',
+      action: { type: 'CHOICE', payload: { choiceId: 'flee' } },
+    });
+
+    return choices;
+  }
+
+  private getEnvActionLabel(envTags: string[]): string {
+    if (envTags.includes('COVER_CRATE')) return '화물 상자를 적에게 던진다';
+    if (envTags.includes('COVER_WALL')) return '벽의 잔해를 무너뜨린다';
+    if (envTags.includes('NARROW')) return '좁은 통로를 이용해 가둔다';
+    if (envTags.includes('INDOOR')) return '실내 구조물을 활용한다';
+    return '주변 환경을 활용한다';
+  }
 
   private applyPlayerUnit(
     unit: ActionUnit,
@@ -753,14 +900,42 @@ export class CombatService {
         break;
       }
 
-      case 'INTERACT':
-        events.push({
-          id: `interact_${rng.cursor}`,
-          kind: 'BATTLE',
-          text: '상호작용을 시도했다',
-          tags: ['INTERACT'],
-        });
+      case 'INTERACT': {
+        const isEnvAction = unit.meta?.envAction === true;
+        if (isEnvAction) {
+          // 환경 활용: d20 + ACC 판정
+          const roll = rng.d20();
+          const success = roll + playerSnap.acc >= 12;
+          const dmgPercent = success ? 0.4 + rng.next() * 0.2 : 0.1;
+
+          for (const enemy of next.enemies) {
+            if (enemy.hp <= 0) continue;
+            const eMaxHp = enemyStats[enemy.id]?.maxHP ?? 100;
+            const envDmg = Math.round(eMaxHp * dmgPercent);
+            enemy.hp = Math.max(0, enemy.hp - envDmg);
+            const eDiff = enemyDiffMap.get(enemy.id);
+            if (eDiff) eDiff.hpDelta = vd(eDiff.hpDelta.from, enemy.hp);
+
+            events.push({
+              id: `env_dmg_${enemy.id}_${rng.cursor}`,
+              kind: 'DAMAGE',
+              text: success
+                ? `환경을 활용! ${eName(enemy.id)}에게 ${envDmg} 피해!`
+                : `환경 활용 실패… ${eName(enemy.id)}에게 ${envDmg} 피해`,
+              tags: success ? ['ENV_ACTION', 'SUCCESS'] : ['ENV_ACTION', 'PARTIAL'],
+              data: { damage: envDmg, targetId: enemy.id },
+            });
+          }
+        } else {
+          events.push({
+            id: `interact_${rng.cursor}`,
+            kind: 'BATTLE',
+            text: '상호작용을 시도했다',
+            tags: ['INTERACT'],
+          });
+        }
         break;
+      }
     }
   }
 

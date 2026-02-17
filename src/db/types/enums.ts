@@ -108,5 +108,6 @@ export const EDGE_CONDITION_TYPE = [
   'DEFAULT',
   'CHOICE',
   'COMBAT_OUTCOME',
+  'RANDOM',
 ] as const;
 export type EdgeConditionType = (typeof EDGE_CONDITION_TYPE)[number];
