@@ -1,4 +1,4 @@
-// 정본: design/server_api_system.md §5 — GET /v1/runs/:runId
+// 정본: design/HUB_system.md — HUB 기반 런 생성
 
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, lt } from 'drizzle-orm';
@@ -19,16 +19,22 @@ import {
   NotFoundError,
 } from '../common/errors/game-errors.js';
 import type { GetRunQuery } from './dto/get-run.dto.js';
-import { RunPlannerService } from '../engine/planner/run-planner.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
+import { WorldStateService } from '../engine/hub/world-state.service.js';
+import { AgendaService } from '../engine/hub/agenda.service.js';
+import { ArcService } from '../engine/hub/arc.service.js';
+import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import type { ServerResultV1, RunState } from '../db/types/index.js';
 
 @Injectable()
 export class RunsService {
   constructor(
     @Inject(DB) private readonly db: DrizzleDB,
-    private readonly planner: RunPlannerService,
     private readonly content: ContentLoaderService,
+    private readonly worldStateService: WorldStateService,
+    private readonly agendaService: AgendaService,
+    private readonly arcService: ArcService,
+    private readonly sceneShellService: SceneShellService,
   ) {}
 
   async createRun(userId: string, presetId: string, gender: 'male' | 'female' = 'male') {
@@ -85,14 +91,25 @@ export class RunsService {
 
     const seed = randomUUID();
 
-    // DAG 그래프에서 시작 노드 조회
-    const startNodeId = this.planner.getStartNodeId();
-    const startNodeDef = this.planner.findNode(startNodeId);
-    if (!startNodeDef) {
-      throw new Error(`Start node not found: ${startNodeId}`);
-    }
+    // 3. HUB 시스템 초기화
+    const worldState = this.worldStateService.initWorldState();
+    const agenda = this.agendaService.initAgenda();
+    const arcState = this.arcService.initArcState();
 
-    // 초기 RunState — 프리셋 기반
+    // NPC relations 초기화
+    const npcRelations: Record<string, number> = {};
+    // npcs.json이 있으면 기본 관계도 설정
+    const locations = this.content.getAllLocations();
+    for (const loc of locations) {
+      // 기본 NPC 관계 50 (중립)
+    }
+    npcRelations['NPC_RONEN'] = 30; // 의뢰인
+    npcRelations['NPC_GUARD_CAPTAIN'] = 20;
+    npcRelations['NPC_MERCHANT_ELDER'] = 25;
+    npcRelations['NPC_HARBOR_BOSS'] = 15;
+    npcRelations['NPC_SLUM_LEADER'] = 10;
+
+    // 초기 RunState — 프리셋 기반 + HUB 확장
     const initialRunState: RunState = {
       gold: preset.startingGold,
       hp: preset.stats.MaxHP,
@@ -103,11 +120,19 @@ export class RunsService {
         itemId: si.itemId,
         qty: si.qty,
       })),
+      worldState,
+      agenda,
+      arcState,
+      npcRelations,
+      eventCooldowns: {},
     };
 
-    // 3~6. 트랜잭션: run + nodes + memory + 첫 턴
+    // 4. HUB 선택지 생성
+    const hubChoices = this.sceneShellService.buildHubChoices(worldState, arcState);
+
+    // 5. 트랜잭션: run + HUB 노드 + memory + 첫 턴
     const result = await this.db.transaction(async (tx) => {
-      // 3. run_sessions INSERT (runState + graphNodeId 포함)
+      // run_sessions INSERT
       const [run] = await tx
         .insert(runSessions)
         .values({
@@ -120,34 +145,28 @@ export class RunsService {
           currentTurnNo: 0,
           seed,
           runState: initialRunState,
-          currentGraphNodeId: startNodeId,
+          currentGraphNodeId: null,
+          currentLocationId: null, // HUB
           presetId,
           gender,
           routeTag: null,
         })
         .returning();
 
-      // 4. 첫 노드만 INSERT (이후 노드는 lazy 생성)
-      const startEventId =
-        (startNodeDef.nodeMeta.eventId as string) ?? 'default';
+      // 첫 노드: HUB 타입
       await tx.insert(nodeInstances).values({
         runId: run.id,
         nodeIndex: 0,
-        graphNodeId: startNodeId,
-        nodeType: startNodeDef.nodeType,
-        nodeMeta: startNodeDef.nodeMeta,
-        environmentTags: startNodeDef.environmentTags,
-        edges: startNodeDef.edges,
+        graphNodeId: null,
+        nodeType: 'HUB',
+        nodeMeta: { hubEntry: true },
+        environmentTags: ['HUB', 'GRAYMAR'],
+        edges: null,
         status: 'NODE_ACTIVE',
-        nodeState: {
-          eventId: startEventId,
-          stage: 0,
-          maxStage: 2,
-          choicesMade: [],
-        },
+        nodeState: { phase: 'HUB' },
       });
 
-      // 5. run_memories INSERT
+      // run_memories INSERT
       await tx.insert(runMemories).values({
         runId: run.id,
         theme: [
@@ -168,15 +187,16 @@ export class RunsService {
           {
             key: 'npc_client',
             value:
-              '의뢰인 로넨 — 항만 노동 길드의 말단 서기관. 장부 관리 책임자였으나 도난 사실을 상부에 보고하지 못해 쫓기는 처지. 용병에게 의뢰하는 이유: 길드 내부에 배신자가 있어 동료를 믿을 수 없다.',
+              '의뢰인 로넨 — 항만 노동 길드의 말단 서기관. 장부 관리 책임자였으나 도난 사실을 상부에 보고하지 못해 쫓기는 처지.',
             importance: 0.9,
             tags: ['NPC', 'THEME'],
           },
           {
-            key: 'time',
-            value: '한밤중 — 항만 순찰이 교대하는 시각',
-            importance: 0.5,
-            tags: ['TIME', 'THEME'],
+            key: 'hub_system',
+            value:
+              'HUB 거점 — 그레이마르 항만의 허름한 선술집. 이곳에서 시장/경비대/항만/빈민가로 이동하며 임무를 수행한다.',
+            importance: 0.8,
+            tags: ['HUB', 'THEME'],
           },
           {
             key: 'protagonist',
@@ -188,7 +208,7 @@ export class RunsService {
         storySummary: null,
       });
 
-      // 6. 첫 EVENT 노드 진입 — turnNo=0 SYSTEM 턴
+      // 첫 HUB 노드 진입 — turnNo=0 SYSTEM 턴
       const firstNode = await tx.query.nodeInstances.findFirst({
         where: and(
           eq(nodeInstances.runId, run.id),
@@ -201,46 +221,44 @@ export class RunsService {
         turnNo: 0,
         node: {
           id: firstNode!.id,
-          type: 'EVENT',
+          type: 'HUB',
           index: 0,
           state: 'NODE_ACTIVE',
         },
         summary: {
           short: [
-            '[배경] 그레이마르 항만 — 왕국 남서부 최대 무역항. 밤안개가 부두를 뒤덮고, 정박한 화물선들의 삭구가 바람에 삐걱댄다. 부두 끝 등대만이 희미한 불빛을 던지고, 순찰 교대 시각이라 인적이 드물다. 소금과 생선 냄새, 축축한 밧줄 냄새가 뒤섞인 공기.',
-            `[주인공] ${preset.protagonistTheme} 일거리를 찾아 며칠 전 그레이마르에 도착했으나 아직 마땅한 의뢰를 잡지 못했다. 허름한 선술집에서 나와 부두를 걷고 있다.`,
-            '[사건] 어둠 속에서 한 남자가 주인공에게 다가온다. 낡은 외투에 잉크 얼룩이 묻은 서기관 로넨 — 항만 노동 길드의 장부 관리 책임자. 초조한 눈빛으로 주변을 살피며, 낮고 급한 목소리로 말한다:',
-            '"용병을 찾고 있었소. 당신이 변경에서 싸운 자라는 소문을 들었소."',
-            '"길드의 공물 장부가 사라졌소. 해관청에 바친 상납금 내역이 전부 적힌 장부요. 그런데 그 안에는… 공식 기록에 없는 뒷거래 내역도 있소. 밀수 조직과의 거래, 간부들의 횡령. 이게 해관청 손에 들어가면 길드 간부 절반이 교수대에 서게 되오."',
-            '"길드 안에 배신자가 있소. 내부 사람은 믿을 수 없소. 그래서 외부 사람이 필요한 거요." 로넨이 금화가 든 주머니를 내밀며 말했다. "이건 선불이오. 장부를 되찾아주면 나머지를 치르겠소. 하지만 서두르시오 — 이 도시엔 그 장부를 원하는 자들이 너무 많소."',
+            '[배경] 그레이마르 항만 — 왕국 남서부 최대 무역항. 안개 낀 밤, 허름한 선술집 \'잠긴 닻\'.',
+            `[주인공] ${preset.protagonistTheme} 일거리를 찾아 며칠 전 그레이마르에 도착했다.`,
+            '[NPC] 서기관 로넨 — 항만 노동 길드 말단 서기관. 장부 관리 책임자였으나 도난 당해 쫓기는 처지. 초조하고 겁에 질려 있다.',
+            '[상황] 로넨이 당신을 찾아와 의뢰한다. 공물 장부가 사라졌다. 장부에는 뒷거래 기록이 포함되어 있어 공개되면 길드 간부들이 처형당한다.',
+            '[서술 지시] 400~700자, 프롤로그.',
+            '- 선술집의 퇴폐한 분위기(소리, 냄새, 빛)로 장면을 연다.',
+            '- 로넨과의 대화를 3~4차례 주고받기로 구성한다. 한 번에 모든 정보를 쏟지 말고 점진적으로 사정을 밝힌다.',
+            '- 대화 흐름: 로넨이 조심스럽게 말을 꺼냄 → 당신이 반응/질문 → 로넨이 핵심(뒷거래 기록)을 털어놓음 → 당신이 수락 여부를 저울질.',
+            '- 당신이 의뢰를 수락하는 이유를 행동이나 반응으로 간접 암시한다.',
           ].join('\n'),
-          display:
-            '밤의 그레이마르 항만. 서기관 로넨이 사라진 공물 장부의 추적을 의뢰한다.',
+          display: [
+            '짙은 안개가 항만을 감싸는 밤이었다. 선술집 \'잠긴 닻\'의 구석 자리에서 당신은 싸구려 에일을 홀짝이고 있었다. 기름때 묻은 등잔이 흔들릴 때마다 주변의 그림자가 일렁였다.',
+            '',
+            '"당신이… 일을 해결해준다는 분이오?" 테이블 건너편에 앉은 사내의 목소리가 떨렸다. 서기관 로넨 — 길드 서기라기엔 행색이 너무 초라했다.',
+            '',
+            '당신은 잔을 내려놓고 사내를 살폈다. 핏기 없는 얼굴, 끊임없이 문 쪽을 훔쳐보는 눈동자.',
+            '',
+            '"장부가 사라졌소." 로넨이 목소리를 한층 낮췄다. "이틀 전 밤에 사무실을 털렸는데… 공물 내역만이 아니오. 뒷거래 기록이 전부 들어 있소."',
+            '',
+            '"뒷거래?"',
+            '',
+            '"길드 간부들이 해관청에 흘린 뇌물 목록이오." 로넨의 손이 잔 위에서 미세하게 떨렸다. "공개되면 간부 다수가 목이 달아나고… 나도 무사하지 못하오."',
+            '',
+            '당신은 등잔 너머로 사내의 눈을 들여다보았다. 거짓은 아닌 것 같았다. 선술집 안쪽에서 취객의 웃음소리가 터져 나왔다.',
+          ].join('\n'),
         },
         events: [
           {
-            id: 'enter_0',
-            kind: 'SYSTEM',
-            text: '그레이마르 항만 — 모험이 시작됩니다.',
-            tags: ['RUN_START', 'NODE_ENTER'],
-          },
-          {
-            id: 'enter_npc_0',
-            kind: 'NPC',
-            text: '서기관 로넨이 주인공에게 접근하여 공물 장부 추적을 의뢰한다. 길드 내부에 배신자가 있어 외부 용병이 필요하다고 설명한다.',
-            tags: ['NPC', 'QUEST_OFFER'],
-          },
-          {
             id: 'enter_quest_0',
             kind: 'QUEST',
-            text: '[의뢰] 사라진 공물 장부 — 해관청 상납 기록과 뒷거래 내역이 담긴 장부를 되찾아라. 장부가 유출되면 길드 간부 다수가 처형된다.',
+            text: '[의뢰] 사라진 공물 장부 — 도시의 네 구역을 탐색하여 단서를 모으고 장부의 행방을 추적하라.',
             tags: ['QUEST', 'QUEST_START'],
-          },
-          {
-            id: 'enter_ctx_0',
-            kind: 'NPC',
-            text: '로넨의 동기: 장부 관리 책임자로서 도난을 상부에 보고하지 못한 상태. 장부가 돌아오지 않으면 본인도 처벌을 면할 수 없다.',
-            tags: ['NPC', 'CONTEXT'],
           },
         ],
         diff: {
@@ -253,7 +271,7 @@ export class RunsService {
           inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
           meta: {
             battle: { phase: 'NONE' },
-            position: { env: ['HARBOR', 'NIGHT', 'FOG'] },
+            position: { env: ['HUB', 'GRAYMAR'] },
           },
         },
         ui: {
@@ -261,24 +279,14 @@ export class RunsService {
           targetLabels: [],
           actionSlots: { base: 2, bonusAvailable: false, max: 3 },
           toneHint: 'mysterious',
+          worldState: {
+            hubHeat: worldState.hubHeat,
+            hubSafety: worldState.hubSafety,
+            timePhase: worldState.timePhase,
+            currentLocationId: null,
+          },
         },
-        choices: [
-          {
-            id: 'choice_0_a',
-            label: '선불금을 받고 의뢰를 수락한다',
-            action: { type: 'CHOICE', payload: { choiceId: 'choice_0_a' } },
-          },
-          {
-            id: 'choice_0_b',
-            label: '장부에 정확히 무엇이 적혀 있는지 묻는다',
-            action: { type: 'CHOICE', payload: { choiceId: 'choice_0_b' } },
-          },
-          {
-            id: 'choice_0_c',
-            label: '의뢰를 보류하고 부두 주변을 먼저 살핀다',
-            action: { type: 'CHOICE', payload: { choiceId: 'choice_0_c' } },
-          },
-        ],
+        choices: hubChoices,
         flags: { bonusSlot: false, downed: false, battleEnded: false },
       };
 
@@ -286,7 +294,7 @@ export class RunsService {
         runId: run.id,
         turnNo: 0,
         nodeInstanceId: firstNode!.id,
-        nodeType: 'EVENT',
+        nodeType: 'HUB',
         inputType: 'SYSTEM',
         rawInput: '',
         idempotencyKey: `${run.id}_init`,

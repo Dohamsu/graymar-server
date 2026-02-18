@@ -41,4 +41,19 @@ export interface RunState {
   inventory: Array<{ itemId: string; qty: number }>;
   routeTag?: string;
   branchChoiceId?: string;
+  // HUB 시스템 확장 필드
+  worldState?: import('./world-state.js').WorldState;
+  agenda?: import('./agenda.js').PlayerAgenda;
+  arcState?: import('./arc-state.js').ArcState;
+  npcRelations?: Record<string, number>; // npcId -> 0~100
+  eventCooldowns?: Record<string, number>; // eventId -> lastUsedTurnNo
+  actionHistory?: ActionHistoryEntry[]; // 고집(insistence) 시스템용 행동 이력
 }
+
+export type ActionHistoryEntry = {
+  turnNo: number;
+  actionType: string;
+  suppressedActionType?: string;
+  inputText: string;
+  eventId?: string; // 매칭된 이벤트 ID (FALLBACK 페널티 계산용)
+};

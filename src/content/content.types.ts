@@ -116,3 +116,32 @@ export type PresetDefinition = {
   startingGold: number;
   startingItems: Array<{ itemId: string; qty: number }>;
 };
+
+// HUB 시스템 콘텐츠 타입
+
+export type LocationDefinition = {
+  locationId: string;
+  name: string;
+  description: string;
+  tags: string[];
+  dangerLevel: number;
+  availableAtNight: boolean;
+  nightDescription: string;
+};
+
+export type SuggestedChoice = {
+  id: string;
+  label: string;
+  hint?: string;
+  affordance: string;
+  riskLevel?: 1 | 2 | 3;
+};
+
+export type ArcEventDefinition = {
+  stage: number;
+  eventId: string;
+  title: string;
+  description: string;
+  requirements: Record<string, unknown>;
+  rewards: Record<string, unknown>;
+};

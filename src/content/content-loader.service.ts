@@ -9,7 +9,11 @@ import type {
   ItemDefinition,
   PlayerDefaults,
   PresetDefinition,
+  LocationDefinition,
+  SuggestedChoice,
+  ArcEventDefinition,
 } from './content.types.js';
+import type { EventDefV2, HubSafety, TimePhase } from '../db/types/index.js';
 
 const CONTENT_DIR = join(process.cwd(), '..', 'content', 'graymar_v1');
 
@@ -20,20 +24,33 @@ export class ContentLoaderService implements OnModuleInit {
   private items = new Map<string, ItemDefinition>();
   private presets = new Map<string, PresetDefinition>();
   private playerDefaults!: PlayerDefaults;
+  // HUB 시스템 콘텐츠
+  private locations = new Map<string, LocationDefinition>();
+  private eventsV2: EventDefV2[] = [];
+  private sceneShells: Record<string, Record<string, Record<string, string>>> = {};
+  private suggestedChoices: Record<string, SuggestedChoice[]> = {};
+  private arcEvents: Record<string, ArcEventDefinition[]> = {};
 
   async onModuleInit() {
     await this.loadAll();
   }
 
   private async loadAll() {
-    const [enemiesRaw, encountersRaw, itemsRaw, defaultsRaw, presetsRaw] =
-      await Promise.all([
-        readFile(join(CONTENT_DIR, 'enemies.json'), 'utf-8'),
-        readFile(join(CONTENT_DIR, 'encounters.json'), 'utf-8'),
-        readFile(join(CONTENT_DIR, 'items.json'), 'utf-8'),
-        readFile(join(CONTENT_DIR, 'player_defaults.json'), 'utf-8'),
-        readFile(join(CONTENT_DIR, 'presets.json'), 'utf-8'),
-      ]);
+    const [
+      enemiesRaw, encountersRaw, itemsRaw, defaultsRaw, presetsRaw,
+      locationsRaw, eventsV2Raw, sceneShellsRaw, suggestedChoicesRaw, arcEventsRaw,
+    ] = await Promise.all([
+      readFile(join(CONTENT_DIR, 'enemies.json'), 'utf-8'),
+      readFile(join(CONTENT_DIR, 'encounters.json'), 'utf-8'),
+      readFile(join(CONTENT_DIR, 'items.json'), 'utf-8'),
+      readFile(join(CONTENT_DIR, 'player_defaults.json'), 'utf-8'),
+      readFile(join(CONTENT_DIR, 'presets.json'), 'utf-8'),
+      readFile(join(CONTENT_DIR, 'locations.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(CONTENT_DIR, 'events_v2.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(CONTENT_DIR, 'scene_shells.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(CONTENT_DIR, 'suggested_choices.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(CONTENT_DIR, 'arc_events.json'), 'utf-8').catch(() => '{}'),
+    ]);
 
     const enemiesList = JSON.parse(enemiesRaw) as EnemyDefinition[];
     for (const e of enemiesList) this.enemies.set(e.enemyId, e);
@@ -48,6 +65,15 @@ export class ContentLoaderService implements OnModuleInit {
 
     const presetsList = JSON.parse(presetsRaw) as PresetDefinition[];
     for (const p of presetsList) this.presets.set(p.presetId, p);
+
+    // HUB 콘텐츠 로드
+    const locationsList = JSON.parse(locationsRaw) as LocationDefinition[];
+    for (const loc of locationsList) this.locations.set(loc.locationId, loc);
+
+    this.eventsV2 = JSON.parse(eventsV2Raw) as EventDefV2[];
+    this.sceneShells = JSON.parse(sceneShellsRaw);
+    this.suggestedChoices = JSON.parse(suggestedChoicesRaw);
+    this.arcEvents = JSON.parse(arcEventsRaw);
   }
 
   getPlayerDefaults(): PlayerDefaults {
@@ -145,5 +171,42 @@ export class ContentLoaderService implements OnModuleInit {
       }));
     }
     return items;
+  }
+
+  // --- HUB 콘텐츠 메서드 ---
+
+  getLocation(id: string): LocationDefinition | undefined {
+    return this.locations.get(id);
+  }
+
+  getAllLocations(): LocationDefinition[] {
+    return [...this.locations.values()];
+  }
+
+  getEventsByLocation(locationId: string): EventDefV2[] {
+    return this.eventsV2.filter((e) => e.locationId === locationId);
+  }
+
+  getAllEventsV2(): EventDefV2[] {
+    return this.eventsV2;
+  }
+
+  getSceneShell(
+    locationId: string,
+    timePhase: TimePhase,
+    safety: HubSafety,
+  ): string {
+    return (
+      this.sceneShells[locationId]?.[timePhase]?.[safety] ??
+      '주변을 둘러본다.'
+    );
+  }
+
+  getSuggestedChoices(templateId: string): SuggestedChoice[] | undefined {
+    return this.suggestedChoices[templateId];
+  }
+
+  getArcEvents(route: string): ArcEventDefinition[] {
+    return this.arcEvents[route] ?? [];
   }
 }

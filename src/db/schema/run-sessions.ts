@@ -32,6 +32,7 @@ export const runSessions = pgTable(
     presetId: text('preset_id'),
     gender: text('gender', { enum: ['male', 'female'] as const }).default('male'),
     routeTag: text('route_tag'),
+    currentLocationId: text('current_location_id'), // null = HUB
     startedAt: timestamp('started_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

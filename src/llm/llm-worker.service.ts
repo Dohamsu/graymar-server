@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { and, eq, lt, or, isNull } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
-import { turns, recentSummaries } from '../db/schema/index.js';
+import { turns, recentSummaries, runSessions } from '../db/schema/index.js';
 import { ContextBuilderService } from './context-builder.service.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { LlmCallerService } from './llm-caller.service.js';
@@ -101,11 +101,18 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
+      // RunState 조회 (HUB WorldState 컨텍스트용)
+      const runSession = await this.db.query.runSessions.findFirst({
+        where: eq(runSessions.id, pending.runId),
+        columns: { runState: true },
+      });
+
       // 1. LLM 컨텍스트 구축
       const llmContext = await this.contextBuilder.build(
         pending.runId,
         pending.nodeInstanceId,
         serverResult,
+        runSession?.runState as Record<string, unknown> | null,
       );
 
       // 2. 프롬프트 메시지 조립

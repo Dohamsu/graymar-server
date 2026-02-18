@@ -27,6 +27,7 @@ export const nodeInstances = pgTable(
       .notNull()
       .default('NODE_ACTIVE'),
     graphNodeId: text('graph_node_id'),
+    parentNodeInstanceId: text('parent_node_instance_id'), // 서브노드의 부모 LOCATION 참조
     edges: jsonb('edges').$type<EdgeDefinition[]>(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),

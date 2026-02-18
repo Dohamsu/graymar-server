@@ -96,11 +96,30 @@ export type ActionSlots = {
   max: 3;
 };
 
+export type WorldStateUI = {
+  hubHeat: number;
+  hubSafety: string;
+  timePhase: string;
+  currentLocationId: string | null;
+};
+
+export type ActionContext = {
+  parsedType: string;    // 엔진이 해석한 행동 유형 (FIGHT, THREATEN 등)
+  originalInput: string; // 플레이어 원문 입력
+  tone?: string;         // 행동 톤 (AGGRESSIVE, CAUTIOUS 등)
+  escalated?: boolean;   // 고집 에스컬레이션으로 승격된 경우 true
+  insistenceCount?: number; // 동일 행동 반복 횟수
+};
+
 export type UIBundle = {
   availableActions: string[];
   targetLabels: TargetLabel[];
   actionSlots: ActionSlots;
   toneHint: ToneHint;
+  // HUB 시스템 확장
+  worldState?: WorldStateUI;
+  resolveOutcome?: 'SUCCESS' | 'PARTIAL' | 'FAIL';
+  actionContext?: ActionContext;
 };
 
 // --- Choice ---
