@@ -1,6 +1,6 @@
 // Canonical Enums (CLAUDE.md 정본)
 
-export const NODE_TYPE = ['COMBAT', 'EVENT', 'REST', 'SHOP', 'EXIT'] as const;
+export const NODE_TYPE = ['COMBAT', 'EVENT', 'REST', 'SHOP', 'EXIT', 'HUB', 'LOCATION'] as const;
 export type NodeType = (typeof NODE_TYPE)[number];
 
 export const RUN_STATUS = ['RUN_ACTIVE', 'RUN_ENDED', 'RUN_ABORTED'] as const;
