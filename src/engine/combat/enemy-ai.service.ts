@@ -1,4 +1,4 @@
-// 정본: design/combat_engine_resolve_v1.md §3.4 — 적 AI (v1 최소 구현)
+// 정본: specs/combat_engine_resolve_v1.md §3.4 — 적 AI (v1 최소 구현)
 
 import { Injectable } from '@nestjs/common';
 import type { AiPersonality, Distance } from '../../db/types/index.js';

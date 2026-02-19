@@ -11,8 +11,10 @@ import { MockProvider } from './providers/mock.provider.js';
 import { OpenAIProvider } from './providers/openai.provider.js';
 import { ClaudeProvider } from './providers/claude.provider.js';
 import { GeminiProvider } from './providers/gemini.provider.js';
+import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
 
 @Module({
+  imports: [HubEngineModule],
   controllers: [LlmSettingsController],
   providers: [
     ContextBuilderService,

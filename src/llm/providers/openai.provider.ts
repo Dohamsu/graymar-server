@@ -45,11 +45,15 @@ export class OpenAIProvider implements LlmProvider {
     const choice = completion.choices[0];
     const text = choice?.message?.content ?? '';
 
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
+    const cachedTokens = (completion.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0;
+
     return {
       text,
       model: completion.model,
       promptTokens: completion.usage?.prompt_tokens ?? 0,
       completionTokens: completion.usage?.completion_tokens ?? 0,
+      cachedTokens: cachedTokens as number,
       latencyMs: Date.now() - start,
     };
   }

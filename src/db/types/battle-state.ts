@@ -1,4 +1,4 @@
-// 정본: design/battlestate_storage_recovery_v1.md §2
+// 정본: specs/battlestate_storage_recovery_v1.md §2
 
 import type { AiPersonality, Angle, BattlePhase, Distance } from './enums.js';
 

@@ -1,4 +1,4 @@
-// 정본: design/combat_engine_resolve_v1.md §0,§3,§6 — resolveCombatTurn 단일 진입점
+// 정본: specs/combat_engine_resolve_v1.md §0,§3,§6 — resolveCombatTurn 단일 진입점
 
 import { Injectable } from '@nestjs/common';
 import type { BattleStateV1, StatusInstance } from '../../db/types/index.js';
@@ -25,6 +25,8 @@ import { HitService } from './hit.service.js';
 import { DamageService } from './damage.service.js';
 import { EnemyAiService } from './enemy-ai.service.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
+import { EquipmentService } from '../rewards/equipment.service.js';
+import type { EquippedGear } from '../../db/types/equipment.js';
 
 export interface CombatTurnInput {
   turnNo: number;
@@ -36,6 +38,7 @@ export interface CombatTurnInput {
   enemyStats: Record<string, PermanentStats>;
   enemyNames?: Record<string, string>;
   inventory?: Array<{ itemId: string; qty: number }>;
+  equipped?: EquippedGear; // Phase 4: 장비 modifier 통합
 }
 
 export interface CombatTurnOutput {
@@ -69,6 +72,7 @@ export class CombatService {
     private readonly damageService: DamageService,
     private readonly enemyAiService: EnemyAiService,
     private readonly contentLoader: ContentLoaderService,
+    private readonly equipmentService: EquipmentService,
   ) {}
 
   resolveCombatTurn(input: CombatTurnInput): CombatTurnOutput {
@@ -117,8 +121,12 @@ export class CombatService {
     const forced = staminaBefore === 0 && input.actionPlan.staminaCost > 0;
     next.player.stamina = staminaAfter;
 
-    // 플레이어 스탯 스냅샷
-    const playerMods = this.statusService.getModifiers(next.player.status);
+    // 플레이어 스탯 스냅샷 (상태이상 + 장비 modifier 통합)
+    const statusMods = this.statusService.getModifiers(next.player.status);
+    const gearMods = input.equipped
+      ? this.equipmentService.getGearModifiers(input.equipped)
+      : [];
+    const playerMods = [...gearMods, ...statusMods];
     const playerSnap = this.statsService.buildSnapshot(
       input.playerStats,
       playerMods,

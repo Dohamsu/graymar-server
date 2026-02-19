@@ -1,4 +1,4 @@
-// 정본: design/input_processing_pipeline_v1.md §4 — 한국어 키워드 매핑 Rule Parser
+// 정본: specs/input_processing_pipeline_v1.md §4 — 한국어 키워드 매핑 Rule Parser
 
 import { Injectable } from '@nestjs/common';
 import type {

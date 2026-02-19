@@ -1,4 +1,4 @@
-// 정본: design/HUB_agenda_system.md
+// 정본: specs/HUB_agenda_system.md
 
 export type ImplicitBuckets = {
   destabilizeGuard: number;

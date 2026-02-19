@@ -1,4 +1,4 @@
-// 정본: design/input_processing_pipeline_v1.md §6 — Policy Check (COOPERATIVE_TRANSFORM)
+// 정본: specs/input_processing_pipeline_v1.md §6 — Policy Check (COOPERATIVE_TRANSFORM)
 
 import { Injectable } from '@nestjs/common';
 import type { ParsedIntent } from '../../db/types/index.js';

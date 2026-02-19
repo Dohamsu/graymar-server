@@ -17,6 +17,8 @@ import { ShopNodeService } from './nodes/shop-node.service.js';
 import { ExitNodeService } from './nodes/exit-node.service.js';
 import { RewardsService } from './rewards/rewards.service.js';
 import { InventoryService } from './rewards/inventory.service.js';
+import { EquipmentService } from './rewards/equipment.service.js';
+import { AffixService } from './rewards/affix.service.js';
 import { NodeTransitionService } from './nodes/node-transition.service.js';
 import { HubEngineModule } from './hub/hub-engine.module.js';
 
@@ -46,6 +48,8 @@ const providers = [
   // Layer 9
   RewardsService,
   InventoryService,
+  AffixService,
+  EquipmentService,
   // Layer 10 — Transition
   NodeTransitionService,
 ];

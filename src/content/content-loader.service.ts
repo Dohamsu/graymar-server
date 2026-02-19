@@ -12,8 +12,11 @@ import type {
   LocationDefinition,
   SuggestedChoice,
   ArcEventDefinition,
+  NpcDefinition,
+  SetDefinitionData,
+  ShopDefinition,
 } from './content.types.js';
-import type { EventDefV2, HubSafety, TimePhase } from '../db/types/index.js';
+import type { EventDefV2, HubSafety, TimePhase, AffixKind, RegionAffixDef } from '../db/types/index.js';
 
 const CONTENT_DIR = join(process.cwd(), '..', 'content', 'graymar_v1');
 
@@ -29,7 +32,14 @@ export class ContentLoaderService implements OnModuleInit {
   private eventsV2: EventDefV2[] = [];
   private sceneShells: Record<string, Record<string, Record<string, string>>> = {};
   private suggestedChoices: Record<string, SuggestedChoice[]> = {};
+  private npcs = new Map<string, NpcDefinition>();
   private arcEvents: Record<string, ArcEventDefinition[]> = {};
+  // Phase 4: Equipment/Set/Shop
+  private sets = new Map<string, SetDefinitionData>();
+  private shops = new Map<string, ShopDefinition>();
+  private shopsByLocation = new Map<string, ShopDefinition[]>();
+  // Phase 4.1: Region Affix
+  private affixes: RegionAffixDef[] = [];
 
   async onModuleInit() {
     await this.loadAll();
@@ -39,6 +49,7 @@ export class ContentLoaderService implements OnModuleInit {
     const [
       enemiesRaw, encountersRaw, itemsRaw, defaultsRaw, presetsRaw,
       locationsRaw, eventsV2Raw, sceneShellsRaw, suggestedChoicesRaw, arcEventsRaw,
+      npcsRaw, setsRaw, shopsRaw, affixesRaw,
     ] = await Promise.all([
       readFile(join(CONTENT_DIR, 'enemies.json'), 'utf-8'),
       readFile(join(CONTENT_DIR, 'encounters.json'), 'utf-8'),
@@ -50,6 +61,10 @@ export class ContentLoaderService implements OnModuleInit {
       readFile(join(CONTENT_DIR, 'scene_shells.json'), 'utf-8').catch(() => '{}'),
       readFile(join(CONTENT_DIR, 'suggested_choices.json'), 'utf-8').catch(() => '{}'),
       readFile(join(CONTENT_DIR, 'arc_events.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(CONTENT_DIR, 'npcs.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(CONTENT_DIR, 'sets.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(CONTENT_DIR, 'shops.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(CONTENT_DIR, 'region_affixes.json'), 'utf-8').catch(() => '[]'),
     ]);
 
     const enemiesList = JSON.parse(enemiesRaw) as EnemyDefinition[];
@@ -70,10 +85,28 @@ export class ContentLoaderService implements OnModuleInit {
     const locationsList = JSON.parse(locationsRaw) as LocationDefinition[];
     for (const loc of locationsList) this.locations.set(loc.locationId, loc);
 
+    const npcsList = JSON.parse(npcsRaw) as NpcDefinition[];
+    for (const npc of npcsList) this.npcs.set(npc.npcId, npc);
+
     this.eventsV2 = JSON.parse(eventsV2Raw) as EventDefV2[];
     this.sceneShells = JSON.parse(sceneShellsRaw);
     this.suggestedChoices = JSON.parse(suggestedChoicesRaw);
     this.arcEvents = JSON.parse(arcEventsRaw);
+
+    // Phase 4: 세트/상점 로드
+    const setsList = JSON.parse(setsRaw) as SetDefinitionData[];
+    for (const s of setsList) this.sets.set(s.setId, s);
+
+    const shopsList = JSON.parse(shopsRaw) as ShopDefinition[];
+    for (const shop of shopsList) {
+      this.shops.set(shop.shopId, shop);
+      const existing = this.shopsByLocation.get(shop.locationId) ?? [];
+      existing.push(shop);
+      this.shopsByLocation.set(shop.locationId, existing);
+    }
+
+    // Phase 4.1: Region Affix 로드
+    this.affixes = JSON.parse(affixesRaw) as RegionAffixDef[];
   }
 
   getPlayerDefaults(): PlayerDefaults {
@@ -173,6 +206,16 @@ export class ContentLoaderService implements OnModuleInit {
     return items;
   }
 
+  // --- NPC 메서드 ---
+
+  getNpc(id: string): NpcDefinition | undefined {
+    return this.npcs.get(id);
+  }
+
+  getAllNpcs(): NpcDefinition[] {
+    return [...this.npcs.values()];
+  }
+
   // --- HUB 콘텐츠 메서드 ---
 
   getLocation(id: string): LocationDefinition | undefined {
@@ -208,5 +251,60 @@ export class ContentLoaderService implements OnModuleInit {
 
   getArcEvents(route: string): ArcEventDefinition[] {
     return this.arcEvents[route] ?? [];
+  }
+
+  // --- Phase 4: Set/Shop 메서드 ---
+
+  getSet(id: string): SetDefinitionData | undefined {
+    return this.sets.get(id);
+  }
+
+  getAllSets(): SetDefinitionData[] {
+    return [...this.sets.values()];
+  }
+
+  getShop(id: string): ShopDefinition | undefined {
+    return this.shops.get(id);
+  }
+
+  getShopsByLocation(locationId: string): ShopDefinition[] {
+    return this.shopsByLocation.get(locationId) ?? [];
+  }
+
+  getAllShops(): ShopDefinition[] {
+    return [...this.shops.values()];
+  }
+
+  /** 장비 아이템만 필터링 */
+  getEquipmentItems(): ItemDefinition[] {
+    return [...this.items.values()].filter((it) => it.type === 'EQUIPMENT');
+  }
+
+  /** itemId → setId 매핑 (장비만) */
+  getItemSetMap(): Record<string, string | undefined> {
+    const map: Record<string, string | undefined> = {};
+    for (const item of this.items.values()) {
+      if (item.setId) map[item.itemId] = item.setId;
+    }
+    return map;
+  }
+
+  // --- Phase 4.1: Region Affix 메서드 ---
+
+  /** 위치 + 종류 + 프로필로 후보 affix 필터링 */
+  getAffixesByLocation(locationId: string, kind: AffixKind, profileId: string): RegionAffixDef[] {
+    return this.affixes.filter(
+      (a) => a.locationId === locationId && a.kind === kind && a.allowedProfiles.includes(profileId),
+    );
+  }
+
+  /** affixId로 단일 affix 조회 */
+  getAffix(affixId: string): RegionAffixDef | undefined {
+    return this.affixes.find((a) => a.affixId === affixId);
+  }
+
+  /** 전체 affix 목록 */
+  getAllAffixes(): RegionAffixDef[] {
+    return this.affixes;
   }
 }

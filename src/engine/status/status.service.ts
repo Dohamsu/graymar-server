@@ -1,4 +1,4 @@
-// 정본: design/status_effect_system_v1.md — 상태이상 시스템
+// 정본: specs/status_effect_system_v1.md — 상태이상 시스템
 
 import { Injectable } from '@nestjs/common';
 import type { StatusInstance } from '../../db/types/index.js';

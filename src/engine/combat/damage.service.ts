@@ -1,4 +1,4 @@
-// 정본: design/combat_system.md Part 0 §4-5 — 피해/치명타 계산
+// 정본: specs/combat_system.md Part 0 §4-5 — 피해/치명타 계산
 
 import { Injectable } from '@nestjs/common';
 import type { Rng } from '../rng/rng.service.js';

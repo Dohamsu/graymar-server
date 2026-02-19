@@ -1,4 +1,4 @@
-// 정본: design/combat_system.md Part 0 §3 — 명중 판정
+// 정본: specs/combat_system.md Part 0 §3 — 명중 판정
 
 import { Injectable } from '@nestjs/common';
 import type { Rng } from '../rng/rng.service.js';

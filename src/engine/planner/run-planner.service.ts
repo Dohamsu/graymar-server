@@ -1,4 +1,4 @@
-// 정본: design/node_routing_v2.md — 24노드 DAG 그래프 + 기존 12노드 선형 시퀀스
+// 정본: specs/node_routing_v2.md — 24노드 DAG 그래프 + 기존 12노드 선형 시퀀스
 
 import { Injectable } from '@nestjs/common';
 import type { NodeType } from '../../db/types/index.js';

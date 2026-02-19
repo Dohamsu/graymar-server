@@ -1,4 +1,4 @@
-// 정본: design/HUB_event_system.md
+// 정본: specs/HUB_event_system.md
 
 export const AFFORDANCE = [
   'INVESTIGATE',

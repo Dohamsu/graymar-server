@@ -1,4 +1,4 @@
-// 정본: design/node_resolve_rules_v1.md §5 — EVENT 노드
+// 정본: specs/node_resolve_rules_v1.md §5 — EVENT 노드
 
 import { Injectable } from '@nestjs/common';
 import { EventContentProvider } from '../../content/event-content.provider.js';

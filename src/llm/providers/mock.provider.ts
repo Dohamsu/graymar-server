@@ -24,6 +24,7 @@ export class MockProvider implements LlmProvider {
       model: 'mock-v1',
       promptTokens: 0,
       completionTokens: 0,
+      cachedTokens: 0,
       latencyMs: Date.now() - start,
     });
   }

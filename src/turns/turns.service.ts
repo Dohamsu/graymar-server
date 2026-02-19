@@ -1,4 +1,4 @@
-// 정본: design/HUB_system.md — Action-First 턴 파이프라인
+// 정본: specs/HUB_system.md — Action-First 턴 파이프라인
 
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, ne } from 'drizzle-orm';
@@ -23,6 +23,7 @@ import type {
   ArcState,
   PlayerAgenda,
 } from '../db/types/index.js';
+import { computePBP } from '../db/types/player-behavior.js';
 import type { NodeType, LlmStatus } from '../db/types/index.js';
 import {
   ForbiddenError,
@@ -48,6 +49,7 @@ import { AgendaService } from '../engine/hub/agenda.service.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js';
+import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
 
 @Injectable()
@@ -70,6 +72,7 @@ export class TurnsService {
     private readonly arcService: ArcService,
     private readonly sceneShellService: SceneShellService,
     private readonly intentParser: IntentParserV2Service,
+    private readonly orchestration: TurnOrchestrationService,
   ) {}
 
   async submitTurn(runId: string, userId: string, body: SubmitTurnBody) {
@@ -375,7 +378,10 @@ export class TurnsService {
 
     if (!matchedEvent) {
       // fallback 결과
-      const choices = this.sceneShellService.buildLocationChoices(locationId);
+      const selectedChoiceIds = actionHistory
+        .filter((h) => h.choiceId)
+        .map((h) => h.choiceId!);
+      const choices = this.sceneShellService.buildLocationChoices(locationId, undefined, undefined, selectedChoiceIds);
       const result = this.buildLocationResult(turnNo, currentNode, '특별한 일이 일어나지 않았다.', 'PARTIAL', choices, ws);
       await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, updatedRunState, body.options?.skipLlm);
       return { accepted: true, turnNo, serverResult: result, llm: { status: 'PENDING' as LlmStatus, narrative: null }, meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' } };
@@ -481,13 +487,14 @@ export class TurnsService {
     // cooldown 업데이트
     const newCooldowns = { ...cooldowns, [matchedEvent.eventId]: turnNo };
 
-    // 행동 이력 업데이트 (고집 시스템 + FALLBACK 페널티)
+    // 행동 이력 업데이트 (고집 시스템 + FALLBACK 페널티 + 선택지 중복 방지)
     const newHistory = [...actionHistory, {
       turnNo,
       actionType: intent.actionType,
       suppressedActionType: intent.suppressedActionType,
       inputText: rawInput,
       eventId: matchedEvent.eventId,
+      choiceId: body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
     }].slice(-10); // 최대 10개 유지
 
     // RunState 반영
@@ -497,9 +504,27 @@ export class TurnsService {
     updatedRunState.npcRelations = relations;
     updatedRunState.eventCooldowns = newCooldowns;
     updatedRunState.actionHistory = newHistory;
+    // PBP 집계 (최근 행동 이력 기반)
+    updatedRunState.pbp = computePBP(newHistory);
 
-    // 결과 조립
-    const choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, matchedEvent.payload.choices);
+    // Step 5-7: Turn Orchestration (NPC 주입, 감정 피크, 대화 자세)
+    const orchestrationResult = this.orchestration.orchestrate(
+      updatedRunState,
+      locationId,
+      turnNo,
+      resolveResult.outcome,
+      matchedEvent.payload.tags ?? [],
+    );
+    updatedRunState.pressure = orchestrationResult.pressure;
+    if (orchestrationResult.peakMode) {
+      updatedRunState.lastPeakTurn = turnNo;
+    }
+
+    // 결과 조립 — 이전에 선택한 choice 필터링
+    const selectedChoiceIds = newHistory
+      .filter((h) => h.choiceId)
+      .map((h) => h.choiceId!);
+    const choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, matchedEvent.payload.choices, selectedChoiceIds);
     const summaryText = `${matchedEvent.payload.sceneFrame}`;
     const result = this.buildLocationResult(turnNo, currentNode, summaryText, resolveResult.outcome, choices, ws, {
       parsedType: intent.actionType,
@@ -509,6 +534,17 @@ export class TurnsService {
       insistenceCount: insistenceCount > 0 ? insistenceCount : undefined,
     });
 
+    // Orchestration 결과를 ui에 추가 (LLM context 전달용)
+    if (orchestrationResult.npcInjection) {
+      (result.ui as any).npcInjection = orchestrationResult.npcInjection;
+    }
+    if (orchestrationResult.peakMode) {
+      (result.ui as any).peakMode = true;
+    }
+    if (Object.keys(orchestrationResult.npcPostures).length > 0) {
+      (result.ui as any).npcPostures = orchestrationResult.npcPostures;
+    }
+
     // 이벤트 추가
     result.events.push({
       id: `event_${matchedEvent.eventId}`,
@@ -517,7 +553,15 @@ export class TurnsService {
       tags: matchedEvent.payload.tags,
     });
 
-    await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, updatedRunState, body.options?.skipLlm);
+    // Step 10: Off-screen Tick (턴 커밋 전 RunState에 반영)
+    const postTickRunState = this.orchestration.offscreenTick(
+      updatedRunState,
+      turnNo,
+      resolveResult.outcome,
+      matchedEvent.payload.tags ?? [],
+    );
+
+    await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, postTickRunState, body.options?.skipLlm);
 
     return {
       accepted: true, turnNo, serverResult: result,
@@ -953,7 +997,7 @@ export class TurnsService {
       run: { id: run.id, status: run.status, actLevel: run.actLevel, currentTurnNo: run.currentTurnNo },
       turn: { turnNo: turn.turnNo, nodeInstanceId: turn.nodeInstanceId, nodeType: turn.nodeType, inputType: turn.inputType, rawInput: turn.rawInput, createdAt: turn.createdAt },
       serverResult: turn.serverResult,
-      llm: { status: turn.llmStatus, output: turn.llmOutput, modelUsed: turn.llmModelUsed, completedAt: turn.llmCompletedAt, error: turn.llmError },
+      llm: { status: turn.llmStatus, output: turn.llmOutput, modelUsed: turn.llmModelUsed, completedAt: turn.llmCompletedAt, error: turn.llmError, tokenStats: turn.llmTokenStats ?? null },
     };
 
     if (query.includeDebug) {

@@ -1,4 +1,4 @@
-// 정본: design/political_narrative_system_v1.md
+// 정본: specs/political_narrative_system_v1.md
 
 export type HubEvent = {
   id: string;

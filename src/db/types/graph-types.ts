@@ -1,4 +1,4 @@
-// 정본: design/node_routing_v2.md — DAG 그래프 타입 정의
+// 정본: specs/node_routing_v2.md — DAG 그래프 타입 정의
 
 import type { NodeType, EdgeConditionType } from './enums.js';
 

@@ -1,4 +1,4 @@
-// 정본: design/server_api_system.md §14 — DB Polling LLM Worker
+// 정본: specs/server_api_system.md §14 — DB Polling LLM Worker
 
 import {
   Inject,
@@ -15,6 +15,7 @@ import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
+import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 
 const POLL_INTERVAL_MS = 2000;
 const LOCK_TIMEOUT_S = 60;
@@ -32,6 +33,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly llmCaller: LlmCallerService,
     private readonly configService: LlmConfigService,
     private readonly aiTurnLog: AiTurnLogService,
+    private readonly sceneShell: SceneShellService,
   ) {}
 
   onModuleInit(): void {
@@ -139,11 +141,22 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         narrative = callResult.response.text;
         modelUsed = callResult.response.model;
       } else {
+        // Partial Narrative Mode: SceneShell 기반 분위기 서술 + 결과 요약 조합
         this.logger.warn(
-          `LLM call failed for turn ${pending.turnNo}, using summary.display as fallback`,
+          `LLM call failed for turn ${pending.turnNo}, using SceneShell fallback`,
         );
-        narrative = serverResult.summary.display ?? serverResult.summary.short;
-        modelUsed = 'fallback-summary';
+        const wsData = (serverResult.ui as Record<string, unknown>)?.worldState as
+          | { currentLocationId?: string; timePhase?: string; hubSafety?: string }
+          | undefined;
+        const resolveOutcome = (serverResult.ui as Record<string, unknown>)?.resolveOutcome as string | undefined;
+        narrative = this.sceneShell.buildFallbackNarrative(
+          wsData?.currentLocationId ?? 'LOC_MARKET',
+          (wsData?.timePhase ?? 'DAY') as any,
+          (wsData?.hubSafety ?? 'SAFE') as any,
+          serverResult.summary.display ?? serverResult.summary.short,
+          resolveOutcome,
+        );
+        modelUsed = 'fallback-scene-shell';
       }
 
       // 5. AI Turn 로그 기록
@@ -155,13 +168,19 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         error: callResult.error,
       });
 
-      // 6. DONE 저장
+      // 6. DONE 저장 (토큰 통계 포함)
       await this.db
         .update(turns)
         .set({
           llmStatus: 'DONE',
           llmOutput: narrative,
           llmModelUsed: modelUsed,
+          llmTokenStats: {
+            prompt: callResult.response?.promptTokens ?? 0,
+            cached: callResult.response?.cachedTokens ?? 0,
+            completion: callResult.response?.completionTokens ?? 0,
+            latencyMs: callResult.response?.latencyMs ?? 0,
+          },
           llmCompletedAt: new Date(),
         })
         .where(eq(turns.id, pending.id));
@@ -173,8 +192,13 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         summary: narrative,
       });
 
+      const prompt = callResult.response?.promptTokens ?? 0;
+      const cached = callResult.response?.cachedTokens ?? 0;
+      const completion = callResult.response?.completionTokens ?? 0;
+      const latency = callResult.response?.latencyMs ?? 0;
+      const cacheRate = prompt > 0 ? Math.round((cached / prompt) * 100) : 0;
       this.logger.debug(
-        `LLM DONE: turn ${pending.turnNo} (run ${pending.runId}, model=${modelUsed})`,
+        `LLM DONE: turn ${pending.turnNo} (run ${pending.runId}, model=${modelUsed}) tokens: prompt=${prompt} cached=${cached} (${cacheRate}%) completion=${completion} latency=${latency}ms`,
       );
     } catch (err) {
       this.logger.error(`LLM FAILED: turn ${pending.turnNo}`, err);
