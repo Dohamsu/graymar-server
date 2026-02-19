@@ -6,8 +6,74 @@ import type {
   TimePhase,
   ChoiceItem,
   EventChoice,
+  ResolveOutcome,
 } from '../../db/types/index.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
+
+// --- Resolve 후속 선택지 (판정 결과에 따른 상황별) ---
+
+const FOLLOW_UP_CHOICES: Record<ResolveOutcome, ChoiceItem[]> = {
+  SUCCESS: [
+    {
+      id: 'followup_deepen',
+      label: '성과를 발판 삼아 더 깊이 파고든다',
+      hint: '유리한 상황을 활용해 한 발 더 나아간다',
+      action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } },
+    },
+    {
+      id: 'followup_leverage',
+      label: '얻은 것을 활용해 다른 이에게 접근한다',
+      hint: '새로운 인물이나 기회를 노린다',
+      action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+    },
+    {
+      id: 'followup_explore',
+      label: '다른 쪽을 둘러본다',
+      hint: '주변에 더 흥미로운 것이 있을 수 있다',
+      action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+    },
+  ],
+  PARTIAL: [
+    {
+      id: 'followup_retry',
+      label: '다른 방법으로 다시 시도한다',
+      hint: '같은 목표를 다른 각도로 접근한다',
+      action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } },
+    },
+    {
+      id: 'followup_adapt',
+      label: '얻은 것에 만족하고 주변을 살핀다',
+      hint: '현실적으로 판단하고 다음을 도모한다',
+      action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+    },
+    {
+      id: 'followup_push',
+      label: '밀어붙인다',
+      hint: '위험하지만 더 확실한 결과를 노린다',
+      action: { type: 'CHOICE', payload: { affordance: 'THREATEN', riskLevel: 2 } },
+    },
+  ],
+  FAIL: [
+    {
+      id: 'followup_retreat',
+      label: '한 발 물러서서 상황을 정리한다',
+      hint: '태세를 가다듬고 기회를 엿본다',
+      action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+    },
+    {
+      id: 'followup_alternative',
+      label: '다른 길을 찾는다',
+      hint: '정면이 아닌 우회로를 모색한다',
+      action: { type: 'CHOICE', payload: { affordance: 'SNEAK' } },
+    },
+    {
+      id: 'followup_help',
+      label: '주변에 도움을 구한다',
+      hint: '혼자 힘으로는 어려울 수 있다',
+      action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+    },
+  ],
+};
 
 // --- LOCATION별 기본 탐색 선택지 ---
 
@@ -179,6 +245,7 @@ export class SceneShellService {
     eventType?: string,
     eventChoices?: EventChoice[],
     selectedChoiceIds?: string[],
+    sourceEventId?: string,
   ): ChoiceItem[] {
     const selected = new Set(selectedChoiceIds ?? []);
     let choices: ChoiceItem[] = [];
@@ -192,7 +259,11 @@ export class SceneShellService {
           hint: c.hint,
           action: {
             type: 'CHOICE' as const,
-            payload: { affordance: c.affordance, riskLevel: c.riskLevel },
+            payload: {
+              affordance: c.affordance,
+              riskLevel: c.riskLevel,
+              ...(sourceEventId ? { sourceEventId } : {}),
+            },
           },
         })),
       );
@@ -241,6 +312,46 @@ export class SceneShellService {
     }
 
     // HUB 복귀 선택지 항상 포함
+    choices.push({
+      id: 'go_hub',
+      label: '거점으로 돌아간다',
+      hint: '거점에서 다른 지역을 탐색한다',
+      action: { type: 'CHOICE', payload: { returnToHub: true } },
+    });
+
+    return choices;
+  }
+
+  /**
+   * Resolve 판정 후 후속 선택지 생성.
+   * 이벤트 고유 선택지 대신, 판정 결과에 맞는 상황 선택지를 반환한다.
+   * - 2개 outcome 기반 + 1개 LOCATION 기본 + go_hub
+   */
+  buildFollowUpChoices(
+    locationId: string,
+    resolveOutcome: ResolveOutcome,
+    usedChoiceIds?: string[],
+  ): ChoiceItem[] {
+    const used = new Set(usedChoiceIds ?? []);
+
+    // 1. Outcome 기반 선택지 (최대 2개)
+    const outcomePool = FOLLOW_UP_CHOICES[resolveOutcome] ?? FOLLOW_UP_CHOICES.PARTIAL;
+    const outcomeFiltered = outcomePool.filter((c) => !used.has(c.id));
+    const outcomeChoices = outcomeFiltered.length > 0 ? outcomeFiltered.slice(0, 2) : outcomePool.slice(0, 2);
+
+    // 2. LOCATION 기본 선택지에서 1개 추가 (outcome 선택지와 affordance 중복 방지)
+    const usedAffordances = new Set(outcomeChoices.map((c) => c.action.payload.affordance));
+    const locationDefaults = DEFAULT_LOCATION_CHOICES[locationId] ?? GENERIC_EXPLORE_CHOICES;
+    const locationChoice = locationDefaults.find(
+      (c) => !usedAffordances.has(c.action.payload.affordance) && !used.has(c.id),
+    );
+
+    const choices: ChoiceItem[] = [...outcomeChoices];
+    if (locationChoice) {
+      choices.push(locationChoice);
+    }
+
+    // go_hub 항상 포함
     choices.push({
       id: 'go_hub',
       label: '거점으로 돌아간다',

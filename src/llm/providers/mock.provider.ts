@@ -1,4 +1,5 @@
-// Mock LLM 공급자 — 기존 llm-worker의 mock 로직을 추출
+// Mock LLM 공급자 — 개발/테스트/fallback용
+// summary.display(서술 폴백 텍스트)를 반환. raw 프롬프트를 그대로 반환하지 않음.
 
 import type {
   LlmProvider,
@@ -12,12 +13,8 @@ export class MockProvider implements LlmProvider {
   generate(request: LlmProviderRequest): Promise<LlmProviderResponse> {
     const start = Date.now();
 
-    // 마지막 user 메시지에서 [상황 요약] 이후 텍스트를 추출
-    const lastUserMsg = [...request.messages]
-      .reverse()
-      .find((m) => m.role === 'user');
-
-    const text = lastUserMsg?.content ?? 'No narrative available.';
+    // fallback 텍스트: "No narrative available" (LLM worker의 SceneShell fallback이 대체함)
+    const text = '서술을 불러오지 못했습니다.';
 
     return Promise.resolve({
       text,

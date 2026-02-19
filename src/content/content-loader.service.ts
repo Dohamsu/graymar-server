@@ -234,6 +234,10 @@ export class ContentLoaderService implements OnModuleInit {
     return this.eventsV2;
   }
 
+  getEventById(eventId: string): EventDefV2 | undefined {
+    return this.eventsV2.find((e) => e.eventId === eventId);
+  }
+
   getSceneShell(
     locationId: string,
     timePhase: TimePhase,
