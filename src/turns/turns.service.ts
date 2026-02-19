@@ -286,6 +286,42 @@ export class TurnsService {
       return { accepted: true, turnNo, serverResult: result, llm: { status: 'PENDING' as LlmStatus, narrative: null }, meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' } };
     }
 
+    // 프롤로그 의뢰 수락
+    if (choiceId === 'accept_quest') {
+      const hubChoices = this.sceneShellService.buildHubChoices(ws, arcState);
+      const result: ServerResultV1 = {
+        ...this.buildSystemResult(turnNo, currentNode, '의뢰를 수락했다.'),
+        summary: {
+          short: [
+            '[상황] 당신은 로넨의 의뢰를 수락했다. 사라진 공물 장부를 찾기로 했다.',
+            '[NPC] 서기관 로넨 — 항만 노동 길드 말단 서기관. ⚠️ 말투: "~하오", "~이오", "~소"체. 예: "고맙소", "잊지 않겠소". 현대 존댓말("~합니다", "~입니다", "~세요") 절대 금지.',
+            '[서술 지시] 150~300자. 의뢰 수락 장면을 서술하세요.',
+            '- 당신이 수락의 의사를 행동(고개 끄덕임, 잔을 내려놓음, 몸을 일으킴 등)으로 표현하는 장면을 묘사하세요.',
+            '- 로넨이 안도하며 짧게 감사를 표한다. 반드시 "~소"체로 말한다. 예: "고맙소", "은혜를 잊지 않겠소".',
+            '- 선술집을 나서며 밤의 그레이마르 거리를 바라보는 것으로 마무리하세요. 어디로 갈지는 언급하지 마세요.',
+            '- 당신의 내면("결심한다", "다짐한다")을 쓰지 마세요. 행동만 묘사하세요.',
+          ].join('\n'),
+          display: undefined,
+        },
+        ui: {
+          availableActions: ['CHOICE'],
+          targetLabels: [],
+          actionSlots: { base: 2, bonusAvailable: false, max: 3 },
+          toneHint: 'calm',
+          worldState: {
+            hubHeat: ws.hubHeat,
+            hubSafety: ws.hubSafety,
+            timePhase: ws.timePhase,
+            currentLocationId: null,
+          },
+        },
+        choices: hubChoices,
+      };
+
+      await this.commitTurnRecord(run, currentNode, turnNo, body, choiceId, result, updatedRunState);
+      return { accepted: true, turnNo, serverResult: result, llm: { status: 'PENDING' as LlmStatus, narrative: null }, meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' } };
+    }
+
     throw new InvalidInputError(`Unknown HUB choice: ${choiceId}`);
   }
 
@@ -497,6 +533,11 @@ export class TurnsService {
       choiceId: body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
     }].slice(-10); // 최대 10개 유지
 
+    // 골드 차감 (BRIBE/TRADE)
+    if (resolveResult.goldDelta !== 0) {
+      updatedRunState.gold = Math.max(0, updatedRunState.gold + resolveResult.goldDelta);
+    }
+
     // RunState 반영
     updatedRunState.worldState = ws;
     updatedRunState.agenda = agenda;
@@ -520,6 +561,9 @@ export class TurnsService {
       updatedRunState.lastPeakTurn = turnNo;
     }
 
+    // 비도전 행위 여부 (MOVE_LOCATION, REST, SHOP, TALK → 주사위 UI 숨김)
+    const isNonChallenge = ['MOVE_LOCATION', 'REST', 'SHOP', 'TALK'].includes(intent.actionType);
+
     // 결과 조립 — 이전에 선택한 choice 필터링
     const selectedChoiceIds = newHistory
       .filter((h) => h.choiceId)
@@ -532,7 +576,7 @@ export class TurnsService {
       tone: intent.tone,
       escalated: intent.escalated,
       insistenceCount: insistenceCount > 0 ? insistenceCount : undefined,
-    });
+    }, isNonChallenge, resolveResult.goldDelta);
 
     // Orchestration 결과를 ui에 추가 (LLM context 전달용)
     if (orchestrationResult.npcInjection) {
@@ -927,9 +971,15 @@ export class TurnsService {
     turnNo: number, node: any, text: string, outcome: string,
     choices: ServerResultV1['choices'], ws: WorldState,
     actionContext?: { parsedType: string; originalInput: string; tone: string; escalated?: boolean; insistenceCount?: number },
+    hideResolve?: boolean,
+    goldDelta?: number,
   ): ServerResultV1 {
+    const base = this.buildSystemResult(turnNo, node, text);
+    if (goldDelta && goldDelta !== 0) {
+      base.diff.inventory.goldDelta = goldDelta;
+    }
     return {
-      ...this.buildSystemResult(turnNo, node, text),
+      ...base,
       // 내러티브 텍스트는 summary(NARRATOR)에만 — SYSTEM 이벤트로 표시하지 않음
       events: [],
       ui: {
@@ -937,7 +987,8 @@ export class TurnsService {
         actionSlots: { base: 2, bonusAvailable: false, max: 3 },
         toneHint: outcome === 'FAIL' ? 'danger' : outcome === 'SUCCESS' ? 'triumph' : 'neutral',
         worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: ws.currentLocationId },
-        resolveOutcome: outcome as any,
+        // 비도전 행위는 주사위 UI를 표시하지 않음
+        ...(hideResolve ? {} : { resolveOutcome: outcome as any }),
         ...(actionContext ? { actionContext } : {}),
       },
       choices,
