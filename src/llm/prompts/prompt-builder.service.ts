@@ -47,25 +47,40 @@ export class PromptBuilderService {
 
     // L3: 현재 LOCATION 방문 전체 대화 (단기 기억 — 우선 사용)
     if (ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
-      const sessionLines = ctx.locationSessionTurns.map((t) => {
+      const totalTurns = ctx.locationSessionTurns.length;
+      const sessionLines = ctx.locationSessionTurns.map((t, idx) => {
         const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
         const outcomeLabel = t.resolveOutcome === 'SUCCESS' ? '성공'
           : t.resolveOutcome === 'PARTIAL' ? '부분 성공'
           : t.resolveOutcome === 'FAIL' ? '실패' : '';
         const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
-        // 현재 방문 대화는 서술을 더 길게 포함 (300자)
-        const narrativePart = t.narrative ? `\n서술: ${t.narrative.slice(0, 300)}${t.narrative.length > 300 ? '...' : ''}` : '';
+        const isLastTurn = idx === totalTurns - 1;
+        let narrativePart = '';
+        if (t.narrative) {
+          if (isLastTurn) {
+            // 직전 턴: 마지막 150자만 표시 (LLM이 '이어쓸' 지점 명확화)
+            const trimmed = t.narrative.length > 150
+              ? '...' + t.narrative.slice(-150)
+              : t.narrative;
+            narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
+          } else {
+            // 이전 턴: 요약용 200자
+            narrativePart = `\n서술: ${t.narrative.slice(0, 200)}${t.narrative.length > 200 ? '...' : ''}`;
+          }
+        }
         return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${t.rawInput}"${outcomePart}${narrativePart}`;
       });
       memoryParts.push(
         [
           '[이번 방문 대화]',
-          '이 장소에서 있었던 대화와 행동입니다.',
-          '⚠️ 핵심 규칙: 바로 직전 턴의 서술에서 이어지는 장면을 써야 합니다. 장면을 처음부터 다시 시작하지 마세요.',
-          '- 직전 턴에서 NPC가 등장했다면, 같은 NPC와의 대화를 이어가세요.',
-          '- 직전 턴에서 특정 장소(술집, 골목 등)에 있었다면, 같은 장소에서 계속하세요.',
-          '- 직전 턴의 서술 마지막 상황에서 자연스럽게 이어지는 다음 장면을 묘사하세요.',
-          '- [상황 요약]은 이번 턴의 게임 결과 정보일 뿐, 새로운 장면 설정이 아닙니다.',
+          '이 장소에서 있었던 대화와 행동입니다. 서술 텍스트는 참고용이며 복사 대상이 아닙니다.',
+          '',
+          '⚠️ 핵심 규칙:',
+          '1. 직전 턴의 서술 텍스트를 절대 반복/복사하지 마세요. 이미 쓰인 묘사를 다시 쓰면 안 됩니다.',
+          '2. 직전 서술의 마지막 장면에서 자연스럽게 이어지는 새 장면만 작성하세요.',
+          '3. 직전 턴에서 NPC가 등장했다면, 같은 NPC와의 대화를 이어가세요.',
+          '4. 직전 턴에서 특정 장소에 있었다면, 같은 장소에서 계속하세요.',
+          '5. [상황 요약]은 이번 턴의 게임 결과 정보일 뿐, 새로운 장면 설정이 아닙니다.',
           '',
           sessionLines.join('\n---\n'),
         ].join('\n'),
@@ -139,9 +154,17 @@ export class PromptBuilderService {
         }
         factsParts.push(parts.join('\n'));
       } else if (inputType === 'CHOICE') {
-        factsParts.push(
+        const actionCtx = sr.ui?.actionContext as { parsedType?: string; originalInput?: string; tone?: string } | undefined;
+        const parts = [
           `[플레이어 선택] 당신은 "${rawInput}"을(를) 선택했습니다.`,
-        );
+          '서술 규칙: 먼저 플레이어가 이 선택을 실행하는 장면을 구체적으로 묘사하세요.',
+          '직전 턴의 장면·장소·NPC에서 자연스럽게 이어져야 합니다. 장면을 갑자기 다른 장소로 옮기지 마세요.',
+          '선택의 결과를 충분히 보여준 뒤, 자연스럽게 다음 상황으로 전환하세요.',
+        ];
+        if (actionCtx?.parsedType) {
+          parts.push(`엔진 해석: ${actionCtx.parsedType}`);
+        }
+        factsParts.push(parts.join('\n'));
       }
     }
 

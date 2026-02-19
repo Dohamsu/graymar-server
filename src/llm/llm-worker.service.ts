@@ -16,6 +16,7 @@ import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
+import { toDisplayText } from '../common/text-utils.js';
 
 const POLL_INTERVAL_MS = 2000;
 const LOCK_TIMEOUT_S = 60;
@@ -133,11 +134,13 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         temperature: config.temperature,
       });
 
-      // 4. 내러티브 결정 — 실패 시 summary.short로 graceful degradation
+      // 4. 내러티브 결정 — 실패 또는 mock fallback 시 SceneShell로 graceful degradation
       let narrative: string;
       let modelUsed: string;
 
-      if (callResult.success && callResult.response) {
+      const isMockFallback = callResult.success && callResult.providerUsed === 'mock' && config.provider !== 'mock';
+
+      if (callResult.success && callResult.response && !isMockFallback) {
         narrative = callResult.response.text;
         modelUsed = callResult.response.model;
       } else {
@@ -153,7 +156,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           wsData?.currentLocationId ?? 'LOC_MARKET',
           (wsData?.timePhase ?? 'DAY') as any,
           (wsData?.hubSafety ?? 'SAFE') as any,
-          serverResult.summary.display ?? serverResult.summary.short,
+          serverResult.summary.display ?? toDisplayText(serverResult.summary.short),
           resolveOutcome,
         );
         modelUsed = 'fallback-scene-shell';

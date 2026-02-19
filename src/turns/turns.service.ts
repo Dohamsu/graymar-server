@@ -22,6 +22,7 @@ import type {
   WorldState,
   ArcState,
   PlayerAgenda,
+  ChoiceItem,
 } from '../db/types/index.js';
 import { computePBP } from '../db/types/player-behavior.js';
 import type { NodeType, LlmStatus } from '../db/types/index.js';
@@ -301,7 +302,7 @@ export class TurnsService {
             '- 선술집을 나서며 밤의 그레이마르 거리를 바라보는 것으로 마무리하세요. 어디로 갈지는 언급하지 마세요.',
             '- 당신의 내면("결심한다", "다짐한다")을 쓰지 마세요. 행동만 묘사하세요.',
           ].join('\n'),
-          display: undefined,
+          display: '당신은 고개를 끄덕이며 의뢰를 수락했다. 서기관 로넨이 안도의 한숨을 내쉬었다. "고맙소… 은혜를 잊지 않겠소." 당신은 선술집을 나서 밤의 그레이마르 거리를 바라보았다.',
         },
         ui: {
           availableActions: ['CHOICE'],
@@ -402,15 +403,49 @@ export class TurnsService {
     const insistenceCount = this.calculateInsistenceCount(actionHistory, rawInput);
     const intent = this.intentParser.parseWithInsistence(rawInput, source, choicePayload, insistenceCount);
 
-    // EventMatcherService로 이벤트 매칭
-    const allEvents = this.content.getAllEventsV2();
+    // MOVE_LOCATION: 자유 텍스트로 다른 LOCATION 이동 요청 시 실제 전환
+    if (intent.actionType === 'MOVE_LOCATION' && body.input.type === 'ACTION') {
+      const targetLocationId = this.extractTargetLocation(rawInput, locationId);
+      if (targetLocationId && targetLocationId !== locationId) {
+        return this.performLocationTransition(
+          run, currentNode, turnNo, body, rawInput, runState, ws, arcState, locationId, targetLocationId,
+        );
+      }
+    }
+
+    // 이벤트 연속성: 같은 씬을 유지할 수 있으면 이전 이벤트 재사용
+    const sourceEventId = choicePayload?.sourceEventId as string | undefined;
     const rng = this.rngService.create(run.seed, turnNo);
-    const recentEventIds = actionHistory
-      .filter((h) => h.eventId)
-      .map((h) => h.eventId!);
-    const matchedEvent = this.eventMatcher.match(
-      allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds,
-    );
+    let matchedEvent: ReturnType<typeof this.eventMatcher.match> = null;
+
+    if (sourceEventId) {
+      // CHOICE에서 sourceEventId가 있으면 같은 이벤트 씬 유지
+      const continuedEvent = this.content.getEventById(sourceEventId);
+      matchedEvent = continuedEvent ?? null;
+    }
+
+    // ACTION(자유 텍스트)에서도 직전 이벤트 재사용 (씬 연속성)
+    // 단, MOVE_LOCATION 의도가 아닌 경우에만 (장소 이동은 새 씬)
+    if (!matchedEvent && body.input.type === 'ACTION' && intent.actionType !== 'MOVE_LOCATION') {
+      const lastEvent = actionHistory.length > 0
+        ? actionHistory[actionHistory.length - 1]
+        : undefined;
+      if (lastEvent?.eventId) {
+        const continuedEvent = this.content.getEventById(lastEvent.eventId);
+        matchedEvent = continuedEvent ?? null;
+      }
+    }
+
+    if (!matchedEvent) {
+      // 새 이벤트 매칭 (첫 턴, MOVE_LOCATION, 또는 이전 이벤트 없을 때)
+      const allEvents = this.content.getAllEventsV2();
+      const recentEventIds = actionHistory
+        .filter((h) => h.eventId)
+        .map((h) => h.eventId!);
+      matchedEvent = this.eventMatcher.match(
+        allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds,
+      );
+    }
 
     if (!matchedEvent) {
       // fallback 결과
@@ -564,11 +599,22 @@ export class TurnsService {
     // 비도전 행위 여부 (MOVE_LOCATION, REST, SHOP, TALK → 주사위 UI 숨김)
     const isNonChallenge = ['MOVE_LOCATION', 'REST', 'SHOP', 'TALK'].includes(intent.actionType);
 
-    // 결과 조립 — 이전에 선택한 choice 필터링
+    // 결과 조립 — 선택지 생성 전략:
+    // 이벤트 첫 만남 → 이벤트 고유 선택지, 이미 상호작용한 이벤트 → resolve 후속 선택지
+    const previousHistory = runState.actionHistory ?? [];
+    const eventAlreadyInteracted = previousHistory.some((h) => h.eventId === matchedEvent.eventId);
     const selectedChoiceIds = newHistory
       .filter((h) => h.choiceId)
       .map((h) => h.choiceId!);
-    const choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, matchedEvent.payload.choices, selectedChoiceIds);
+
+    let choices: ChoiceItem[];
+    if (eventAlreadyInteracted) {
+      // 이미 상호작용한 이벤트 → resolve 결과 기반 후속 선택지 (sourceEventId 없음 → 다음 턴에 새 이벤트 매칭)
+      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds);
+    } else {
+      // 첫 만남 이벤트 → 이벤트 고유 선택지
+      choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, matchedEvent.payload.choices, selectedChoiceIds, matchedEvent.eventId);
+    }
     const summaryText = `${matchedEvent.payload.sceneFrame}`;
     const result = this.buildLocationResult(turnNo, currentNode, summaryText, resolveResult.outcome, choices, ws, {
       parsedType: intent.actionType,
@@ -947,6 +993,88 @@ export class TurnsService {
         .where(eq(runMemories.runId, runId));
     }
     // run_memories가 없으면 LLM Worker가 아직 생성 전 — 스킵 (다음 방문 시 저장)
+  }
+
+  /** LOCATION→LOCATION 직접 이동 (HUB 경유 없이) */
+  private async performLocationTransition(
+    run: any, currentNode: any, turnNo: number, body: SubmitTurnBody,
+    rawInput: string, runState: RunState, ws: WorldState, arcState: ArcState,
+    fromLocationId: string, toLocationId: string,
+  ) {
+    const updatedRunState: RunState = { ...runState };
+
+    // 장기기억 저장
+    await this.saveLocationVisitSummary(run.id, currentNode.id, fromLocationId);
+
+    // WorldState 업데이트
+    const newWs = this.worldStateService.moveToLocation(ws, toLocationId);
+    updatedRunState.worldState = newWs;
+    updatedRunState.actionHistory = []; // 이동 시 고집 이력 초기화
+
+    // 현재 노드 종료
+    await this.db.update(nodeInstances)
+      .set({ status: 'NODE_ENDED', updatedAt: new Date() })
+      .where(eq(nodeInstances.id, currentNode.id));
+
+    // 이동 턴 커밋
+    const locationNames: Record<string, string> = {
+      LOC_MARKET: '시장 거리', LOC_GUARD: '경비대 지구',
+      LOC_HARBOR: '항만 부두', LOC_SLUMS: '빈민가',
+    };
+    const toName = locationNames[toLocationId] ?? toLocationId;
+    const moveResult = this.buildSystemResult(turnNo, currentNode, `${toName}(으)로 향한다.`);
+    await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, moveResult, updatedRunState, body.options?.skipLlm);
+
+    // 새 LOCATION 노드 생성
+    const transition = await this.nodeTransition.transitionToLocation(
+      run.id, currentNode.nodeIndex, turnNo + 1, toLocationId,
+      updatedRunState.worldState!, updatedRunState,
+    );
+
+    // 전환 턴 생성
+    transition.enterResult.turnNo = turnNo + 1;
+    await this.db.insert(turns).values({
+      runId: run.id, turnNo: turnNo + 1, nodeInstanceId: transition.enterResult.node.id,
+      nodeType: 'LOCATION', inputType: 'SYSTEM', rawInput: '',
+      idempotencyKey: `${run.id}_loc_${transition.nextNodeIndex}`,
+      parsedBy: null, confidence: null, parsedIntent: null,
+      policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
+      serverResult: transition.enterResult, llmStatus: 'PENDING',
+    });
+
+    await this.db.update(runSessions).set({
+      currentTurnNo: turnNo + 1, runState: updatedRunState, updatedAt: new Date(),
+    }).where(eq(runSessions.id, run.id));
+
+    return {
+      accepted: true, turnNo, serverResult: moveResult,
+      llm: { status: 'PENDING' as LlmStatus, narrative: null },
+      meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
+      transition: {
+        nextNodeIndex: transition.nextNodeIndex,
+        nextNodeType: transition.nextNodeType,
+        enterResult: transition.enterResult,
+        battleState: null,
+        enterTurnNo: turnNo + 1,
+      },
+    };
+  }
+
+  /** 자유 텍스트에서 목표 위치 추출 */
+  private extractTargetLocation(input: string, currentLocationId: string): string | null {
+    const normalized = input.toLowerCase();
+    const locationKeywords: Array<{ keywords: string[]; locationId: string }> = [
+      { keywords: ['시장', '상점가', '장터'], locationId: 'LOC_MARKET' },
+      { keywords: ['경비대', '경비', '초소', '병영'], locationId: 'LOC_GUARD' },
+      { keywords: ['항만', '부두', '항구', '선착장'], locationId: 'LOC_HARBOR' },
+      { keywords: ['빈민가', '빈민', '슬럼', '뒷골목'], locationId: 'LOC_SLUMS' },
+    ];
+    for (const entry of locationKeywords) {
+      for (const kw of entry.keywords) {
+        if (normalized.includes(kw)) return entry.locationId;
+      }
+    }
+    return null;
   }
 
   /** 고집(insistence) 카운트: suppressedActionType이 동일한 연속 행동 횟수 */
