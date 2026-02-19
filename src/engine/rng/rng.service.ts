@@ -1,4 +1,4 @@
-// 정본: design/combat_engine_resolve_v1.md §2 — splitmix64 기반 결정적 RNG
+// 정본: specs/combat_engine_resolve_v1.md §2 — splitmix64 기반 결정적 RNG
 
 import { Injectable } from '@nestjs/common';
 

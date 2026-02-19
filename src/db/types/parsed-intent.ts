@@ -1,4 +1,4 @@
-// 정본: design/input_processing_pipeline_v1.md §3-4
+// 정본: specs/input_processing_pipeline_v1.md §3-4
 
 import type {
   ActionTypeCombat,

@@ -4,6 +4,7 @@
 export interface LlmMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  cacheControl?: 'ephemeral'; // Claude 캐시 브레이크포인트 (OpenAI/Gemini/Mock은 무시)
 }
 
 export interface LlmProviderRequest {
@@ -18,6 +19,7 @@ export interface LlmProviderResponse {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number; // OpenAI: prompt_tokens_details.cached_tokens
   latencyMs: number;
 }
 

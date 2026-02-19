@@ -31,6 +31,13 @@ export class WorldStateService {
       deferredEffects: [],
       combatWindowCount: 0,
       combatWindowStart: 0,
+      locationStates: {
+        LOC_MARKET: { security: 60, crime: 30, unrest: 20, spotlight: false },
+        LOC_GUARD: { security: 80, crime: 10, unrest: 10, spotlight: false },
+        LOC_HARBOR: { security: 40, crime: 50, unrest: 40, spotlight: false },
+        LOC_SLUMS: { security: 20, crime: 70, unrest: 60, spotlight: false },
+      },
+      incidentFlags: {},
     };
   }
 

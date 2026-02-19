@@ -1,4 +1,4 @@
-// 정본: design/llm_context_system_v1.md
+// 정본: specs/llm_context_system_v1.md
 
 export type ThemeMemory = {
   key: string;

@@ -14,3 +14,8 @@ export * from './agenda.js';
 export * from './arc-state.js';
 export * from './parsed-intent-v2.js';
 export * from './resolve-result.js';
+export * from './npc-state.js';
+export * from './player-behavior.js';
+export * from './region-state.js';
+export * from './equipment.js';
+export * from './region-affix.js';

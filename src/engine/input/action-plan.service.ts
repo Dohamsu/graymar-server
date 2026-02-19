@@ -1,4 +1,4 @@
-// 정본: design/combat_engine_resolve_v1.md §1.1 — Intent → ActionPlan 변환
+// 정본: specs/combat_engine_resolve_v1.md §1.1 — Intent → ActionPlan 변환
 
 import { Injectable } from '@nestjs/common';
 import type { ActionPlan, ActionUnit } from '../../db/types/index.js';

@@ -19,7 +19,7 @@ export class ClaudeProvider implements LlmProvider {
   constructor(private readonly config: LlmConfig) {}
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  generate(_request: LlmProviderRequest): Promise<LlmProviderResponse> {
+  generate(_request: LlmProviderRequest): Promise<LlmProviderResponse> { // Phase B: cache_control 변환 구현 예정
     return Promise.reject(
       new Error(
         'Claude provider is not yet implemented. Install @anthropic-ai/sdk and implement generate().',

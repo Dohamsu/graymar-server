@@ -1,4 +1,4 @@
-// 정본: design/llm_context_system_v1.md — L0~L4 5계층 인터페이스
+// 정본: specs/llm_context_system_v1.md — L0~L4 5계층 인터페이스
 
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, ne } from 'drizzle-orm';
@@ -9,7 +9,8 @@ import {
   recentSummaries,
   turns,
 } from '../db/schema/index.js';
-import type { ServerResultV1 } from '../db/types/index.js';
+import type { ServerResultV1, NPCState, Relationship, PlayerBehaviorProfile } from '../db/types/index.js';
+import { summarizeRelationship, computeEffectivePosture } from '../db/types/npc-state.js';
 
 export interface RecentTurnEntry {
   turnNo: number;
@@ -32,6 +33,16 @@ export interface LlmContext {
   worldSnapshot: string | null; // L0 확장: WorldState 요약
   locationContext: string | null; // L1 확장: 현재 LOCATION + 이벤트 컨텍스트
   agendaArc: string | null; // L4 확장: Agenda/Arc 진행도
+  // Phase 2: NPC/PBP 확장
+  npcRelationFacts: string[]; // L2 확장: NPC 관계 서술 요약
+  playerProfile: string | null; // L4 확장: 플레이어 행동 프로필 요약
+  // Phase 3: Turn Orchestration
+  npcInjection: { npcName: string; posture: string; dialogueSeed: string; reason: string } | null;
+  peakMode: boolean;
+  npcPostures: Record<string, string>; // npcId → effective posture
+  // Phase 4: Equipment Narrative Tags
+  equipmentTags: string[]; // 장비 서술 태그 (최대 6개, LLM 톤 영향)
+  activeSetNames: string[]; // 활성 세트 이름 목록
 }
 
 @Injectable()
@@ -165,6 +176,46 @@ export class ContextBuilderService {
       ? `\n[행동 결과] ${resolveOutcome === 'SUCCESS' ? '성공' : resolveOutcome === 'PARTIAL' ? '부분 성공' : '실패'}`
       : '';
 
+    // Phase 2: NPC 관계 서술 요약 (L2 확장)
+    const npcRelationFacts: string[] = [];
+    if (runState) {
+      const npcStates = runState.npcStates as Record<string, NPCState> | undefined;
+      const relationships = runState.relationships as Record<string, Relationship> | undefined;
+      if (npcStates && relationships) {
+        for (const [npcId, rel] of Object.entries(relationships)) {
+          const npc = npcStates[npcId];
+          if (npc) {
+            const posture = computeEffectivePosture(npc);
+            const summary = summarizeRelationship(npcId, rel);
+            npcRelationFacts.push(`${summary} (자세: ${posture})`);
+          }
+        }
+      }
+    }
+
+    // Phase 2: 플레이어 행동 프로필 요약 (L4 확장)
+    let playerProfile: string | null = null;
+    if (runState) {
+      const pbp = runState.pbp as PlayerBehaviorProfile | undefined;
+      if (pbp && pbp.scores) {
+        const s = pbp.scores as unknown as Record<string, number>;
+        const nonZero = Object.entries(s).filter(([, v]) => v > 0);
+        if (nonZero.length > 0) {
+          playerProfile = `플레이어 성향: ${pbp.dominant}/${pbp.secondary} (${nonZero.map(([k, v]) => `${k}=${v}`).join(', ')})`;
+        }
+      }
+    }
+
+    // Phase 3: Orchestration 컨텍스트 (serverResult.ui에서 추출)
+    const uiAny = serverResult.ui as Record<string, unknown>;
+    const npcInjection = uiAny?.npcInjection as LlmContext['npcInjection'] ?? null;
+    const peakMode = (uiAny?.peakMode as boolean) ?? false;
+    const npcPostures = (uiAny?.npcPostures as Record<string, string>) ?? {};
+
+    // Phase 4: Equipment narrative tags (serverResult.ui에서 추출)
+    const equipmentTags = (uiAny?.equipmentTags as string[]) ?? [];
+    const activeSetNames = (uiAny?.activeSetNames as string[]) ?? [];
+
     return {
       theme: memory?.theme ?? [],
       storySummary: memory?.storySummary ?? null,
@@ -177,6 +228,13 @@ export class ContextBuilderService {
       worldSnapshot,
       locationContext,
       agendaArc,
+      npcRelationFacts,
+      playerProfile,
+      npcInjection,
+      peakMode,
+      npcPostures,
+      equipmentTags,
+      activeSetNames,
     };
   }
 }

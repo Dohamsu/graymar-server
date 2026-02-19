@@ -1,4 +1,4 @@
-// 정본: design/combat_resolve_engine_v1.md §2 — 스탯 파이프라인 (Priority 기반)
+// 정본: specs/combat_resolve_engine_v1.md §2 — 스탯 파이프라인 (Priority 기반)
 
 import { Injectable } from '@nestjs/common';
 import type { PermanentStats } from '../../db/types/index.js';

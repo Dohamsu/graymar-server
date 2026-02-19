@@ -1,4 +1,4 @@
-// 정본: design/HUB_input_processing.md
+// 정본: specs/HUB_input_processing.md
 
 export const INTENT_ACTION_TYPE = [
   'INVESTIGATE',

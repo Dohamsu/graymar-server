@@ -178,8 +178,10 @@ export class SceneShellService {
     locationId: string,
     eventType?: string,
     eventChoices?: EventChoice[],
+    selectedChoiceIds?: string[],
   ): ChoiceItem[] {
-    const choices: ChoiceItem[] = [];
+    const selected = new Set(selectedChoiceIds ?? []);
+    let choices: ChoiceItem[] = [];
 
     // 1순위: 이벤트 payload.choices (이벤트 고유 선택지)
     if (eventChoices && eventChoices.length > 0) {
@@ -222,6 +224,22 @@ export class SceneShellService {
       }
     }
 
+    // 이전에 선택한 선택지 필터링 (중복 방지)
+    if (selected.size > 0) {
+      const filtered = choices.filter((c) => !selected.has(c.id));
+      if (filtered.length > 0) {
+        choices = filtered;
+      } else {
+        // 현재 풀의 모든 선택지가 소진됨 → 다른 풀에서 보충
+        const fallbackPool = DEFAULT_LOCATION_CHOICES[locationId] ?? GENERIC_EXPLORE_CHOICES;
+        const fallbackFiltered = fallbackPool.filter((c) => !selected.has(c.id));
+        if (fallbackFiltered.length > 0) {
+          choices = fallbackFiltered;
+        }
+        // 모든 풀 소진 시 원본 유지 (재선택 허용)
+      }
+    }
+
     // HUB 복귀 선택지 항상 포함
     choices.push({
       id: 'go_hub',
@@ -231,5 +249,35 @@ export class SceneShellService {
     });
 
     return choices;
+  }
+
+  /**
+   * LLM 실패 시 SceneShell 기반 부분 서술 생성 (Partial Narrative Mode)
+   * - scene_shells.json 분위기 텍스트 + summary 조합 → 3~5문장
+   * - NPC 대사 생략, 상황 묘사 위주
+   */
+  buildFallbackNarrative(
+    locationId: string,
+    timePhase: TimePhase,
+    safety: HubSafety,
+    summaryText: string,
+    resolveOutcome?: string,
+  ): string {
+    const atmosphere = this.generateSceneShell(locationId, timePhase, safety);
+
+    const parts: string[] = [];
+    if (atmosphere) parts.push(atmosphere);
+    if (summaryText) parts.push(summaryText);
+
+    // 판정 결과에 따른 보충 서술
+    if (resolveOutcome === 'SUCCESS') {
+      parts.push('행동은 원하는 대로 진행되었다.');
+    } else if (resolveOutcome === 'PARTIAL') {
+      parts.push('완전하지는 않지만 어느 정도 결과를 얻었다.');
+    } else if (resolveOutcome === 'FAIL') {
+      parts.push('상황이 의도대로 흘러가지 않았다.');
+    }
+
+    return parts.join(' ') || summaryText || '주변은 조용하다.';
   }
 }

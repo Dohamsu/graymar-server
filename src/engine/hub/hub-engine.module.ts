@@ -7,6 +7,8 @@ import { AgendaService } from './agenda.service.js';
 import { ArcService } from './arc.service.js';
 import { SceneShellService } from './scene-shell.service.js';
 import { IntentParserV2Service } from './intent-parser-v2.service.js';
+import { TurnOrchestrationService } from './turn-orchestration.service.js';
+import { ShopService } from './shop.service.js';
 const providers = [
   WorldStateService,
   HeatService,
@@ -16,6 +18,8 @@ const providers = [
   ArcService,
   SceneShellService,
   IntentParserV2Service,
+  TurnOrchestrationService,
+  ShopService,
 ];
 
 @Module({

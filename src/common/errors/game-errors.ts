@@ -1,4 +1,4 @@
-// 정본: design/server_api_system.md §8
+// 정본: specs/server_api_system.md §8
 
 import { HttpStatus } from '@nestjs/common';
 

@@ -1,4 +1,4 @@
-// 정본: design/node_resolve_rules_v1.md — 통합 노드 리졸버 (노드 타입별 분기)
+// 정본: specs/node_resolve_rules_v1.md — 통합 노드 리졸버 (노드 타입별 분기)
 
 import { Injectable } from '@nestjs/common';
 import type { NodeType, NodeOutcome } from '../../db/types/index.js';

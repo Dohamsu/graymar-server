@@ -1,4 +1,4 @@
-// 정본: design/HUB_system.md — HUB 기반 런 생성
+// 정본: specs/HUB_system.md — HUB 기반 런 생성
 
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, lt } from 'drizzle-orm';
@@ -125,6 +125,8 @@ export class RunsService {
       arcState,
       npcRelations,
       eventCooldowns: {},
+      equipped: {},
+      equipmentBag: [],
     };
 
     // 4. HUB 선택지 생성

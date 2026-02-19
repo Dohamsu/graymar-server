@@ -1,4 +1,4 @@
-// 정본: design/rewards_and_progression_v1.md §4 — 인벤토리 시스템
+// 정본: specs/rewards_and_progression_v1.md §4 — 인벤토리 시스템
 
 import { Injectable } from '@nestjs/common';
 import type { ItemStack } from '../../db/types/index.js';

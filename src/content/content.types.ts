@@ -62,7 +62,7 @@ export type EncounterDefinition = {
 
 export type ItemDefinition = {
   itemId: string;
-  type: 'CLUE' | 'CONSUMABLE' | 'KEY_ITEM';
+  type: 'CLUE' | 'CONSUMABLE' | 'KEY_ITEM' | 'EQUIPMENT';
   name: string;
   description?: string;
   factKey?: string;
@@ -76,7 +76,17 @@ export type ItemDefinition = {
     targetSelf: boolean;
   };
   buyPrice?: number;
+  sellPrice?: number;
   maxStack?: number;
+  // Phase 4: Equipment 확장 필드
+  rarity?: 'COMMON' | 'RARE' | 'UNIQUE' | 'LEGENDARY';
+  slot?: 'WEAPON' | 'ARMOR' | 'TACTICAL' | 'POLITICAL' | 'RELIC';
+  statBonus?: Record<string, number>; // { atk: 3, crit: 2 }
+  setId?: string;
+  narrativeTags?: string[];
+  // Phase 4.1: Region Affix
+  allowRegionAffix?: boolean;
+  regionAffixProfileId?: string;
 };
 
 export type PlayerDefaults = {
@@ -135,6 +145,42 @@ export type SuggestedChoice = {
   hint?: string;
   affordance: string;
   riskLevel?: 1 | 2 | 3;
+};
+
+export type NpcDefinition = {
+  npcId: string;
+  name: string;
+  role: string;
+  faction: string | null;
+  hostile: boolean | 'conditional';
+  combatProfile: unknown;
+  title: string | null;
+  aliases: string[];
+  nameStyle: string;
+  basePosture?: string;
+  initialTrust?: number;
+  agenda?: string;
+};
+
+export type SetDefinitionData = {
+  setId: string;
+  name: string;
+  regionId: string;
+  type: 'COMBAT' | 'POLITICAL';
+  pieces: string[];
+  bonus2: { description: string; statBonus?: Record<string, number>; specialEffect?: string };
+  bonus3: { description: string; statBonus?: Record<string, number>; specialEffect?: string };
+};
+
+export type ShopDefinition = {
+  shopId: string;
+  locationId: string;
+  name: string;
+  description: string;
+  refreshInterval: number;
+  stockPool: string[]; // itemId 목록
+  stockSize: number;
+  uniqueChance: number; // 0~1
 };
 
 export type ArcEventDefinition = {

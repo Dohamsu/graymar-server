@@ -1,4 +1,4 @@
-// 정본: design/HUB_arc_system.md
+// 정본: specs/HUB_arc_system.md
 
 export const ARC_ROUTE = [
   'EXPOSE_CORRUPTION',

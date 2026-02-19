@@ -1,4 +1,4 @@
-// 정본: design/HUB_resolve_system.md
+// 정본: specs/HUB_resolve_system.md
 
 export const RESOLVE_OUTCOME = ['SUCCESS', 'PARTIAL', 'FAIL'] as const;
 export type ResolveOutcome = (typeof RESOLVE_OUTCOME)[number];

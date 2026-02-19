@@ -1,4 +1,4 @@
-// 정본: design/combat_engine_resolve_v1.md §1.1
+// 정본: specs/combat_engine_resolve_v1.md §1.1
 
 import type { ActionTypeCombat, ParsedBy, PolicyResult } from './enums.js';
 
