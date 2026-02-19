@@ -12,6 +12,14 @@ import type { Rng } from '../rng/rng.service.js';
 const HEAT_DELTA_CLAMP = 8;
 const MAX_COMBAT_PER_WINDOW = 3;
 
+// 비도전(non-challenge) 행위: 주사위 판정 없이 자동 SUCCESS
+const NON_CHALLENGE_ACTIONS = new Set([
+  'MOVE_LOCATION',
+  'REST',
+  'SHOP',
+  'TALK',
+]);
+
 // actionType → 관련 스탯 매핑
 const ACTION_STAT_MAP: Record<string, keyof PermanentStats> = {
   FIGHT: 'atk',
@@ -28,6 +36,14 @@ const ACTION_STAT_MAP: Record<string, keyof PermanentStats> = {
 
 @Injectable()
 export class ResolveService {
+  // BRIBE/TRADE 골드 비용: 기본 5, PARTIAL이면 3, FAIL이면 0 (돌려받음)
+  private computeGoldCost(actionType: string, outcome: string): number {
+    if (actionType !== 'BRIBE' && actionType !== 'TRADE') return 0;
+    if (outcome === 'SUCCESS') return -5;
+    if (outcome === 'PARTIAL') return -3;
+    return 0; // FAIL: 비용 없음 (거래 성사 안됨)
+  }
+
   resolve(
     event: EventDefV2,
     intent: ParsedIntentV2,
@@ -35,6 +51,11 @@ export class ResolveService {
     stats: PermanentStats,
     rng: Rng,
   ): ResolveResult {
+    // 비도전 행위 → 주사위 없이 자동 SUCCESS
+    if (NON_CHALLENGE_ACTIONS.has(intent.actionType)) {
+      return this.buildAutoSuccess(event, intent);
+    }
+
     // 1d6 주사위 (결정적 RNG)
     const diceRoll = rng.range(1, 6);
 
@@ -133,6 +154,7 @@ export class ResolveService {
       heatDelta,
       tensionDelta: outcome === 'FAIL' ? 1 : 0,
       influenceDelta: outcome === 'SUCCESS' ? 1 : 0,
+      goldDelta: this.computeGoldCost(intent.actionType, outcome),
       relationChanges,
       reputationChanges,
       flagsSet: outcome === 'SUCCESS' ? event.payload.tags.filter((t) => t.startsWith('flag_')) : [],
@@ -143,6 +165,51 @@ export class ResolveService {
       combatEncounterId: triggerCombat
         ? this.selectCombatEncounter(event)
         : undefined,
+    };
+  }
+
+  /** 비도전 행위 자동 SUCCESS: 주사위 소비 없음, 최소 열기, 전투 트리거 없음 */
+  private buildAutoSuccess(event: EventDefV2, intent: ParsedIntentV2): ResolveResult {
+    const tags = event.payload.tags;
+
+    // 관계/평판은 SUCCESS 기준 적용
+    const relationChanges: Record<string, number> = {};
+    const npcId = event.payload.primaryNpcId;
+    if (npcId) relationChanges[npcId] = 5;
+
+    const reputationChanges: Record<string, number> = {};
+    if (tags.some((t) => ['GUARD_ALLIANCE', 'GUARD_PATROL', 'CHECKPOINT', 'ARMED_GUARD'].includes(t))) {
+      reputationChanges['CITY_GUARD'] = 3;
+    }
+    if (tags.some((t) => ['MERCHANT_GUILD', 'LEDGER', 'MERCHANT_CONSORTIUM'].includes(t))) {
+      reputationChanges['MERCHANT_CONSORTIUM'] = 3;
+    }
+    if (tags.some((t) => ['LABOR_GUILD', 'WORKER_RIGHTS', 'DOCK_THUGS'].includes(t))) {
+      reputationChanges['LABOR_GUILD'] = 3;
+    }
+
+    const agendaBucketDelta: Record<string, number> = {};
+    if (tags.includes('destabilize')) agendaBucketDelta.destabilizeGuard = 2;
+    if (tags.includes('merchant')) agendaBucketDelta.allyMerchant = 2;
+    if (tags.includes('underworld')) agendaBucketDelta.empowerUnderworld = 2;
+    if (tags.includes('corruption')) agendaBucketDelta.exposeCorruption = 2;
+    if (tags.includes('chaos')) agendaBucketDelta.profitFromChaos = 2;
+
+    return {
+      score: 6, // 자동 SUCCESS 임계값
+      outcome: 'SUCCESS',
+      eventId: event.eventId,
+      heatDelta: 0, // 비도전 행위는 열기를 올리지 않음
+      tensionDelta: 0,
+      influenceDelta: 1,
+      goldDelta: 0,
+      relationChanges,
+      reputationChanges,
+      flagsSet: event.payload.tags.filter((t) => t.startsWith('flag_')),
+      deferredEffects: [],
+      agendaBucketDelta,
+      commitmentDelta: event.commitmentDeltaOnSuccess ?? 0,
+      triggerCombat: false,
     };
   }
 

@@ -10,6 +10,7 @@ export type ResolveResult = {
   heatDelta: number; // ±8 clamp
   tensionDelta: number;
   influenceDelta: number;
+  goldDelta: number; // BRIBE/TRADE 골드 비용 (음수)
   relationChanges: Record<string, number>;
   flagsSet: string[];
   deferredEffects: Array<{
