@@ -418,15 +418,19 @@ export class TurnsService {
     const rng = this.rngService.create(run.seed, turnNo);
     let matchedEvent: ReturnType<typeof this.eventMatcher.match> = null;
 
-    if (sourceEventId) {
+    // FALLBACK 이벤트 고착 방지: 같은 이벤트에 3턴 이상 연속 시 새 이벤트 매칭
+    const consecutiveSameEvent = this.countConsecutiveSameEvent(actionHistory);
+    const shouldRefreshEvent = consecutiveSameEvent >= 3;
+
+    if (sourceEventId && !shouldRefreshEvent) {
       // CHOICE에서 sourceEventId가 있으면 같은 이벤트 씬 유지
       const continuedEvent = this.content.getEventById(sourceEventId);
       matchedEvent = continuedEvent ?? null;
     }
 
     // 직전 이벤트 재사용 (씬 연속성) — ACTION과 CHOICE 모두 적용
-    // 단, MOVE_LOCATION 의도가 아닌 경우에만 (장소 이동은 새 씬)
-    if (!matchedEvent && intent.actionType !== 'MOVE_LOCATION') {
+    // 단, MOVE_LOCATION 의도가 아닌 경우 + FALLBACK 고착이 아닌 경우에만
+    if (!matchedEvent && intent.actionType !== 'MOVE_LOCATION' && !shouldRefreshEvent) {
       const lastEvent = actionHistory.length > 0
         ? actionHistory[actionHistory.length - 1]
         : undefined;
@@ -873,6 +877,19 @@ export class TurnsService {
       llm: { status: llmStatus, narrative: null },
       meta: { nodeOutcome: nodeOutcome ?? 'ONGOING', policyResult },
     };
+  }
+
+  /** 같은 이벤트가 연속으로 몇 턴 반복되었는지 계산 (끝에서부터) */
+  private countConsecutiveSameEvent(actionHistory: Array<{ eventId?: string }>): number {
+    if (actionHistory.length === 0) return 0;
+    const lastEventId = actionHistory[actionHistory.length - 1]?.eventId;
+    if (!lastEventId) return 0;
+    let count = 0;
+    for (let i = actionHistory.length - 1; i >= 0; i--) {
+      if (actionHistory[i]?.eventId === lastEventId) count++;
+      else break;
+    }
+    return count;
   }
 
   // --- Helper: 일반 턴 레코드 커밋 ---
