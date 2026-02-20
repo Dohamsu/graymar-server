@@ -144,22 +144,34 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         narrative = callResult.response.text;
         modelUsed = callResult.response.model;
       } else {
-        // Partial Narrative Mode: SceneShell 기반 분위기 서술 + 결과 요약 조합
+        // LLM 호출 실패 → FAILED로 마킹하여 클라이언트에 알림
+        const errorMsg = callResult.error ?? 'LLM provider call failed';
         this.logger.warn(
-          `LLM call failed for turn ${pending.turnNo}, using SceneShell fallback`,
+          `LLM call failed for turn ${pending.turnNo}: ${errorMsg}`,
         );
-        const wsData = (serverResult.ui as Record<string, unknown>)?.worldState as
-          | { currentLocationId?: string; timePhase?: string; hubSafety?: string }
-          | undefined;
-        const resolveOutcome = (serverResult.ui as Record<string, unknown>)?.resolveOutcome as string | undefined;
-        narrative = this.sceneShell.buildFallbackNarrative(
-          wsData?.currentLocationId ?? 'LOC_MARKET',
-          (wsData?.timePhase ?? 'DAY') as any,
-          (wsData?.hubSafety ?? 'SAFE') as any,
-          serverResult.summary.display ?? toDisplayText(serverResult.summary.short),
-          resolveOutcome,
-        );
-        modelUsed = 'fallback-scene-shell';
+
+        // AI Turn 로그 기록 (실패 기록)
+        await this.aiTurnLog.log({
+          runId: pending.runId,
+          turnNo: pending.turnNo,
+          response: callResult.response,
+          messages,
+          error: callResult.error,
+        });
+
+        // FAILED 상태로 저장 — 클라이언트가 경고를 표시할 수 있도록
+        await this.db
+          .update(turns)
+          .set({
+            llmStatus: 'FAILED',
+            llmError: { error: errorMsg, worker: WORKER_ID, provider: config.provider },
+            llmModelUsed: config.provider === 'openai' ? config.openaiModel
+              : config.provider === 'gemini' ? config.geminiModel
+              : config.provider === 'claude' ? config.claudeModel
+              : 'unknown',
+          })
+          .where(eq(turns.id, pending.id));
+        return;
       }
 
       // 5. AI Turn 로그 기록
