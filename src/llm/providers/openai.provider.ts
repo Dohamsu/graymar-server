@@ -1,4 +1,6 @@
 // OpenAI LLM 공급자 — openai SDK v6
+// GPT-5/o-series reasoning 모델: Responses API 사용
+// GPT-4o 등 기존 모델: Chat Completions API 사용
 
 import type {
   LlmProvider,
@@ -6,6 +8,9 @@ import type {
   LlmProviderResponse,
 } from '../types/index.js';
 import type { LlmConfig } from '../types/index.js';
+
+// GPT-5, o1, o3 등 reasoning 모델 판별
+const isReasoningModel = (model: string) => /^(gpt-5|o[1-9])/.test(model);
 
 export class OpenAIProvider implements LlmProvider {
   readonly name = 'openai';
@@ -15,7 +20,6 @@ export class OpenAIProvider implements LlmProvider {
 
   private getClient(): import('openai').default {
     if (!this.client) {
-      // Dynamic import 대신 require 사용 — openai는 CommonJS 호환
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       const OpenAI = require('openai').default;
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
@@ -28,10 +32,68 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   async generate(request: LlmProviderRequest): Promise<LlmProviderResponse> {
-    const start = Date.now();
     const model = request.model ?? this.config.openaiModel;
 
+    if (isReasoningModel(model)) {
+      return this.generateWithResponses(request, model);
+    }
+    return this.generateWithChatCompletions(request, model);
+  }
+
+  /** Responses API — GPT-5/o-series reasoning 모델용 */
+  private async generateWithResponses(
+    request: LlmProviderRequest,
+    model: string,
+  ): Promise<LlmProviderResponse> {
+    const start = Date.now();
     const client = this.getClient();
+
+    const input = request.messages.map((m) => ({
+      role: m.role as 'system' | 'user' | 'assistant',
+      content: m.content,
+    }));
+
+    // reasoning 모델은 max_output_tokens에 추론 토큰이 포함되므로 8배 확보
+    const reasoningBudget = Math.max(request.maxTokens * 8, 8192);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response: any = await client.responses.create({
+      model,
+      input,
+      max_output_tokens: reasoningBudget,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const text: string = response.output_text ?? '';
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const usage = response.usage ?? {};
+
+    if (!text) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      console.warn(`[OpenAIProvider/Responses] Empty output_text. Status: ${response.status}, model: ${response.model}`);
+    }
+
+    return {
+      text,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      model: response.model ?? model,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      promptTokens: usage.input_tokens ?? 0,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      completionTokens: usage.output_tokens ?? 0,
+      cachedTokens: 0,
+      latencyMs: Date.now() - start,
+    };
+  }
+
+  /** Chat Completions API — GPT-4o 등 기존 모델용 */
+  private async generateWithChatCompletions(
+    request: LlmProviderRequest,
+    model: string,
+  ): Promise<LlmProviderResponse> {
+    const start = Date.now();
+    const client = this.getClient();
+
     const completion = await client.chat.completions.create({
       model,
       messages: request.messages.map((m) => ({
