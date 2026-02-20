@@ -424,9 +424,9 @@ export class TurnsService {
       matchedEvent = continuedEvent ?? null;
     }
 
-    // ACTION(자유 텍스트)에서도 직전 이벤트 재사용 (씬 연속성)
+    // 직전 이벤트 재사용 (씬 연속성) — ACTION과 CHOICE 모두 적용
     // 단, MOVE_LOCATION 의도가 아닌 경우에만 (장소 이동은 새 씬)
-    if (!matchedEvent && body.input.type === 'ACTION' && intent.actionType !== 'MOVE_LOCATION') {
+    if (!matchedEvent && intent.actionType !== 'MOVE_LOCATION') {
       const lastEvent = actionHistory.length > 0
         ? actionHistory[actionHistory.length - 1]
         : undefined;
@@ -609,8 +609,8 @@ export class TurnsService {
 
     let choices: ChoiceItem[];
     if (eventAlreadyInteracted) {
-      // 이미 상호작용한 이벤트 → resolve 결과 기반 후속 선택지 (sourceEventId 없음 → 다음 턴에 새 이벤트 매칭)
-      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds);
+      // 이미 상호작용한 이벤트 → resolve 결과 기반 후속 선택지 (sourceEventId 유지 → 맥락 연속성 보장)
+      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds, matchedEvent.eventId);
     } else {
       // 첫 만남 이벤트 → 이벤트 고유 선택지
       choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, matchedEvent.payload.choices, selectedChoiceIds, matchedEvent.eventId);

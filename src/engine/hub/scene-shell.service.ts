@@ -331,6 +331,7 @@ export class SceneShellService {
     locationId: string,
     resolveOutcome: ResolveOutcome,
     usedChoiceIds?: string[],
+    sourceEventId?: string,
   ): ChoiceItem[] {
     const used = new Set(usedChoiceIds ?? []);
 
@@ -351,7 +352,14 @@ export class SceneShellService {
       choices.push(locationChoice);
     }
 
-    // go_hub 항상 포함
+    // sourceEventId가 있으면 모든 선택지에 주입 → 다음 턴에서 같은 이벤트 재사용
+    if (sourceEventId) {
+      for (const c of choices) {
+        c.action.payload.sourceEventId = sourceEventId;
+      }
+    }
+
+    // go_hub 항상 포함 (sourceEventId 미포함 — HUB 복귀 시 이벤트 끊김이 맞음)
     choices.push({
       id: 'go_hub',
       label: '거점으로 돌아간다',
