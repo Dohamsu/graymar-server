@@ -43,6 +43,8 @@ export interface LlmContext {
   // Phase 4: Equipment Narrative Tags
   equipmentTags: string[]; // 장비 서술 태그 (최대 6개, LLM 톤 영향)
   activeSetNames: string[]; // 활성 세트 이름 목록
+  // P2: 캐릭터 성별
+  gender: 'male' | 'female';
 }
 
 @Injectable()
@@ -54,6 +56,7 @@ export class ContextBuilderService {
     nodeInstanceId: string,
     serverResult: ServerResultV1,
     runState?: Record<string, unknown> | null,
+    gender?: 'male' | 'female',
   ): Promise<LlmContext> {
     // L0 + L1: run_memories
     const memory = await this.db.query.runMemories.findFirst({
@@ -235,6 +238,7 @@ export class ContextBuilderService {
       npcPostures,
       equipmentTags,
       activeSetNames,
+      gender: gender ?? 'male',
     };
   }
 }

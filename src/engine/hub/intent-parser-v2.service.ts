@@ -32,7 +32,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
         '협박', '위협', '겁을 줘', '겁을 주', '겁줘', '으름장', '으르렁',
         '위세', '압박', '약점', '폭로', '불태', '가만두지', '가만 안',
         '후회할', '후회하게', '각오', '본때', '혼내', '혼을 내',
-        '칼을 들이', '칼을 겨누', '겨누', '노려', '경고', '엄포',
+        '검을 꺼내', '칼을 꺼내', '칼을 들이', '칼을 겨누', '검을 겨누', '겨누', '노려', '경고', '엄포',
         '벌을 줄', '응징', '보복', '입 다물', '입을 열어',
       ],
       actionType: 'THREATEN',
@@ -43,6 +43,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
       keywords: [
         '훔치', '훔쳐', '도둑', '소매치기', '털어', '빼앗', '빼돌',
         '몰래 가져', '몰래 챙', '슬쩍 집', '슬쩍 가져', '슬쩍 넣',
+        '슬쩍 챙', '슬쩍 들',
         '장물', '좀도둑', '빼내', '낚아채', '집어넣', '슬쩍 빼',
         '치워버', '감춰', '숨겨서 가져', '꿀꺽',
       ],
@@ -70,6 +71,9 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
         '값을 치르', '사례금', '수고비', '은화', '은화를', '동전',
         '금전', '재물', '금을 줄', '돈으로 해결', '돈이면',
         '얼마면', '얼마를', '지갑', '주머니에서 꺼',
+        '금화를 꺼', '금화를 흔', '금화를 내밀', '금화 내밀',
+        '금화를 보여', '금화를 쥐어', '돈을 꺼', '돈을 내밀',
+        '돈을 흔', '은화를 꺼', '은화를 내밀', '뒷돈',
       ],
       actionType: 'BRIBE',
     },
@@ -80,7 +84,8 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
         '조사', '살펴', '살펴본', '탐색', '찾아', '찾아본', '수색',
         '뒤지', '뒤져', '파헤', '파헤치', '캐물', '캐내', '추적',
         '추궁', '심문', '증거', '단서', '정체', '배후', '진상',
-        '확인', '검사', '들여다', '열어본', '열어보', '꺼내본', '꺼내',
+        '확인', '검사', '들여다', '열어본', '열어보',
+        '꺼내서 살펴', '꺼내서 확인', '꺼내어 조사', '꺼내어 살피',
         '해독', '분석', '읽어', '읽어본', '문서', '장부', '기록',
         '알아내', '알아본', '알아보', '파악', '조회', '정보를 캐',
         '더 깊이', '자세히', '꼼꼼히', '면밀히',
@@ -110,6 +115,15 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
         '진심을 담아', '진심으로', '솔직하게', '신뢰를',
         '합의', '제안', '동맹', '협력을 제', '손을 잡',
         '편이 되', '도움을 청', '부드럽게',
+        // P1 보강: 설득·해명·변호 맥락 키워드
+        '진정하', '진정해', '진정시', '해명', '변명', '변호',
+        '권리', '자격이', '소속이', '길드 소속', '신분',
+        '오해', '오해를', '이해해', '이해하', '이해시',
+        '설명', '설명하', '설명해', '알아들', '알아듣',
+        '말이 통', '통하는', '입장을', '사정을', '양해',
+        '관계없', '상관없', '걱정 마', '걱정하지', '안심',
+        '믿어', '믿으', '맹세', '약속하', '약속할',
+        '일하는 사람', '사람이오', '해가 되지', '해가 안',
       ],
       actionType: 'PERSUADE',
     },
@@ -128,10 +142,12 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
     // ── TRADE: 거래·상업·흥정 ──
     {
       keywords: [
-        '거래', '교환', '흥정', '구매', '구입', '판매',
+        '거래', '교환', '흥정', '흥정을 시', '흥정을 하', '흥정하',
+        '구매', '구입', '판매',
         '값을 깎', '시세', '매입', '사겠', '사고 싶', '사줘',
         '팔겠', '팔고 싶', '팔아', '물물교환', '바꿔', '바꾸',
         '값이 얼마', '얼마에 파', '얼마에 사',
+        '물건을 고', '물건을 사', '가격을',
       ],
       actionType: 'TRADE',
     },
@@ -148,7 +164,8 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
     // ── REST: 휴식·회복 ──
     {
       keywords: [
-        '쉬', '휴식', '잠', '회복', '눕', '앉아서', '기운을',
+        '쉬겠', '쉬자', '쉬려', '쉬고 싶', '좀 쉬', '잠시 쉬',
+        '휴식', '잠을 자', '잠을 청', '회복', '눕', '앉아서', '기운을',
         '체력을', '한숨 돌', '숨을 고르', '정비', '재정비',
         '몸을 추스', '기력', '쉬어',
       ],
@@ -258,6 +275,7 @@ export class IntentParserV2Service {
     source: 'RULE' | 'LLM' | 'CHOICE' = 'RULE',
     choicePayload?: Record<string, unknown>,
     insistenceCount: number = 0,
+    repeatedType: string | null = null,
   ): ParsedIntentV2 {
     // CHOICE 입력 시 payload에서 직접 매핑 (에스컬레이션 불필요)
     if (source === 'CHOICE' && choicePayload) {
@@ -277,10 +295,10 @@ export class IntentParserV2Service {
         ? escalationTarget
         : undefined;
 
-    // 고집 에스컬레이션: 3회 이상 반복 시 강한 actionType으로 승격
+    // 고집 에스컬레이션: 같은 actionType이 연속 3회(history 2회 + 현재) → 강한 타입으로 승격
     let escalated = false;
-    if (suppressedActionType && insistenceCount >= 3) {
-      actionType = suppressedActionType;
+    if (insistenceCount >= 2 && actionType === repeatedType && ESCALATION_MAP[actionType]) {
+      actionType = ESCALATION_MAP[actionType]!;
       escalated = true;
     }
 
@@ -326,20 +344,32 @@ export class IntentParserV2Service {
     };
   }
 
-  /** 입력 텍스트에서 매칭되는 모든 actionType을 순서대로 반환 */
+  /** 입력 텍스트에서 매칭되는 모든 actionType을 히트 수 기반으로 정렬하여 반환 */
   private extractAllActionTypes(input: string): IntentActionType[] {
-    const matched: IntentActionType[] = [];
+    const hitCounts = new Map<IntentActionType, number>();
+    const firstSeenOrder: IntentActionType[] = [];
+
     for (const entry of KEYWORD_MAP) {
+      let hits = 0;
       for (const kw of entry.keywords) {
         if (input.includes(kw)) {
-          if (!matched.includes(entry.actionType)) {
-            matched.push(entry.actionType);
-          }
-          break;
+          hits++;
         }
       }
+      if (hits > 0) {
+        hitCounts.set(entry.actionType, hits);
+        firstSeenOrder.push(entry.actionType);
+      }
     }
-    return matched;
+
+    // 히트 수가 같으면 KEYWORD_MAP 순서(우선순위) 유지, 히트가 많은 것이 앞으로
+    firstSeenOrder.sort((a, b) => {
+      const diff = (hitCounts.get(b) ?? 0) - (hitCounts.get(a) ?? 0);
+      if (diff !== 0) return diff;
+      return 0; // 히트 수 같으면 원래 순서 유지
+    });
+
+    return firstSeenOrder;
   }
 
   private extractTone(input: string): IntentTone {

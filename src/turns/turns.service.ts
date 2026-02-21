@@ -50,6 +50,7 @@ import { AgendaService } from '../engine/hub/agenda.service.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js';
+import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
 import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
 
@@ -73,6 +74,7 @@ export class TurnsService {
     private readonly arcService: ArcService,
     private readonly sceneShellService: SceneShellService,
     private readonly intentParser: IntentParserV2Service,
+    private readonly llmIntentParser: LlmIntentParserService,
     private readonly orchestration: TurnOrchestrationService,
   ) {}
 
@@ -398,10 +400,10 @@ export class TurnsService {
       }
     }
 
-    // 고집(insistence) 카운트 계산: 이전 행동 이력에서 동일 패턴 반복 횟수
+    // 고집(insistence) 카운트 계산: 같은 actionType 연속 반복 횟수
     const actionHistory = runState.actionHistory ?? [];
-    const insistenceCount = this.calculateInsistenceCount(actionHistory, rawInput);
-    const intent = this.intentParser.parseWithInsistence(rawInput, source, choicePayload, insistenceCount);
+    const { count: insistenceCount, repeatedType } = this.calculateInsistenceCount(actionHistory);
+    const intent = await this.llmIntentParser.parseWithInsistence(rawInput, source, choicePayload, insistenceCount, repeatedType, locationId);
 
     // MOVE_LOCATION: 자유 텍스트로 다른 LOCATION 이동 요청 시 실제 전환
     if (intent.actionType === 'MOVE_LOCATION' && body.input.type === 'ACTION') {
@@ -413,35 +415,43 @@ export class TurnsService {
       }
     }
 
-    // 이벤트 연속성: 같은 씬을 유지할 수 있으면 이전 이벤트 재사용
+    // 이벤트 연속성: 의도 기반 씬 연속성 판단 (3단계)
     const sourceEventId = choicePayload?.sourceEventId as string | undefined;
     const rng = this.rngService.create(run.seed, turnNo);
     let matchedEvent: ReturnType<typeof this.eventMatcher.match> = null;
 
-    // FALLBACK 이벤트 고착 방지: 같은 이벤트에 3턴 이상 연속 시 새 이벤트 매칭
-    const consecutiveSameEvent = this.countConsecutiveSameEvent(actionHistory);
-    const shouldRefreshEvent = consecutiveSameEvent >= 3;
-
-    if (sourceEventId && !shouldRefreshEvent) {
-      // CHOICE에서 sourceEventId가 있으면 같은 이벤트 씬 유지
-      const continuedEvent = this.content.getEventById(sourceEventId);
-      matchedEvent = continuedEvent ?? null;
+    // Step 1: CHOICE의 sourceEventId → 명시적 씬 유지 (플레이어의 선택)
+    if (sourceEventId) {
+      matchedEvent = this.content.getEventById(sourceEventId) ?? null;
     }
 
-    // 직전 이벤트 재사용 (씬 연속성) — ACTION과 CHOICE 모두 적용
-    // 단, MOVE_LOCATION 의도가 아닌 경우 + FALLBACK 고착이 아닌 경우에만
-    if (!matchedEvent && intent.actionType !== 'MOVE_LOCATION' && !shouldRefreshEvent) {
-      const lastEvent = actionHistory.length > 0
-        ? actionHistory[actionHistory.length - 1]
-        : undefined;
-      if (lastEvent?.eventId) {
-        const continuedEvent = this.content.getEventById(lastEvent.eventId);
-        matchedEvent = continuedEvent ?? null;
+    // Step 2: ACTION(자유 텍스트) → 현재 씬 유지 (플레이어가 씬과 능동적으로 대화 중)
+    //   예외: MOVE_LOCATION 의도, FALLBACK 이벤트(placeholder라 유지 의미 없음)
+    //   예외: 같은 이벤트가 연속 2턴 이상 사용 시 새 이벤트로 전환 (반복 방지)
+    if (!matchedEvent && body.input.type === 'ACTION' && intent.actionType !== 'MOVE_LOCATION') {
+      const lastEntry = actionHistory[actionHistory.length - 1];
+      if (lastEntry?.eventId) {
+        const lastEvent = this.content.getEventById(lastEntry.eventId);
+        if (lastEvent && lastEvent.eventType !== 'FALLBACK') {
+          // 같은 이벤트 연속 사용 횟수 계산
+          let consecutiveCount = 0;
+          for (let i = actionHistory.length - 1; i >= 0; i--) {
+            if (actionHistory[i].eventId === lastEntry.eventId) {
+              consecutiveCount++;
+            } else {
+              break;
+            }
+          }
+          // 연속 2턴 이하만 씬 유지, 3턴째부터는 새 이벤트 매칭으로 전환
+          if (consecutiveCount < 2) {
+            matchedEvent = lastEvent;
+          }
+        }
       }
     }
 
+    // Step 3: 새 이벤트 매칭 (전환 CHOICE, 첫 턴, FALLBACK 탈출, MOVE_LOCATION)
     if (!matchedEvent) {
-      // 새 이벤트 매칭 (첫 턴, MOVE_LOCATION, 또는 이전 이벤트 없을 때)
       const allEvents = this.content.getAllEventsV2();
       const recentEventIds = actionHistory
         .filter((h) => h.eventId)
@@ -613,8 +623,8 @@ export class TurnsService {
 
     let choices: ChoiceItem[];
     if (eventAlreadyInteracted) {
-      // 이미 상호작용한 이벤트 → resolve 결과 기반 후속 선택지 (sourceEventId 유지 → 맥락 연속성 보장)
-      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds, matchedEvent.eventId);
+      // 이미 상호작용한 이벤트 → resolve 결과 기반 후속 선택지 (sourceEventId 부분 적용 + eventType별 풀)
+      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds, matchedEvent.eventId, matchedEvent.eventType, turnNo);
     } else {
       // 첫 만남 이벤트 → 이벤트 고유 선택지
       choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, matchedEvent.payload.choices, selectedChoiceIds, matchedEvent.eventId);
@@ -879,18 +889,6 @@ export class TurnsService {
     };
   }
 
-  /** 같은 이벤트가 연속으로 몇 턴 반복되었는지 계산 (끝에서부터) */
-  private countConsecutiveSameEvent(actionHistory: Array<{ eventId?: string }>): number {
-    if (actionHistory.length === 0) return 0;
-    const lastEventId = actionHistory[actionHistory.length - 1]?.eventId;
-    if (!lastEventId) return 0;
-    let count = 0;
-    for (let i = actionHistory.length - 1; i >= 0; i--) {
-      if (actionHistory[i]?.eventId === lastEventId) count++;
-      else break;
-    }
-    return count;
-  }
 
   // --- Helper: 일반 턴 레코드 커밋 ---
   private async commitTurnRecord(
@@ -1094,22 +1092,21 @@ export class TurnsService {
     return null;
   }
 
-  /** 고집(insistence) 카운트: suppressedActionType이 동일한 연속 행동 횟수 */
+  /** 고집(insistence) 카운트: 같은 actionType 연속 반복 횟수 + 반복 타입 반환 */
   private calculateInsistenceCount(
     history: Array<{ actionType: string; suppressedActionType?: string; inputText: string }>,
-    currentInput: string,
-  ): number {
-    if (history.length === 0) return 0;
-    // 최근 이력에서 suppressedActionType이 있는 연속 항목 카운트
+  ): { count: number; repeatedType: string | null } {
+    if (history.length === 0) return { count: 0, repeatedType: null };
+    const lastType = history[history.length - 1].actionType;
     let count = 0;
     for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i].suppressedActionType) {
+      if (history[i].actionType === lastType) {
         count++;
       } else {
-        break; // 연속성 끊김
+        break;
       }
     }
-    return count;
+    return { count, repeatedType: lastType };
   }
 
   private buildLocationResult(
