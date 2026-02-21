@@ -17,9 +17,12 @@ export class PromptBuilderService {
     const messages: LlmMessage[] = [];
 
     // 1. System prompt + L0 theme 병합 (Tier 1: 런 전체 고정 → prefix 캐싱 대상)
+    const genderHint = ctx.gender === 'female'
+      ? '\n\n## 주인공 성별\n주인공("당신")은 **여성**입니다. NPC의 호칭(아가씨, 자매, 부인 등), 외모 묘사, 주변 반응에 성별을 자연스럽게 반영하세요. 단, 과도한 성별 강조는 피하세요.'
+      : '';
     const systemContent = ctx.theme.length > 0
-      ? `${NARRATIVE_SYSTEM_PROMPT}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}`
-      : NARRATIVE_SYSTEM_PROMPT;
+      ? `${NARRATIVE_SYSTEM_PROMPT}${genderHint}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}`
+      : `${NARRATIVE_SYSTEM_PROMPT}${genderHint}`;
     messages.push({ role: 'system', content: systemContent, cacheControl: 'ephemeral' });
 
     // 2. Memory block (assistant role로 이전 컨텍스트 제공)
@@ -64,8 +67,8 @@ export class PromptBuilderService {
               : t.narrative;
             narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
           } else {
-            // 이전 턴: 요약용 200자
-            narrativePart = `\n서술: ${t.narrative.slice(0, 200)}${t.narrative.length > 200 ? '...' : ''}`;
+            // 이전 턴: 서술 제외 (행동+결과만 전달하여 현재 턴 우선순위 확보)
+            narrativePart = '';
           }
         }
         return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${t.rawInput}"${outcomePart}${narrativePart}`;
@@ -102,9 +105,16 @@ export class PromptBuilderService {
       memoryParts.push(`[최근 서술]\n${ctx.recentSummaries.join('\n---\n')}`);
     }
 
-    // L2 확장: NPC 관계 서술 요약
+    // L2 확장: NPC 관계 서술 요약 + 등장 가능 NPC 제한
     if (ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0) {
-      memoryParts.push(`[NPC 관계]\n${ctx.npcRelationFacts.join('\n')}`);
+      memoryParts.push(
+        [
+          '[NPC 관계 — 등장 가능 NPC 목록]',
+          '아래 NPC만 서술에 이름 있는 캐릭터로 등장할 수 있습니다. 이 목록에 없는 새로운 개인 캐릭터를 만들지 마세요.',
+          '',
+          ctx.npcRelationFacts.join('\n'),
+        ].join('\n'),
+      );
     }
 
     // L4 확장: Agenda/Arc 진행도
@@ -138,7 +148,9 @@ export class PromptBuilderService {
       if (inputType === 'ACTION') {
         const actionCtx = sr.ui?.actionContext as { parsedType?: string; originalInput?: string; tone?: string; escalated?: boolean; insistenceCount?: number } | undefined;
         const parts = [
-          `[플레이어 행동] 당신은 "${rawInput}"을(를) 시도했습니다.`,
+          `⚠️ [이번 턴 플레이어 행동 — 서술의 핵심]`,
+          `플레이어 원문: "${rawInput}"`,
+          `이 행동이 이번 서술의 주제입니다. 반드시 이 행동을 시도하는 장면으로 시작하세요.`,
         ];
         if (actionCtx?.parsedType) {
           parts.push(`엔진 해석: ${actionCtx.parsedType}${actionCtx.tone && actionCtx.tone !== 'NEUTRAL' ? ` (${actionCtx.tone})` : ''}`);
@@ -149,7 +161,7 @@ export class PromptBuilderService {
           );
         } else {
           parts.push(
-            '서술 규칙: 먼저 플레이어가 원문 행동을 실제로 시도하는 장면을 묘사하세요. 결과가 원래 의도와 다르면, 왜 방향이 바뀌었는지(주변 상황, 상대 반응, 목격자 등)를 자연스럽게 서술하세요. 행동을 조용히 무시하거나 완전히 다른 행동으로 대체하지 마세요.',
+            '서술 규칙: 이전 턴에서 무슨 일이 있었든, 이번 턴은 위 행동에서 시작합니다. 이전 장면을 되풀이하지 마세요. 먼저 플레이어가 원문 행동을 실제로 시도하는 장면을 묘사하세요. 결과가 원래 의도와 다르면, 왜 방향이 바뀌었는지(주변 상황, 상대 반응, 목격자 등)를 자연스럽게 서술하세요. 행동을 조용히 무시하거나 완전히 다른 행동으로 대체하지 마세요.',
           );
         }
         factsParts.push(parts.join('\n'));
@@ -249,8 +261,9 @@ export class PromptBuilderService {
       );
       factsParts.push(
         [
-          '[제시된 선택지] — 서술 범위 경계',
-          '아래 선택지는 이 서술 이후에 플레이어가 선택할 수 있는 행동입니다.',
+          '[제시된 선택지] — 서술 범위 경계 (절대 출력 금지)',
+          '아래는 서술 이후 게임 시스템이 표시할 선택지입니다. 참고만 하세요.',
+          '⚠️ 이 선택지를 서술에 절대 포함하지 마세요. 목록, 요약, 재구성 어떤 형태로도 출력 금지.',
           '⚠️ 서술 안에서 이 선택지에 해당하는 행동을 미리 수행하지 마세요.',
           '서술은 이 선택지들이 자연스러운 다음 단계가 되는 시점에서 끝나야 합니다.',
           '',

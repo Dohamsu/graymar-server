@@ -25,7 +25,7 @@ import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
     AiTurnLogService,
     LlmProviderRegistryService,
   ],
-  exports: [ContextBuilderService, LlmConfigService],
+  exports: [ContextBuilderService, LlmConfigService, LlmCallerService],
 })
 export class LlmModule implements OnModuleInit {
   constructor(

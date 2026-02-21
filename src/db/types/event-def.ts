@@ -25,6 +25,8 @@ export const EVENT_TYPE_V2 = [
   'SHOP',
   'CHECKPOINT',
   'AMBUSH',
+  'ENCOUNTER',
+  'OPPORTUNITY',
   'FALLBACK',
 ] as const;
 export type EventTypeV2 = (typeof EVENT_TYPE_V2)[number];
