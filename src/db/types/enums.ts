@@ -111,3 +111,15 @@ export const EDGE_CONDITION_TYPE = [
   'RANDOM',
 ] as const;
 export type EdgeConditionType = (typeof EDGE_CONDITION_TYPE)[number];
+
+// --- Narrative Engine v1 Enums ---
+// 상세 타입 정의는 각 전문 타입 파일에 위치 (incident.ts, signal-feed.ts, etc.)
+// enums.ts는 re-export만 제공
+export type {
+  IncidentOutcome,
+  IncidentKind,
+} from './incident.js';
+export type { SignalChannel } from './signal-feed.js';
+export type { NarrativeMarkType } from './narrative-mark.js';
+export type { StepStatus } from './operation-session.js';
+export type { TimePhaseV2 } from './world-state.js';

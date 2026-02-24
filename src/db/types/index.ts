@@ -19,3 +19,11 @@ export * from './player-behavior.js';
 export * from './region-state.js';
 export * from './equipment.js';
 export * from './region-affix.js';
+// Structured Memory v2
+export * from './structured-memory.js';
+// Narrative Engine v1
+export * from './incident.js';
+export * from './signal-feed.js';
+export * from './narrative-mark.js';
+export * from './operation-session.js';
+export * from './ending.js';

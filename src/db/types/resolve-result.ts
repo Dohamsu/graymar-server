@@ -1,4 +1,6 @@
-// 정본: specs/HUB_resolve_system.md
+// 정본: specs/HUB_resolve_system.md + Narrative_Engine_v1_Integrated_Spec.md
+
+import type { IncidentImpactPatch } from './incident.js';
 
 export const RESOLVE_OUTCOME = ['SUCCESS', 'PARTIAL', 'FAIL'] as const;
 export type ResolveOutcome = (typeof RESOLVE_OUTCOME)[number];
@@ -24,4 +26,7 @@ export type ResolveResult = {
   commitmentDelta: number;
   triggerCombat: boolean;
   combatEncounterId?: string;
+  // Narrative Engine v1
+  incidentPatches?: IncidentImpactPatch[];
+  matchedIncidentId?: string;
 };

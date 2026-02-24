@@ -172,12 +172,16 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
       actionType: 'REST',
     },
 
-    // ── MOVE_LOCATION: 장소 이동 ──
+    // ── MOVE_LOCATION: 장소 이동 + 복귀 의도 ──
     {
       keywords: [
         '이동', '향한다', '떠나', '나가', '벗어나', '자리를 뜨',
         '다른 곳', '다른 장소', '옮겨', '빠져나', '퇴장',
         '발길을 돌', '돌아간다', '돌아가',
+        // Narrative Engine v1: Operation Session 복귀 의도
+        '끝내', '끝내자', '끝낸다', '그만', '그만하',
+        '돌아가자', '돌아갈', '복귀', '철수', '물러나',
+        '작전 종료', '여기까지', '충분', '그쯤', '마무리',
       ],
       actionType: 'MOVE_LOCATION',
     },

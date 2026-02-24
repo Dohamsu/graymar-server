@@ -40,6 +40,7 @@ import { NodeResolverService } from '../engine/nodes/node-resolver.service.js';
 import { NodeTransitionService } from '../engine/nodes/node-transition.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { InventoryService } from '../engine/rewards/inventory.service.js';
+import { RewardsService } from '../engine/rewards/rewards.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
 // HUB 엔진 서비스
 import { WorldStateService } from '../engine/hub/world-state.service.js';
@@ -52,7 +53,26 @@ import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js';
 import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
 import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
+// Narrative Engine v1
+import { WorldTickService } from '../engine/hub/world-tick.service.js';
+import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
+import { NpcEmotionalService } from '../engine/hub/npc-emotional.service.js';
+import { NarrativeMarkService } from '../engine/hub/narrative-mark.service.js';
+import { EndingGeneratorService } from '../engine/hub/ending-generator.service.js';
+import { MemoryCollectorService } from '../engine/hub/memory-collector.service.js';
+import { MemoryIntegrationService } from '../engine/hub/memory-integration.service.js';
+import { initNPCState } from '../db/types/npc-state.js';
+import type { IncidentDef, IncidentRuntime, NarrativeMarkCondition, NPCState, NpcEmotionalState } from '../db/types/index.js';
+import type { IncidentSummaryUI, SignalFeedItemUI, NpcEmotionalUI } from '../db/types/server-result.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
+
+/** 한국어 조사 자동 판별 — 받침 유무에 따라 을/를, 이/가 등 선택 */
+function korParticle(word: string, withBatchim: string, withoutBatchim: string): string {
+  if (!word) return withBatchim;
+  const last = word.charCodeAt(word.length - 1);
+  if (last < 0xAC00 || last > 0xD7A3) return withBatchim;
+  return (last - 0xAC00) % 28 !== 0 ? withBatchim : withoutBatchim;
+}
 
 @Injectable()
 export class TurnsService {
@@ -76,6 +96,16 @@ export class TurnsService {
     private readonly intentParser: IntentParserV2Service,
     private readonly llmIntentParser: LlmIntentParserService,
     private readonly orchestration: TurnOrchestrationService,
+    private readonly rewardsService: RewardsService,
+    // Narrative Engine v1
+    private readonly worldTick: WorldTickService,
+    private readonly incidentMgmt: IncidentManagementService,
+    private readonly npcEmotional: NpcEmotionalService,
+    private readonly narrativeMarkService: NarrativeMarkService,
+    private readonly endingGenerator: EndingGeneratorService,
+    // Structured Memory v2
+    private readonly memoryCollector: MemoryCollectorService,
+    private readonly memoryIntegration: MemoryIntegrationService,
   ) {}
 
   async submitTurn(runId: string, userId: string, body: SubmitTurnBody) {
@@ -346,8 +376,8 @@ export class TurnsService {
 
     // go_hub 선택 시 → HUB 복귀
     if (body.input.type === 'CHOICE' && body.input.choiceId === 'go_hub') {
-      // 장기기억 저장: 현재 LOCATION 방문 대화를 요약하여 run_memories.storySummary에 추가
-      await this.saveLocationVisitSummary(run.id, currentNode.id, locationId);
+      // Structured Memory v2: 방문 종료 통합 (기존 saveLocationVisitSummary 역할 포함)
+      await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
 
       ws = this.worldStateService.returnToHub(ws);
       updatedRunState.worldState = ws;
@@ -497,6 +527,13 @@ export class TurnsService {
         run.seed, updatedRunState.hp, updatedRunState.stamina,
       );
       transition.enterResult.turnNo = turnNo + 1;
+
+      // 전투 진입 summary에 트리거 행동 컨텍스트 추가 (LLM 내러티브 연속성)
+      const triggerContext = `플레이어가 "${rawInput}"${korParticle(rawInput, '을', '를')} 시도했으나 실패하여 전투가 발생했다.`;
+      transition.enterResult.summary = {
+        short: `${triggerContext} ${transition.enterResult.summary.short}`,
+        display: transition.enterResult.summary.display,
+      };
       await this.db.insert(turns).values({
         runId: run.id, turnNo: turnNo + 1, nodeInstanceId: transition.enterResult.node.id,
         nodeType: 'COMBAT', inputType: 'SYSTEM', rawInput: '',
@@ -546,6 +583,80 @@ export class TurnsService {
         deferredEffects: [...ws.deferredEffects, { ...de, sourceTurnNo: turnNo }],
       };
     }
+
+    // === Narrative Engine v1: preStepTick (시간 사이클 + Incident tick + signal) ===
+    const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
+    ws = this.worldStateService.migrateWorldState(ws);
+    const { ws: wsAfterTick, resolvedPatches } = this.worldTick.preStepTick(ws, incidentDefs, rng, 1);
+    ws = wsAfterTick;
+
+    // === Narrative Engine v1: Incident impact 적용 ===
+    const relevantIncident = this.incidentMgmt.findRelevantIncident(
+      ws, locationId, intent.actionType, incidentDefs,
+    );
+    if (relevantIncident) {
+      const updatedIncident = this.incidentMgmt.applyImpact(
+        relevantIncident.incident, relevantIncident.def, resolveResult.outcome, ws.globalClock,
+      );
+      ws = {
+        ...ws,
+        activeIncidents: ws.activeIncidents.map((i) =>
+          i.incidentId === updatedIncident.incidentId ? updatedIncident : i,
+        ),
+      };
+    }
+
+    // === Narrative Engine v1: postStepTick (impact patches, safety, signal expire) ===
+    ws = this.worldTick.postStepTick(ws, resolvedPatches);
+
+    // === Narrative Engine v1: NPC Emotional 업데이트 ===
+    const npcStates = { ...(runState.npcStates ?? {}) } as Record<string, NPCState>;
+    // 현재 location의 관련 NPC에게 감정 영향 적용
+    if (matchedEvent.payload.primaryNpcId) {
+      const npcId = matchedEvent.payload.primaryNpcId;
+      if (!npcStates[npcId]) {
+        const npcDef = this.content.getNpc(npcId);
+        npcStates[npcId] = initNPCState({
+          npcId,
+          basePosture: npcDef?.basePosture,
+          initialTrust: npcDef?.initialTrust ?? relations[npcId] ?? 0,
+          agenda: npcDef?.agenda,
+        });
+      }
+      const npc = npcStates[npcId];
+      npc.emotional = this.npcEmotional.applyActionImpact(
+        npc.emotional, intent.actionType, resolveResult.outcome, true,
+      );
+      npcStates[npcId] = this.npcEmotional.syncLegacyFields(npc);
+    }
+
+    // === Narrative Engine v1: Narrative Marks 체크 ===
+    const markConditions = this.content.getNarrativeMarkConditions();
+    const npcEmotionals: Record<string, NpcEmotionalState> = {};
+    for (const [npcId, npc] of Object.entries(npcStates)) {
+      npcEmotionals[npcId] = npc.emotional;
+    }
+    const npcNames: Record<string, string> = {};
+    for (const [npcId] of Object.entries(npcStates)) {
+      const npcDef = this.content.getNpc(npcId);
+      npcNames[npcId] = npcDef?.name ?? npcId;
+    }
+    // resolve outcome 횟수 집계
+    const resolveOutcomeCounts: Record<string, number> = {};
+    for (const h of [...actionHistory, { actionType: intent.actionType }]) {
+      // 간단히 현재 결과만 카운트
+    }
+    resolveOutcomeCounts[resolveResult.outcome] = (resolveOutcomeCounts[resolveResult.outcome] ?? 0) + 1;
+
+    const newMarks = this.narrativeMarkService.checkAndApply(
+      ws.narrativeMarks ?? [],
+      markConditions as NarrativeMarkCondition[],
+      { ws, npcEmotionals, npcNames, resolveOutcomes: resolveOutcomeCounts, clock: ws.globalClock },
+    );
+    if (newMarks.length > 0) {
+      ws = { ...ws, narrativeMarks: [...(ws.narrativeMarks ?? []), ...newMarks] };
+    }
+
     ws = this.worldStateService.advanceTime(ws);
     ws = this.worldStateService.updateHubSafety(ws);
 
@@ -582,9 +693,25 @@ export class TurnsService {
       choiceId: body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
     }].slice(-10); // 최대 10개 유지
 
-    // 골드 차감 (BRIBE/TRADE)
-    if (resolveResult.goldDelta !== 0) {
-      updatedRunState.gold = Math.max(0, updatedRunState.gold + resolveResult.goldDelta);
+    // LOCATION 보상 계산 (resolve 주사위 이후 같은 RNG로 수행)
+    const locationReward = this.rewardsService.calculateLocationRewards({
+      outcome: resolveResult.outcome,
+      eventType: matchedEvent.eventType,
+      actionType: intent.actionType,
+      rng,
+    });
+
+    // 골드: BRIBE/TRADE 비용(음수) + 보상(양수) 합산
+    const totalGoldDelta = resolveResult.goldDelta + locationReward.gold;
+    if (totalGoldDelta !== 0) {
+      updatedRunState.gold = Math.max(0, updatedRunState.gold + totalGoldDelta);
+    }
+
+    // 아이템 보상 반영 (인벤토리에 추가)
+    for (const added of locationReward.items) {
+      const existing = updatedRunState.inventory.find((i) => i.itemId === added.itemId);
+      if (existing) existing.qty += added.qty;
+      else updatedRunState.inventory.push({ itemId: added.itemId, qty: added.qty });
     }
 
     // RunState 반영
@@ -594,6 +721,7 @@ export class TurnsService {
     updatedRunState.npcRelations = relations;
     updatedRunState.eventCooldowns = newCooldowns;
     updatedRunState.actionHistory = newHistory;
+    updatedRunState.npcStates = npcStates; // Narrative Engine v1
     // PBP 집계 (최근 행동 이력 기반)
     updatedRunState.pbp = computePBP(newHistory);
 
@@ -624,19 +752,53 @@ export class TurnsService {
     let choices: ChoiceItem[];
     if (eventAlreadyInteracted) {
       // 이미 상호작용한 이벤트 → resolve 결과 기반 후속 선택지 (sourceEventId 부분 적용 + eventType별 풀)
-      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds, matchedEvent.eventId, matchedEvent.eventType, turnNo);
+      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds, matchedEvent.eventId, matchedEvent.eventType, turnNo, matchedEvent.payload.choices);
     } else {
       // 첫 만남 이벤트 → 이벤트 고유 선택지
       choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, matchedEvent.payload.choices, selectedChoiceIds, matchedEvent.eventId);
     }
-    const summaryText = `${matchedEvent.payload.sceneFrame}`;
+    // summary.short: "이번 턴의 핵심 한 문장" — 행동 + 판정결과 + 배경 포함 (LLM 맥락 유지용)
+    const outcomeLabel = resolveResult.outcome === 'SUCCESS' ? '성공' : resolveResult.outcome === 'PARTIAL' ? '부분 성공' : '실패';
+    const actionLabel = this.actionTypeToKorean(intent.actionType);
+    const summaryText = isNonChallenge
+      ? `[상황] ${matchedEvent.payload.sceneFrame} [행동] 플레이어가 ${actionLabel}${korParticle(actionLabel, '을', '를')} 했다.`
+      : `[상황] ${matchedEvent.payload.sceneFrame} [행동] 플레이어가 "${rawInput}"${korParticle(rawInput, '을', '를')} 시도하여 ${outcomeLabel}했다.`;
     const result = this.buildLocationResult(turnNo, currentNode, summaryText, resolveResult.outcome, choices, ws, {
       parsedType: intent.actionType,
       originalInput: rawInput,
       tone: intent.tone,
       escalated: intent.escalated,
       insistenceCount: insistenceCount > 0 ? insistenceCount : undefined,
-    }, isNonChallenge, resolveResult.goldDelta);
+      eventSceneFrame: matchedEvent.payload.sceneFrame,
+      eventMatchPolicy: matchedEvent.matchPolicy,
+    }, isNonChallenge, totalGoldDelta, locationReward.items);
+
+    // 골드 변동 이벤트 (순 변동 기준 — 비용+보상 합산)
+    if (totalGoldDelta > 0) {
+      result.events.push({
+        id: `gold_${turnNo}`,
+        kind: 'GOLD',
+        text: `${totalGoldDelta}골드를 획득했다.`,
+        tags: [],
+      });
+    } else if (totalGoldDelta < 0) {
+      result.events.push({
+        id: `gold_${turnNo}`,
+        kind: 'GOLD',
+        text: `${Math.abs(totalGoldDelta)}골드를 소비했다.`,
+        tags: [],
+      });
+    }
+    for (const item of locationReward.items) {
+      const itemDef = this.content.getItem(item.itemId);
+      const itemName = itemDef?.name ?? item.itemId;
+      result.events.push({
+        id: `loot_${turnNo}_${item.itemId}`,
+        kind: 'LOOT',
+        text: `${itemName}${korParticle(itemName, '을', '를')} 획득했다.`,
+        tags: [],
+      });
+    }
 
     // Orchestration 결과를 ui에 추가 (LLM context 전달용)
     if (orchestrationResult.npcInjection) {
@@ -647,6 +809,47 @@ export class TurnsService {
     }
     if (Object.keys(orchestrationResult.npcPostures).length > 0) {
       (result.ui as any).npcPostures = orchestrationResult.npcPostures;
+    }
+
+    // === Narrative Engine v1: UI data 추가 ===
+    const finalWs = updatedRunState.worldState!;
+    // Signal Feed
+    (result.ui as any).signalFeed = (finalWs.signalFeed ?? []).map((s: any) => ({
+      id: s.id,
+      channel: s.channel,
+      severity: s.severity,
+      locationId: s.locationId,
+      text: s.text,
+    })) as SignalFeedItemUI[];
+
+    // Active Incidents
+    const incidentDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
+    (result.ui as any).activeIncidents = (finalWs.activeIncidents ?? []).map((i: IncidentRuntime) => ({
+      incidentId: i.incidentId,
+      title: incidentDefMap.get(i.incidentId)?.title ?? i.incidentId,
+      kind: i.kind,
+      stage: i.stage,
+      control: i.control,
+      pressure: i.pressure,
+      deadlineClock: i.deadlineClock,
+      resolved: i.resolved,
+      outcome: i.outcome,
+    })) as IncidentSummaryUI[];
+
+    // NPC Emotional
+    const npcEmotionalUIs: NpcEmotionalUI[] = Object.entries(npcStates).map(([npcId, npc]) => ({
+      npcId,
+      npcName: npcNames[npcId] ?? npcId,
+      trust: npc.emotional.trust,
+      fear: npc.emotional.fear,
+      respect: npc.emotional.respect,
+      suspicion: npc.emotional.suspicion,
+      attachment: npc.emotional.attachment,
+      posture: npc.posture,
+      marks: (finalWs.narrativeMarks ?? []).filter((m: any) => m.npcId === npcId).map((m: any) => m.type),
+    }));
+    if (npcEmotionalUIs.length > 0) {
+      (result.ui as any).npcEmotional = npcEmotionalUIs;
     }
 
     // 이벤트 추가
@@ -665,7 +868,98 @@ export class TurnsService {
       matchedEvent.payload.tags ?? [],
     );
 
+    // === Narrative Engine v1: NPC passive drift (offscreen) ===
+    if (postTickRunState.npcStates) {
+      for (const [npcId, npc] of Object.entries(postTickRunState.npcStates as Record<string, NPCState>)) {
+        npc.emotional = this.npcEmotional.applyPassiveDrift(npc.emotional);
+        (postTickRunState.npcStates as Record<string, NPCState>)[npcId] = this.npcEmotional.syncLegacyFields(npc);
+      }
+    }
+
+    // === Narrative Engine v1: Ending 조건 체크 ===
+    const endWs = postTickRunState.worldState!;
+    const { shouldEnd, reason: endReason } = this.endingGenerator.checkEndingConditions(
+      endWs.activeIncidents ?? [],
+      endWs.mainArcClock ?? { startDay: 1, softDeadlineDay: 14, triggered: false },
+      endWs.day ?? 1,
+    );
+
+    // === Structured Memory v2: 실시간 수집 ===
+    try {
+      // NPC 감정 변화 delta 계산 (이번 턴에서 변경된 축만)
+      let npcEmoDelta: { npcId: string; delta: Record<string, number> } | undefined;
+      if (matchedEvent.payload.primaryNpcId) {
+        const npcId = matchedEvent.payload.primaryNpcId;
+        const npc = npcStates[npcId];
+        if (npc?.emotional) {
+          // 대략적인 delta — applyActionImpact에서 변경된 값 (정확한 before 없으므로 간략화)
+          npcEmoDelta = { npcId, delta: {} };
+        }
+      }
+      await this.memoryCollector.collectFromTurn(
+        run.id,
+        currentNode.id,
+        locationId,
+        turnNo,
+        {
+          actionType: intent.actionType,
+          rawInput: rawInput.slice(0, 30),
+          outcome: resolveResult.outcome,
+          eventId: matchedEvent.eventId,
+          sceneFrame: matchedEvent.payload.sceneFrame,
+          primaryNpcId: matchedEvent.payload.primaryNpcId,
+          eventTags: matchedEvent.payload.tags ?? [],
+          reputationChanges: resolveResult.reputationChanges,
+          goldDelta: totalGoldDelta,
+          incidentImpact: relevantIncident
+            ? {
+                incidentId: relevantIncident.incident.incidentId,
+                controlDelta: relevantIncident.incident.control - (ws.activeIncidents?.find((i) => i.incidentId === relevantIncident.incident.incidentId)?.control ?? 0),
+                pressureDelta: relevantIncident.incident.pressure - (ws.activeIncidents?.find((i) => i.incidentId === relevantIncident.incident.incidentId)?.pressure ?? 0),
+              }
+            : undefined,
+          npcEmotionalDelta: npcEmoDelta as any,
+          newMarks: newMarks.map((m) => m.type),
+        },
+      );
+    } catch (err) {
+      // 수집 실패는 게임 진행에 영향 없음
+    }
+
     await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, postTickRunState, body.options?.skipLlm);
+
+    if (shouldEnd && endReason) {
+      // 엔딩 생성
+      const endingInput = this.endingGenerator.gatherEndingInputs(
+        endWs.activeIncidents ?? [],
+        (postTickRunState.npcStates ?? {}) as Record<string, NPCState>,
+        endWs.narrativeMarks ?? [],
+        endWs as unknown as Record<string, unknown>,
+        postTickRunState.arcState ?? null,
+      );
+      const endingResult = this.endingGenerator.generateEnding(endingInput, endReason, turnNo);
+
+      // RUN_ENDED로 상태 변경
+      await this.db.update(runSessions).set({
+        status: 'RUN_ENDED',
+        updatedAt: new Date(),
+      }).where(eq(runSessions.id, run.id));
+
+      // 엔딩 결과를 이벤트에 추가
+      result.events.push({
+        id: `ending_${turnNo}`,
+        kind: 'SYSTEM',
+        text: `[엔딩] ${endingResult.closingLine}`,
+        tags: ['RUN_ENDED'],
+        data: { endingResult },
+      });
+
+      return {
+        accepted: true, turnNo, serverResult: result,
+        llm: { status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus, narrative: null },
+        meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
+      };
+    }
 
     return {
       accepted: true, turnNo, serverResult: result,
@@ -757,7 +1051,7 @@ export class TurnsService {
       battleState, playerStats,
       enemyStats: Object.keys(enemyStats).length > 0 ? enemyStats : undefined,
       enemyNames: Object.keys(enemyNames).length > 0 ? enemyNames : undefined,
-      rewardSeed: run.seed,
+      rewardSeed: `${run.seed}_t${turnNo}`,
       playerHp: battleState.player?.hp ?? runState.hp,
       playerMaxHp: runState.maxHp, playerStamina: battleState.player?.stamina ?? runState.stamina,
       playerMaxStamina: runState.maxStamina, playerGold: runState.gold,
@@ -809,11 +1103,9 @@ export class TurnsService {
         const parentNodeIndex = parentNode?.nodeIndex ?? currentNode.nodeIndex - 1;
         const locationId = ws.currentLocationId ?? 'LOC_MARKET';
 
-        // Heat 반영
+        // Heat 반영 (combatWindowCount는 전투 시작 시 이미 증가됨 — 중복 증가 방지)
         const newWs = this.heatService.applyHeatDelta(ws, 3);
-        updatedRunState.worldState = this.worldStateService.updateHubSafety({
-          ...newWs, combatWindowCount: newWs.combatWindowCount + 1,
-        });
+        updatedRunState.worldState = this.worldStateService.updateHubSafety(newWs);
 
         const transition = await this.nodeTransition.returnFromCombat(
           run.id, parentNodeIndex, turnNo + 1, locationId, updatedRunState.worldState!,
@@ -975,17 +1267,33 @@ export class TurnsService {
       LOC_SLUMS: '빈민가',
     };
     const locName = locationNames[locationId] ?? locationId;
+    // 핵심 행동+결과 요약 (행동 라인)
     const summaryLines = visitTurns.map((t) => {
       const sr = t.serverResult as ServerResultV1 | null;
       const outcome = (sr?.ui as Record<string, unknown>)?.resolveOutcome as string | undefined;
       const outcomeText = outcome === 'SUCCESS' ? '성공' : outcome === 'PARTIAL' ? '부분 성공' : outcome === 'FAIL' ? '실패' : '';
       const outcomePart = outcomeText ? `(${outcomeText})` : '';
-      // LLM 서술이 있으면 첫 100자를 핵심 결과로 사용
-      const narrativeHint = t.llmOutput ? ` — ${t.llmOutput.slice(0, 100)}` : '';
-      return `- "${t.rawInput}"${outcomePart}${narrativeHint}`;
+      // 이벤트 sceneFrame → 어떤 상황이었는지 보존
+      const sceneFrame = (sr?.summary?.short as string) ?? '';
+      const scenePart = sceneFrame ? ` [${sceneFrame.slice(0, 60)}]` : '';
+      return `"${t.rawInput}"${outcomePart}${scenePart}`;
     });
 
-    const visitSummary = `[${locName} 방문] ${summaryLines.join('; ')}`.slice(0, 500);
+    // NPC 이름 추출: LLM 서술에서 콘텐츠 NPC 이름 매칭
+    const allNpcs = this.content.getAllNpcs();
+    const mentionedNpcs = new Set<string>();
+    for (const t of visitTurns) {
+      if (t.llmOutput) {
+        for (const npc of allNpcs) {
+          if (t.llmOutput.includes(npc.name)) {
+            mentionedNpcs.add(npc.name);
+          }
+        }
+      }
+    }
+    const npcPart = mentionedNpcs.size > 0 ? ` 만난 인물: ${[...mentionedNpcs].join(', ')}.` : '';
+
+    const visitSummary = `[${locName} 방문]${npcPart} ${summaryLines.join('; ')}`.slice(0, 600);
 
     // run_memories.storySummary에 추가
     const existing = await this.db.query.runMemories.findFirst({
@@ -994,13 +1302,13 @@ export class TurnsService {
 
     if (existing) {
       const currentSummary = existing.storySummary ?? '';
-      // 기존 요약에 방문 기록 추가 (최대 2000자 유지)
+      // 기존 요약에 방문 기록 추가 (최대 3000자 유지)
       let newSummary = currentSummary
         ? `${currentSummary}\n${visitSummary}`
         : visitSummary;
-      if (newSummary.length > 2000) {
+      if (newSummary.length > 3000) {
         // 오래된 방문 기록부터 잘라냄 (앞부분 삭제)
-        newSummary = '...' + newSummary.slice(newSummary.length - 1997);
+        newSummary = '...' + newSummary.slice(newSummary.length - 2997);
       }
       await this.db
         .update(runMemories)
@@ -1018,8 +1326,8 @@ export class TurnsService {
   ) {
     const updatedRunState: RunState = { ...runState };
 
-    // 장기기억 저장
-    await this.saveLocationVisitSummary(run.id, currentNode.id, fromLocationId);
+    // Structured Memory v2: 방문 종료 통합
+    await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
 
     // WorldState 업데이트
     const newWs = this.worldStateService.moveToLocation(ws, toLocationId);
@@ -1109,16 +1417,31 @@ export class TurnsService {
     return { count, repeatedType: lastType };
   }
 
+  /** IntentActionType → 한국어 라벨 (summary.short용) */
+  private actionTypeToKorean(actionType: string): string {
+    const map: Record<string, string> = {
+      INVESTIGATE: '조사', PERSUADE: '설득', SNEAK: '은밀 행동', BRIBE: '뇌물',
+      THREATEN: '위협', HELP: '도움', STEAL: '절도', FIGHT: '전투',
+      OBSERVE: '관찰', TRADE: '거래', TALK: '대화', SEARCH: '탐색',
+      MOVE_LOCATION: '이동', REST: '휴식', SHOP: '상점 이용',
+    };
+    return map[actionType] ?? actionType;
+  }
+
   private buildLocationResult(
     turnNo: number, node: any, text: string, outcome: string,
     choices: ServerResultV1['choices'], ws: WorldState,
-    actionContext?: { parsedType: string; originalInput: string; tone: string; escalated?: boolean; insistenceCount?: number },
+    actionContext?: { parsedType: string; originalInput: string; tone: string; escalated?: boolean; insistenceCount?: number; eventSceneFrame?: string; eventMatchPolicy?: string },
     hideResolve?: boolean,
     goldDelta?: number,
+    itemsAdded?: import('../db/types/index.js').ItemStack[],
   ): ServerResultV1 {
     const base = this.buildSystemResult(turnNo, node, text);
     if (goldDelta && goldDelta !== 0) {
       base.diff.inventory.goldDelta = goldDelta;
+    }
+    if (itemsAdded && itemsAdded.length > 0) {
+      base.diff.inventory.itemsAdded = itemsAdded;
     }
     return {
       ...base,

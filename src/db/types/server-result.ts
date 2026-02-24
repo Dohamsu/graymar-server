@@ -111,6 +111,49 @@ export type ActionContext = {
   insistenceCount?: number; // 동일 행동 반복 횟수
 };
 
+// --- Narrative Engine v1 UI types ---
+
+export type IncidentSummaryUI = {
+  incidentId: string;
+  title: string;
+  kind: string;
+  stage: number;
+  control: number;
+  pressure: number;
+  deadlineClock: number;
+  resolved: boolean;
+  outcome?: string;
+};
+
+export type SignalFeedItemUI = {
+  id: string;
+  channel: string;
+  severity: 1 | 2 | 3 | 4 | 5;
+  locationId?: string;
+  text: string;
+};
+
+export type NpcEmotionalUI = {
+  npcId: string;
+  npcName: string;
+  trust: number;
+  fear: number;
+  respect: number;
+  suspicion: number;
+  attachment: number;
+  posture: string;
+  marks: string[];
+};
+
+export type OperationProgressUI = {
+  sessionId: string;
+  locationId: string;
+  currentStep: number;
+  maxSteps: number;
+  totalTimeCost: number;
+  active: boolean;
+};
+
 export type UIBundle = {
   availableActions: string[];
   targetLabels: TargetLabel[];
@@ -120,6 +163,11 @@ export type UIBundle = {
   worldState?: WorldStateUI;
   resolveOutcome?: 'SUCCESS' | 'PARTIAL' | 'FAIL';
   actionContext?: ActionContext;
+  // Narrative Engine v1 확장
+  signalFeed?: SignalFeedItemUI[];
+  activeIncidents?: IncidentSummaryUI[];
+  operationProgress?: OperationProgressUI;
+  npcEmotional?: NpcEmotionalUI[];
 };
 
 // --- Choice ---
