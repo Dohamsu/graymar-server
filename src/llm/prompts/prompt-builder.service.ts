@@ -5,9 +5,12 @@ import type { LlmContext } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
 import type { LlmMessage } from '../types/index.js';
 import { NARRATIVE_SYSTEM_PROMPT } from './system-prompts.js';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
 
 @Injectable()
 export class PromptBuilderService {
+  constructor(private readonly content: ContentLoaderService) {}
+
   buildNarrativePrompt(
     ctx: LlmContext,
     sr: ServerResultV1,
@@ -33,9 +36,31 @@ export class PromptBuilderService {
       memoryParts.push(`[세계 상태]\n${ctx.worldSnapshot}`);
     }
 
-    // L1: Story summary
-    if (ctx.storySummary) {
+    // Structured Memory v2: 서사 이정표 (milestones)
+    if (ctx.milestonesText) {
+      memoryParts.push(`[서사 이정표]\n${ctx.milestonesText}\n이 이정표들은 플레이어의 여정에서 중요한 순간입니다. NPC 대사나 배경 묘사에서 자연스럽게 콜백하세요.`);
+    }
+
+    // L1: Story summary — 구조화 메모리 우선, fallback으로 기존 storySummary
+    if (ctx.structuredSummary) {
+      memoryParts.push(`[이야기 요약]\n${ctx.structuredSummary}\n재방문 장소에서는 이전 방문의 행동과 결과가 세계에 남긴 흔적을 묘사하세요.`);
+    } else if (ctx.storySummary) {
       memoryParts.push(`[이야기 요약]\n${ctx.storySummary}`);
+    }
+
+    // Structured Memory v2: NPC 관계 일지 (기존 NPC 감정 상태 흡수)
+    if (ctx.npcJournalText) {
+      memoryParts.push(`[NPC 관계]\n${ctx.npcJournalText}\n⚠️ NPC가 등장하면, 위 태도와 과거 상호작용을 반드시 대사 톤과 행동에 반영하세요. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다.`);
+    }
+
+    // Structured Memory v2: 사건 일지 (기존 도시 사건 + 서사 표식 흡수)
+    if (ctx.incidentChronicleText) {
+      memoryParts.push(`[사건 일지]\n${ctx.incidentChronicleText}\n진행 중인 사건의 여파를 배경 묘사에 반영하세요 — 주민 반응, 경비 변화, 분위기 등.`);
+    }
+
+    // Structured Memory v2: LLM 추출 사실
+    if (ctx.llmFactsText) {
+      memoryParts.push(`[기억된 사실]\n${ctx.llmFactsText}\n⚠️ 위 사실들을 서술에 적극 활용하세요. 해당 장소나 NPC 관련 장면에서 이 디테일을 감각적 묘사로 녹여내세요.`);
     }
 
     // L1 확장: LOCATION 컨텍스트
@@ -48,6 +73,26 @@ export class PromptBuilderService {
       memoryParts.push(`[현재 노드 사실]\n${JSON.stringify(ctx.nodeFacts)}`);
     }
 
+    // [장면 흐름] 블록 — narrative thread 캐시 (이번 방문 대화 위에 배치)
+    let hasNarrativeThread = false;
+    if (ctx.narrativeThread) {
+      try {
+        const thread = JSON.parse(ctx.narrativeThread) as { entries: { turnNo: number; summary: string }[] };
+        if (thread.entries.length > 0) {
+          hasNarrativeThread = true;
+          const threadLines = thread.entries.map(e => `[턴 ${e.turnNo}] ${e.summary}`);
+          memoryParts.push(
+            [
+              '[장면 흐름]',
+              '이 장소 방문 중 누적된 장면 맥락입니다. 이 흐름에서 자연스럽게 이어가세요.',
+              '',
+              threadLines.join('\n'),
+            ].join('\n'),
+          );
+        }
+      } catch { /* ignore parse failure */ }
+    }
+
     // L3: 현재 LOCATION 방문 전체 대화 (단기 기억 — 우선 사용)
     if (ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
       const totalTurns = ctx.locationSessionTurns.length;
@@ -57,19 +102,25 @@ export class PromptBuilderService {
           : t.resolveOutcome === 'PARTIAL' ? '부분 성공'
           : t.resolveOutcome === 'FAIL' ? '실패' : '';
         const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
-        const isLastTurn = idx === totalTurns - 1;
+        const distFromEnd = totalTurns - 1 - idx; // 0 = 직전, 1 = 그 이전, ...
         let narrativePart = '';
         if (t.narrative) {
-          if (isLastTurn) {
-            // 직전 턴: 마지막 150자만 표시 (LLM이 '이어쓸' 지점 명확화)
-            const trimmed = t.narrative.length > 150
-              ? '...' + t.narrative.slice(-150)
+          if (distFromEnd === 0) {
+            // 직전 턴: 마지막 300자 표시 (LLM이 '이어쓸' 지점 명확화)
+            const trimmed = t.narrative.length > 300
+              ? '...' + t.narrative.slice(-300)
               : t.narrative;
             narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
-          } else {
-            // 이전 턴: 서술 제외 (행동+결과만 전달하여 현재 턴 우선순위 확보)
-            narrativePart = '';
+          } else if (!hasNarrativeThread && distFromEnd <= 2) {
+            // thread가 없을 때만 fallback: 2~3번째 이전 턴 서술 포함
+            const maxLen = distFromEnd === 1 ? 250 : 150;
+            const trimmed = t.narrative.length > maxLen
+              ? '...' + t.narrative.slice(-maxLen)
+              : t.narrative;
+            narrativePart = `\n서술(맥락 참고 — 복사 금지): ${trimmed}`;
           }
+          // thread가 있으면 직전 턴만 raw narrative, 나머지는 thread가 담당
+          // thread가 없으면 4번째 이전부터: 서술 제외 (행동+결과만)
         }
         return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${t.rawInput}"${outcomePart}${narrativePart}`;
       });
@@ -81,9 +132,9 @@ export class PromptBuilderService {
           '⚠️ 핵심 규칙:',
           '1. 직전 턴의 서술 텍스트를 절대 반복/복사하지 마세요. 이미 쓰인 묘사를 다시 쓰면 안 됩니다.',
           '2. 직전 서술의 마지막 장면에서 자연스럽게 이어지는 새 장면만 작성하세요.',
-          '3. 직전 턴에서 NPC가 등장했다면, 같은 NPC와의 대화를 이어가세요.',
+          '3. 직전 턴에서 NPC나 인물이 등장했다면, 같은 인물과의 상호작용을 이어가세요. 갑자기 새 인물로 전환하지 마세요.',
           '4. 직전 턴에서 특정 장소에 있었다면, 같은 장소에서 계속하세요.',
-          '5. [상황 요약]은 이번 턴의 게임 결과 정보일 뿐, 새로운 장면 설정이 아닙니다.',
+          '5. [상황 요약]과 [배경 상황]은 이번 턴의 게임 엔진 정보일 뿐, 장면 전환 지시가 아닙니다. 직전 서술의 흐름이 항상 우선합니다.',
           '',
           sessionLines.join('\n---\n'),
         ].join('\n'),
@@ -105,8 +156,27 @@ export class PromptBuilderService {
       memoryParts.push(`[최근 서술]\n${ctx.recentSummaries.join('\n---\n')}`);
     }
 
-    // L2 확장: NPC 관계 서술 요약 + 등장 가능 NPC 제한
-    if (ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0) {
+    // L2 확장: NPC 로스터 (콘텐츠 정의 NPC 목록 — 항상 제공)
+    const allNpcs = this.content.getAllNpcs();
+    if (allNpcs.length > 0) {
+      const npcLines = allNpcs.map((npc) => {
+        const title = npc.title ? ` (${npc.title})` : '';
+        return `- ${npc.name}${title}: ${npc.role}`;
+      });
+      const relationPart = ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0
+        ? `\n\n현재 관계:\n${ctx.npcRelationFacts.join('\n')}`
+        : '';
+      memoryParts.push(
+        [
+          '[등장 가능 NPC 목록]',
+          '아래 NPC만 서술에 이름 있는 캐릭터로 등장할 수 있습니다. 이 목록에 없는 새로운 이름 있는 캐릭터를 만들지 마세요.',
+          '배경 인물이 필요하면 "한 사내", "노점 상인" 등 익명 표현만 사용하세요.',
+          '',
+          npcLines.join('\n'),
+          relationPart,
+        ].join('\n'),
+      );
+    } else if (ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0) {
       memoryParts.push(
         [
           '[NPC 관계 — 등장 가능 NPC 목록]',
@@ -115,6 +185,29 @@ export class PromptBuilderService {
           ctx.npcRelationFacts.join('\n'),
         ].join('\n'),
       );
+    }
+
+    // Narrative Engine v1: Incident/감정/마크/시그널 컨텍스트
+    // 구조화 메모리가 있으면 [사건 일지], [NPC 관계], [서사 이정표]에 통합되므로 건너뜀
+    const hasStructured = !!(ctx.structuredSummary || ctx.npcJournalText || ctx.incidentChronicleText);
+    if (!hasStructured) {
+      if (ctx.incidentContext) {
+        memoryParts.push(`[도시 사건]\n${ctx.incidentContext}\n플레이어의 행동이 사건의 통제/압력에 영향을 줍니다. 사건의 긴장감을 서술에 자연스럽게 반영하세요.`);
+      }
+      if (ctx.npcEmotionalContext) {
+        memoryParts.push(`[NPC 감정 상태]\n${ctx.npcEmotionalContext}\nNPC의 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요.`);
+      }
+      if (ctx.narrativeMarkContext) {
+        memoryParts.push(`[서사 표식]\n${ctx.narrativeMarkContext}\n이 표식들은 이야기에 영구적 영향을 줍니다. 관련 장면에서 자연스럽게 참조하세요.`);
+      }
+    } else {
+      // 구조화 메모리 사용 시에도 활성 Incident의 런타임 수치는 보충 (chronicle은 과거 기록, 런타임은 현재 수치)
+      if (ctx.incidentContext) {
+        memoryParts.push(`[활성 사건 현황]\n${ctx.incidentContext}`);
+      }
+    }
+    if (ctx.signalContext) {
+      memoryParts.push(`[도시 시그널]\n${ctx.signalContext}\n배경 분위기와 NPC 대화에 시그널 정보를 자연스럽게 녹여내세요.`);
     }
 
     // L4 확장: Agenda/Arc 진행도
@@ -146,7 +239,7 @@ export class PromptBuilderService {
     // 플레이어 행동 (가장 중요 — 서술에 반드시 반영)
     if (rawInput && inputType !== 'SYSTEM') {
       if (inputType === 'ACTION') {
-        const actionCtx = sr.ui?.actionContext as { parsedType?: string; originalInput?: string; tone?: string; escalated?: boolean; insistenceCount?: number } | undefined;
+        const actionCtx = sr.ui?.actionContext as { parsedType?: string; originalInput?: string; tone?: string; escalated?: boolean; insistenceCount?: number; eventSceneFrame?: string; eventMatchPolicy?: string } | undefined;
         const parts = [
           `⚠️ [이번 턴 플레이어 행동 — 서술의 핵심]`,
           `플레이어 원문: "${rawInput}"`,
@@ -154,6 +247,19 @@ export class PromptBuilderService {
         ];
         if (actionCtx?.parsedType) {
           parts.push(`엔진 해석: ${actionCtx.parsedType}${actionCtx.tone && actionCtx.tone !== 'NEUTRAL' ? ` (${actionCtx.tone})` : ''}`);
+        }
+        // 이벤트 전환 브리징: 직전 서술이 있으면 연속성 우선, 없으면 새 장면 설정
+        if (actionCtx?.eventSceneFrame) {
+          const hasOngoingScene = ctx.locationSessionTurns
+            && ctx.locationSessionTurns.length > 0
+            && ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1].narrative;
+          if (hasOngoingScene) {
+            parts.push(`[배경 상황] ${actionCtx.eventSceneFrame}`);
+            parts.push('⚠️ 서술 연속성 최우선: 직전 서술의 장면(등장 인물, 장소, 대화 흐름)에서 자연스럽게 이어가세요. 위 배경 상황은 흐름 안에서 자연스럽게 녹여내거나, 직전 장면과 어울리지 않으면 무시해도 됩니다. 갑자기 새로운 인물이나 장소로 전환하지 마세요.');
+          } else {
+            parts.push(`현재 장면 상황: ${actionCtx.eventSceneFrame}`);
+            parts.push('서술 규칙: 플레이어의 행동을 먼저 묘사한 뒤, 위 장면 상황이 자연스럽게 펼쳐지도록 연결하세요. 예: "~하려던 도중, ~" 또는 "~하며 걸어가는데, ~" 형태로 행동과 상황을 매끄럽게 이어붙이세요.');
+          }
         }
         if (actionCtx?.escalated) {
           parts.push(

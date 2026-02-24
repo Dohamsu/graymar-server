@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { and, eq, lt, or, isNull } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
-import { turns, recentSummaries, runSessions } from '../db/schema/index.js';
+import { turns, recentSummaries, runSessions, nodeMemories, runMemories } from '../db/schema/index.js';
 import { ContextBuilderService } from './context-builder.service.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { LlmCallerService } from './llm-caller.service.js';
@@ -17,6 +17,9 @@ import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { toDisplayText } from '../common/text-utils.js';
+import type { ServerResultV1 } from '../db/types/index.js';
+import type { StructuredMemory, LlmExtractedFact, LlmFactCategory } from '../db/types/structured-memory.js';
+import { LLM_FACT_CATEGORY } from '../db/types/structured-memory.js';
 
 const POLL_INTERVAL_MS = 2000;
 const LOCK_TIMEOUT_S = 60;
@@ -138,12 +141,41 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       // 4. 내러티브 결정 — 실패 또는 mock fallback 시 SceneShell로 graceful degradation
       let narrative: string;
       let modelUsed: string;
+      let threadEntry: string | null = null;
+      let extractedFacts: LlmExtractedFact[] = [];
 
       const isMockFallback = callResult.success && callResult.providerUsed === 'mock' && config.provider !== 'mock';
 
       if (callResult.success && callResult.response && !isMockFallback) {
         narrative = callResult.response.text;
         modelUsed = callResult.response.model;
+
+        // 4-a-0. [MEMORY] 태그 파싱 및 스트립 (최대 2개)
+        const memoryMatches = [...narrative.matchAll(/\[MEMORY:(\w+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g)];
+        for (const m of memoryMatches.slice(0, 2)) {
+          const category = m[1] as string;
+          const text = m[2].trim().slice(0, 50);
+          if (LLM_FACT_CATEGORY.includes(category as LlmFactCategory) && text.length > 0) {
+            extractedFacts.push({
+              turnNo: pending.turnNo,
+              category: category as LlmFactCategory,
+              text,
+              importance: 0.7,
+            });
+          }
+        }
+        // 서술 본문에서 [MEMORY] 태그 제거
+        narrative = narrative.replace(/\s*\[MEMORY:\w+\][\s\S]*?\[\/MEMORY\]/g, '').trim();
+
+        // 4-a. [THREAD] 태그 파싱 및 스트립
+        const threadMatch = narrative.match(/\[THREAD\]([\s\S]*?)\[\/THREAD\]/);
+        if (threadMatch) {
+          threadEntry = threadMatch[1].trim().slice(0, 100);
+          narrative = narrative.replace(/\s*\[THREAD\][\s\S]*?\[\/THREAD\]\s*$/, '').trim();
+        } else {
+          // Fallback: serverResult 기반 구조화 요약
+          threadEntry = this.buildFallbackThread(serverResult, pending.rawInput);
+        }
       } else {
         // LLM 호출 실패 → FAILED로 마킹하여 클라이언트에 알림
         const errorMsg = callResult.error ?? 'LLM provider call failed';
@@ -208,6 +240,75 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         summary: narrative,
       });
 
+      // 4-b. narrativeThread 누적 저장
+      if (threadEntry && pending.nodeInstanceId) {
+        const existingNode = await this.db.query.nodeMemories.findFirst({
+          where: and(
+            eq(nodeMemories.runId, pending.runId),
+            eq(nodeMemories.nodeInstanceId, pending.nodeInstanceId),
+          ),
+        });
+
+        type ThreadData = { entries: { turnNo: number; summary: string }[] };
+        let thread: ThreadData = { entries: [] };
+        if (existingNode?.narrativeThread) {
+          try { thread = JSON.parse(existingNode.narrativeThread); } catch { /* ignore */ }
+        }
+
+        thread.entries.push({ turnNo: pending.turnNo, summary: threadEntry });
+
+        // 예산 관리: 총 500자 초과 시 가장 오래된 엔트리 삭제
+        while (
+          thread.entries.length > 1 &&
+          JSON.stringify(thread.entries).length > 500
+        ) {
+          thread.entries.shift();
+        }
+
+        const threadJson = JSON.stringify(thread);
+
+        if (existingNode) {
+          await this.db.update(nodeMemories)
+            .set({ narrativeThread: threadJson, updatedAt: new Date() })
+            .where(eq(nodeMemories.id, existingNode.id));
+        } else {
+          await this.db.insert(nodeMemories).values({
+            runId: pending.runId,
+            nodeInstanceId: pending.nodeInstanceId,
+            nodeFacts: [],
+            narrativeThread: threadJson,
+          });
+        }
+      }
+
+      // 4-c. [MEMORY] 추출 사실을 structuredMemory에 저장
+      if (extractedFacts.length > 0) {
+        try {
+          const memRow = await this.db.query.runMemories.findFirst({
+            where: eq(runMemories.runId, pending.runId),
+          });
+          if (memRow) {
+            const structured = (memRow.structuredMemory ?? null) as StructuredMemory | null;
+            if (structured) {
+              // NPC 자동 매칭: 텍스트에서 NPC 이름 탐지
+              for (const fact of extractedFacts) {
+                structured.llmExtracted.push(fact);
+              }
+              // 예산 체크 (최대 15개, importance 낮은 것부터 제거)
+              if (structured.llmExtracted.length > 15) {
+                structured.llmExtracted.sort((a, b) => b.importance - a.importance || b.turnNo - a.turnNo);
+                structured.llmExtracted = structured.llmExtracted.slice(0, 15);
+              }
+              await this.db.update(runMemories)
+                .set({ structuredMemory: structured, updatedAt: new Date() })
+                .where(eq(runMemories.runId, pending.runId));
+            }
+          }
+        } catch (err) {
+          this.logger.warn(`Failed to save MEMORY facts for turn ${pending.turnNo}: ${err}`);
+        }
+      }
+
       const prompt = callResult.response?.promptTokens ?? 0;
       const cached = callResult.response?.cachedTokens ?? 0;
       const completion = callResult.response?.completionTokens ?? 0;
@@ -226,5 +327,62 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         })
         .where(eq(turns.id, pending.id));
     }
+  }
+
+  /**
+   * [THREAD] 태그 미출력 시 serverResult 기반 구조화 요약 생성.
+   * 위치 + 행동/결과 + 핵심 이벤트(NPC/QUEST)를 조합하여 맥락 요약을 만든다.
+   */
+  private buildFallbackThread(
+    sr: ServerResultV1,
+    rawInput: string | null,
+  ): string | null {
+    const parts: string[] = [];
+    const uiAny = sr.ui as Record<string, unknown>;
+
+    // 1. 위치 — summary.short에서 [장소] 패턴 추출, 없으면 worldState.currentLocationId
+    const locMatch = sr.summary.short.match(/^\[([^\]]+)\]/);
+    if (locMatch) {
+      parts.push(locMatch[1]);
+    } else {
+      const ws = uiAny?.worldState as Record<string, unknown> | undefined;
+      if (ws?.currentLocationId) parts.push(String(ws.currentLocationId));
+    }
+
+    // 2. 플레이어 행동 + 결과
+    if (rawInput) {
+      const actionCtx = uiAny?.actionContext as {
+        parsedType?: string;
+        originalInput?: string;
+      } | undefined;
+      const resolveOutcome = uiAny?.resolveOutcome as string | undefined;
+
+      const actionDesc = actionCtx?.parsedType
+        ? `${rawInput.slice(0, 20)}(${actionCtx.parsedType})`
+        : rawInput.slice(0, 25);
+      const outcome = resolveOutcome === 'SUCCESS' ? '성공'
+        : resolveOutcome === 'PARTIAL' ? '부분 성공'
+        : resolveOutcome === 'FAIL' ? '실패' : '';
+      const outcomeSuffix = outcome ? ` → ${outcome}` : '';
+      parts.push(`당신이 ${actionDesc}${outcomeSuffix}`);
+    }
+
+    // 3. NPC/QUEST/MOVE 핵심 이벤트 텍스트 (최대 2개)
+    const keyEvents = sr.events
+      .filter((e) => ['NPC', 'QUEST', 'MOVE'].includes(e.kind))
+      .map((e) => e.text.slice(0, 40))
+      .slice(0, 2);
+    if (keyEvents.length > 0) {
+      parts.push(keyEvents.join('. '));
+    }
+
+    // 4. 위 정보만으로 부족하면 summary.short fallback
+    if (parts.length < 2) {
+      const cleanSummary = sr.summary.short.replace(/^\[[^\]]+\]\s*/, '');
+      if (cleanSummary) parts.push(cleanSummary.slice(0, 50));
+    }
+
+    if (parts.length === 0) return null;
+    return parts.join('. ').slice(0, 100);
   }
 }

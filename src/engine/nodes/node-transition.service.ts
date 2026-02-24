@@ -1,7 +1,7 @@
 // HUB/LOCATION 노드 전환 서비스 (DAG 대체)
 
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, max } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../../db/drizzle.module.js';
 import {
   runSessions,
@@ -37,6 +37,17 @@ export class NodeTransitionService {
   ) {}
 
   /**
+   * run 내 최대 nodeIndex 조회 → +1 반환
+   */
+  private async getNextNodeIndex(runId: string): Promise<number> {
+    const result = await this.db
+      .select({ maxIndex: max(nodeInstances.nodeIndex) })
+      .from(nodeInstances)
+      .where(eq(nodeInstances.runId, runId));
+    return (result[0]?.maxIndex ?? -1) + 1;
+  }
+
+  /**
    * LOCATION 노드로 전환
    */
   async transitionToLocation(
@@ -47,7 +58,7 @@ export class NodeTransitionService {
     ws: WorldState,
     runState?: RunState,
   ): Promise<NodeTransitionResult> {
-    const nextIndex = currentNodeIndex + 1;
+    const nextIndex = await this.getNextNodeIndex(runId);
     const location = this.content.getLocation(locationId);
     const locationName = location?.name ?? locationId;
     const envTags = location?.tags ?? [];
@@ -160,7 +171,7 @@ export class NodeTransitionService {
     ws: WorldState,
     arcState: ArcState,
   ): Promise<NodeTransitionResult> {
-    const nextIndex = currentNodeIndex + 1;
+    const nextIndex = await this.getNextNodeIndex(runId);
 
     // HUB 노드 생성
     await this.db.insert(nodeInstances).values({
@@ -266,7 +277,7 @@ export class NodeTransitionService {
     playerHp: number,
     playerStamina: number,
   ): Promise<NodeTransitionResult> {
-    const nextIndex = parentNodeIndex + 1;
+    const nextIndex = await this.getNextNodeIndex(runId);
 
     const encounter = this.content.getEncounter(encounterId);
     if (!encounter) {

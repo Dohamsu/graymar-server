@@ -1,4 +1,8 @@
 // 정본: specs/HUB_event_system.md
+// @deprecated Narrative Engine v1에서 EventDefV2는 IncidentDef로 대체됨.
+// Affordance, MatchPolicy는 Incident 시스템에서도 재사용.
+// EventDefV2, EventTypeV2, EventPayload, EventChoice, EventEffect, Gate, ConditionCmp은
+// 마이그레이션 완료 후 제거 예정.
 
 export const AFFORDANCE = [
   'INVESTIGATE',

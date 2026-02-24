@@ -24,7 +24,10 @@ import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { AgendaService } from '../engine/hub/agenda.service.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
-import type { ServerResultV1, RunState } from '../db/types/index.js';
+import type { ServerResultV1, RunState, IncidentDef, NPCState } from '../db/types/index.js';
+import { initNPCState } from '../db/types/npc-state.js';
+import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
+import { RngService } from '../engine/rng/rng.service.js';
 
 @Injectable()
 export class RunsService {
@@ -35,6 +38,8 @@ export class RunsService {
     private readonly agendaService: AgendaService,
     private readonly arcService: ArcService,
     private readonly sceneShellService: SceneShellService,
+    private readonly incidentMgmt: IncidentManagementService,
+    private readonly rngService: RngService,
   ) {}
 
   async createRun(userId: string, presetId: string, gender: 'male' | 'female' = 'male') {
@@ -109,6 +114,24 @@ export class RunsService {
     npcRelations['NPC_HARBOR_BOSS'] = 15;
     npcRelations['NPC_SLUM_LEADER'] = 10;
 
+    // Narrative Engine v1: 초기 Incident spawn
+    const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
+    const initRng = this.rngService.create(seed, 0);
+    const initialIncidents = this.incidentMgmt.initIncidents(incidentDefs, worldState, initRng);
+    worldState.activeIncidents = initialIncidents;
+
+    // Narrative Engine v1: NPC State 초기화
+    const npcStates: Record<string, NPCState> = {};
+    const allNpcs = this.content.getAllNpcs();
+    for (const npcDef of allNpcs) {
+      npcStates[npcDef.npcId] = initNPCState({
+        npcId: npcDef.npcId,
+        basePosture: npcDef.basePosture,
+        initialTrust: npcDef.initialTrust ?? npcRelations[npcDef.npcId] ?? 0,
+        agenda: npcDef.agenda,
+      });
+    }
+
     // 초기 RunState — 프리셋 기반 + HUB 확장
     const initialRunState: RunState = {
       gold: preset.startingGold,
@@ -127,6 +150,7 @@ export class RunsService {
       eventCooldowns: {},
       equipped: {},
       equipmentBag: [],
+      npcStates,
     };
 
     // 4. HUB 선택지 생성

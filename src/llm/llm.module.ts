@@ -5,6 +5,7 @@ import { LlmConfigService } from './llm-config.service.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
+import { MemoryRendererService } from './memory-renderer.service.js';
 import { LlmProviderRegistryService } from './providers/llm-provider-registry.service.js';
 import { LlmSettingsController } from './llm-settings.controller.js';
 import { MockProvider } from './providers/mock.provider.js';
@@ -12,9 +13,10 @@ import { OpenAIProvider } from './providers/openai.provider.js';
 import { ClaudeProvider } from './providers/claude.provider.js';
 import { GeminiProvider } from './providers/gemini.provider.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
+import { ContentModule } from '../content/content.module.js';
 
 @Module({
-  imports: [HubEngineModule],
+  imports: [HubEngineModule, ContentModule],
   controllers: [LlmSettingsController],
   providers: [
     ContextBuilderService,
@@ -23,6 +25,7 @@ import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
     PromptBuilderService,
     LlmCallerService,
     AiTurnLogService,
+    MemoryRendererService,
     LlmProviderRegistryService,
   ],
   exports: [ContextBuilderService, LlmConfigService, LlmCallerService],

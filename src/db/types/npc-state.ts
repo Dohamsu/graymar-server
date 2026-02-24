@@ -1,4 +1,4 @@
-// 정본: architecture/09_npc_politics.md §1
+// 정본: architecture/09_npc_politics.md §1 + Narrative_Engine_v1_Integrated_Spec.md §6
 
 export const NPC_POSTURE = [
   'FRIENDLY',
@@ -9,18 +9,29 @@ export const NPC_POSTURE = [
 ] as const;
 export type NpcPosture = (typeof NPC_POSTURE)[number];
 
+/** Narrative Engine v1: 5축 감정 모델 */
+export interface NpcEmotionalState {
+  trust: number; // -100~100 (신뢰/불신)
+  fear: number; // 0~100 (공포)
+  respect: number; // -100~100 (존경/경멸)
+  suspicion: number; // 0~100 (의심)
+  attachment: number; // 0~100 (애착)
+}
+
 export interface NPCState {
   npcId: string;
   agenda: string;
   currentGoal: string;
   currentStage: string;
-  trustToPlayer: number; // -100~100
-  suspicion: number; // 0~100
+  trustToPlayer: number; // -100~100 (v1 호환, emotional.trust에서 파생)
+  suspicion: number; // 0~100 (v1 호환, emotional.suspicion에서 파생)
   influence: number; // 0~100
   funds: number; // 0~100
   network: number; // 0~100
   exposure: number; // 0~100
   posture: NpcPosture;
+  // Narrative Engine v1 확장
+  emotional: NpcEmotionalState;
 }
 
 export interface Relationship {
@@ -48,18 +59,26 @@ export function initNPCState(npcData: {
   initialTrust?: number;
   agenda?: string;
 }): NPCState {
+  const initialTrust = npcData.initialTrust ?? 0;
   return {
     npcId: npcData.npcId,
     agenda: npcData.agenda ?? '',
     currentGoal: '',
     currentStage: 'INITIAL',
-    trustToPlayer: npcData.initialTrust ?? 0,
+    trustToPlayer: initialTrust,
     suspicion: 0,
     influence: 50,
     funds: 50,
     network: 50,
     exposure: 0,
     posture: (npcData.basePosture as NpcPosture) ?? 'CAUTIOUS',
+    emotional: {
+      trust: initialTrust,
+      fear: 0,
+      respect: 0,
+      suspicion: 0,
+      attachment: 0,
+    },
   };
 }
 
@@ -70,6 +89,17 @@ export function initNPCState(npcData: {
 export function computeEffectivePosture(
   state: NPCState,
 ): NpcPosture {
+  const emo = state.emotional;
+  // emotional 기반 posture 계산 (emotional이 있으면 우선)
+  if (emo) {
+    if (emo.fear > 60) return 'FEARFUL';
+    if (emo.trust > 30 && emo.respect > 20) return 'FRIENDLY';
+    if (emo.suspicion > 60 || emo.trust < -30) return 'HOSTILE';
+    if (emo.suspicion > 30) return 'CALCULATING';
+    if (emo.trust > 20) return 'FRIENDLY';
+    if (emo.trust < -20) return 'CAUTIOUS';
+  }
+  // v1 호환 fallback
   if (state.trustToPlayer > 30) return 'FRIENDLY';
   if (state.suspicion > 60) return 'HOSTILE';
   if (state.trustToPlayer < -30) return 'HOSTILE';

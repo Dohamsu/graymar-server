@@ -510,46 +510,73 @@ export class SceneShellService {
     sourceEventId?: string,
     eventType?: string,
     turnNo?: number,
+    eventChoices?: EventChoice[],
   ): ChoiceItem[] {
     const used = new Set(usedChoiceIds ?? []);
+    const TARGET_COUNT = 3;
+    const choices: ChoiceItem[] = [];
+    const usedAffordances = new Set<string>();
 
-    // 1. LOCATION별 풀 (우선) + eventType별 풀 + 기본 풀 합산
-    const locationPool = LOCATION_FOLLOW_UPS[locationId]?.[resolveOutcome] ?? [];
-    const basePool = locationPool.length > 0
-      ? locationPool
-      : (FOLLOW_UP_CHOICES[resolveOutcome] ?? FOLLOW_UP_CHOICES.PARTIAL);
-    const typePool = eventType && EVENT_TYPE_FOLLOW_UPS[eventType]
-      ? (EVENT_TYPE_FOLLOW_UPS[eventType][resolveOutcome] ?? [])
-      : [];
-    const combinedPool = [...basePool, ...typePool].filter((c) => !used.has(c.id));
+    // 1. 이벤트 미사용 고유 선택지 (payload.choices 중 미선택분) — 가장 관련성 높음
+    if (eventChoices && eventChoices.length > 0) {
+      const unusedEventChoices = eventChoices
+        .filter((c) => !used.has(c.id))
+        .slice(0, 2);
+      for (const c of unusedEventChoices) {
+        choices.push({
+          id: c.id,
+          label: c.label,
+          hint: c.hint,
+          action: {
+            type: 'CHOICE' as const,
+            payload: {
+              affordance: c.affordance,
+              riskLevel: c.riskLevel,
+              ...(sourceEventId ? { sourceEventId } : {}),
+            },
+          },
+        });
+        usedAffordances.add(c.affordance);
+      }
+    }
 
-    // 결정적 셔플 → 2개 선택
-    const shuffled = this.deterministicShuffle(
-      combinedPool.length > 0 ? combinedPool : [...basePool],
-      turnNo ?? 0,
-    );
-    const picked = shuffled.slice(0, 2);
+    // 2. 부족하면 follow-up 풀(LOCATION + eventType + 기본)에서 보충
+    if (choices.length < TARGET_COUNT) {
+      const locationPool = LOCATION_FOLLOW_UPS[locationId]?.[resolveOutcome] ?? [];
+      const basePool = locationPool.length > 0
+        ? locationPool
+        : (FOLLOW_UP_CHOICES[resolveOutcome] ?? FOLLOW_UP_CHOICES.PARTIAL);
+      const typePool = eventType && EVENT_TYPE_FOLLOW_UPS[eventType]
+        ? (EVENT_TYPE_FOLLOW_UPS[eventType][resolveOutcome] ?? [])
+        : [];
+      const combinedPool = [...basePool, ...typePool].filter(
+        (c) => !used.has(c.id) && !usedAffordances.has(c.action.payload.affordance as string),
+      );
 
-    // 2. 첫 번째 선택지에만 sourceEventId ("이어간다"), 두 번째는 없음 ("전환")
-    const choices: ChoiceItem[] = picked.map((c, idx) => ({
-      ...c,
-      action: {
-        ...c.action,
-        payload: {
-          ...c.action.payload,
-          ...(idx === 0 && sourceEventId ? { sourceEventId } : {}),
-        },
-      },
-    }));
+      const shuffled = this.deterministicShuffle(
+        combinedPool.length > 0 ? combinedPool : [...basePool],
+        turnNo ?? 0,
+      );
+      const needed = TARGET_COUNT - choices.length;
+      const picked = shuffled.slice(0, needed);
 
-    // 3. LOCATION 기본 선택지 1개 (sourceEventId 없음)
-    const usedAffordances = new Set(choices.map((c) => c.action.payload.affordance));
-    const locationDefaults = DEFAULT_LOCATION_CHOICES[locationId] ?? GENERIC_EXPLORE_CHOICES;
-    const locationChoice = locationDefaults.find(
-      (c) => !usedAffordances.has(c.action.payload.affordance) && !used.has(c.id),
-    );
-    if (locationChoice) {
-      choices.push(locationChoice);
+      // 첫 번째 보충 선택지에만 sourceEventId (이벤트 고유 선택지가 없었을 경우)
+      for (let i = 0; i < picked.length; i++) {
+        const c = picked[i];
+        choices.push({
+          ...c,
+          action: {
+            ...c.action,
+            payload: {
+              ...c.action.payload,
+              ...(i === 0 && choices.length === 0 && sourceEventId ? { sourceEventId } : {}),
+            },
+          },
+        });
+        if (c.action.payload.affordance) {
+          usedAffordances.add(c.action.payload.affordance as string);
+        }
+      }
     }
 
     // go_hub 항상 포함 (sourceEventId 미포함 — HUB 복귀 시 이벤트 끊김이 맞음)

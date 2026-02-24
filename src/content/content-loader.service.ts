@@ -40,6 +40,10 @@ export class ContentLoaderService implements OnModuleInit {
   private shopsByLocation = new Map<string, ShopDefinition[]>();
   // Phase 4.1: Region Affix
   private affixes: RegionAffixDef[] = [];
+  // Narrative Engine v1
+  private incidentsData: unknown[] = [];
+  private endingsData: Record<string, unknown> = {};
+  private narrativeMarkConditions: unknown[] = [];
 
   async onModuleInit() {
     await this.loadAll();
@@ -50,6 +54,7 @@ export class ContentLoaderService implements OnModuleInit {
       enemiesRaw, encountersRaw, itemsRaw, defaultsRaw, presetsRaw,
       locationsRaw, eventsV2Raw, sceneShellsRaw, suggestedChoicesRaw, arcEventsRaw,
       npcsRaw, setsRaw, shopsRaw, affixesRaw,
+      incidentsRaw, endingsRaw, narrativeMarksRaw,
     ] = await Promise.all([
       readFile(join(CONTENT_DIR, 'enemies.json'), 'utf-8'),
       readFile(join(CONTENT_DIR, 'encounters.json'), 'utf-8'),
@@ -65,6 +70,10 @@ export class ContentLoaderService implements OnModuleInit {
       readFile(join(CONTENT_DIR, 'sets.json'), 'utf-8').catch(() => '[]'),
       readFile(join(CONTENT_DIR, 'shops.json'), 'utf-8').catch(() => '[]'),
       readFile(join(CONTENT_DIR, 'region_affixes.json'), 'utf-8').catch(() => '[]'),
+      // Narrative Engine v1
+      readFile(join(CONTENT_DIR, 'incidents.json'), 'utf-8').catch(() => '{"incidents":[]}'),
+      readFile(join(CONTENT_DIR, 'endings.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(CONTENT_DIR, 'narrative_marks.json'), 'utf-8').catch(() => '{"marks":[]}'),
     ]);
 
     const enemiesList = JSON.parse(enemiesRaw) as EnemyDefinition[];
@@ -107,6 +116,13 @@ export class ContentLoaderService implements OnModuleInit {
 
     // Phase 4.1: Region Affix 로드
     this.affixes = JSON.parse(affixesRaw) as RegionAffixDef[];
+
+    // Narrative Engine v1: Incidents/Endings/Narrative Marks 로드
+    const incidentsParsed = JSON.parse(incidentsRaw);
+    this.incidentsData = incidentsParsed.incidents ?? [];
+    this.endingsData = JSON.parse(endingsRaw);
+    const marksParsed = JSON.parse(narrativeMarksRaw);
+    this.narrativeMarkConditions = marksParsed.marks ?? [];
   }
 
   getPlayerDefaults(): PlayerDefaults {
@@ -310,5 +326,24 @@ export class ContentLoaderService implements OnModuleInit {
   /** 전체 affix 목록 */
   getAllAffixes(): RegionAffixDef[] {
     return this.affixes;
+  }
+
+  // --- Narrative Engine v1: Incidents/Endings ---
+
+  getIncidentsData(): unknown[] {
+    return this.incidentsData;
+  }
+
+  getIncident(incidentId: string): { incidentId: string; kind: string; title: string } | undefined {
+    return (this.incidentsData as Array<{ incidentId: string; kind: string; title: string }>)
+      .find((i) => i.incidentId === incidentId);
+  }
+
+  getEndingsData(): Record<string, unknown> {
+    return this.endingsData;
+  }
+
+  getNarrativeMarkConditions(): unknown[] {
+    return this.narrativeMarkConditions;
   }
 }

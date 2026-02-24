@@ -37,7 +37,16 @@ export class WorldStateService {
         LOC_HARBOR: { security: 40, crime: 50, unrest: 40, spotlight: false },
         LOC_SLUMS: { security: 20, crime: 70, unrest: 60, spotlight: false },
       },
-      incidentFlags: {},
+      // Narrative Engine v1
+      globalClock: 0,
+      day: 1,
+      phaseV2: 'DAWN',
+      activeIncidents: [],
+      npcGoals: {},
+      signalFeed: [],
+      narrativeMarks: [],
+      mainArcClock: { startDay: 1, softDeadlineDay: 14, triggered: false },
+      operationSession: null,
     };
   }
 
@@ -52,6 +61,7 @@ export class WorldStateService {
       currentLocationId: null,
       hubHeat: newHeat,
       hubSafety: this.computeSafety(newHeat),
+      combatWindowCount: 0, // HUB 복귀 시 전투 윈도우 초기화
     };
   }
 
@@ -104,5 +114,23 @@ export class WorldStateService {
     if (heat < 40) return 'SAFE';
     if (heat < 70) return 'ALERT';
     return 'DANGER';
+  }
+
+  /**
+   * 기존 active run에서 v1 필드가 없을 때 defaults 적용 (마이그레이션)
+   */
+  migrateWorldState(ws: WorldState): WorldState {
+    return {
+      ...ws,
+      globalClock: ws.globalClock ?? 0,
+      day: ws.day ?? 1,
+      phaseV2: ws.phaseV2 ?? (ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY'),
+      activeIncidents: ws.activeIncidents ?? [],
+      npcGoals: ws.npcGoals ?? {},
+      signalFeed: ws.signalFeed ?? [],
+      narrativeMarks: ws.narrativeMarks ?? [],
+      mainArcClock: ws.mainArcClock ?? { startDay: 1, softDeadlineDay: 14, triggered: false },
+      operationSession: ws.operationSession ?? null,
+    };
   }
 }
