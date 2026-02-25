@@ -16,6 +16,7 @@ export class PromptBuilderService {
     sr: ServerResultV1,
     rawInput: string = '',
     inputType: string = 'SYSTEM',
+    previousChoiceLabels?: string[],
   ): LlmMessage[] {
     const messages: LlmMessage[] = [];
 
@@ -365,17 +366,24 @@ export class PromptBuilderService {
       const choiceTexts = sr.choices.map(
         (c) => `- ${c.label}${c.hint ? ` (${c.hint})` : ''}`,
       );
-      factsParts.push(
-        [
-          '[제시된 선택지] — 서술 범위 경계 (절대 출력 금지)',
-          '아래는 서술 이후 게임 시스템이 표시할 선택지입니다. 참고만 하세요.',
-          '⚠️ 이 선택지를 서술에 절대 포함하지 마세요. 목록, 요약, 재구성 어떤 형태로도 출력 금지.',
-          '⚠️ 서술 안에서 이 선택지에 해당하는 행동을 미리 수행하지 마세요.',
-          '서술은 이 선택지들이 자연스러운 다음 단계가 되는 시점에서 끝나야 합니다.',
-          '',
-          choiceTexts.join('\n'),
-        ].join('\n'),
-      );
+      const choiceParts = [
+        '[참고 선택지] — 서술 범위 경계',
+        '아래는 게임 엔진이 생성한 기본 선택지입니다. 서술에 포함하지 마세요.',
+        '⚠️ 서술 안에서 이 선택지에 해당하는 행동을 미리 수행하지 마세요.',
+        '서술이 끝나면, [CHOICES] 태그로 서술 내용에 기반한 맥락 선택지 3개를 생성하세요.',
+        '기본 선택지보다 서술에 등장한 구체적 상황·인물·사물을 활용한 선택지가 좋습니다.',
+        '',
+        choiceTexts.join('\n'),
+      ];
+      if (previousChoiceLabels && previousChoiceLabels.length > 0) {
+        choiceParts.push('');
+        choiceParts.push('⚠️ 이전에 보여준 선택지 (절대 반복 금지):');
+        for (const label of previousChoiceLabels) {
+          choiceParts.push(`- ${label}`);
+        }
+        choiceParts.push('위 선택지와 동일하거나 유사한 선택지를 생성하지 마세요. 이번 서술에 새로 등장한 구체적 디테일을 활용하세요.');
+      }
+      factsParts.push(choiceParts.join('\n'));
     }
 
     messages.push({ role: 'user', content: factsParts.join('\n\n') });

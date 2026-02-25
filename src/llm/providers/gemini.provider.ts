@@ -49,8 +49,9 @@ export class GeminiProvider implements LlmProvider {
       ? systemMessages.map((m) => m.content).join('\n\n')
       : undefined;
 
-    // Gemini 2.5 모델은 thinking 모델 — maxOutputTokens를 넉넉하게 설정
-    const outputBudget = Math.max(request.maxTokens, 8192);
+    // Gemini 2.5 thinking 모델만 output budget 확대, flash-lite 등은 요청값 그대로
+    const isThinkingModel = /^gemini-2\.5-(pro|flash)$/.test(model);
+    const outputBudget = isThinkingModel ? Math.max(request.maxTokens, 8192) : request.maxTokens;
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
     const response = await client.models.generateContent({

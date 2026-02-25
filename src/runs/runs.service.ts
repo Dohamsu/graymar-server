@@ -49,15 +49,12 @@ export class RunsService {
       throw new BadRequestError(`Unknown presetId: ${presetId}`);
     }
 
-    // 1. User upsert
+    // 1. User 존재 확인
     const existingUser = await this.db.query.users.findFirst({
       where: eq(users.id, userId),
     });
     if (!existingUser) {
-      await this.db.insert(users).values({
-        id: userId,
-        email: `${userId}@placeholder.local`,
-      });
+      throw new NotFoundError('User not found. Please register first.');
     }
 
     // 2. PlayerProfile upsert — 매 런마다 프리셋 스탯으로 갱신

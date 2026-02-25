@@ -12,6 +12,7 @@ export interface LlmProviderRequest {
   maxTokens: number;
   temperature: number;
   model?: string;
+  reasoningEffort?: 'low' | 'medium' | 'high'; // GPT-5/o-series reasoning 강도
 }
 
 export interface LlmProviderResponse {

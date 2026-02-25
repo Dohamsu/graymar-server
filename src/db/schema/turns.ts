@@ -18,6 +18,7 @@ import {
 } from '../types/index.js';
 import type {
   ActionPlan,
+  ChoiceItem,
   ParsedIntent,
   ServerResultV1,
 } from '../types/index.js';
@@ -62,6 +63,7 @@ export const turns = pgTable(
     llmModelUsed: text('llm_model_used'),
     llmTokenStats: jsonb('llm_token_stats').$type<{ prompt: number; cached: number; completion: number; latencyMs: number }>(),
     llmCompletedAt: timestamp('llm_completed_at'),
+    llmChoices: jsonb('llm_choices').$type<ChoiceItem[]>(),
 
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },

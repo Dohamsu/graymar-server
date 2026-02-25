@@ -28,7 +28,7 @@ import { ContentModule } from '../content/content.module.js';
     MemoryRendererService,
     LlmProviderRegistryService,
   ],
-  exports: [ContextBuilderService, LlmConfigService, LlmCallerService],
+  exports: [ContextBuilderService, LlmConfigService, LlmCallerService, LlmProviderRegistryService],
 })
 export class LlmModule implements OnModuleInit {
   constructor(
