@@ -15,6 +15,7 @@ import type { NpcEmotionalState } from '../../db/types/npc-state.js';
 
 export interface CollectTurnData {
   actionType: IntentActionType;
+  secondaryActionType?: IntentActionType;
   rawInput: string;
   outcome: ResolveOutcome;
   eventId?: string;

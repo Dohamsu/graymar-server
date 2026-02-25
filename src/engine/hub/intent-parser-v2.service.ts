@@ -26,7 +26,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
       actionType: 'FIGHT',
     },
 
-    // ── THREATEN: 위협·압박·겁주기 ──
+    // ── THREATEN: 위협·압박·겁주기·추궁·심문 ──
     {
       keywords: [
         '협박', '위협', '겁을 줘', '겁을 주', '겁줘', '으름장', '으르렁',
@@ -34,6 +34,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
         '후회할', '후회하게', '각오', '본때', '혼내', '혼을 내',
         '검을 꺼내', '칼을 꺼내', '칼을 들이', '칼을 겨누', '검을 겨누', '겨누', '노려', '경고', '엄포',
         '벌을 줄', '응징', '보복', '입 다물', '입을 열어',
+        '따지', '따진', '추궁', '심문', '문책', '시비',
       ],
       actionType: 'THREATEN',
     },
@@ -41,7 +42,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
     // ── STEAL: 절도·소매치기·몰래 가져가기 ──
     {
       keywords: [
-        '훔치', '훔쳐', '도둑', '소매치기', '털어', '빼앗', '빼돌',
+        '훔치', '훔쳐', '훔친', '도둑', '소매치기', '털어', '빼앗', '빼돌',
         '몰래 가져', '몰래 챙', '슬쩍 집', '슬쩍 가져', '슬쩍 넣',
         '슬쩍 챙', '슬쩍 들',
         '장물', '좀도둑', '빼내', '낚아채', '집어넣', '슬쩍 빼',
@@ -50,7 +51,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
       actionType: 'STEAL',
     },
 
-    // ── SNEAK: 은밀·잠입·미행 ──
+    // ── SNEAK: 은밀·잠입·미행·엿듣기 ──
     {
       keywords: [
         '몰래', '숨어', '숨는', '잠입', '은밀', '살금', '살금살금',
@@ -58,6 +59,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
         '뒤를 밟', '미행', '숨겨진', '숨은', '뒷문', '뒷길',
         '틈을 타', '틈새', '우회', '피해서', '피해 가',
         '조용히 따라', '조용히 접근', '은신', '눈을 피',
+        '엿듣', '엿보', '엿본', '엿들',
       ],
       actionType: 'SNEAK',
     },
@@ -67,28 +69,29 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
       keywords: [
         '뇌물', '금화를 건네', '금화를 줘', '돈으로', '매수', '매수하',
         '골드를', '골드 줄', '골드를 줄', '골드를 드', '골드 드',
-        '돈을 줄', '돈을 드', '돈을 건네', '대가를', '보상을 줄',
+        '돈을 줄', '돈을 드', '돈을 건네', '돈을 건넨', '대가를', '보상을 줄',
         '값을 치르', '사례금', '수고비', '은화', '은화를', '동전',
         '금전', '재물', '금을 줄', '돈으로 해결', '돈이면',
         '얼마면', '얼마를', '지갑', '주머니에서 꺼',
         '금화를 꺼', '금화를 흔', '금화를 내밀', '금화 내밀',
-        '금화를 보여', '금화를 쥐어', '돈을 꺼', '돈을 내밀',
+        '금화를 보여', '금화를 쥐어', '금화를 건넨', '돈을 꺼', '돈을 내밀',
         '돈을 흔', '은화를 꺼', '은화를 내밀', '뒷돈',
       ],
       actionType: 'BRIBE',
     },
 
-    // ── INVESTIGATE: 조사·탐색·단서 추적 ──
+    // ── INVESTIGATE: 조사·탐색·단서 추적·질문 ──
     {
       keywords: [
         '조사', '살펴', '살펴본', '탐색', '찾아', '찾아본', '수색',
         '뒤지', '뒤져', '파헤', '파헤치', '캐물', '캐내', '추적',
-        '추궁', '심문', '증거', '단서', '정체', '배후', '진상',
+        '증거', '단서', '정체', '배후', '진상',
         '확인', '검사', '들여다', '열어본', '열어보',
         '꺼내서 살펴', '꺼내서 확인', '꺼내어 조사', '꺼내어 살피',
         '해독', '분석', '읽어', '읽어본', '문서', '장부', '기록',
         '알아내', '알아본', '알아보', '파악', '조회', '정보를 캐',
         '더 깊이', '자세히', '꼼꼼히', '면밀히',
+        '물어', '물어본', '물어보', '질문',
       ],
       actionType: 'INVESTIGATE',
     },
@@ -97,7 +100,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
     {
       keywords: [
         '관찰', '지켜본', '지켜보', '눈여겨', '살핀', '살피', '감시',
-        '주시', '엿본', '엿보', '엿듣', '엿들', '눈을 돌려', '눈길',
+        '주시', '눈을 돌려', '눈길',
         '시선', '바라보', '바라본', '쳐다보', '쳐다본', '훑어',
         '훑어본', '둘러보', '둘러본', '내려다', '올려다',
         '동향', '동태', '낌새', '기색', '움직임을 살', '주변을 살',
@@ -139,7 +142,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
       actionType: 'HELP',
     },
 
-    // ── TRADE: 거래·상업·흥정 ──
+    // ── TRADE: 거래·상업·흥정·상점 이용 ──
     {
       keywords: [
         '거래', '교환', '흥정', '흥정을 시', '흥정을 하', '흥정하',
@@ -148,17 +151,10 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
         '팔겠', '팔고 싶', '팔아', '물물교환', '바꿔', '바꾸',
         '값이 얼마', '얼마에 파', '얼마에 사',
         '물건을 고', '물건을 사', '가격을',
-      ],
-      actionType: 'TRADE',
-    },
-
-    // ── SHOP: 상점 이용 ──
-    {
-      keywords: [
         '상점', '가게', '진열', '진열대', '물건을 보', '물건을 구경',
         '매대', '취급', '재고', '품목',
       ],
-      actionType: 'SHOP',
+      actionType: 'TRADE',
     },
 
     // ── REST: 휴식·회복 ──
@@ -175,9 +171,25 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
     // ── MOVE_LOCATION: 장소 이동 + 복귀 의도 ──
     {
       keywords: [
-        '이동', '향한다', '떠나', '나가', '벗어나', '자리를 뜨',
-        '다른 곳', '다른 장소', '옮겨', '빠져나', '퇴장',
-        '발길을 돌', '돌아간다', '돌아가',
+        // 일반 이동 동사
+        '이동', '향한다', '향하', '떠나', '나가', '벗어나', '자리를 뜨',
+        '다른 곳', '다른 장소', '다른 데', '딴 곳', '딴 데',
+        '옮겨', '옮긴', '빠져나', '퇴장',
+        '발길을 돌', '발길을 옮', '발을 옮', '걸음을 옮',
+        '돌아간다', '돌아가', '돌아서',
+        // 이동 동사 확장 — 한국어 활용 커버
+        '길을 나서', '자리를 피', '자리를 옮',
+        '건너가', '건너간', '넘어가', '넘어간',
+        '찾아가', '찾아간', '들르', '들렀',
+        '가 보자', '가보자', '가 볼까', '가볼까',
+        '가 봐야', '가봐야', '갈까',
+        // "~(으)로 간다/가다" 형 — 방향성 이동
+        '쪽으로 가', '쪽으로 간', '쪽으로 향', '쪽으로 갔',
+        '쪽으로 움직', '쪽으로 발',
+        // 출발/이탈 의도
+        '이곳을 떠나', '이 곳을 떠나', '여기를 떠나', '여길 떠나',
+        '여기서 떠나', '여기서 나', '여기선 빠져',
+        '위험하니', '위험하다',
         // Narrative Engine v1: Operation Session 복귀 의도
         '끝내', '끝내자', '끝낸다', '그만', '그만하',
         '돌아가자', '돌아갈', '복귀', '철수', '물러나',
@@ -186,17 +198,39 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
       actionType: 'MOVE_LOCATION',
     },
 
-    // ── TALK: 대화·질문 (최하위 — 다른 매칭이 없을 때 fallback) ──
+    // ── TALK: 대화 (최하위 — 다른 매칭이 없을 때 fallback) ──
     {
       keywords: [
-        '대화', '이야기', '물어', '물어본', '물어보', '질문',
-        '안부', '인사', '수다', '소문', '소식', '말을 건',
-        '말을 걸', '얘기', '여쭤', '묻', '말해', '말하',
-        '알려', '알려줘', '가르쳐', '전해',
+        '대화', '이야기', '안부', '인사', '수다', '잡담',
+        '말을 건', '말을 걸', '얘기', '말해', '말하',
       ],
       actionType: 'TALK',
     },
   ];
+
+// ── 장소명 기반 이동 감지 ──
+// 입력에 장소명 + 이동 맥락이 동시에 나타나면 MOVE_LOCATION 강제 판정
+const LOCATION_NAMES = [
+  // LOC_MARKET
+  '시장', '상점가', '장터', '노점가',
+  // LOC_GUARD
+  '경비대', '초소', '병영', '수비대', '순찰대',
+  // LOC_HARBOR
+  '항만', '부두', '항구', '선착장', '포구', '배터',
+  // LOC_SLUMS
+  '빈민가', '슬럼', '하층가', '빈민굴',
+  // HUB
+  '거점', '선술집', '숙소', '잠긴 닻',
+];
+
+// "장소명 + 이 중 하나" → 이동 의도 (예: "항만 쪽으로", "시장에 가", "경비대로 향")
+// 주의: "에서"는 현재 위치를 나타내는 조사이므로 포함하지 않음 ("시장에서 물건을 본다" ≠ 이동)
+const MOVE_SUFFIXES = [
+  '으로', '로 ', '쪽', '에 가', '까지',
+  '로 가', '로 간', '로 갔', '로 향',
+  '로 이동', '로 옮',
+  '로 건너', '로 넘어', '로 들어',
+];
 
 // 에스컬레이션 맵: 약한 actionType → 강한 actionType
 const ESCALATION_MAP: Partial<Record<IntentActionType, IntentActionType>> = {
@@ -291,6 +325,8 @@ export class IntentParserV2Service {
     // 모든 매칭된 actionType 수집
     const allMatched = this.extractAllActionTypes(normalizedInput);
     let actionType = allMatched[0] ?? 'TALK';
+    let secondaryActionType: IntentActionType | undefined =
+      allMatched[1] && allMatched[1] !== actionType ? allMatched[1] : undefined;
 
     // suppressedActionType 감지: 에스컬레이션 대상이 매칭 목록에 있는지 확인
     const escalationTarget = ESCALATION_MAP[actionType];
@@ -300,11 +336,15 @@ export class IntentParserV2Service {
         : undefined;
 
     // 고집 에스컬레이션: 같은 actionType이 연속 3회(history 2회 + 현재) → 강한 타입으로 승격
+    // 에스컬레이션은 primary에만 적용
     let escalated = false;
     if (insistenceCount >= 2 && actionType === repeatedType && ESCALATION_MAP[actionType]) {
       actionType = ESCALATION_MAP[actionType]!;
       escalated = true;
     }
+
+    // 에스컬레이션 후 secondary가 primary와 같아지면 제거
+    if (secondaryActionType === actionType) secondaryActionType = undefined;
 
     const tone = this.extractTone(normalizedInput);
     const riskLevel = this.extractRiskLevel(normalizedInput);
@@ -315,6 +355,7 @@ export class IntentParserV2Service {
     return {
       inputText,
       actionType,
+      secondaryActionType,
       tone,
       target,
       riskLevel,
@@ -366,6 +407,15 @@ export class IntentParserV2Service {
       }
     }
 
+    // 장소명 + 이동 맥락 복합 감지 → MOVE_LOCATION 강제 부스트
+    if (this.detectLocationBasedMove(input)) {
+      const existing = hitCounts.get('MOVE_LOCATION') ?? 0;
+      hitCounts.set('MOVE_LOCATION', existing + 10); // 키워드 히트보다 훨씬 높은 가중치
+      if (!firstSeenOrder.includes('MOVE_LOCATION')) {
+        firstSeenOrder.push('MOVE_LOCATION');
+      }
+    }
+
     // 히트 수가 같으면 KEYWORD_MAP 순서(우선순위) 유지, 히트가 많은 것이 앞으로
     firstSeenOrder.sort((a, b) => {
       const diff = (hitCounts.get(b) ?? 0) - (hitCounts.get(a) ?? 0);
@@ -403,6 +453,30 @@ export class IntentParserV2Service {
       if (match) return match[1];
     }
     return null;
+  }
+
+  /**
+   * 장소명 + 이동 맥락 복합 감지
+   * "항만 쪽으로 간다", "시장에 가 보자", "경비대로 향한다" 등
+   * 장소명이 입력에 있고, 그 뒤에 이동 접미사가 붙으면 MOVE_LOCATION 판정
+   */
+  private detectLocationBasedMove(input: string): boolean {
+    for (const locName of LOCATION_NAMES) {
+      const idx = input.indexOf(locName);
+      if (idx === -1) continue;
+
+      // 장소명 이후의 텍스트에서 이동 접미사 확인
+      const afterLoc = input.slice(idx + locName.length);
+      for (const suffix of MOVE_SUFFIXES) {
+        if (afterLoc.startsWith(suffix) || afterLoc.startsWith(' ' + suffix)) {
+          return true;
+        }
+      }
+
+      // 장소명 이전에 "~로/~쪽으로" + 장소명 형태도 체크 (예: "쪽으로 시장")
+      // 일반적이지 않으므로 후방만 체크하면 충분
+    }
+    return false;
   }
 
   private collectTags(input: string, actionType: IntentActionType): string[] {

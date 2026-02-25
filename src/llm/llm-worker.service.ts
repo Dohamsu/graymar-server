@@ -7,7 +7,7 @@ import {
   type OnModuleDestroy,
   Logger,
 } from '@nestjs/common';
-import { and, eq, lt, or, isNull } from 'drizzle-orm';
+import { and, eq, lt, or, isNull, desc } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { turns, recentSummaries, runSessions, nodeMemories, runMemories } from '../db/schema/index.js';
 import { ContextBuilderService } from './context-builder.service.js';
@@ -17,13 +17,18 @@ import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { toDisplayText } from '../common/text-utils.js';
-import type { ServerResultV1 } from '../db/types/index.js';
+import type { ServerResultV1, ChoiceItem } from '../db/types/index.js';
 import type { StructuredMemory, LlmExtractedFact, LlmFactCategory } from '../db/types/structured-memory.js';
 import { LLM_FACT_CATEGORY } from '../db/types/structured-memory.js';
 
 const POLL_INTERVAL_MS = 2000;
 const LOCK_TIMEOUT_S = 60;
 const WORKER_ID = `worker_${process.pid}_${Date.now()}`;
+
+const VALID_CHOICE_AFFORDANCES = new Set([
+  'INVESTIGATE', 'PERSUADE', 'SNEAK', 'BRIBE', 'THREATEN',
+  'HELP', 'STEAL', 'FIGHT', 'OBSERVE', 'TRADE', 'TALK', 'SEARCH',
+]);
 
 @Injectable()
 export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
@@ -122,27 +127,51 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         runSession?.gender as 'male' | 'female' | undefined,
       );
 
-      // 2. 프롬프트 메시지 조립
+      // 2. 이전 턴의 LLM 선택지 라벨 조회 (반복 방지용)
+      let previousChoiceLabels: string[] | undefined;
+      if (pending.nodeType === 'LOCATION' && pending.nodeInstanceId) {
+        const prevTurn = await this.db.query.turns.findFirst({
+          where: and(
+            eq(turns.nodeInstanceId, pending.nodeInstanceId),
+            eq(turns.llmStatus, 'DONE'),
+            lt(turns.turnNo, pending.turnNo),
+          ),
+          orderBy: desc(turns.turnNo),
+          columns: { llmChoices: true },
+        });
+        if (prevTurn?.llmChoices && Array.isArray(prevTurn.llmChoices)) {
+          previousChoiceLabels = (prevTurn.llmChoices as ChoiceItem[])
+            .filter(c => c.id !== 'go_hub')
+            .map(c => c.label);
+        }
+      }
+
+      // 3. 프롬프트 메시지 조립
       const config = this.configService.get();
       const messages = this.promptBuilder.buildNarrativePrompt(
         llmContext,
         serverResult,
         pending.rawInput ?? '',
         (pending.inputType as string) ?? 'SYSTEM',
+        previousChoiceLabels,
       );
 
-      // 3. LLM 호출 (재시도/fallback 포함)
+      // 4. LLM 호출 (재시도/fallback 포함)
+      // Reasoning 모델의 경우 메모리 컨텍스트 양에 따라 추론 강도 결정
+      const reasoningEffort = this.determineReasoningEffort(llmContext);
       const callResult = await this.llmCaller.call({
         messages,
         maxTokens: config.maxTokens,
         temperature: config.temperature,
+        reasoningEffort,
       });
 
-      // 4. 내러티브 결정 — 실패 또는 mock fallback 시 SceneShell로 graceful degradation
+      // 5. 내러티브 결정 — 실패 또는 mock fallback 시 SceneShell로 graceful degradation
       let narrative: string;
       let modelUsed: string;
       let threadEntry: string | null = null;
       let extractedFacts: LlmExtractedFact[] = [];
+      let llmChoices: ChoiceItem[] | null = null;
 
       const isMockFallback = callResult.success && callResult.providerUsed === 'mock' && config.provider !== 'mock';
 
@@ -176,6 +205,34 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           // Fallback: serverResult 기반 구조화 요약
           threadEntry = this.buildFallbackThread(serverResult, pending.rawInput);
         }
+
+        // 4-a-3. [CHOICES] 파싱 (LOCATION 턴만)
+        if (pending.nodeType === 'LOCATION') {
+          const choiceResult = this.parseAndValidateChoices(narrative, pending.turnNo);
+          narrative = choiceResult.cleanedNarrative;
+          if (choiceResult.choices) {
+            choiceResult.choices.push({
+              id: 'go_hub', label: '거점으로 돌아간다',
+              action: { type: 'CHOICE', payload: { returnToHub: true } },
+            });
+            llmChoices = choiceResult.choices;
+          }
+        }
+
+        // 4-a-2. 방어적 출력 클리닝: LLM이 입력 태그를 복사하거나 자체 생성한 대괄호 태그 제거
+        // [이야기 이정표], [서사 이정표], [NPC 관계] 등 어떤 대괄호 태그든 산문에 포함되면 안 됨
+        narrative = narrative
+          .replace(/\n*\[이야기 이정표\][\s\S]*$/g, '')
+          .replace(/\n*\[서사 이정표\][\s\S]*$/g, '')
+          .replace(/\n*\[NPC 관계\][\s\S]*$/g, '')
+          .replace(/\n*\[사건 일지\][\s\S]*$/g, '')
+          .replace(/\n*\[기억된 사실\][\s\S]*$/g, '')
+          .replace(/\n*\[이야기 요약\][\s\S]*$/g, '')
+          .replace(/\n*\[세계 상태\][\s\S]*$/g, '')
+          .replace(/\n*\[상황 요약\][\s\S]*$/g, '')
+          .replace(/\n*\[선택지\][\s\S]*$/g, '')
+          .replace(/\n*\[CHOICES\][\s\S]*?\[\/CHOICES\]/g, '')
+          .trim();
       } else {
         // LLM 호출 실패 → FAILED로 마킹하여 클라이언트에 알림
         const errorMsg = callResult.error ?? 'LLM provider call failed';
@@ -230,6 +287,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             latencyMs: callResult.response?.latencyMs ?? 0,
           },
           llmCompletedAt: new Date(),
+          llmChoices: llmChoices,
         })
         .where(eq(turns.id, pending.id));
 
@@ -327,6 +385,59 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         })
         .where(eq(turns.id, pending.id));
     }
+  }
+
+  /**
+   * [CHOICES] 태그 파싱 및 검증 — LOCATION 턴에서 LLM이 생성한 맥락 선택지 추출.
+   * 유효 선택지가 2개 미만이면 null 반환 (서버 fallback 유지).
+   */
+  private parseAndValidateChoices(
+    rawNarrative: string,
+    turnNo: number,
+    sourceEventId?: string,
+  ): { cleanedNarrative: string; choices: ChoiceItem[] | null } {
+    const match = rawNarrative.match(/\[CHOICES\]([\s\S]*?)\[\/CHOICES\]/);
+    if (!match) return { cleanedNarrative: rawNarrative, choices: null };
+
+    const cleaned = rawNarrative.replace(/\s*\[CHOICES\][\s\S]*?\[\/CHOICES\]/g, '').trim();
+    const lines = match[1].split('\n').map(l => l.trim()).filter(l => l.includes('|'));
+
+    const valid: ChoiceItem[] = [];
+    for (const line of lines.slice(0, 5)) {
+      const [label, aff, hint] = line.split('|').map(s => s.trim());
+      const affordance = aff?.toUpperCase();
+      if (!label || label.length < 3 || label.length > 80) continue;
+      if (!affordance || !VALID_CHOICE_AFFORDANCES.has(affordance)) continue;
+
+      valid.push({
+        id: `llm_${turnNo}_${valid.length}`,
+        label,
+        hint: hint?.slice(0, 60) || undefined,
+        action: {
+          type: 'CHOICE' as const,
+          payload: { affordance, source: 'llm', ...(sourceEventId ? { sourceEventId } : {}) },
+        },
+      });
+      if (valid.length >= 3) break;
+    }
+
+    if (valid.length < 2) return { cleanedNarrative: cleaned, choices: null };
+    return { cleanedNarrative: cleaned, choices: valid };
+  }
+
+  /**
+   * Reasoning 모델(GPT-5/o-series)의 추론 강도를 결정.
+   * 내러티브 생성은 기본적으로 'low'로 충분 (테스트 결과: low→14s, medium→37s, 품질 차이 미미).
+   * peakMode(긴장 정점)에서만 'medium'으로 올려 서사적 전환점의 깊이를 확보.
+   */
+  private determineReasoningEffort(
+    llmContext: import('./context-builder.service.js').LlmContext,
+  ): 'low' | 'medium' | 'high' {
+    // 긴장 정점(peakMode)에서만 medium — 일반 서사는 low로 충분
+    if (llmContext.peakMode) {
+      return 'medium';
+    }
+    return 'low';
   }
 
   /**

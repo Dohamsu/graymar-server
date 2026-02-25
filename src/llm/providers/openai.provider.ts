@@ -53,14 +53,17 @@ export class OpenAIProvider implements LlmProvider {
       content: m.content,
     }));
 
-    // reasoning 모델은 max_output_tokens에 추론 토큰이 포함되므로 8배 확보
-    const reasoningBudget = Math.max(request.maxTokens * 8, 8192);
+    // reasoning 모델은 max_output_tokens에 추론 토큰이 포함되므로 effort에 따라 배율 조정
+    const effort = request.reasoningEffort ?? 'medium';
+    const budgetMultiplier = effort === 'low' ? 3 : effort === 'medium' ? 5 : 8;
+    const reasoningBudget = Math.max(request.maxTokens * budgetMultiplier, 4096);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response: any = await client.responses.create({
       model,
       input,
       max_output_tokens: reasoningBudget,
+      reasoning: { effort },
     });
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access

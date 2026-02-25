@@ -220,13 +220,14 @@ export class IncidentManagementService {
 
   /**
    * 현재 location에서 관련 Incident 찾기.
-   * stage의 affordances와 intent의 actionType이 매치되는 것 우선.
+   * stage의 affordances와 intent의 actionType(primary OR secondary)이 매치되는 것 우선.
    */
   findRelevantIncident(
     ws: WorldState,
     locationId: string,
     actionType: string,
     incidentDefs: IncidentDef[],
+    secondaryActionType?: string,
   ): { incident: IncidentRuntime; def: IncidentDef } | null {
     const defMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
 
@@ -238,10 +239,11 @@ export class IncidentManagementService {
 
     if (candidates.length === 0) return null;
 
-    // affordance 매칭 우선
+    // affordance 매칭 우선 (primary OR secondary)
     const affordanceMatch = candidates.find(({ def, incident }) => {
       const stageDef = def.stages[incident.stage];
-      return stageDef?.affordances.includes(actionType as any);
+      return stageDef?.affordances.includes(actionType as any) ||
+        (secondaryActionType && stageDef?.affordances.includes(secondaryActionType as any));
     });
 
     return affordanceMatch ?? candidates[0];

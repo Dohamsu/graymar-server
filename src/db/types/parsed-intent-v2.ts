@@ -30,7 +30,8 @@ export type IntentTone = (typeof INTENT_TONE)[number];
 
 export type ParsedIntentV2 = {
   inputText: string;
-  actionType: IntentActionType;
+  actionType: IntentActionType;              // primary (판정·stat 기준)
+  secondaryActionType?: IntentActionType;    // secondary (매칭 확장용, optional)
   tone: IntentTone;
   target: string | null;
   riskLevel: 1 | 2 | 3;

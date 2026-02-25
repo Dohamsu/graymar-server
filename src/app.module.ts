@@ -9,10 +9,12 @@ import { EngineModule } from './engine/engine.module.js';
 import { RunsModule } from './runs/runs.module.js';
 import { TurnsModule } from './turns/turns.module.js';
 import { LlmModule } from './llm/llm.module.js';
+import { AuthModule } from './auth/auth.module.js';
 
 @Module({
   imports: [
     DrizzleModule,
+    AuthModule,
     ContentModule,
     EngineModule,
     RunsModule,

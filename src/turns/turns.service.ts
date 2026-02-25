@@ -1,6 +1,6 @@
 // 정본: specs/HUB_system.md — Action-First 턴 파이프라인
 
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, asc, eq, ne } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import {
@@ -76,6 +76,8 @@ function korParticle(word: string, withBatchim: string, withoutBatchim: string):
 
 @Injectable()
 export class TurnsService {
+  private readonly logger = new Logger(TurnsService.name);
+
   constructor(
     @Inject(DB) private readonly db: DrizzleDB,
     private readonly ruleParser: RuleParserService,
@@ -434,6 +436,10 @@ export class TurnsService {
     const actionHistory = runState.actionHistory ?? [];
     const { count: insistenceCount, repeatedType } = this.calculateInsistenceCount(actionHistory);
     const intent = await this.llmIntentParser.parseWithInsistence(rawInput, source, choicePayload, insistenceCount, repeatedType, locationId);
+    const _sec = intent.secondaryActionType ? `+${intent.secondaryActionType}` : '';
+    this.logger.log(
+      `[Intent] "${rawInput.slice(0, 30)}" → ${intent.actionType}${_sec} (source=${intent.source}, tone=${intent.tone}, conf=${intent.confidence})`,
+    );
 
     // MOVE_LOCATION: 자유 텍스트로 다른 LOCATION 이동 요청 시 실제 전환
     if (intent.actionType === 'MOVE_LOCATION' && body.input.type === 'ACTION') {
@@ -504,6 +510,9 @@ export class TurnsService {
 
     // ResolveService 판정
     const resolveResult = this.resolveService.resolve(matchedEvent, intent, ws, playerStats, rng);
+    this.logger.log(
+      `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${matchedEvent.eventId} heat=${resolveResult.heatDelta}`,
+    );
 
     // 전투 트리거?
     if (resolveResult.triggerCombat && resolveResult.combatEncounterId) {
@@ -592,7 +601,7 @@ export class TurnsService {
 
     // === Narrative Engine v1: Incident impact 적용 ===
     const relevantIncident = this.incidentMgmt.findRelevantIncident(
-      ws, locationId, intent.actionType, incidentDefs,
+      ws, locationId, intent.actionType, incidentDefs, intent.secondaryActionType,
     );
     if (relevantIncident) {
       const updatedIncident = this.incidentMgmt.applyImpact(
@@ -687,6 +696,7 @@ export class TurnsService {
     const newHistory = [...actionHistory, {
       turnNo,
       actionType: intent.actionType,
+      secondaryActionType: intent.secondaryActionType,
       suppressedActionType: intent.suppressedActionType,
       inputText: rawInput,
       eventId: matchedEvent.eventId,
@@ -903,6 +913,7 @@ export class TurnsService {
         turnNo,
         {
           actionType: intent.actionType,
+          secondaryActionType: intent.secondaryActionType,
           rawInput: rawInput.slice(0, 30),
           outcome: resolveResult.outcome,
           eventId: matchedEvent.eventId,
@@ -1387,10 +1398,40 @@ export class TurnsService {
   private extractTargetLocation(input: string, currentLocationId: string): string | null {
     const normalized = input.toLowerCase();
     const locationKeywords: Array<{ keywords: string[]; locationId: string }> = [
-      { keywords: ['시장', '상점가', '장터'], locationId: 'LOC_MARKET' },
-      { keywords: ['경비대', '경비', '초소', '병영'], locationId: 'LOC_GUARD' },
-      { keywords: ['항만', '부두', '항구', '선착장'], locationId: 'LOC_HARBOR' },
-      { keywords: ['빈민가', '빈민', '슬럼', '뒷골목'], locationId: 'LOC_SLUMS' },
+      {
+        keywords: [
+          '시장', '상점가', '장터', '노점가', '노점', '좌판거리',
+          '상인들이 모인', '물건 파는',
+        ],
+        locationId: 'LOC_MARKET',
+      },
+      {
+        keywords: [
+          '경비대', '경비', '초소', '병영', '수비대', '순찰대',
+          '경비병', '병사들', '관청',
+        ],
+        locationId: 'LOC_GUARD',
+      },
+      {
+        keywords: [
+          '항만', '부두', '항구', '선착장', '포구', '배터',
+          '창고가', '선박', '정박', '바닷가',
+        ],
+        locationId: 'LOC_HARBOR',
+      },
+      {
+        keywords: [
+          '빈민가', '빈민', '슬럼', '뒷골목', '하층가', '빈민굴',
+          '어두운 골목', '허름한 골목',
+        ],
+        locationId: 'LOC_SLUMS',
+      },
+      {
+        keywords: [
+          '거점', '선술집', '숙소', '잠긴 닻',
+        ],
+        locationId: 'HUB',
+      },
     ];
     for (const entry of locationKeywords) {
       for (const kw of entry.keywords) {
@@ -1513,7 +1554,7 @@ export class TurnsService {
       run: { id: run.id, status: run.status, actLevel: run.actLevel, currentTurnNo: run.currentTurnNo },
       turn: { turnNo: turn.turnNo, nodeInstanceId: turn.nodeInstanceId, nodeType: turn.nodeType, inputType: turn.inputType, rawInput: turn.rawInput, createdAt: turn.createdAt },
       serverResult: turn.serverResult,
-      llm: { status: turn.llmStatus, output: turn.llmOutput, modelUsed: turn.llmModelUsed, completedAt: turn.llmCompletedAt, error: turn.llmError, tokenStats: turn.llmTokenStats ?? null },
+      llm: { status: turn.llmStatus, output: turn.llmOutput, modelUsed: turn.llmModelUsed, completedAt: turn.llmCompletedAt, error: turn.llmError, tokenStats: turn.llmTokenStats ?? null, choices: turn.llmChoices ?? null },
     };
 
     if (query.includeDebug) {

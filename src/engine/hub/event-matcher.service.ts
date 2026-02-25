@@ -49,11 +49,13 @@ export class EventMatcherService {
       this.evaluateGates(e.gates, ws, cooldowns, currentTurnNo, e.eventId),
     );
 
-    // Step 4: affordances 매칭
+    // Step 4: affordances 매칭 (primary OR secondary)
     candidates = candidates.filter(
       (e) =>
         e.affordances.includes('ANY') ||
-        e.affordances.includes(intent.actionType as any),
+        e.affordances.includes(intent.actionType as any) ||
+        (intent.secondaryActionType &&
+         e.affordances.includes(intent.secondaryActionType as any)),
     );
 
     if (candidates.length === 0) return null;
