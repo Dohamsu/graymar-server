@@ -47,4 +47,13 @@ export class TurnsController {
       query,
     );
   }
+
+  @Post(':turnNo/retry-llm')
+  async retryLlm(
+    @Param('runId') runId: string,
+    @Param('turnNo') turnNo: string,
+    @UserId() userId: string,
+  ) {
+    return this.turnsService.retryLlm(runId, parseInt(turnNo, 10), userId);
+  }
 }

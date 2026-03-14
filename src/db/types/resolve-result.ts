@@ -8,6 +8,12 @@ export type ResolveOutcome = (typeof RESOLVE_OUTCOME)[number];
 export type ResolveResult = {
   score: number;
   outcome: ResolveOutcome;
+  // UI 표시용 주사위 분해 (비도전 행위에는 없음)
+  diceRoll?: number;
+  statKey?: string | null;
+  statValue?: number;
+  statBonus?: number;
+  baseMod?: number;
   eventId: string;
   heatDelta: number; // ±8 clamp
   tensionDelta: number;

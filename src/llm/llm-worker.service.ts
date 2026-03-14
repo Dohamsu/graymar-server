@@ -232,6 +232,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           .replace(/\n*\[상황 요약\][\s\S]*$/g, '')
           .replace(/\n*\[선택지\][\s\S]*$/g, '')
           .replace(/\n*\[CHOICES\][\s\S]*?\[\/CHOICES\]/g, '')
+          .replace(/\n*\[CHOICES\][\s\S]*$/g, '')
           .trim();
       } else {
         // LLM 호출 실패 → FAILED로 마킹하여 클라이언트에 알림

@@ -7,7 +7,7 @@
 import { Injectable } from '@nestjs/common';
 import type { RunState } from '../../db/types/permanent-stats.js';
 import type { NPCState, NpcPosture, Relationship } from '../../db/types/npc-state.js';
-import { computeEffectivePosture } from '../../db/types/npc-state.js';
+import { computeEffectivePosture, getNpcDisplayName } from '../../db/types/npc-state.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 
 // --- 타입 정의 ---
@@ -15,6 +15,7 @@ import { ContentLoaderService } from '../../content/content-loader.service.js';
 export interface NpcInjection {
   npcId: string;
   npcName: string;
+  introduced: boolean; // NPC 이름 공개 여부
   reason: string; // 왜 등장하는지 (LLM 시드)
   posture: NpcPosture;
   dialogueSeed: string; // LLM 대화 시작점
@@ -207,7 +208,7 @@ export class TurnOrchestrationService {
     const chosen = candidates[0];
     const state = npcStates[chosen.npcId]!;
     const npcData = this.contentLoader.getNpc(chosen.npcId);
-    const npcName = npcData?.name ?? chosen.npcId;
+    const npcName = getNpcDisplayName(state, npcData);
     const posture = computeEffectivePosture(state);
 
     // 대화 시드 생성
@@ -217,6 +218,7 @@ export class TurnOrchestrationService {
     return {
       npcId: chosen.npcId,
       npcName,
+      introduced: state.introduced ?? false,
       reason,
       posture,
       dialogueSeed,
