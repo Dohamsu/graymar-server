@@ -150,6 +150,11 @@ export class ResolveService {
     return {
       score,
       outcome,
+      diceRoll,
+      statKey: statKey ?? null,
+      statValue: statKey ? (stats[statKey] as number) : 0,
+      statBonus,
+      baseMod,
       eventId: event.eventId,
       heatDelta,
       tensionDelta: outcome === 'FAIL' ? 1 : 0,

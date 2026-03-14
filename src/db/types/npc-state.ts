@@ -20,6 +20,8 @@ export interface NpcEmotionalState {
 
 export interface NPCState {
   npcId: string;
+  introduced: boolean;
+  encounterCount: number;
   agenda: string;
   currentGoal: string;
   currentStage: string;
@@ -62,6 +64,8 @@ export function initNPCState(npcData: {
   const initialTrust = npcData.initialTrust ?? 0;
   return {
     npcId: npcData.npcId,
+    introduced: false,
+    encounterCount: 0,
     agenda: npcData.agenda ?? '',
     currentGoal: '',
     currentStage: 'INITIAL',
@@ -129,4 +133,44 @@ export function summarizeRelationship(
     return `${npcName}과(와)의 관계는 평범하다`;
   }
   return parts.join('. ') + '.';
+}
+
+/**
+ * NPC의 소개 상태에 따라 표시 이름을 반환.
+ * introduced === true → 실명, 아니면 unknownAlias 또는 '낯선 인물'.
+ */
+export function getNpcDisplayName(
+  npcState: NPCState,
+  npcDef: { name: string; unknownAlias?: string } | undefined,
+): string {
+  if (!npcDef) return npcState.npcId;
+  if (npcState.introduced) return npcDef.name;
+  return npcDef.unknownAlias || '낯선 인물';
+}
+
+/**
+ * NPC의 posture와 encounterCount를 기반으로 이번 턴에 이름을 공개할지 결정.
+ * - FRIENDLY/FEARFUL → 1회 (첫 만남에서 자기소개)
+ * - CAUTIOUS → 2회 (신뢰 구축 후)
+ * - CALCULATING/HOSTILE → 3회 (다른 경로로 알게 됨)
+ */
+export function shouldIntroduce(
+  npcState: NPCState,
+  posture: NpcPosture,
+): boolean {
+  if (npcState.introduced) return false;
+
+  const count = npcState.encounterCount ?? 0;
+  switch (posture) {
+    case 'FRIENDLY':
+    case 'FEARFUL':
+      return count >= 1;
+    case 'CAUTIOUS':
+      return count >= 2;
+    case 'CALCULATING':
+    case 'HOSTILE':
+      return count >= 3;
+    default:
+      return count >= 2;
+  }
 }

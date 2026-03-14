@@ -150,6 +150,7 @@ export type SuggestedChoice = {
 export type NpcDefinition = {
   npcId: string;
   name: string;
+  unknownAlias?: string;
   role: string;
   faction: string | null;
   hostile: boolean | 'conditional';

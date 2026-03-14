@@ -502,6 +502,18 @@ export class RunsService {
         llmStatus: t.llmStatus,
         llmOutput: t.llmOutput,
         createdAt: t.createdAt,
+        // 이력 복원용 경량 필드
+        resolveOutcome: t.serverResult?.ui?.resolveOutcome ?? null,
+        eventTexts: (t.serverResult?.events ?? [])
+          .filter((e: { kind: string }) =>
+            ['SYSTEM', 'LOOT', 'GOLD', 'INCIDENT_PROGRESS', 'INCIDENT_RESOLVED'].includes(e.kind),
+          )
+          .map((e: { text: string }) => e.text),
+        choices: (t.serverResult?.choices ?? []).map((c: { id: string; label: string }) => ({
+          id: c.id,
+          label: c.label,
+        })),
+        displaySummary: t.serverResult?.summary?.display ?? null,
       })),
       page: {
         hasMore,

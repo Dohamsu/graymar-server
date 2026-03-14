@@ -111,6 +111,17 @@ export type ActionContext = {
   insistenceCount?: number; // 동일 행동 반복 횟수
 };
 
+// --- Resolve Breakdown (판정 주사위 분해) ---
+
+export type ResolveBreakdown = {
+  diceRoll: number;       // 1-6
+  statKey: string | null; // 'atk'|'def'|'acc'|'eva'|'speed' 또는 null
+  statValue: number;      // 원본 스탯 값
+  statBonus: number;      // floor(stat/3)
+  baseMod: number;        // 보정치
+  totalScore: number;     // 최종 점수
+};
+
 // --- Narrative Engine v1 UI types ---
 
 export type IncidentSummaryUI = {
@@ -162,6 +173,7 @@ export type UIBundle = {
   // HUB 시스템 확장
   worldState?: WorldStateUI;
   resolveOutcome?: 'SUCCESS' | 'PARTIAL' | 'FAIL';
+  resolveBreakdown?: ResolveBreakdown;
   actionContext?: ActionContext;
   // Narrative Engine v1 확장
   signalFeed?: SignalFeedItemUI[];

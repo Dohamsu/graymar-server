@@ -157,12 +157,36 @@ export class PromptBuilderService {
       memoryParts.push(`[최근 서술]\n${ctx.recentSummaries.join('\n---\n')}`);
     }
 
-    // L2 확장: NPC 로스터 (콘텐츠 정의 NPC 목록 — 항상 제공)
+    // L2 확장: NPC 로스터 (콘텐츠 정의 NPC 목록 — 소개 상태 반영)
     const allNpcs = this.content.getAllNpcs();
     if (allNpcs.length > 0) {
+      const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
+      const newlyIntroducedNpcIds = new Set(ctx.newlyIntroducedNpcIds ?? []);
+      const newlyEncounteredNpcIds = new Set(ctx.newlyEncounteredNpcIds ?? []);
+
       const npcLines = allNpcs.map((npc) => {
         const title = npc.title ? ` (${npc.title})` : '';
-        return `- ${npc.name}${title}: ${npc.role}`;
+        const isNewlyIntroduced = newlyIntroducedNpcIds.has(npc.npcId);
+        const isNewlyEncountered = newlyEncounteredNpcIds.has(npc.npcId);
+        const isIntroduced = introducedNpcIds.has(npc.npcId);
+        const alias = npc.unknownAlias || '낯선 인물';
+
+        if (isNewlyIntroduced && isNewlyEncountered) {
+          // 첫 만남 + 이번에 소개 (FRIENDLY/FEARFUL) → 자기소개
+          return `- ${npc.name}${title}: ${npc.role} [첫 만남 — 자연스럽게 자기소개(이름 포함)를 하도록 서술하세요]`;
+        } else if (isNewlyIntroduced && !isNewlyEncountered) {
+          // 재만남에서 소개 (CAUTIOUS/CALCULATING/HOSTILE) → 상황/타인 통해 이름 공개
+          return `- ${npc.name}${title}: ${npc.role} [이번 장면에서 이름이 자연스럽게 드러납니다 — 다른 인물이 이름을 부르거나, 상황 단서(문서, 간판, 대화)를 통해 알게 되는 식으로 서술하세요. 직접 자기소개하지 않습니다]`;
+        } else if (isNewlyEncountered && !isNewlyIntroduced) {
+          // 첫 만남이지만 소개 안 함 (CAUTIOUS 등) → 별칭만
+          return `- "${alias}": ${npc.role} [첫 만남 — 이름을 밝히지 않습니다. "${alias}"로만 지칭하세요]`;
+        } else if (isIntroduced) {
+          // 이미 소개됨 → 실명
+          return `- ${npc.name}${title}: ${npc.role}`;
+        } else {
+          // 아직 만나지 않았거나 소개 안 됨 → 별칭
+          return `- "${alias}": ${npc.role} [이름 미공개 — "${alias}"로만 지칭하세요]`;
+        }
       });
       const relationPart = ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0
         ? `\n\n현재 관계:\n${ctx.npcRelationFacts.join('\n')}`
@@ -172,6 +196,7 @@ export class PromptBuilderService {
           '[등장 가능 NPC 목록]',
           '아래 NPC만 서술에 이름 있는 캐릭터로 등장할 수 있습니다. 이 목록에 없는 새로운 이름 있는 캐릭터를 만들지 마세요.',
           '배경 인물이 필요하면 "한 사내", "노점 상인" 등 익명 표현만 사용하세요.',
+          '⚠️ [이름 미공개] 표시가 있는 NPC는 반드시 별칭으로만 지칭하세요. 실명을 사용하면 안 됩니다.',
           '',
           npcLines.join('\n'),
           relationPart,
@@ -300,9 +325,21 @@ export class PromptBuilderService {
     // toneHint
     factsParts.push(`[분위기] ${sr.ui.toneHint}`);
 
-    // Phase 3: NPC 주입 (Step 5)
+    // Phase 3: NPC 주입 (Step 5) — 소개 상태 반영
     if (ctx.npcInjection) {
       const npc = ctx.npcInjection;
+      const isNewlyIntroduced = (ctx.newlyIntroducedNpcIds ?? []).includes(npc.npcId ?? '');
+      const isNewlyEncountered = (ctx.newlyEncounteredNpcIds ?? []).includes(npc.npcId ?? '');
+
+      let introInstruction = '';
+      if (isNewlyIntroduced && isNewlyEncountered) {
+        introInstruction = '\n이 NPC는 처음 만나며 자기소개를 합니다. 이름을 포함한 자연스러운 소개를 서술하세요.';
+      } else if (isNewlyIntroduced) {
+        introInstruction = '\n이 NPC의 이름이 이번 장면에서 드러납니다. 다른 인물의 언급이나 상황 단서를 통해 자연스럽게 이름이 밝혀지도록 서술하세요.';
+      } else if (npc.introduced === false) {
+        introInstruction = `\n이 NPC는 아직 이름이 밝혀지지 않았습니다. "${npc.npcName}"으로만 지칭하세요.`;
+      }
+
       factsParts.push(
         [
           `[NPC 등장] ${npc.npcName}이(가) 이 장면에 나타납니다.`,
@@ -310,7 +347,8 @@ export class PromptBuilderService {
           `자세: ${npc.posture}`,
           `대화 시드: ${npc.dialogueSeed}`,
           '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.',
-        ].join('\n'),
+          introInstruction,
+        ].filter(Boolean).join('\n'),
       );
     }
 

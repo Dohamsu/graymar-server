@@ -61,7 +61,7 @@ import { NarrativeMarkService } from '../engine/hub/narrative-mark.service.js';
 import { EndingGeneratorService } from '../engine/hub/ending-generator.service.js';
 import { MemoryCollectorService } from '../engine/hub/memory-collector.service.js';
 import { MemoryIntegrationService } from '../engine/hub/memory-integration.service.js';
-import { initNPCState } from '../db/types/npc-state.js';
+import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture } from '../db/types/npc-state.js';
 import type { IncidentDef, IncidentRuntime, NarrativeMarkCondition, NPCState, NpcEmotionalState } from '../db/types/index.js';
 import type { IncidentSummaryUI, SignalFeedItemUI, NpcEmotionalUI } from '../db/types/server-result.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
@@ -369,6 +369,22 @@ export class TurnsService {
     runState: RunState,
     playerStats: PermanentStats,
   ) {
+    // HP≤0 방어: 전투 패배 등으로 HP가 0 이하인 상태에서 행동 방지
+    if (runState.hp <= 0) {
+      await this.db.update(runSessions)
+        .set({ status: 'RUN_ENDED', updatedAt: new Date() })
+        .where(eq(runSessions.id, run.id));
+
+      const result = this.buildSystemResult(turnNo, currentNode, '더 이상 버틸 수 없다...');
+      await this.commitTurnRecord(run, currentNode, turnNo, body, '', result, runState);
+
+      return {
+        turnNo,
+        result,
+        meta: { nodeOutcome: 'RUN_ENDED' },
+      };
+    }
+
     let ws = runState.worldState ?? this.worldStateService.initWorldState();
     const arcState = runState.arcState ?? this.arcService.initArcState();
     let agenda = runState.agenda ?? this.agendaService.initAgenda();
@@ -422,10 +438,16 @@ export class TurnsService {
     if (body.input.type === 'CHOICE' && body.input.choiceId) {
       const prevTurn = await this.db.query.turns.findFirst({
         where: and(eq(turns.runId, run.id), eq(turns.turnNo, run.currentTurnNo)),
-        columns: { serverResult: true },
+        columns: { serverResult: true, llmChoices: true },
       });
+      // 서버 생성 선택지에서 먼저 탐색
       const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)?.choices;
-      const matched = prevChoices?.find((c) => c.id === body.input.choiceId);
+      let matched = prevChoices?.find((c) => c.id === body.input.choiceId);
+      // 못 찾으면 LLM 생성 선택지에서 탐색
+      if (!matched && prevTurn?.llmChoices) {
+        const llmChoices = prevTurn.llmChoices as import('../db/types/index.js').ChoiceItem[];
+        matched = llmChoices.find((c) => c.id === body.input.choiceId);
+      }
       if (matched) {
         rawInput = matched.label;
         choicePayload = matched.action.payload;
@@ -454,7 +476,7 @@ export class TurnsService {
     // 이벤트 연속성: 의도 기반 씬 연속성 판단 (3단계)
     const sourceEventId = choicePayload?.sourceEventId as string | undefined;
     const rng = this.rngService.create(run.seed, turnNo);
-    let matchedEvent: ReturnType<typeof this.eventMatcher.match> = null;
+    let matchedEvent: import('../db/types/event-def.js').EventDefV2 | null = null;
 
     // Step 1: CHOICE의 sourceEventId → 명시적 씬 유지 (플레이어의 선택)
     if (sourceEventId) {
@@ -620,6 +642,8 @@ export class TurnsService {
 
     // === Narrative Engine v1: NPC Emotional 업데이트 ===
     const npcStates = { ...(runState.npcStates ?? {}) } as Record<string, NPCState>;
+    const newlyIntroducedNpcIds: string[] = [];
+    const newlyEncounteredNpcIds: string[] = [];
     // 현재 location의 관련 NPC에게 감정 영향 적용
     if (matchedEvent.payload.primaryNpcId) {
       const npcId = matchedEvent.payload.primaryNpcId;
@@ -631,7 +655,19 @@ export class TurnsService {
           initialTrust: npcDef?.initialTrust ?? relations[npcId] ?? 0,
           agenda: npcDef?.agenda,
         });
+        newlyEncounteredNpcIds.push(npcId);
       }
+
+      // encounterCount 증가
+      npcStates[npcId].encounterCount = (npcStates[npcId].encounterCount ?? 0) + 1;
+
+      // 성격 기반 소개 판정
+      const posture = computePosture(npcStates[npcId]);
+      if (shouldIntroduce(npcStates[npcId], posture)) {
+        npcStates[npcId].introduced = true;
+        newlyIntroducedNpcIds.push(npcId);
+      }
+
       const npc = npcStates[npcId];
       npc.emotional = this.npcEmotional.applyActionImpact(
         npc.emotional, intent.actionType, resolveResult.outcome, true,
@@ -648,7 +684,7 @@ export class TurnsService {
     const npcNames: Record<string, string> = {};
     for (const [npcId] of Object.entries(npcStates)) {
       const npcDef = this.content.getNpc(npcId);
-      npcNames[npcId] = npcDef?.name ?? npcId;
+      npcNames[npcId] = getNpcDisplayName(npcStates[npcId], npcDef);
     }
     // resolve outcome 횟수 집계
     const resolveOutcomeCounts: Record<string, number> = {};
@@ -781,7 +817,15 @@ export class TurnsService {
       insistenceCount: insistenceCount > 0 ? insistenceCount : undefined,
       eventSceneFrame: matchedEvent.payload.sceneFrame,
       eventMatchPolicy: matchedEvent.matchPolicy,
-    }, isNonChallenge, totalGoldDelta, locationReward.items);
+    }, isNonChallenge, totalGoldDelta, locationReward.items,
+    isNonChallenge ? undefined : {
+      diceRoll: resolveResult.diceRoll!,
+      statKey: resolveResult.statKey ?? null,
+      statValue: resolveResult.statValue ?? 0,
+      statBonus: resolveResult.statBonus ?? 0,
+      baseMod: resolveResult.baseMod ?? 0,
+      totalScore: resolveResult.score,
+    });
 
     // 골드 변동 이벤트 (순 변동 기준 — 비용+보상 합산)
     if (totalGoldDelta > 0) {
@@ -819,6 +863,14 @@ export class TurnsService {
     }
     if (Object.keys(orchestrationResult.npcPostures).length > 0) {
       (result.ui as any).npcPostures = orchestrationResult.npcPostures;
+    }
+
+    // NPC 소개 정보를 ui에 추가 (LLM context-builder로 전달)
+    if (newlyIntroducedNpcIds.length > 0) {
+      (result.ui as any).newlyIntroducedNpcIds = newlyIntroducedNpcIds;
+    }
+    if (newlyEncounteredNpcIds.length > 0) {
+      (result.ui as any).newlyEncounteredNpcIds = newlyEncounteredNpcIds;
     }
 
     // === Narrative Engine v1: UI data 추가 ===
@@ -1476,6 +1528,7 @@ export class TurnsService {
     hideResolve?: boolean,
     goldDelta?: number,
     itemsAdded?: import('../db/types/index.js').ItemStack[],
+    resolveBreakdown?: import('../db/types/index.js').ResolveBreakdown,
   ): ServerResultV1 {
     const base = this.buildSystemResult(turnNo, node, text);
     if (goldDelta && goldDelta !== 0) {
@@ -1495,6 +1548,7 @@ export class TurnsService {
         worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: ws.currentLocationId },
         // 비도전 행위는 주사위 UI를 표시하지 않음
         ...(hideResolve ? {} : { resolveOutcome: outcome as any }),
+        ...(resolveBreakdown ? { resolveBreakdown } : {}),
         ...(actionContext ? { actionContext } : {}),
       },
       choices,
@@ -1566,5 +1620,36 @@ export class TurnsService {
     }
 
     return response;
+  }
+
+  /**
+   * LLM 재시도 — FAILED 상태의 턴을 PENDING으로 리셋하여 Worker가 다시 처리하도록 한다.
+   */
+  async retryLlm(runId: string, turnNo: number, userId: string) {
+    const run = await this.db.query.runSessions.findFirst({ where: eq(runSessions.id, runId) });
+    if (!run) throw new NotFoundError('Run not found');
+    if (run.userId !== userId) throw new ForbiddenError('Not your run');
+
+    const turn = await this.db.query.turns.findFirst({
+      where: and(eq(turns.runId, runId), eq(turns.turnNo, turnNo)),
+    });
+    if (!turn) throw new NotFoundError('Turn not found');
+
+    if (turn.llmStatus !== 'FAILED') {
+      throw new InvalidInputError(`Cannot retry: current LLM status is ${turn.llmStatus}`);
+    }
+
+    // FAILED → PENDING 리셋
+    await this.db
+      .update(turns)
+      .set({
+        llmStatus: 'PENDING',
+        llmError: null,
+        llmLockedAt: null,
+        llmLockOwner: null,
+      })
+      .where(eq(turns.id, turn.id));
+
+    return { success: true, turnNo, llmStatus: 'PENDING' };
   }
 }

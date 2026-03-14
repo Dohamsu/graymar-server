@@ -12,7 +12,8 @@ import {
 } from '../db/schema/index.js';
 import type { ServerResultV1, NPCState, Relationship, PlayerBehaviorProfile, IncidentRuntime, SignalFeedItem, NarrativeMark } from '../db/types/index.js';
 import type { NpcEmotionalState } from '../db/types/npc-state.js';
-import { summarizeRelationship, computeEffectivePosture } from '../db/types/npc-state.js';
+import { summarizeRelationship, computeEffectivePosture, getNpcDisplayName } from '../db/types/npc-state.js';
+import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { StructuredMemory } from '../db/types/structured-memory.js';
 import { MemoryRendererService } from './memory-renderer.service.js';
 
@@ -41,7 +42,7 @@ export interface LlmContext {
   npcRelationFacts: string[]; // L2 확장: NPC 관계 서술 요약
   playerProfile: string | null; // L4 확장: 플레이어 행동 프로필 요약
   // Phase 3: Turn Orchestration
-  npcInjection: { npcName: string; posture: string; dialogueSeed: string; reason: string } | null;
+  npcInjection: { npcId?: string; npcName: string; introduced?: boolean; posture: string; dialogueSeed: string; reason: string } | null;
   peakMode: boolean;
   npcPostures: Record<string, string>; // npcId → effective posture
   // Phase 4: Equipment Narrative Tags
@@ -56,6 +57,10 @@ export interface LlmContext {
   npcEmotionalContext: string | null; // NPC 감정 상태 요약
   narrativeMarkContext: string | null; // Narrative Mark 요약
   signalContext: string | null; // Signal Feed 요약
+  // NPC 소개 시스템
+  introducedNpcIds: string[]; // 이미 소개된 NPC
+  newlyIntroducedNpcIds: string[]; // 이번 턴 이름 공개되는 NPC
+  newlyEncounteredNpcIds: string[]; // 이번 턴 처음 만나는 NPC
   // Structured Memory v2
   structuredSummary: string | null; // visitLog 기반 이야기 요약
   npcJournalText: string | null; // NPC 관계 일지
@@ -69,6 +74,7 @@ export class ContextBuilderService {
   constructor(
     @Inject(DB) private readonly db: DrizzleDB,
     private readonly memoryRenderer: MemoryRendererService,
+    private readonly content: ContentLoaderService,
   ) {}
 
   async build(
@@ -239,8 +245,10 @@ export class ContextBuilderService {
         for (const [npcId, rel] of Object.entries(relationships)) {
           const npc = npcStates[npcId];
           if (npc) {
+            const npcDef = this.content.getNpc(npcId);
+            const displayName = getNpcDisplayName(npc, npcDef);
             const posture = computeEffectivePosture(npc);
-            const summary = summarizeRelationship(npcId, rel);
+            const summary = summarizeRelationship(displayName, rel);
             npcRelationFacts.push(`${summary} (자세: ${posture})`);
           }
         }
@@ -292,15 +300,17 @@ export class ContextBuilderService {
         incidentContext = `활성 사건 ${activeIncidents.length}건:\n${lines.join('\n')}`;
       }
 
-      // NPC 감정 상태 요약
+      // NPC 감정 상태 요약 (displayName 사용)
       const npcStates = runState.npcStates as Record<string, NPCState> | undefined;
       if (npcStates) {
         const emotionalLines: string[] = [];
         for (const [npcId, npc] of Object.entries(npcStates)) {
           const em = npc.emotional as NpcEmotionalState | undefined;
           if (em) {
+            const npcDef = this.content.getNpc(npcId);
+            const displayName = getNpcDisplayName(npc, npcDef);
             const posture = computeEffectivePosture(npc);
-            emotionalLines.push(`- ${npcId}: ${posture} (신뢰${em.trust} 공포${em.fear} 존경${em.respect} 의심${em.suspicion} 유대${em.attachment})`);
+            emotionalLines.push(`- ${displayName}: ${posture} (신뢰${em.trust} 공포${em.fear} 존경${em.respect} 의심${em.suspicion} 유대${em.attachment})`);
           }
         }
         if (emotionalLines.length > 0) {
@@ -323,6 +333,19 @@ export class ContextBuilderService {
         signalContext = `주요 시그널:\n${sigLines.join('\n')}`;
       }
     }
+
+    // NPC 소개 시스템: 소개 상태 수집
+    const introducedNpcIds: string[] = [];
+    if (runState) {
+      const allNpcStates = runState.npcStates as Record<string, NPCState> | undefined;
+      if (allNpcStates) {
+        for (const [npcId, npc] of Object.entries(allNpcStates)) {
+          if (npc.introduced) introducedNpcIds.push(npcId);
+        }
+      }
+    }
+    const newlyIntroducedNpcIds = (uiAny?.newlyIntroducedNpcIds as string[]) ?? [];
+    const newlyEncounteredNpcIds = (uiAny?.newlyEncounteredNpcIds as string[]) ?? [];
 
     // Structured Memory v2: 렌더링
     let structuredSummary: string | null = null;
@@ -372,6 +395,10 @@ export class ContextBuilderService {
       npcEmotionalContext,
       narrativeMarkContext,
       signalContext,
+      // NPC 소개 시스템
+      introducedNpcIds,
+      newlyIntroducedNpcIds,
+      newlyEncounteredNpcIds,
       // Structured Memory v2
       structuredSummary,
       npcJournalText,
