@@ -9,26 +9,26 @@ import type {
 } from '../../db/types/index.js';
 import { computeEffectivePosture } from '../../db/types/npc-state.js';
 
-// 행동→감정 축 영향 매핑
+// 행동→감정 축 영향 매핑 (v2: 직접 상호작용 체감 강화)
 const ACTION_IMPACT: Record<string, Partial<Record<keyof NpcEmotionalState, number>>> = {
-  FIGHT: { fear: 10, trust: -5, respect: 5, suspicion: 5 },
-  THREATEN: { fear: 15, trust: -10, respect: -5, suspicion: 10 },
-  HELP: { trust: 10, attachment: 8, respect: 5, fear: -3 },
-  PERSUADE: { trust: 5, respect: 3, suspicion: -2 },
-  BRIBE: { trust: -3, suspicion: 8, attachment: 2 },
-  INVESTIGATE: { suspicion: 5, respect: 2 },
-  SNEAK: { suspicion: 8, trust: -3 },
-  STEAL: { trust: -15, suspicion: 15, fear: 3 },
-  OBSERVE: { suspicion: 3 },
-  TRADE: { trust: 3, attachment: 2 },
-  TALK: { trust: 2, attachment: 1 },
+  FIGHT: { fear: 15, trust: -8, respect: 8, suspicion: 8 },
+  THREATEN: { fear: 20, trust: -12, respect: -5, suspicion: 12 },
+  HELP: { trust: 15, attachment: 12, respect: 8, fear: -5 },
+  PERSUADE: { trust: 8, respect: 5, suspicion: -3 },
+  BRIBE: { trust: -5, suspicion: 10, attachment: 3 },
+  INVESTIGATE: { suspicion: 6, respect: 3 },
+  SNEAK: { suspicion: 10, trust: -4 },
+  STEAL: { trust: -20, suspicion: 20, fear: 5 },
+  OBSERVE: { suspicion: 4 },
+  TRADE: { trust: 6, attachment: 4 },
+  TALK: { trust: 5, attachment: 3 },
 };
 
 // outcome별 감정 변동 배율
 const OUTCOME_MULTIPLIER: Record<ResolveOutcome, number> = {
   SUCCESS: 1.0,
-  PARTIAL: 0.5,
-  FAIL: -0.3, // 실패 시 일부 축 반전
+  PARTIAL: 0.6,
+  FAIL: -0.5, // 실패 시 역효과 강화
 };
 
 // 클램프 범위
@@ -86,9 +86,9 @@ export class NpcEmotionalService {
   applyPassiveDrift(state: NpcEmotionalState): NpcEmotionalState {
     return {
       ...state,
-      fear: clamp(state.fear - 1, CLAMP_UNIPOLAR.min, CLAMP_UNIPOLAR.max),
-      suspicion: clamp(state.suspicion - 1, CLAMP_UNIPOLAR.min, CLAMP_UNIPOLAR.max),
-      attachment: clamp(state.attachment - 0.5, CLAMP_UNIPOLAR.min, CLAMP_UNIPOLAR.max),
+      fear: clamp(state.fear - 0.5, CLAMP_UNIPOLAR.min, CLAMP_UNIPOLAR.max),
+      suspicion: clamp(state.suspicion - 0.5, CLAMP_UNIPOLAR.min, CLAMP_UNIPOLAR.max),
+      attachment: clamp(state.attachment - 0.3, CLAMP_UNIPOLAR.min, CLAMP_UNIPOLAR.max),
     };
   }
 

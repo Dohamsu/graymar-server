@@ -13,6 +13,7 @@ export * from './event-def.js';
 export * from './agenda.js';
 export * from './arc-state.js';
 export * from './parsed-intent-v2.js';
+export * from './parsed-intent-v3.js';
 export * from './resolve-result.js';
 export * from './npc-state.js';
 export * from './player-behavior.js';
@@ -27,3 +28,14 @@ export * from './signal-feed.js';
 export * from './narrative-mark.js';
 export * from './operation-session.js';
 export * from './ending.js';
+// Notification System
+export * from './notification.js';
+// Incident Routing
+export * from './incident-routing.js';
+// WorldDelta + PlayerThread
+export * from './world-delta.js';
+export * from './player-thread.js';
+// Event Director
+export * from './event-director.js';
+// Procedural Event
+export * from './procedural-event.js';

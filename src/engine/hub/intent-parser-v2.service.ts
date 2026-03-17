@@ -48,6 +48,9 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
         '챙긴', '챙겨', '챙기',
         '장물', '좀도둑', '빼내', '낚아채', '집어넣',
         '치워버', '감춰', '숨겨서 가져', '꿀꺽',
+        // P7 보강: 주머니·소지품 절도 패턴
+        '주머니를 뒤', '주머니를 털', '주머니에 손', '호주머니',
+        '소지품을 뒤', '소지품을 털', '짐을 뒤', '짐을 털',
       ],
       actionType: 'STEAL',
     },
@@ -218,6 +221,9 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
         '말동무', '수다를',
         '물어', '물어본', '물어보',
         '말해', '말하',
+        // P7 보강: "~에 대해 물어", "~에게 물어" 복합 패턴 (INVESTIGATE보다 우선)
+        '에 대해 물어', '에게 물어', '한테 물어',
+        '에 대해 묻', '에게 묻', '한테 묻',
       ],
       actionType: 'TALK',
     },

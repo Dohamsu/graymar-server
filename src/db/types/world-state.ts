@@ -1,6 +1,8 @@
 // 정본: specs/HUB_world_state.md + architecture/Narrative_Engine_v1_Integrated_Spec.md §3
 
 import type { IncidentRuntime } from './incident.js';
+import type { WorldDelta } from './world-delta.js';
+import type { PlayerThread } from './player-thread.js';
 import type { SignalFeedItem } from './signal-feed.js';
 import type { NarrativeMark } from './narrative-mark.js';
 import type { MainArcClock } from './ending.js';
@@ -72,4 +74,9 @@ export type WorldState = {
   narrativeMarks: NarrativeMark[]; // 획득한 내러티브 마크 (불가역)
   mainArcClock: MainArcClock; // 메인 아크 데드라인
   operationSession: OperationSession | null; // 현재 진행 중인 Operation Session
+  // User-Driven System v3 확장
+  worldDeltas?: WorldDelta[];       // 최근 턴 변화 기록 (최대 10개)
+  playerThreads?: PlayerThread[];   // 플레이어 행동 패턴 스레드
+  // PR7: Procedural Event 히스토리 (최대 15개)
+  proceduralHistory?: import('./procedural-event.js').ProceduralHistoryEntry[];
 };
