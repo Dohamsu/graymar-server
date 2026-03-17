@@ -88,6 +88,15 @@ export class LlmConfigService {
     };
   }
 
+  /** 경량 LLM 모델 설정 (Mid Summary 등 보조 작업용) */
+  getLightModelConfig(): { provider: string; model: string; timeoutMs: number } {
+    return {
+      provider: process.env.LLM_LIGHT_PROVIDER ?? 'claude',
+      model: process.env.LLM_LIGHT_MODEL ?? 'claude-haiku-4-5-20251001',
+      timeoutMs: parseInt(process.env.LLM_LIGHT_TIMEOUT_MS ?? '5000', 10),
+    };
+  }
+
   private getAvailableProviders(): string[] {
     const providers = ['mock'];
     if (this.config.openaiApiKey) providers.push('openai');

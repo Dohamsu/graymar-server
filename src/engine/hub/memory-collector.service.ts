@@ -7,11 +7,14 @@ import { nodeMemories } from '../../db/schema/index.js';
 import type {
   VisitContextCache,
   VisitAction,
+  StructuredMemory,
 } from '../../db/types/structured-memory.js';
 import { createEmptyVisitContext } from '../../db/types/structured-memory.js';
 import type { IntentActionType } from '../../db/types/parsed-intent-v2.js';
 import type { ResolveOutcome } from '../../db/types/resolve-result.js';
 import type { NpcEmotionalState } from '../../db/types/npc-state.js';
+import type { NpcKnowledgeEntry } from '../../db/types/npc-knowledge.js';
+import { runMemories } from '../../db/schema/index.js';
 
 export interface CollectTurnData {
   actionType: IntentActionType;
@@ -22,6 +25,7 @@ export interface CollectTurnData {
   sceneFrame?: string;
   primaryNpcId?: string;
   eventTags?: string[];
+  summaryShort?: string; // 행동+결과 요약 (resolveResult.summary.short)
   reputationChanges: Record<string, number>;
   goldDelta: number;
   incidentImpact?: {
@@ -37,16 +41,22 @@ export interface CollectTurnData {
 }
 
 /** 이벤트 태그에서 NPC ID를 추론 (태그에 NPC 힌트가 포함된 경우) */
-const TAG_TO_NPC: Record<string, string> = {
+export const TAG_TO_NPC: Record<string, string> = {
   NPC_EDRIC: 'NPC_SEO_DOYUN',
+  SEO_DOYUN: 'NPC_SEO_DOYUN',
   CAPTAIN_BELLON: 'NPC_GUARD_CAPTAIN',
   TOBREN: 'NPC_BAEK_SEUNGHO',
   SHADOW: 'NPC_INFO_BROKER',
   HARLUN: 'NPC_YOON_HAMIN',
+  NPC_HARLAN: 'NPC_YOON_HAMIN',
   LYRA: 'NPC_MOON_SEA',
   MAIREL_FACTION: 'NPC_KANG_CHAERIN',
   MAIREL_CORRUPTION: 'NPC_KANG_CHAERIN',
   MAIREL_OFFICE: 'NPC_KANG_CHAERIN',
+  NPC_MIRELA: 'NPC_MIRELA',
+  NPC_RENNICK: 'NPC_RENNICK',
+  NPC_CAPTAIN_BREN: 'NPC_CAPTAIN_BREN',
+  NPC_ROSA: 'NPC_ROSA',
 };
 
 @Injectable()
@@ -76,12 +86,18 @@ export class MemoryCollectorService {
     }
 
     // 행동 기록 (최대 5개)
+    // summaryShort: 실제 행동+결과 요약 우선, 없으면 rawInput+outcome 조합
+    const summaryShort = data.summaryShort
+      ? data.summaryShort.slice(0, 60)
+      : `${data.rawInput.slice(0, 30)} → ${data.outcome}`.slice(0, 60);
     const action: VisitAction = {
       rawInput: data.rawInput.slice(0, 30),
       actionType: data.actionType,
       outcome: data.outcome,
       eventId: data.eventId,
       brief: (data.sceneFrame ?? '').slice(0, 40),
+      summaryShort,
+      relatedNpcId: data.primaryNpcId,
     };
     ctx.actions.push(action);
     if (ctx.actions.length > 5) {
@@ -156,6 +172,41 @@ export class MemoryCollectorService {
       }
     }
 
+    // NPC Knowledge 수집: 대화형 행동 + SUCCESS/PARTIAL 시
+    const knowledgeActionTypes = [
+      'TALK', 'PERSUADE', 'BRIBE', 'INVESTIGATE', 'OBSERVE', 'HELP', 'THREATEN',
+    ] as const;
+    // NPC ID: primaryNpcId 우선, 없으면 이벤트 태그에서 추론
+    const targetNpcId = data.primaryNpcId ?? this.resolveNpcFromTags(data.eventTags);
+    if (
+      knowledgeActionTypes.includes(data.actionType as any) &&
+      (data.outcome === 'SUCCESS' || data.outcome === 'PARTIAL') &&
+      targetNpcId
+    ) {
+      await this.collectNpcKnowledge(
+        runId, targetNpcId, locationId, turnNo,
+        data.actionType, data.outcome, data.rawInput,
+        'PLAYER_TOLD',
+      );
+    }
+
+    // PR-E: 자동 수집 — NPC가 있는 턴이면 이벤트 태그 기반 정보도 수집
+    if (targetNpcId && data.eventTags && data.eventTags.length > 0) {
+      const infoTags = data.eventTags.filter((t) =>
+        ['EVIDENCE', 'SECRET', 'RUMOR', 'CORRUPTION', 'SMUGGLING', 'THEFT', 'ASSASSINATION'].some(
+          (kw) => t.toUpperCase().includes(kw),
+        ),
+      );
+      if (infoTags.length > 0 && (data.outcome === 'SUCCESS' || data.outcome === 'PARTIAL')) {
+        const tagText = `[${infoTags.slice(0, 2).join(',')}] ${data.rawInput.slice(0, 50)}`.slice(0, 80);
+        await this.collectNpcKnowledge(
+          runId, targetNpcId, locationId, turnNo,
+          data.actionType, data.outcome, tagText,
+          'AUTO_COLLECT',
+        );
+      }
+    }
+
     // DB 저장
     if (existing) {
       await this.db
@@ -168,6 +219,72 @@ export class MemoryCollectorService {
         nodeInstanceId,
         visitContext: ctx,
       });
+    }
+  }
+
+  /** 이벤트 태그에서 NPC ID 추론 */
+  private resolveNpcFromTags(tags?: string[]): string | undefined {
+    if (!tags) return undefined;
+    for (const tag of tags) {
+      const npcId = TAG_TO_NPC[tag];
+      if (npcId) return npcId;
+    }
+    return undefined;
+  }
+
+  /** NPC Knowledge 수집 — NPC가 플레이어와의 대화에서 알게 된 정보 기록 */
+  private async collectNpcKnowledge(
+    runId: string,
+    npcId: string,
+    locationId: string,
+    turnNo: number,
+    actionType: string,
+    outcome: string,
+    rawInput: string,
+    source: NpcKnowledgeEntry['source'] = 'PLAYER_TOLD',
+  ): Promise<void> {
+    try {
+      const memRow = await this.db.query.runMemories.findFirst({
+        where: eq(runMemories.runId, runId),
+      });
+      if (!memRow) return;
+
+      const structured = (memRow.structuredMemory ?? null) as StructuredMemory | null;
+      if (!structured) return;
+
+      const knowledge = structured.npcKnowledge ?? {};
+      const entries = knowledge[npcId] ?? [];
+
+      const factId = `nk_${turnNo}_${npcId}_${source}`;
+      const text = `${actionType} → ${outcome}: ${rawInput.slice(0, 70)}`.slice(0, 80);
+      const importance = outcome === 'SUCCESS' ? 0.8 : 0.5;
+
+      // PR-E: 중복 방지 — 같은 턴+NPC에 이미 동일 source 기록이 있으면 스킵
+      const duplicate = entries.some((e) => e.turnNo === turnNo && e.source === source);
+      if (duplicate) return;
+
+      const newEntry: NpcKnowledgeEntry = {
+        factId, text,
+        source,
+        turnNo, locationId, importance,
+      };
+
+      entries.push(newEntry);
+
+      // NPC당 최대 5개 — importance 기반 정리
+      if (entries.length > 5) {
+        entries.sort((a, b) => b.importance - a.importance || b.turnNo - a.turnNo);
+        entries.length = 5;
+      }
+
+      knowledge[npcId] = entries;
+      structured.npcKnowledge = knowledge;
+
+      await this.db.update(runMemories)
+        .set({ structuredMemory: structured, updatedAt: new Date() })
+        .where(eq(runMemories.runId, runId));
+    } catch {
+      // NPC knowledge 수집 실패는 게임 진행에 영향 없음
     }
   }
 

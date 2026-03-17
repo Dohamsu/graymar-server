@@ -6,8 +6,18 @@ import type { IntentActionType } from './parsed-intent-v2.js';
 import type { ResolveOutcome } from './resolve-result.js';
 import type { ArcRoute } from './arc-state.js';
 import type { HubSafety, TimePhaseV2 } from './world-state.js';
+import type { NpcKnowledgeLedger } from './npc-knowledge.js';
 
 // ─── StructuredMemory (run_memories.structuredMemory JSONB) ───
+
+export interface VisitExitSummary {
+  locationId: string;
+  locationName: string;
+  turnCount: number;
+  keyActions: string[];       // max 3, 80자
+  keyDialogues: string[];     // max 3, 80자
+  unresolvedLeads: string[];  // max 2, 60자
+}
 
 export interface StructuredMemory {
   version: 2;
@@ -17,6 +27,8 @@ export interface StructuredMemory {
   milestones: MilestoneEntry[];
   worldSnapshot: WorldMemorySnapshot;
   llmExtracted: LlmExtractedFact[];
+  npcKnowledge?: NpcKnowledgeLedger; // Phase 2: NPC가 알고 있는 정보
+  lastExitSummary?: VisitExitSummary; // 직전 장소 이탈 요약
 }
 
 // ─── VisitLogEntry (방문 기록) ───
@@ -27,6 +39,8 @@ export interface VisitAction {
   outcome: ResolveOutcome;
   eventId?: string;
   brief: string; // 최대 40자
+  summaryShort?: string; // 행동+결과 요약 (최대 60자)
+  relatedNpcId?: string; // 이 행동에 관련된 NPC ID
 }
 
 export interface VisitLogEntry {
@@ -133,6 +147,7 @@ export const LLM_FACT_CATEGORY = [
   'PLACE_DETAIL',
   'PLOT_HINT',
   'ATMOSPHERE',
+  'NPC_DIALOGUE',
 ] as const;
 export type LlmFactCategory = (typeof LLM_FACT_CATEGORY)[number];
 
@@ -186,6 +201,7 @@ export function createEmptyStructuredMemory(): StructuredMemory {
       updatedAtTurnNo: 0,
     },
     llmExtracted: [],
+    npcKnowledge: {},
   };
 }
 

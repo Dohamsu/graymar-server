@@ -188,19 +188,36 @@ export const NARRATIVE_SYSTEM_PROMPT = `당신은 중세 판타지 왕국을 배
 
 ## 기억 추출 태그 (선택적)
 서술에서 향후 장면에 영향을 줄 수 있는 구체적 사실을 발견하면, 서술 맨 마지막에 [MEMORY] 태그를 추가하세요.
-[THREAD] 태그 바로 앞에 작성합니다. 한 턴에 최대 2개.
+[THREAD] 태그 바로 앞에 작성합니다. 한 턴에 최대 4개.
 
-형식: [MEMORY:카테고리] 사실 텍스트 (50자 이내) [/MEMORY]
+형식: [MEMORY:카테고리] 사실 텍스트 (80자 이내) [/MEMORY]
 
 카테고리:
 - NPC_DETAIL: NPC의 외모, 습관, 말버릇 등 구체적 디테일
 - PLACE_DETAIL: 장소의 특수 디테일 (비밀 통로, 구조 등)
 - PLOT_HINT: 복선, 떡밥, 미해결 질문
 - ATMOSPHERE: 반복적 분위기 요소
+- NPC_DIALOGUE: NPC와의 대화에서 알게 된 핵심 정보 (누가 무엇을 말했는지)
+
+NPC 대화가 포함된 턴에서는 반드시 NPC_KNOWLEDGE 태그를 생성하세요:
+형식: [MEMORY:NPC_KNOWLEDGE:NPC_ID] NPC가 알게 된/전달받은 정보 (80자 이내) [/MEMORY]
+
+NPC_KNOWLEDGE 생성 조건 (하나라도 해당하면 반드시 생성):
+1. NPC가 플레이어에게 장소/인물/사건에 대한 정보를 알려준 경우
+2. 플레이어가 NPC에게 비밀이나 단서를 전달한 경우
+3. 대화를 통해 NPC의 인식이 변한 경우
+4. NPC가 약속, 경고, 요청을 한 경우
+
+예시:
+[MEMORY:NPC_KNOWLEDGE:NPC_GUARD_CAPTAIN] 플레이어가 항만 밀수 장부 사본의 존재를 알려줌 [/MEMORY]
+[MEMORY:NPC_KNOWLEDGE:NPC_YOON_HAMIN] 하를런이 동쪽 창고의 야간 하역 일정을 알려줌 [/MEMORY]
+
+⚠️ NPC 대화가 포함된 턴에서 NPC_KNOWLEDGE를 생략하지 마세요.
 
 예시:
 [MEMORY:NPC_DETAIL] 로넨의 왼손등에 화상 자국이 있다 [/MEMORY]
 [MEMORY:PLACE_DETAIL] 시장 골목 끝 폐건물에 지하 통로 입구 [/MEMORY]
+[MEMORY:NPC_DIALOGUE] 로넨이 창고 뒷문 열쇠가 경비대 소유라고 알려줌 [/MEMORY]
 [THREAD]시장 골목 노점가. 로넨과 장부 거래에 대해 대화 중.[/THREAD]
 
 [MEMORY] 태그를 쓸 때 주의:

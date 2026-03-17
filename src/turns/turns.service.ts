@@ -69,7 +69,7 @@ import { IncidentManagementService } from '../engine/hub/incident-management.ser
 import { NpcEmotionalService } from '../engine/hub/npc-emotional.service.js';
 import { NarrativeMarkService } from '../engine/hub/narrative-mark.service.js';
 import { EndingGeneratorService } from '../engine/hub/ending-generator.service.js';
-import { MemoryCollectorService } from '../engine/hub/memory-collector.service.js';
+import { MemoryCollectorService, TAG_TO_NPC } from '../engine/hub/memory-collector.service.js';
 import { MemoryIntegrationService } from '../engine/hub/memory-integration.service.js';
 // Event Director + Procedural Event (설계문서 19, 20)
 import { EventDirectorService } from '../engine/hub/event-director.service.js';
@@ -504,6 +504,38 @@ export class TurnsService {
           run, currentNode, turnNo, body, rawInput, runState, ws, arcState, locationId, targetLocationId,
         );
       }
+      // Fixplan3-P4: 목표 장소 불명확 시 HUB 복귀 (go_hub와 동일 처리)
+      await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
+      const hubWs = this.worldStateService.returnToHub(ws);
+      const hubRunState: RunState = { ...runState, worldState: hubWs, actionHistory: [] };
+
+      await this.db.update(nodeInstances)
+        .set({ status: 'NODE_ENDED', updatedAt: new Date() })
+        .where(eq(nodeInstances.id, currentNode.id));
+
+      const moveResult = this.buildSystemResult(turnNo, currentNode, '다른 장소를 찾아 거점으로 돌아간다.');
+      await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, moveResult, hubRunState, body.options?.skipLlm);
+
+      const transition = await this.nodeTransition.transitionToHub(
+        run.id, currentNode.nodeIndex, turnNo + 1, hubWs, arcState,
+      );
+      transition.enterResult.turnNo = turnNo + 1;
+      await this.db.insert(turns).values({
+        runId: run.id, turnNo: turnNo + 1, nodeInstanceId: transition.enterResult.node.id,
+        nodeType: 'HUB', inputType: 'SYSTEM', rawInput: '',
+        idempotencyKey: `${run.id}_hub_${turnNo + 1}`,
+        parsedBy: null, confidence: null, parsedIntent: null,
+        policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
+        serverResult: transition.enterResult, llmStatus: 'PENDING',
+      });
+      await this.db.update(runSessions).set({ currentTurnNo: turnNo + 1, runState: hubRunState, updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+
+      return {
+        accepted: true, turnNo, serverResult: moveResult,
+        llm: { status: 'PENDING' as LlmStatus, narrative: null },
+        meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
+        transition: { nextNodeIndex: transition.nextNodeIndex, nextNodeType: 'HUB', enterResult: transition.enterResult, battleState: null, enterTurnNo: turnNo + 1 },
+      };
     }
 
     // 이벤트 연속성: 의도 기반 씬 연속성 판단 (3단계)
@@ -533,8 +565,8 @@ export class TurnsService {
               break;
             }
           }
-          // 연속 2턴 이하만 씬 유지, 3턴째부터는 새 이벤트 매칭으로 전환
-          if (consecutiveCount < 2) {
+          // Fixplan3-P5: 연속 1턴만 씬 유지, 2턴째부터는 새 이벤트 매칭으로 전환
+          if (consecutiveCount < 1) {
             matchedEvent = lastEvent;
           }
         }
@@ -557,9 +589,21 @@ export class TurnsService {
         .filter((h) => h.eventId)
         .map((h) => h.eventId!);
 
+      // NPC 연속성 컨텍스트 구축 (Phase 1: Context Coherence)
+      const lastEntry = actionHistory[actionHistory.length - 1] as Record<string, unknown> | undefined;
+      const sessionNpcContext = {
+        lastPrimaryNpcId: (lastEntry?.primaryNpcId as string) ?? null,
+        sessionTurnCount: actionHistory.length,
+        interactedNpcIds: [...new Set(
+          (actionHistory as Array<Record<string, unknown>>)
+            .filter(a => a.primaryNpcId)
+            .map(a => a.primaryNpcId as string),
+        )],
+      };
+
       // PR5: EventDirector로 교체 (기존 EventMatcher를 내부적으로 위임)
       const directorResult = this.eventDirector.select(
-        allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds, routingResult,
+        allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds, routingResult, sessionNpcContext,
       );
       matchedEvent = directorResult.selectedEvent;
 
@@ -717,9 +761,11 @@ export class TurnsService {
     const npcStates = { ...(runState.npcStates ?? {}) } as Record<string, NPCState>;
     const newlyIntroducedNpcIds: string[] = [];
     const newlyEncounteredNpcIds: string[] = [];
+    // effectiveNpcId: matchedEvent.payload.primaryNpcId 우선, 없으면 npcInjection은 orchestration 이후 보충
+    const eventPrimaryNpc = matchedEvent.payload.primaryNpcId ?? null;
     // 현재 location의 관련 NPC에게 감정 영향 적용
-    if (matchedEvent.payload.primaryNpcId) {
-      const npcId = matchedEvent.payload.primaryNpcId;
+    if (eventPrimaryNpc) {
+      const npcId = eventPrimaryNpc;
       if (!npcStates[npcId]) {
         const npcDef = this.content.getNpc(npcId);
         npcStates[npcId] = initNPCState({
@@ -731,8 +777,11 @@ export class TurnsService {
         newlyEncounteredNpcIds.push(npcId);
       }
 
-      // encounterCount 증가
-      npcStates[npcId].encounterCount = (npcStates[npcId].encounterCount ?? 0) + 1;
+      // encounterCount 증가 — 이번 방문 내 첫 만남인 경우에만 (방문 단위 1회)
+      const alreadyMetThisVisit = actionHistory.some((h) => h.primaryNpcId === npcId);
+      if (!alreadyMetThisVisit) {
+        npcStates[npcId].encounterCount = (npcStates[npcId].encounterCount ?? 0) + 1;
+      }
 
       // 성격 기반 소개 판정
       const posture = computePosture(npcStates[npcId]);
@@ -746,6 +795,34 @@ export class TurnsService {
         npc.emotional, intent.actionType, resolveResult.outcome, true,
       );
       npcStates[npcId] = this.npcEmotional.syncLegacyFields(npc);
+    }
+
+    // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC를 추론하여 encounterCount 보충
+    if (!eventPrimaryNpc && matchedEvent.payload.tags) {
+      for (const tag of matchedEvent.payload.tags) {
+        const tagNpcId = TAG_TO_NPC[tag];
+        if (!tagNpcId) continue;
+        if (!npcStates[tagNpcId]) {
+          const npcDef = this.content.getNpc(tagNpcId);
+          if (!npcDef) continue;
+          npcStates[tagNpcId] = initNPCState({
+            npcId: tagNpcId,
+            basePosture: npcDef.basePosture,
+            initialTrust: npcDef.initialTrust ?? relations[tagNpcId] ?? 0,
+            agenda: npcDef.agenda,
+          });
+          newlyEncounteredNpcIds.push(tagNpcId);
+        }
+        const alreadyMet = actionHistory.some((h) => h.primaryNpcId === tagNpcId);
+        if (!alreadyMet) {
+          npcStates[tagNpcId].encounterCount = (npcStates[tagNpcId].encounterCount ?? 0) + 1;
+        }
+        const posture = computePosture(npcStates[tagNpcId]);
+        if (shouldIntroduce(npcStates[tagNpcId], posture)) {
+          npcStates[tagNpcId].introduced = true;
+          newlyIntroducedNpcIds.push(tagNpcId);
+        }
+      }
     }
 
     // === Narrative Engine v1: Narrative Marks 체크 ===
@@ -802,6 +879,7 @@ export class TurnsService {
     const newCooldowns = { ...cooldowns, [matchedEvent.eventId]: turnNo };
 
     // 행동 이력 업데이트 (고집 시스템 + FALLBACK 페널티 + 선택지 중복 방지)
+    const eventPrimaryNpcId = (matchedEvent.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
     const newHistory = [...actionHistory, {
       turnNo,
       actionType: intent.actionType,
@@ -810,6 +888,7 @@ export class TurnsService {
       inputText: rawInput,
       eventId: matchedEvent.eventId,
       choiceId: body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
+      primaryNpcId: eventPrimaryNpcId ?? undefined,
     }].slice(-10); // 최대 10개 유지
 
     // LOCATION 보상 계산 (resolve 주사위 이후 같은 RNG로 수행)
@@ -874,6 +953,35 @@ export class TurnsService {
     updatedRunState.pressure = orchestrationResult.pressure;
     if (orchestrationResult.peakMode) {
       updatedRunState.lastPeakTurn = turnNo;
+    }
+
+    // PR-A: npcInjection의 NPC도 보충 처리 (eventPrimaryNpc가 null이었을 때)
+    const injectedNpcId = orchestrationResult.npcInjection?.npcId ?? null;
+    const effectiveNpcId = eventPrimaryNpc ?? injectedNpcId;
+    if (injectedNpcId && !eventPrimaryNpc) {
+      // orchestration에서 주입된 NPC도 emotional/encounter 처리
+      if (!npcStates[injectedNpcId]) {
+        const npcDef = this.content.getNpc(injectedNpcId);
+        npcStates[injectedNpcId] = initNPCState({
+          npcId: injectedNpcId,
+          basePosture: npcDef?.basePosture,
+          initialTrust: npcDef?.initialTrust ?? relations[injectedNpcId] ?? 0,
+          agenda: npcDef?.agenda,
+        });
+        newlyEncounteredNpcIds.push(injectedNpcId);
+      }
+      // 방문 단위 encounterCount 증가
+      const alreadyMetInjected = actionHistory.some((h) => h.primaryNpcId === injectedNpcId);
+      if (!alreadyMetInjected) {
+        npcStates[injectedNpcId].encounterCount = (npcStates[injectedNpcId].encounterCount ?? 0) + 1;
+      }
+      // 소개 판정
+      const posture = computePosture(npcStates[injectedNpcId]);
+      if (shouldIntroduce(npcStates[injectedNpcId], posture)) {
+        npcStates[injectedNpcId].introduced = true;
+        newlyIntroducedNpcIds.push(injectedNpcId);
+      }
+      updatedRunState.npcStates = npcStates;
     }
 
     // 비도전 행위 여부 (MOVE_LOCATION, REST, SHOP, TALK → 주사위 UI 숨김)
@@ -1071,18 +1179,18 @@ export class TurnsService {
       endWs.activeIncidents ?? [],
       endWs.mainArcClock ?? { startDay: 1, softDeadlineDay: 14, triggered: false },
       endWs.day ?? 1,
+      turnNo,
     );
 
     // === Structured Memory v2: 실시간 수집 ===
     try {
       // NPC 감정 변화 delta 계산 (이번 턴에서 변경된 축만)
       let npcEmoDelta: { npcId: string; delta: Record<string, number> } | undefined;
-      if (matchedEvent.payload.primaryNpcId) {
-        const npcId = matchedEvent.payload.primaryNpcId;
-        const npc = npcStates[npcId];
+      if (effectiveNpcId) {
+        const npc = npcStates[effectiveNpcId];
         if (npc?.emotional) {
           // 대략적인 delta — applyActionImpact에서 변경된 값 (정확한 before 없으므로 간략화)
-          npcEmoDelta = { npcId, delta: {} };
+          npcEmoDelta = { npcId: effectiveNpcId, delta: {} };
         }
       }
       await this.memoryCollector.collectFromTurn(
@@ -1097,8 +1205,9 @@ export class TurnsService {
           outcome: resolveResult.outcome,
           eventId: matchedEvent.eventId,
           sceneFrame: matchedEvent.payload.sceneFrame,
-          primaryNpcId: matchedEvent.payload.primaryNpcId,
+          primaryNpcId: effectiveNpcId ?? undefined,
           eventTags: matchedEvent.payload.tags ?? [],
+          summaryShort: summaryText ?? undefined,
           reputationChanges: resolveResult.reputationChanges,
           goldDelta: totalGoldDelta,
           incidentImpact: relevantIncident
@@ -1119,6 +1228,11 @@ export class TurnsService {
     await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, postTickRunState, body.options?.skipLlm);
 
     if (shouldEnd && endReason) {
+      // Fixplan3-P1: RUN_ENDED 전 structuredMemory 통합 (go_hub 없이 런 종료 시 누락 방지)
+      try {
+        await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, postTickRunState, turnNo);
+      } catch { /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */ }
+
       // 엔딩 생성
       // User-Driven System v3: playerThreads를 엔딩 입력에 전달
       const endingThreads = (endWs.playerThreads ?? []).map((t) => ({

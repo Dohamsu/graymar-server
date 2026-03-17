@@ -2,7 +2,7 @@
 // 기존 EventMatcher를 래핑하여 5단계 정책 파이프라인 적용
 
 import { Injectable } from '@nestjs/common';
-import { EventMatcherService } from './event-matcher.service.js';
+import { EventMatcherService, type SessionNpcContext } from './event-matcher.service.js';
 import type {
   EventDefV2,
   WorldState,
@@ -38,6 +38,7 @@ export class EventDirectorService {
     rng: Rng,
     recentEventIds: string[],
     routingResult: IncidentRoutingResult | null,
+    sessionNpcContext?: SessionNpcContext,
   ): EventDirectorResult {
     const filterLog: string[] = [];
 
@@ -78,6 +79,7 @@ export class EventDirectorService {
       rng,
       recentEventIds,
       routingResult,
+      sessionNpcContext,
     );
 
     const candidateCount = remapped.filter((e) => e.locationId === locationId).length;

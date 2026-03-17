@@ -248,14 +248,9 @@ export class LlmIntentParserService implements OnModuleInit {
     let actionType: IntentActionType;
     let mergeSource: 'KW_OVERRIDE' | 'LLM' | 'AGREE';
 
-    // MOVE_LOCATION 오버라이드: 장소명이 실제로 입력에 포함된 경우만
-    // (일반 이동 키워드 "빠진다/나간다"만으로는 오버라이드하지 않음)
-    const LOCATION_KEYWORDS = ['시장', '경비대', '항만', '부두', '항구', '빈민가', '거점', '선술집', '숙소'];
-    const normalizedForLoc = inputText.toLowerCase();
-    const hasLocationName = LOCATION_KEYWORDS.some(loc => normalizedForLoc.includes(loc));
-
-    if (keywordResult.actionType === 'MOVE_LOCATION' && hasLocationName) {
-      // 장소명 + 이동 키워드 → KW 우선 (높은 신뢰도)
+    // Fixplan3-P4: MOVE_LOCATION 오버라이드 — 장소명 유무 관계없이 KW 우선
+    // 목표 장소 불명확 시 turns.service.ts에서 HUB 복귀 fallback 처리
+    if (keywordResult.actionType === 'MOVE_LOCATION') {
       actionType = keywordResult.actionType;
       mergeSource = 'KW_OVERRIDE';
     } else if (!kwAndLlmDisagree) {

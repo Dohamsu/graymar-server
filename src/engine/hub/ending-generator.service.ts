@@ -16,6 +16,14 @@ import type {
   CityStatus,
 } from '../../db/types/ending.js';
 
+/** 한국어 조사 자동 판별 — 받침 유무에 따라 은/는, 이/가 등 선택 */
+function korParticle(word: string, withBatchim: string, withoutBatchim: string): string {
+  if (!word) return withBatchim;
+  const last = word.charCodeAt(word.length - 1);
+  if (last < 0xAC00 || last > 0xD7A3) return withBatchim;
+  return (last - 0xAC00) % 28 !== 0 ? withBatchim : withoutBatchim;
+}
+
 @Injectable()
 export class EndingGeneratorService {
   constructor(private readonly content: ContentLoaderService) {}
@@ -27,10 +35,17 @@ export class EndingGeneratorService {
     activeIncidents: IncidentRuntime[],
     mainArcClock: MainArcClock,
     day: number,
+    totalTurns?: number,
   ): { shouldEnd: boolean; reason: 'ALL_RESOLVED' | 'DEADLINE' | null } {
+    const MIN_TURNS_FOR_NATURAL = 15;
+
     // 1. 모든 critical Incident가 해결(resolved)되었는지 확인
     const unresolved = activeIncidents.filter((inc) => !inc.resolved);
     if (activeIncidents.length > 0 && unresolved.length === 0) {
+      // Fixplan3-P7: 최소 턴 수 미달 시 조기 엔딩 방지
+      if (totalTurns !== undefined && totalTurns < MIN_TURNS_FOR_NATURAL) {
+        return { shouldEnd: false, reason: null };
+      }
       return { shouldEnd: true, reason: 'ALL_RESOLVED' };
     }
 
@@ -157,7 +172,7 @@ export class EndingGeneratorService {
           epilogueText = templates.neutral ?? '';
         }
       } else {
-        epilogueText = `${npc.npcName}은(는) 자신의 삶을 이어갔다.`;
+        epilogueText = `${npc.npcName}${korParticle(npc.npcName, '은', '는')} 자신의 삶을 이어갔다.`;
       }
 
       return {

@@ -53,6 +53,14 @@ export class PromptBuilderService {
       memoryParts.push(`[이야기 요약]\n${ctx.storySummary}`);
     }
 
+    // Fixplan v1: 직전 장소 이탈 요약
+    if (ctx.previousVisitContext) {
+      const trimmed = this.tokenBudget.trimToFit(ctx.previousVisitContext, 150);
+      if (trimmed) {
+        memoryParts.push(`[직전 장소 정보]\n${trimmed}\n직전 장소에서의 행동과 미해결 단서를 현재 장면의 NPC 반응이나 배경 묘사에 자연스럽게 반영하세요.`);
+      }
+    }
+
     // Structured Memory v2: NPC 관계 일지 (기존 NPC 감정 상태 흡수)
     if (ctx.npcJournalText) {
       memoryParts.push(`[NPC 관계]\n${ctx.npcJournalText}\n⚠️ NPC가 등장하면, 위 태도와 과거 상호작용을 반드시 대사 톤과 행동에 반영하세요. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다.`);
@@ -79,6 +87,13 @@ export class PromptBuilderService {
     // L1 확장: LOCATION 컨텍스트
     if (ctx.locationContext) {
       memoryParts.push(`[현재 장소]\n${ctx.locationContext}`);
+    }
+
+    // Phase 4: 장소별 재방문 기억
+    if (ctx.locationRevisitContext) {
+      memoryParts.push(
+        `[이 장소의 이전 방문]\n${ctx.locationRevisitContext}\n이전 방문의 결과와 변화가 현재 장면에 반영되어야 합니다.`,
+      );
     }
 
     // 장면 연속성: 현재 장면 상태 (대화 상대, 세부 위치, 진행 중인 상황)
@@ -233,8 +248,12 @@ export class PromptBuilderService {
           // 첫 만남이지만 소개 안 함 (CAUTIOUS 등) → 별칭만
           return `- "${alias}": ${npc.role} [첫 만남 — 이름을 밝히지 않습니다. "${alias}"로만 지칭하세요]`;
         } else if (isIntroduced) {
-          // 이미 소개됨 → 실명
-          return `- ${npc.name}${title}: ${npc.role}`;
+          // 이미 소개됨 → 실명 + knowledge
+          const knowledgeEntries = (ctx.npcKnowledge ?? {})[npc.npcId];
+          const knowledgePart = knowledgeEntries && knowledgeEntries.length > 0
+            ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k: any) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`
+            : '';
+          return `- ${npc.name}${title}: ${npc.role} [이미 소개됨]${knowledgePart}`;
         } else {
           // 아직 만나지 않았거나 소개 안 됨 → 별칭
           return `- "${alias}": ${npc.role} [이름 미공개 — "${alias}"로만 지칭하세요]`;

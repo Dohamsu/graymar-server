@@ -11,6 +11,13 @@ import type {
 } from '../../db/types/index.js';
 import type { Rng } from '../rng/rng.service.js';
 
+/** NPC 연속성 컨텍스트 — 같은 LOCATION 방문 내 NPC 상호작용 추적 */
+export interface SessionNpcContext {
+  lastPrimaryNpcId: string | null;
+  sessionTurnCount: number;
+  interactedNpcIds: string[];
+}
+
 const DANGER_BLOCK_CHANCE = 25;
 const CRACKDOWN_BLOCK_CHANCE = 40;
 
@@ -36,6 +43,7 @@ export class EventMatcherService {
     currentTurnNo: number,
     rng: Rng,
     recentEventIds: string[] = [],
+    sessionNpcContext?: SessionNpcContext,
   ): EventDefV2 | null {
     // Step 1: locationId 필터
     let candidates = events.filter((e) => e.locationId === locationId);
@@ -77,7 +85,28 @@ export class EventMatcherService {
 
     // Step 6: Agenda weight 보정 + 최근 사용 이벤트 페널티 + 가중치 선택
     const consecutiveFallbacks = this.countConsecutiveFallbacks(recentEventIds, events);
-    const recentSet = new Set(recentEventIds);
+
+    // PR-D: 직전 이벤트 hard block — 연속 2회 방지
+    const lastEventId = recentEventIds.length > 0 ? recentEventIds[recentEventIds.length - 1] : null;
+    if (lastEventId) {
+      const blocked = candidates.filter((e) => e.eventId !== lastEventId);
+      if (blocked.length > 0) candidates = blocked;
+      // 안전장치: 모든 후보가 직전 이벤트면 원래 후보 유지
+    }
+
+    // 방문 내 하드캡: 동일 이벤트 2회 이상 등장 시 후보에서 제외
+    const visitEventCounts = new Map<string, number>();
+    for (const id of recentEventIds) {
+      visitEventCounts.set(id, (visitEventCounts.get(id) ?? 0) + 1);
+    }
+    const hardcapped = candidates.filter(
+      (e) => (visitEventCounts.get(e.eventId) ?? 0) < 2,
+    );
+    // 안전장치: 전체 후보 제거되면 필터 스킵
+    if (hardcapped.length > 0) {
+      candidates = hardcapped;
+    }
+
     const weights = candidates.map((e) => {
       const base = e.priority * 10 + e.weight;
       const agendaBoost = this.computeAgendaBoost(e, agenda);
@@ -88,12 +117,22 @@ export class EventMatcherService {
         penalty += consecutiveFallbacks * 30;
       }
 
-      // 최근 사용된 이벤트 가중치 감점 (쿨다운 gates 없어도 반복 방지)
-      if (recentSet.has(e.eventId)) {
-        penalty += 40;
+      // 누진 반복 페널티 (연속 횟수 기반)
+      const repeatPenalty = this.calcProgressiveRepeatPenalty(e.eventId, recentEventIds);
+      penalty += repeatPenalty;
+
+      // NPC 연속성 보너스 (BLOCK matchPolicy가 아닌 경우만)
+      let npcBonus = 0;
+      if (sessionNpcContext && e.matchPolicy !== 'BLOCK') {
+        npcBonus = this.calcNpcContinuityBonus(e, sessionNpcContext);
       }
 
-      return Math.max(1, base + agendaBoost - penalty);
+      // npcBonus가 repeatPenalty의 50% 이상 상쇄 불가
+      const effectiveNpcBonus = repeatPenalty > 0
+        ? Math.min(npcBonus, repeatPenalty * 0.5)
+        : npcBonus;
+
+      return Math.max(1, base + agendaBoost + effectiveNpcBonus - penalty);
     });
 
     return this.weightedSelect(candidates, weights, rng);
@@ -116,9 +155,10 @@ export class EventMatcherService {
     rng: Rng,
     recentEventIds: string[],
     routingResult: IncidentRoutingResult | null,
+    sessionNpcContext?: SessionNpcContext,
   ): EventDefV2 | null {
     if (!routingResult || routingResult.routeMode === 'FALLBACK_SCENE') {
-      return this.match(events, locationId, intent, ws, arcState, agenda, cooldowns, currentTurnNo, rng, recentEventIds);
+      return this.match(events, locationId, intent, ws, arcState, agenda, cooldowns, currentTurnNo, rng, recentEventIds, sessionNpcContext);
     }
 
     // Step 1-5: 기존 필터링
@@ -146,7 +186,25 @@ export class EventMatcherService {
     // Step 6: Incident context 가중치 부스트
     const routingTags = new Set(routingResult.tags);
     const consecutiveFallbacks = this.countConsecutiveFallbacks(recentEventIds, events);
-    const recentSet = new Set(recentEventIds);
+
+    // PR-D: 직전 이벤트 hard block — 연속 2회 방지
+    const lastEventIdInc = recentEventIds.length > 0 ? recentEventIds[recentEventIds.length - 1] : null;
+    if (lastEventIdInc) {
+      const blocked = candidates.filter((e) => e.eventId !== lastEventIdInc);
+      if (blocked.length > 0) candidates = blocked;
+    }
+
+    // 방문 내 하드캡: 동일 이벤트 2회 이상 등장 시 후보에서 제외
+    const visitEventCounts = new Map<string, number>();
+    for (const id of recentEventIds) {
+      visitEventCounts.set(id, (visitEventCounts.get(id) ?? 0) + 1);
+    }
+    const hardcapped = candidates.filter(
+      (e) => (visitEventCounts.get(e.eventId) ?? 0) < 2,
+    );
+    if (hardcapped.length > 0) {
+      candidates = hardcapped;
+    }
 
     const weights = candidates.map((e) => {
       const base = e.priority * 10 + e.weight;
@@ -158,18 +216,17 @@ export class EventMatcherService {
       if (e.eventType === 'FALLBACK' && consecutiveFallbacks > 0) {
         penalty += consecutiveFallbacks * 30;
       }
-      if (recentSet.has(e.eventId)) {
-        penalty += 40;
-      }
+
+      // 누진 반복 페널티
+      const repeatPenalty = this.calcProgressiveRepeatPenalty(e.eventId, recentEventIds);
+      penalty += repeatPenalty;
 
       // Incident context 부스트: 이벤트 태그와 라우팅 태그 교집합
       const eventTags = e.payload.tags;
       for (const tag of eventTags) {
         if (routingTags.has(tag)) incidentBoost += 15;
-        // npc:xxx 형태 태그 매칭
         if (routingTags.has(`npc:${tag}`)) incidentBoost += 10;
       }
-      // kind 태그 매칭
       if (routingResult.incident) {
         const kindTag = routingResult.incident.kind.toLowerCase();
         if (eventTags.some((t) => t.toLowerCase().includes(kindTag))) {
@@ -177,10 +234,48 @@ export class EventMatcherService {
         }
       }
 
-      return Math.max(1, base + agendaBoost + incidentBoost - penalty);
+      // NPC 연속성 보너스 (BLOCK matchPolicy가 아닌 경우만)
+      let npcBonus = 0;
+      if (sessionNpcContext && e.matchPolicy !== 'BLOCK') {
+        npcBonus = this.calcNpcContinuityBonus(e, sessionNpcContext);
+      }
+
+      // npcBonus가 repeatPenalty의 50% 이상 상쇄 불가
+      const effectiveNpcBonus = repeatPenalty > 0
+        ? Math.min(npcBonus, repeatPenalty * 0.5)
+        : npcBonus;
+
+      return Math.max(1, base + agendaBoost + incidentBoost + effectiveNpcBonus - penalty);
     });
 
     return this.weightedSelect(candidates, weights, rng);
+  }
+
+  /** 누진 반복 페널티: 연속 등장 횟수에 따라 증가 */
+  private calcProgressiveRepeatPenalty(eventId: string, recentEventIds: string[]): number {
+    let consecutive = 0;
+    for (let i = recentEventIds.length - 1; i >= 0; i--) {
+      if (recentEventIds[i] === eventId) consecutive++;
+      else break;
+    }
+    if (consecutive === 0) return 0;
+    if (consecutive === 1) return 60;  // PR-D: 40 → 60 강화
+    if (consecutive === 2) return 70;
+    return 100; // 3연속 이상: 사실상 차단
+  }
+
+  /** NPC 연속성 보너스: 같은 NPC +25, 방문 내 상호작용 NPC +10 */
+  private calcNpcContinuityBonus(event: EventDefV2, ctx: SessionNpcContext): number {
+    const eventNpcId = (event.payload as Record<string, unknown>).primaryNpcId as string | undefined;
+    if (!eventNpcId) return 0;
+
+    // 직전 턴에서 대화한 NPC와 같은 이벤트 → +25
+    if (ctx.lastPrimaryNpcId && eventNpcId === ctx.lastPrimaryNpcId) return 25;
+
+    // 이번 방문 중 상호작용한 NPC → +10
+    if (ctx.interactedNpcIds.includes(eventNpcId)) return 10;
+
+    return 0;
   }
 
   private evaluateCondition(

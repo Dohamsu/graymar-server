@@ -1,6 +1,6 @@
 // graymar_v1 JSON 로드 + 메모리 캐시
 
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import type {
@@ -22,6 +22,7 @@ const CONTENT_DIR = join(process.cwd(), '..', 'content', 'graymar_v1');
 
 @Injectable()
 export class ContentLoaderService implements OnModuleInit {
+  private readonly logger = new Logger(ContentLoaderService.name);
   private enemies = new Map<string, EnemyDefinition>();
   private encounters = new Map<string, EncounterDefinition>();
   private items = new Map<string, ItemDefinition>();
@@ -116,6 +117,9 @@ export class ContentLoaderService implements OnModuleInit {
 
     // Phase 4.1: Region Affix 로드
     this.affixes = JSON.parse(affixesRaw) as RegionAffixDef[];
+
+    // 콘텐츠 무결성 검증: events_v2의 primaryNpcId가 npcs에 존재하는지 확인
+    this.validateNpcReferences();
 
     // Narrative Engine v1: Incidents/Endings/Narrative Marks 로드
     const incidentsParsed = JSON.parse(incidentsRaw);
@@ -220,6 +224,21 @@ export class ContentLoaderService implements OnModuleInit {
       }));
     }
     return items;
+  }
+
+  private validateNpcReferences(): void {
+    const orphanNpcs = new Set<string>();
+    for (const event of this.eventsV2) {
+      const npcId = (event.payload as Record<string, unknown>)?.primaryNpcId as string | null;
+      if (npcId && !this.npcs.has(npcId)) {
+        orphanNpcs.add(npcId);
+      }
+    }
+    if (orphanNpcs.size > 0) {
+      this.logger.warn(
+        `events_v2에서 npcs.json에 없는 NPC 참조 ${orphanNpcs.size}건: ${[...orphanNpcs].join(', ')}`,
+      );
+    }
   }
 
   // --- NPC 메서드 ---

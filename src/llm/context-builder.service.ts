@@ -15,6 +15,7 @@ import type { NpcEmotionalState } from '../db/types/npc-state.js';
 import { summarizeRelationship, computeEffectivePosture, getNpcDisplayName } from '../db/types/npc-state.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { StructuredMemory } from '../db/types/structured-memory.js';
+import type { NpcKnowledgeLedger } from '../db/types/npc-knowledge.js';
 import { MemoryRendererService } from './memory-renderer.service.js';
 import { MidSummaryService } from './mid-summary.service.js';
 import { IntentMemoryService } from '../engine/hub/intent-memory.service.js';
@@ -77,6 +78,12 @@ export interface LlmContext {
   intentMemory: string | null;
   // PR4: Active Clues (설계문서 18)
   activeClues: string | null;
+  // Phase 2: NPC Knowledge
+  npcKnowledge: NpcKnowledgeLedger | null;
+  // Phase 4: 장소별 재방문 기억
+  locationRevisitContext: string | null;
+  // Fixplan v1: 직전 장소 이탈 요약
+  previousVisitContext: string | null;
 }
 
 @Injectable()
@@ -475,13 +482,18 @@ export class ContextBuilderService {
       }
     }
 
-    // PR2: Mid Summary — locationSessionTurns > 6 → 초기 턴 압축
+    // PR2: Mid Summary — locationSessionTurns > 4 → 초기 턴 압축 (async 2-pass)
     let midSummary: string | null = null;
     let finalLocationSessionTurns = locationSessionTurns;
-    if (locationSessionTurns.length > 6) {
-      const earlyTurns = locationSessionTurns.slice(0, -6);
-      midSummary = this.midSummaryService.generate(earlyTurns, runState);
-      finalLocationSessionTurns = locationSessionTurns.slice(-6);
+    if (locationSessionTurns.length > 4) {
+      const earlyTurns = locationSessionTurns.slice(0, -4);
+      midSummary = await this.midSummaryService.generate(
+        earlyTurns,
+        runState,
+        structured?.llmExtracted,
+        structured?.npcKnowledge ?? undefined,
+      );
+      finalLocationSessionTurns = locationSessionTurns.slice(-4);
     }
 
     // PR3: Intent Memory — actionHistory에서 패턴 감지
@@ -498,6 +510,27 @@ export class ContextBuilderService {
     let activeClues: string | null = null;
     if (structured) {
       activeClues = this.memoryRenderer.renderActiveClues(structured, runState?.worldState as Record<string, unknown> | undefined) || null;
+    }
+
+    // Fixplan v1: 직전 장소 이탈 요약 — currentLocationId와 다른 장소에서 온 경우
+    let previousVisitContext: string | null = null;
+    if (structured?.lastExitSummary) {
+      const currentLocationId = (runState?.worldState as Record<string, unknown> | undefined)?.currentLocationId as string | undefined;
+      const exit = structured.lastExitSummary;
+      if (currentLocationId && exit.locationId !== currentLocationId) {
+        const parts: string[] = [];
+        parts.push(`직전 장소: ${exit.locationName} (${exit.turnCount}턴 체류)`);
+        if (exit.keyActions.length > 0) {
+          parts.push(`주요 행동: ${exit.keyActions.join('; ')}`);
+        }
+        if (exit.keyDialogues.length > 0) {
+          parts.push(`주요 대화: ${exit.keyDialogues.join('; ')}`);
+        }
+        if (exit.unresolvedLeads.length > 0) {
+          parts.push(`미해결 단서: ${exit.unresolvedLeads.join('; ')}`);
+        }
+        previousVisitContext = parts.join('\n');
+      }
     }
 
     return {
@@ -541,6 +574,19 @@ export class ContextBuilderService {
       midSummary,
       intentMemory,
       activeClues,
+      // Phase 2: NPC Knowledge
+      npcKnowledge: structured?.npcKnowledge ?? null,
+      // Fixplan v1: 직전 장소 이탈 요약
+      previousVisitContext,
+      // Phase 4: 장소별 재방문 기억
+      locationRevisitContext: structured
+        ? this.memoryRenderer.renderLocationRevisitContext(
+            (runState?.worldState as Record<string, unknown> | undefined)?.currentLocationId as string | undefined ?? '',
+            structured.visitLog,
+            structured.npcJournal,
+            structured.npcKnowledge ?? {},
+          )
+        : null,
     };
   }
 }
