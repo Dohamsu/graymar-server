@@ -79,7 +79,7 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
       // INVESTIGATE (3)
       { input: '장부를 조사한다', expected: 'INVESTIGATE', label: 'INVESTIGATE-조사' },
       { input: '단서를 찾아본다', expected: 'INVESTIGATE', label: 'INVESTIGATE-단서' },
-      { input: '물어본다', expected: 'INVESTIGATE', label: 'INVESTIGATE-물어본다' },
+      { input: '물어본다', expected: 'TALK', label: 'TALK-물어본다' },
 
       // OBSERVE (2)
       { input: '주변을 둘러본다', expected: 'OBSERVE', label: 'OBSERVE-둘러보기' },
@@ -358,6 +358,40 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
       for (const r of results) {
         expect(r.primary).toBeTruthy();
       }
+    });
+  });
+
+  // ============================================================
+  // 30턴 플레이테스트 오분류 회귀 방지 (LLM이 INVESTIGATE 편향일 때 KW가 올바른 수단 잡는지)
+  // ============================================================
+  describe('30턴 플레이테스트 오분류 회귀 방지', () => {
+    const playtestCases: Array<{ input: string; expected: IntentActionType; label: string }> = [
+      { input: '선원들과 어울려 술 한잔 하며 이야기를 나눈다', expected: 'TALK', label: 'TALK-이야기를 나' },
+      { input: '감독관에게 슬쩍 금화를 건네며 특별 화물에 대해 묻는다', expected: 'BRIBE', label: 'BRIBE-금화를 건네' },
+      { input: '밤에 항만 창고에 몰래 잠입해 문서를 뒤진다', expected: 'SNEAK', label: 'SNEAK-몰래 잠입' },
+      { input: '부두 노동자들의 파업 현장에서 도움을 준다', expected: 'HELP', label: 'HELP-도움' },
+      { input: '노숙자에게 동전을 주며 소문을 캐낸다', expected: 'BRIBE', label: 'BRIBE-동전' },
+      { input: '어둠 속에서 수상한 인물을 미행한다', expected: 'SNEAK', label: 'SNEAK-미행' },
+      { input: '쓰러진 부랑자를 일으켜 세우고 약초를 나눠준다', expected: 'HELP', label: 'HELP-일으켜+약초' },
+      { input: '폐건물 안에서 비밀 모임이 있는지 은밀히 들여다본다', expected: 'SNEAK', label: 'SNEAK-은밀히' },
+      { input: '경비대장을 찾아가 협력을 제안한다', expected: 'PERSUADE', label: 'PERSUADE-협력을 제' },
+      { input: '하급 경비병에게 접근해 최근 단속 정보를 물어본다', expected: 'TALK', label: 'TALK-물어본다' },
+      { input: '구금된 죄수에게 면회를 시도한다', expected: 'TALK', label: 'TALK-면회(대화)' },
+      { input: '쓰러진 부랑자를 일으켜 세우고 약초를 나눠준다', expected: 'HELP', label: 'HELP-약초' },
+      { input: '응급 처치를 해준다', expected: 'HELP', label: 'HELP-응급' },
+      // "도박에 참여한다"는 키워드 매칭 없음 → TALK fallback → LLM이 보완
+      { input: '도박에 참여한다', expected: 'TALK', label: 'TALK-도박(KW없음)' },
+      // P7 회귀 테스트: "~에 대해 물어본다" 패턴 → TALK (INVESTIGATE의 '장부' 키워드보다 우선)
+      { input: '주변 상인에게 장부에 대해 물어본다', expected: 'TALK', label: 'TALK-장부에 대해 물어' },
+      { input: '경비병에게 최근 사건에 대해 물어본다', expected: 'TALK', label: 'TALK-사건에 대해 물어' },
+      // P7 회귀 테스트: "주머니를 뒤진다" 패턴 → STEAL (SNEAK의 '틈을 타'보다 우선)
+      { input: '방심한 틈을 타 주머니를 뒤진다', expected: 'STEAL', label: 'STEAL-주머니를 뒤진다' },
+      { input: '주머니를 털어본다', expected: 'STEAL', label: 'STEAL-주머니를 털어' },
+    ];
+
+    it.each(playtestCases)('[$label] "$input" → $expected', ({ input, expected }) => {
+      const r = parser.parse(input);
+      expect(r.actionType).toBe(expected);
     });
   });
 });

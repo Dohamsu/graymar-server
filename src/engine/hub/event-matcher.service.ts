@@ -7,6 +7,7 @@ import type {
   PlayerAgenda,
   ConditionCmp,
   Gate,
+  IncidentRoutingResult,
 } from '../../db/types/index.js';
 import type { Rng } from '../rng/rng.service.js';
 
@@ -93,6 +94,90 @@ export class EventMatcherService {
       }
 
       return Math.max(1, base + agendaBoost - penalty);
+    });
+
+    return this.weightedSelect(candidates, weights, rng);
+  }
+
+  /**
+   * Incident context 연동 이벤트 매칭.
+   * routingResult가 있으면 관련 tags/npc/location 가중치 부스트.
+   * null이면 기존 match() 동작과 동일.
+   */
+  matchWithIncidentContext(
+    events: EventDefV2[],
+    locationId: string,
+    intent: ParsedIntentV2,
+    ws: WorldState,
+    arcState: ArcState,
+    agenda: PlayerAgenda,
+    cooldowns: Record<string, number>,
+    currentTurnNo: number,
+    rng: Rng,
+    recentEventIds: string[],
+    routingResult: IncidentRoutingResult | null,
+  ): EventDefV2 | null {
+    if (!routingResult || routingResult.routeMode === 'FALLBACK_SCENE') {
+      return this.match(events, locationId, intent, ws, arcState, agenda, cooldowns, currentTurnNo, rng, recentEventIds);
+    }
+
+    // Step 1-5: 기존 필터링
+    let candidates = events.filter((e) => e.locationId === locationId);
+    candidates = candidates.filter((e) => this.evaluateCondition(e.conditions, ws, arcState));
+    candidates = candidates.filter((e) => this.evaluateGates(e.gates, ws, cooldowns, currentTurnNo, e.eventId));
+    candidates = candidates.filter(
+      (e) =>
+        e.affordances.includes('ANY') ||
+        e.affordances.includes(intent.actionType as any) ||
+        (intent.secondaryActionType && e.affordances.includes(intent.secondaryActionType as any)),
+    );
+
+    if (candidates.length === 0) return null;
+
+    // Heat 간섭
+    if (ws.hubSafety === 'DANGER' || ws.hubSafety === 'ALERT') {
+      const blockChance = ws.hubSafety === 'DANGER' ? DANGER_BLOCK_CHANCE : CRACKDOWN_BLOCK_CHANCE;
+      if (rng.chance(blockChance)) {
+        const blockEvents = candidates.filter((e) => e.matchPolicy === 'BLOCK');
+        if (blockEvents.length > 0) candidates = blockEvents;
+      }
+    }
+
+    // Step 6: Incident context 가중치 부스트
+    const routingTags = new Set(routingResult.tags);
+    const consecutiveFallbacks = this.countConsecutiveFallbacks(recentEventIds, events);
+    const recentSet = new Set(recentEventIds);
+
+    const weights = candidates.map((e) => {
+      const base = e.priority * 10 + e.weight;
+      const agendaBoost = this.computeAgendaBoost(e, agenda);
+      let penalty = 0;
+      let incidentBoost = 0;
+
+      // FALLBACK 연속 페널티
+      if (e.eventType === 'FALLBACK' && consecutiveFallbacks > 0) {
+        penalty += consecutiveFallbacks * 30;
+      }
+      if (recentSet.has(e.eventId)) {
+        penalty += 40;
+      }
+
+      // Incident context 부스트: 이벤트 태그와 라우팅 태그 교집합
+      const eventTags = e.payload.tags;
+      for (const tag of eventTags) {
+        if (routingTags.has(tag)) incidentBoost += 15;
+        // npc:xxx 형태 태그 매칭
+        if (routingTags.has(`npc:${tag}`)) incidentBoost += 10;
+      }
+      // kind 태그 매칭
+      if (routingResult.incident) {
+        const kindTag = routingResult.incident.kind.toLowerCase();
+        if (eventTags.some((t) => t.toLowerCase().includes(kindTag))) {
+          incidentBoost += 10;
+        }
+      }
+
+      return Math.max(1, base + agendaBoost + incidentBoost - penalty);
     });
 
     return this.weightedSelect(candidates, weights, rng);

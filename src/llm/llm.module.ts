@@ -6,6 +6,8 @@ import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { MemoryRendererService } from './memory-renderer.service.js';
+import { TokenBudgetService } from './token-budget.service.js';
+import { MidSummaryService } from './mid-summary.service.js';
 import { LlmProviderRegistryService } from './providers/llm-provider-registry.service.js';
 import { LlmSettingsController } from './llm-settings.controller.js';
 import { MockProvider } from './providers/mock.provider.js';
@@ -26,6 +28,8 @@ import { ContentModule } from '../content/content.module.js';
     LlmCallerService,
     AiTurnLogService,
     MemoryRendererService,
+    TokenBudgetService,
+    MidSummaryService,
     LlmProviderRegistryService,
   ],
   exports: [ContextBuilderService, LlmConfigService, LlmCallerService, LlmProviderRegistryService],

@@ -53,6 +53,16 @@ import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js';
 import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
 import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
+// User-Driven System v3
+import { IntentV3BuilderService } from '../engine/hub/intent-v3-builder.service.js';
+import { IncidentRouterService } from '../engine/hub/incident-router.service.js';
+import { WorldDeltaService } from '../engine/hub/world-delta.service.js';
+import { PlayerThreadService } from '../engine/hub/player-thread.service.js';
+import { IncidentResolutionBridgeService } from '../engine/hub/incident-resolution-bridge.service.js';
+// Notification System
+import { NotificationAssemblerService } from '../engine/hub/notification-assembler.service.js';
+// Signal Feed
+import { SignalFeedService } from '../engine/hub/signal-feed.service.js';
 // Narrative Engine v1
 import { WorldTickService } from '../engine/hub/world-tick.service.js';
 import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
@@ -61,8 +71,12 @@ import { NarrativeMarkService } from '../engine/hub/narrative-mark.service.js';
 import { EndingGeneratorService } from '../engine/hub/ending-generator.service.js';
 import { MemoryCollectorService } from '../engine/hub/memory-collector.service.js';
 import { MemoryIntegrationService } from '../engine/hub/memory-integration.service.js';
+// Event Director + Procedural Event (설계문서 19, 20)
+import { EventDirectorService } from '../engine/hub/event-director.service.js';
+import { ProceduralEventService } from '../engine/hub/procedural-event.service.js';
+import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
 import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture } from '../db/types/npc-state.js';
-import type { IncidentDef, IncidentRuntime, NarrativeMarkCondition, NPCState, NpcEmotionalState } from '../db/types/index.js';
+import type { IncidentDef, IncidentRuntime, IncidentRoutingResult, NarrativeMarkCondition, NPCState, NpcEmotionalState } from '../db/types/index.js';
 import type { IncidentSummaryUI, SignalFeedItemUI, NpcEmotionalUI } from '../db/types/server-result.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
 
@@ -99,6 +113,16 @@ export class TurnsService {
     private readonly llmIntentParser: LlmIntentParserService,
     private readonly orchestration: TurnOrchestrationService,
     private readonly rewardsService: RewardsService,
+    // User-Driven System v3
+    private readonly intentV3Builder: IntentV3BuilderService,
+    private readonly incidentRouter: IncidentRouterService,
+    private readonly worldDeltaService: WorldDeltaService,
+    private readonly playerThreadService: PlayerThreadService,
+    private readonly incidentBridge: IncidentResolutionBridgeService,
+    // Notification System
+    private readonly notificationAssembler: NotificationAssemblerService,
+    // Signal Feed (행동 결과 시그널)
+    private readonly signalFeed: SignalFeedService,
     // Narrative Engine v1
     private readonly worldTick: WorldTickService,
     private readonly incidentMgmt: IncidentManagementService,
@@ -108,6 +132,9 @@ export class TurnsService {
     // Structured Memory v2
     private readonly memoryCollector: MemoryCollectorService,
     private readonly memoryIntegration: MemoryIntegrationService,
+    // Event Director + Procedural Event (설계문서 19, 20)
+    private readonly eventDirector: EventDirectorService,
+    private readonly proceduralEvent: ProceduralEventService,
   ) {}
 
   async submitTurn(runId: string, userId: string, body: SubmitTurnBody) {
@@ -463,6 +490,12 @@ export class TurnsService {
       `[Intent] "${rawInput.slice(0, 30)}" → ${intent.actionType}${_sec} (source=${intent.source}, tone=${intent.tone}, conf=${intent.confidence})`,
     );
 
+    // V3 Intent 확장 (유저 주도형 시스템)
+    const intentV3 = this.intentV3Builder.build(intent, rawInput, locationId, choicePayload);
+    this.logger.debug(
+      `[IntentV3] goal=${intentV3.goalCategory}, vector=${intentV3.approachVector}, goalText="${intentV3.goalText}"`,
+    );
+
     // MOVE_LOCATION: 자유 텍스트로 다른 LOCATION 이동 요청 시 실제 전환
     if (intent.actionType === 'MOVE_LOCATION' && body.input.type === 'ACTION') {
       const targetLocationId = this.extractTargetLocation(rawInput, locationId);
@@ -509,14 +542,45 @@ export class TurnsService {
     }
 
     // Step 3: 새 이벤트 매칭 (전환 CHOICE, 첫 턴, FALLBACK 탈출, MOVE_LOCATION)
+    // IncidentRouter: intentV3 기반으로 관련 incident 라우팅
+    const incidentDefsForRouting = this.content.getIncidentsData() as IncidentDef[];
+    const routingResult = this.incidentRouter.route(ws, locationId, intentV3, incidentDefsForRouting);
+    if (routingResult.routeMode !== 'FALLBACK_SCENE') {
+      this.logger.debug(
+        `[IncidentRouter] mode=${routingResult.routeMode}, incident=${routingResult.incident?.incidentId}, score=${routingResult.matchScore}, vector=${routingResult.matchedVector}`,
+      );
+    }
+
     if (!matchedEvent) {
       const allEvents = this.content.getAllEventsV2();
       const recentEventIds = actionHistory
         .filter((h) => h.eventId)
         .map((h) => h.eventId!);
-      matchedEvent = this.eventMatcher.match(
-        allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds,
+
+      // PR5: EventDirector로 교체 (기존 EventMatcher를 내부적으로 위임)
+      const directorResult = this.eventDirector.select(
+        allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds, routingResult,
       );
+      matchedEvent = directorResult.selectedEvent;
+
+      // PR7: 고정 이벤트 실패 또는 FALLBACK → 절차적 이벤트 시도
+      if (!matchedEvent || matchedEvent.eventType === 'FALLBACK') {
+        const proceduralHistory = (ws.proceduralHistory ?? []) as ProceduralHistoryEntry[];
+        const proceduralResult = this.proceduralEvent.generate(
+          { locationId, timePhase: ws.phaseV2 ?? ws.timePhase, stage: ws.mainArc?.stage != null ? String(ws.mainArc.stage) : undefined },
+          proceduralHistory,
+          turnNo,
+          rng,
+        );
+        if (proceduralResult) {
+          matchedEvent = proceduralResult;
+          this.logger.debug(`[ProceduralEvent] 생성: ${proceduralResult.eventId}`);
+        }
+      }
+
+      if (directorResult.filterLog.length > 0) {
+        this.logger.debug(`[EventDirector] ${directorResult.filterLog.join(', ')}`);
+      }
     }
 
     if (!matchedEvent) {
@@ -529,6 +593,12 @@ export class TurnsService {
       await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, updatedRunState, body.options?.skipLlm);
       return { accepted: true, turnNo, serverResult: result, llm: { status: 'PENDING' as LlmStatus, narrative: null }, meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' } };
     }
+
+    // Notification + WorldDelta: 변경 전 상태 스냅샷
+    const prevHeat = ws.hubHeat;
+    const prevSafety = ws.hubSafety;
+    const prevIncidents = [...(ws.activeIncidents ?? [])];
+    const priorWsSnapshot = { ...ws, activeIncidents: [...(ws.activeIncidents ?? [])] };
 
     // ResolveService 판정
     const resolveResult = this.resolveService.resolve(matchedEvent, intent, ws, playerStats, rng);
@@ -636,6 +706,9 @@ export class TurnsService {
         ),
       };
     }
+
+    // === User-Driven System v3: IncidentResolutionBridge (확장 필드 세밀 조정) ===
+    ws = this.incidentBridge.apply(ws, resolveResult.outcome, routingResult);
 
     // === Narrative Engine v1: postStepTick (impact patches, safety, signal expire) ===
     ws = this.worldTick.postStepTick(ws, resolvedPatches);
@@ -760,6 +833,25 @@ export class TurnsService {
       else updatedRunState.inventory.push({ itemId: added.itemId, qty: added.qty });
     }
 
+    // === User-Driven System v3: WorldDelta (세계 변화 기록) ===
+    const { ws: wsWithDelta } = this.worldDeltaService.build(turnNo, priorWsSnapshot, ws);
+    ws = wsWithDelta;
+
+    // === User-Driven System v3: PlayerThread (반복 행동 패턴 추적) ===
+    ws = this.playerThreadService.update(
+      ws, turnNo, locationId, intentV3.approachVector, intentV3.goalCategory,
+      resolveResult.outcome, routingResult,
+    );
+
+    // === Signal Feed: 행동 결과 기반 시그널 생성 ===
+    const actionSignal = this.signalFeed.generateFromActionResult(
+      intent.actionType, resolveResult.outcome, locationId, ws.globalClock,
+      (matchedEvent?.payload as any)?.primaryNpcId ?? intent.target,
+    );
+    if (actionSignal) {
+      ws = { ...ws, signalFeed: [...(ws.signalFeed ?? []), actionSignal] };
+    }
+
     // RunState 반영
     updatedRunState.worldState = ws;
     updatedRunState.agenda = agenda;
@@ -803,12 +895,12 @@ export class TurnsService {
       // 첫 만남 이벤트 → 이벤트 고유 선택지
       choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, matchedEvent.payload.choices, selectedChoiceIds, matchedEvent.eventId);
     }
-    // summary.short: "이번 턴의 핵심 한 문장" — 행동 + 판정결과 + 배경 포함 (LLM 맥락 유지용)
+    // summary.short: "이번 턴의 핵심 한 문장" — 행동 + 판정결과만 (sceneFrame 분리하여 중복 전달 방지)
     const outcomeLabel = resolveResult.outcome === 'SUCCESS' ? '성공' : resolveResult.outcome === 'PARTIAL' ? '부분 성공' : '실패';
     const actionLabel = this.actionTypeToKorean(intent.actionType);
     const summaryText = isNonChallenge
-      ? `[상황] ${matchedEvent.payload.sceneFrame} [행동] 플레이어가 ${actionLabel}${korParticle(actionLabel, '을', '를')} 했다.`
-      : `[상황] ${matchedEvent.payload.sceneFrame} [행동] 플레이어가 "${rawInput}"${korParticle(rawInput, '을', '를')} 시도하여 ${outcomeLabel}했다.`;
+      ? `플레이어가 ${actionLabel}${korParticle(actionLabel, '을', '를')} 했다.`
+      : `플레이어가 "${rawInput}"${korParticle(rawInput, '을', '를')} 시도하여 ${outcomeLabel}했다.`;
     const result = this.buildLocationResult(turnNo, currentNode, summaryText, resolveResult.outcome, choices, ws, {
       parsedType: intent.actionType,
       originalInput: rawInput,
@@ -817,6 +909,11 @@ export class TurnsService {
       insistenceCount: insistenceCount > 0 ? insistenceCount : undefined,
       eventSceneFrame: matchedEvent.payload.sceneFrame,
       eventMatchPolicy: matchedEvent.matchPolicy,
+      eventId: matchedEvent.eventId,
+      primaryNpcId: matchedEvent.payload.primaryNpcId ?? null,
+      goalCategory: intentV3.goalCategory,
+      approachVector: intentV3.approachVector,
+      goalText: intentV3.goalText,
     }, isNonChallenge, totalGoldDelta, locationReward.items,
     isNonChallenge ? undefined : {
       diceRoll: resolveResult.diceRoll!,
@@ -914,11 +1011,41 @@ export class TurnsService {
       (result.ui as any).npcEmotional = npcEmotionalUIs;
     }
 
-    // 이벤트 추가
+    // === Notification System: 알림 조립 ===
+    const notifResult = this.notificationAssembler.build({
+      turnNo,
+      locationId,
+      resolveOutcome: resolveResult.outcome,
+      actionType: intent.actionType,
+      goalText: intentV3.goalText,
+      targetNpcId: (matchedEvent?.payload as any)?.primaryNpcId ?? intent.target ?? null,
+      relatedIncidentId: routingResult?.incident?.incidentId ?? null,
+      prevIncidents,
+      currentIncidents: finalWs.activeIncidents ?? [],
+      ws: finalWs,
+      prevHeat,
+      prevSafety,
+    });
+    if (notifResult.notifications.length > 0) {
+      (result.ui as any).notifications = notifResult.notifications;
+    }
+    if (notifResult.pinnedAlerts.length > 0) {
+      (result.ui as any).pinnedAlerts = notifResult.pinnedAlerts;
+    }
+    if (notifResult.worldDeltaSummary) {
+      (result.ui as any).worldDeltaSummary = notifResult.worldDeltaSummary;
+    }
+
+    // PlayerThread UI 번들에 포함
+    if (ws.playerThreads && ws.playerThreads.length > 0) {
+      (result.ui as any).playerThreads = ws.playerThreads;
+    }
+
+    // 이벤트 추가 (sceneFrame은 actionContext에서 전달, 여기서는 행동 요약만)
     result.events.push({
       id: `event_${matchedEvent.eventId}`,
       kind: 'NPC',
-      text: matchedEvent.payload.sceneFrame,
+      text: `${actionLabel} — ${matchedEvent.eventType}`,
       tags: matchedEvent.payload.tags,
     });
 
@@ -993,12 +1120,22 @@ export class TurnsService {
 
     if (shouldEnd && endReason) {
       // 엔딩 생성
+      // User-Driven System v3: playerThreads를 엔딩 입력에 전달
+      const endingThreads = (endWs.playerThreads ?? []).map((t) => ({
+        approachVector: t.approachVector,
+        goalCategory: t.goalCategory,
+        actionCount: t.actionCount,
+        successCount: t.successCount,
+        status: t.status,
+      }));
       const endingInput = this.endingGenerator.gatherEndingInputs(
         endWs.activeIncidents ?? [],
         (postTickRunState.npcStates ?? {}) as Record<string, NPCState>,
         endWs.narrativeMarks ?? [],
         endWs as unknown as Record<string, unknown>,
         postTickRunState.arcState ?? null,
+        postTickRunState.actionHistory ?? [],
+        endingThreads,
       );
       const endingResult = this.endingGenerator.generateEnding(endingInput, endReason, turnNo);
 
@@ -1524,7 +1661,7 @@ export class TurnsService {
   private buildLocationResult(
     turnNo: number, node: any, text: string, outcome: string,
     choices: ServerResultV1['choices'], ws: WorldState,
-    actionContext?: { parsedType: string; originalInput: string; tone: string; escalated?: boolean; insistenceCount?: number; eventSceneFrame?: string; eventMatchPolicy?: string },
+    actionContext?: { parsedType: string; originalInput: string; tone: string; escalated?: boolean; insistenceCount?: number; eventSceneFrame?: string; eventMatchPolicy?: string; eventId?: string; primaryNpcId?: string | null; goalCategory?: string; approachVector?: string; goalText?: string },
     hideResolve?: boolean,
     goldDelta?: number,
     itemsAdded?: import('../db/types/index.js').ItemStack[],

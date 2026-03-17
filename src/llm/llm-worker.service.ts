@@ -199,8 +199,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         // 4-a. [THREAD] 태그 파싱 및 스트립
         const threadMatch = narrative.match(/\[THREAD\]([\s\S]*?)\[\/THREAD\]/);
         if (threadMatch) {
-          threadEntry = threadMatch[1].trim().slice(0, 100);
-          narrative = narrative.replace(/\s*\[THREAD\][\s\S]*?\[\/THREAD\]\s*$/, '').trim();
+          threadEntry = threadMatch[1].trim().slice(0, 200);
+          narrative = narrative.replace(/\s*\[THREAD\][\s\S]*?\[\/THREAD\]\s*/g, '').trim();
         } else {
           // Fallback: serverResult 기반 구조화 요약
           threadEntry = this.buildFallbackThread(serverResult, pending.rawInput);
@@ -316,10 +316,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
         thread.entries.push({ turnNo: pending.turnNo, summary: threadEntry });
 
-        // 예산 관리: 총 500자 초과 시 가장 오래된 엔트리 삭제
+        // 예산 관리: 총 1200자 초과 시 가장 오래된 엔트리 삭제
         while (
           thread.entries.length > 1 &&
-          JSON.stringify(thread.entries).length > 500
+          JSON.stringify(thread.entries).length > 1200
         ) {
           thread.entries.shift();
         }

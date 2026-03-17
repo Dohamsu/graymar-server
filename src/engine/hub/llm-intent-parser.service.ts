@@ -227,7 +227,15 @@ export class LlmIntentParserService implements OnModuleInit {
     return (INTENT_ACTION_TYPE as readonly string[]).includes(o.actionType);
   }
 
-  /** LLM 결과와 키워드 결과를 병합 + 에스컬레이션 적용 */
+  /**
+   * LLM-Primary 병합: LLM을 기본 신뢰, KW는 안전망.
+   *
+   * 우선순위:
+   * 1. KW가 MOVE_LOCATION (장소명+이동접미사 복합감지) → KW 무조건 우선
+   * 2. LLM과 KW 일치 → 그대로 채택 (AGREE)
+   * 3. LLM과 KW 불일치 → LLM 채택 (LLM이 맥락 이해 우수)
+   *    - KW 결과는 secondary로 보존하여 정보 손실 방지
+   */
   private mergeResults(
     llmResult: { actionType: IntentActionType; secondaryActionType: IntentActionType | null; tone: IntentTone; target: string | null; riskLevel: 1 | 2 | 3 },
     keywordResult: ParsedIntentV2,
@@ -235,17 +243,48 @@ export class LlmIntentParserService implements OnModuleInit {
     insistenceCount: number,
     repeatedType: string | null,
   ): ParsedIntentV2 {
-    // MOVE_LOCATION/REST는 LLM 출력 범위 밖 → KW 감지 시 무조건 우선
-    const KW_OVERRIDE_TYPES: ReadonlySet<string> = new Set(['MOVE_LOCATION', 'REST']);
-    let actionType = KW_OVERRIDE_TYPES.has(keywordResult.actionType)
-      ? keywordResult.actionType
-      : llmResult.actionType;
-    // secondary: LLM 결과 우선, 없으면 키워드 결과의 secondary 사용
-    let secondaryActionType: IntentActionType | undefined =
-      (llmResult.secondaryActionType ?? keywordResult.secondaryActionType) || undefined;
+    const kwAndLlmDisagree = keywordResult.actionType !== llmResult.actionType;
+
+    let actionType: IntentActionType;
+    let mergeSource: 'KW_OVERRIDE' | 'LLM' | 'AGREE';
+
+    // MOVE_LOCATION 오버라이드: 장소명이 실제로 입력에 포함된 경우만
+    // (일반 이동 키워드 "빠진다/나간다"만으로는 오버라이드하지 않음)
+    const LOCATION_KEYWORDS = ['시장', '경비대', '항만', '부두', '항구', '빈민가', '거점', '선술집', '숙소'];
+    const normalizedForLoc = inputText.toLowerCase();
+    const hasLocationName = LOCATION_KEYWORDS.some(loc => normalizedForLoc.includes(loc));
+
+    if (keywordResult.actionType === 'MOVE_LOCATION' && hasLocationName) {
+      // 장소명 + 이동 키워드 → KW 우선 (높은 신뢰도)
+      actionType = keywordResult.actionType;
+      mergeSource = 'KW_OVERRIDE';
+    } else if (!kwAndLlmDisagree) {
+      // 일치 → 그대로
+      actionType = llmResult.actionType;
+      mergeSource = 'AGREE';
+    } else {
+      // 불일치 → LLM 우선 (맥락 이해 우수)
+      actionType = llmResult.actionType;
+      mergeSource = 'LLM';
+    }
+
+    // secondary 결정: LLM의 secondary 우선, 없으면 불일치 시 KW 결과를 secondary로 보존
+    let secondaryActionType: IntentActionType | undefined;
+    if (llmResult.secondaryActionType && llmResult.secondaryActionType !== actionType) {
+      secondaryActionType = llmResult.secondaryActionType;
+    } else if (mergeSource === 'LLM' && keywordResult.actionType !== actionType) {
+      secondaryActionType = keywordResult.actionType;
+    } else {
+      secondaryActionType = keywordResult.secondaryActionType || undefined;
+    }
+
+    if (mergeSource !== 'AGREE') {
+      this.logger.log(
+        `merge: ${mergeSource} | KW=${keywordResult.actionType}(conf=${keywordResult.confidence}) vs LLM=${llmResult.actionType} → ${actionType}`,
+      );
+    }
 
     // 에스컬레이션: 같은 actionType 연속 3회 → 강한 타입으로 승격
-    // 에스컬레이션은 primary에만 적용
     let escalated = false;
     if (insistenceCount >= 2 && actionType === repeatedType && ESCALATION_MAP[actionType]) {
       actionType = ESCALATION_MAP[actionType]!;
@@ -263,8 +302,8 @@ export class LlmIntentParserService implements OnModuleInit {
       target: llmResult.target,
       riskLevel: llmResult.riskLevel,
       intentTags: keywordResult.intentTags,
-      confidence: 2,
-      source: 'LLM',
+      confidence: mergeSource === 'AGREE' ? 2 : 1 as 0 | 1 | 2,
+      source: mergeSource === 'KW_OVERRIDE' ? 'RULE' : 'LLM',
       suppressedActionType: escalated ? undefined : keywordResult.suppressedActionType,
       escalated,
     };

@@ -10,6 +10,8 @@ import type {
   StatusEventSubkind,
   ToneHint,
 } from './enums.js';
+import type { GameNotification, WorldDeltaSummaryUI } from './notification.js';
+import type { PlayerThread } from './player-thread.js';
 
 // --- Leaf types ---
 
@@ -109,6 +111,10 @@ export type ActionContext = {
   tone?: string;         // 행동 톤 (AGGRESSIVE, CAUTIOUS 등)
   escalated?: boolean;   // 고집 에스컬레이션으로 승격된 경우 true
   insistenceCount?: number; // 동일 행동 반복 횟수
+  // User-Driven System v3 확장
+  goalCategory?: string;      // IntentGoalCategory (GET_INFO, GAIN_ACCESS 등)
+  approachVector?: string;    // ApproachVector (SOCIAL, STEALTH 등)
+  goalText?: string;          // 목표 텍스트
 };
 
 // --- Resolve Breakdown (판정 주사위 분해) ---
@@ -180,6 +186,12 @@ export type UIBundle = {
   activeIncidents?: IncidentSummaryUI[];
   operationProgress?: OperationProgressUI;
   npcEmotional?: NpcEmotionalUI[];
+  // Notification System 확장
+  notifications?: GameNotification[];
+  pinnedAlerts?: GameNotification[];
+  worldDeltaSummary?: WorldDeltaSummaryUI;
+  // User-Driven System v3 확장
+  playerThreads?: PlayerThread[];
 };
 
 // --- Choice ---

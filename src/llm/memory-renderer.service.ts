@@ -153,6 +153,46 @@ export class MemoryRendererService {
     }).join('\n');
   }
 
+  /**
+   * PR4: Active Clues — 현재 유효한 단서만 추출하여 집중 블록 생성.
+   * PLOT_HINT(importance≥0.6) + 미해결 incident 관련 단서.
+   * 최대 5개, 중요도 내림차순.
+   */
+  renderActiveClues(
+    structured: StructuredMemory,
+    ws?: Record<string, unknown>,
+  ): string {
+    const clues: { text: string; importance: number }[] = [];
+
+    // 1. llmExtracted에서 PLOT_HINT && importance≥0.6 추출
+    for (const fact of structured.llmExtracted) {
+      if (fact.category === 'PLOT_HINT' && fact.importance >= 0.6) {
+        clues.push({ text: fact.text, importance: fact.importance });
+      }
+    }
+
+    // 2. 미해결 incident 관련 단서 추출
+    for (const entry of structured.incidentChronicle) {
+      if (!entry.resolved && entry.playerInvolvements.length > 0) {
+        const lastInv = entry.playerInvolvements[entry.playerInvolvements.length - 1];
+        if (lastInv.snippet) {
+          clues.push({
+            text: `${entry.title}: ${lastInv.snippet}`,
+            importance: 0.7,
+          });
+        }
+      }
+    }
+
+    if (clues.length === 0) return '';
+
+    // 중요도 내림차순, 최대 5개
+    clues.sort((a, b) => b.importance - a.importance);
+    const top = clues.slice(0, 5);
+
+    return top.map((c) => `- ${c.text}`).join('\n');
+  }
+
   // ── 유틸리티 ──
 
   private actionKorean(actionType: string): string {

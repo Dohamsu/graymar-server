@@ -36,6 +36,20 @@ export type EndingInput = {
   reputation: Record<string, number>;
   arcRoute: string | null;
   arcCommitment: number;
+  // User-Driven System v3 확장
+  dominantVectors?: string[];               // 가장 많이 사용한 ApproachVector (상위 3개)
+  playerThreads?: Array<{
+    approachVector: string;
+    goalCategory: string;
+    actionCount: number;
+    successCount: number;
+    status: string;
+  }>;
+  consequenceFootprint?: {
+    totalSuspicion: number;                 // 누적 suspicion
+    totalPlayerProgress: number;            // 누적 playerProgress
+    totalRivalProgress: number;             // 누적 rivalProgress
+  };
 };
 
 // --- Ending Result ---
@@ -65,4 +79,8 @@ export type EndingResult = {
     incidentsExpired: number;
     totalTurns: number;
   };
+  // User-Driven System v3 확장
+  playstyleSummary?: string;          // "은밀하고 외교적인 용병" 등
+  dominantVectors?: string[];         // 상위 ApproachVector
+  threadSummary?: string;             // 주요 행동 패턴 요약
 };

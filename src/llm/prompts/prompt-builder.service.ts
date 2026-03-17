@@ -6,10 +6,14 @@ import type { ServerResultV1 } from '../../db/types/index.js';
 import type { LlmMessage } from '../types/index.js';
 import { NARRATIVE_SYSTEM_PROMPT } from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
+import { TokenBudgetService } from '../token-budget.service.js';
 
 @Injectable()
 export class PromptBuilderService {
-  constructor(private readonly content: ContentLoaderService) {}
+  constructor(
+    private readonly content: ContentLoaderService,
+    private readonly tokenBudget: TokenBudgetService,
+  ) {}
 
   buildNarrativePrompt(
     ctx: LlmContext,
@@ -59,14 +63,34 @@ export class PromptBuilderService {
       memoryParts.push(`[사건 일지]\n${ctx.incidentChronicleText}\n진행 중인 사건의 여파를 배경 묘사에 반영하세요 — 주민 반응, 경비 변화, 분위기 등.`);
     }
 
-    // Structured Memory v2: LLM 추출 사실
+    // Structured Memory v2: LLM 추출 사실 (PR4: activeClues가 있으면 PLOT_HINT 중복 제거)
     if (ctx.llmFactsText) {
-      memoryParts.push(`[기억된 사실]\n${ctx.llmFactsText}\n⚠️ 위 사실들을 서술에 적극 활용하세요. 해당 장소나 NPC 관련 장면에서 이 디테일을 감각적 묘사로 녹여내세요.`);
+      let factsText = ctx.llmFactsText;
+      if (ctx.activeClues) {
+        // activeClues에 이미 포함된 [사건] 라인 제거
+        const factsLines = factsText.split('\n').filter((line) => !line.includes('[사건]') || !ctx.activeClues!.includes(line.replace('- [사건] ', '').trim().slice(0, 30)));
+        factsText = factsLines.join('\n');
+      }
+      if (factsText.trim()) {
+        memoryParts.push(`[기억된 사실]\n${factsText}\n⚠️ 위 사실들을 서술에 적극 활용하세요. 해당 장소나 NPC 관련 장면에서 이 디테일을 감각적 묘사로 녹여내세요.`);
+      }
     }
 
     // L1 확장: LOCATION 컨텍스트
     if (ctx.locationContext) {
       memoryParts.push(`[현재 장소]\n${ctx.locationContext}`);
+    }
+
+    // 장면 연속성: 현재 장면 상태 (대화 상대, 세부 위치, 진행 중인 상황)
+    if (ctx.currentSceneContext) {
+      memoryParts.push(
+        [
+          '[현재 장면 상태]',
+          '아래는 지금 진행 중인 장면의 핵심 맥락입니다. 서술은 반드시 이 장면에서 이어져야 합니다.',
+          '',
+          ctx.currentSceneContext,
+        ].join('\n'),
+      );
     }
 
     // L2: Node facts
@@ -86,12 +110,34 @@ export class PromptBuilderService {
             [
               '[장면 흐름]',
               '이 장소 방문 중 누적된 장면 맥락입니다. 이 흐름에서 자연스럽게 이어가세요.',
+              '⚠️ 각 턴에서 NPC가 알려준 단서, 획득한 물건, 발견한 사실은 모두 유효합니다. 이미 알게 된 정보를 NPC가 다시 처음 알려주는 것처럼 반복하지 마세요.',
               '',
               threadLines.join('\n'),
             ].join('\n'),
           );
         }
       } catch { /* ignore parse failure */ }
+    }
+
+    // PR3: Intent Memory — 플레이어 행동 패턴 (200 토큰 예산)
+    if (ctx.intentMemory) {
+      const trimmed = this.tokenBudget.fitBlock(ctx.intentMemory, 'INTENT_MEMORY');
+      if (trimmed) {
+        memoryParts.push(`[플레이어 행동 패턴]\n${trimmed}\n플레이어의 최근 행동 패턴에 맞는 톤과 분위기로 서술하세요.`);
+      }
+    }
+
+    // PR4: Active Clues — 활성 단서 (150 토큰 예산)
+    if (ctx.activeClues) {
+      const trimmed = this.tokenBudget.fitBlock(ctx.activeClues, 'ACTIVE_CLUES');
+      if (trimmed) {
+        memoryParts.push(`[활성 단서]\n${trimmed}\n이 단서들을 서술에 자연스럽게 활용하세요. 관련 장면에서 플레이어가 이미 알고 있는 단서로 취급하세요.`);
+      }
+    }
+
+    // PR2: Mid Summary — 이번 방문 초기 턴 요약 (RECENT_STORY 예산 공유)
+    if (ctx.midSummary) {
+      memoryParts.push(`[중간 요약]\n${ctx.midSummary}`);
     }
 
     // L3: 현재 LOCATION 방문 전체 대화 (단기 기억 — 우선 사용)
@@ -112,16 +158,20 @@ export class PromptBuilderService {
               ? '...' + t.narrative.slice(-300)
               : t.narrative;
             narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
-          } else if (!hasNarrativeThread && distFromEnd <= 2) {
-            // thread가 없을 때만 fallback: 2~3번째 이전 턴 서술 포함
+          } else if (distFromEnd <= 2) {
+            // 2~3번째 이전 턴: 250/150자
             const maxLen = distFromEnd === 1 ? 250 : 150;
             const trimmed = t.narrative.length > maxLen
               ? '...' + t.narrative.slice(-maxLen)
               : t.narrative;
             narrativePart = `\n서술(맥락 참고 — 복사 금지): ${trimmed}`;
+          } else {
+            // 4번째 이전부터: 핵심 맥락 유지를 위해 NPC 대사와 핵심 정보 100자 포함
+            const trimmed = t.narrative.length > 100
+              ? '...' + t.narrative.slice(-100)
+              : t.narrative;
+            narrativePart = `\n서술(요약 참고): ${trimmed}`;
           }
-          // thread가 있으면 직전 턴만 raw narrative, 나머지는 thread가 담당
-          // thread가 없으면 4번째 이전부터: 서술 제외 (행동+결과만)
         }
         return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${t.rawInput}"${outcomePart}${narrativePart}`;
       });
@@ -136,6 +186,8 @@ export class PromptBuilderService {
           '3. 직전 턴에서 NPC나 인물이 등장했다면, 같은 인물과의 상호작용을 이어가세요. 갑자기 새 인물로 전환하지 마세요.',
           '4. 직전 턴에서 특정 장소에 있었다면, 같은 장소에서 계속하세요.',
           '5. [상황 요약]과 [배경 상황]은 이번 턴의 게임 엔진 정보일 뿐, 장면 전환 지시가 아닙니다. 직전 서술의 흐름이 항상 우선합니다.',
+          '6. ⚠️ 이전 턴에서 NPC가 알려준 정보, 획득한 물건, 발견한 단서를 반드시 기억하세요. NPC가 같은 정보를 처음 말하는 것처럼 반복하면 안 됩니다. 예: 이미 종이뭉치를 받았으면, 같은 NPC가 다시 종이뭉치를 주거나 같은 정보를 처음 알려주는 식으로 쓰면 안 됩니다.',
+          '7. ⚠️ 이미 대화한 NPC가 다시 등장할 때는 이전 대화 내용을 알고 있어야 합니다. "그대, 무슨 일로 여기 돌아다니오?" 같은 반응은 이미 그 NPC에게서 허가/정보를 받은 상황에서는 부자연스럽습니다.',
           '',
           sessionLines.join('\n---\n'),
         ].join('\n'),
@@ -256,7 +308,9 @@ export class PromptBuilderService {
     }
 
     if (memoryParts.length > 0) {
-      messages.push({ role: 'assistant', content: memoryParts.join('\n\n'), cacheControl: 'ephemeral' });
+      // PR1: Token Budget — 총합 2500 토큰 예산 내로 트리밍
+      const trimmedParts = this.tokenBudget.enforceTotal(memoryParts);
+      messages.push({ role: 'assistant', content: trimmedParts.join('\n\n'), cacheControl: 'ephemeral' });
     }
 
     // 3. Facts block (user role — 이번 턴 정보)
@@ -274,15 +328,19 @@ export class PromptBuilderService {
         if (actionCtx?.parsedType) {
           parts.push(`엔진 해석: ${actionCtx.parsedType}${actionCtx.tone && actionCtx.tone !== 'NEUTRAL' ? ` (${actionCtx.tone})` : ''}`);
         }
-        // 이벤트 전환 브리징: 직전 서술이 있으면 연속성 우선, 없으면 새 장면 설정
+        // 이벤트 전환 브리징: 진행 중 장면이 있으면 sceneFrame 완전 억제
         if (actionCtx?.eventSceneFrame) {
-          const hasOngoingScene = ctx.locationSessionTurns
-            && ctx.locationSessionTurns.length > 0
-            && ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1].narrative;
-          if (hasOngoingScene) {
-            parts.push(`[배경 상황] ${actionCtx.eventSceneFrame}`);
-            parts.push('⚠️ 서술 연속성 최우선: 직전 서술의 장면(등장 인물, 장소, 대화 흐름)에서 자연스럽게 이어가세요. 위 배경 상황은 흐름 안에서 자연스럽게 녹여내거나, 직전 장면과 어울리지 않으면 무시해도 됩니다. 갑자기 새로운 인물이나 장소로 전환하지 마세요.');
+          const ongoingTurnsWithNarrative = (ctx.locationSessionTurns ?? [])
+            .filter(t => t.narrative && t.narrative.length > 0);
+          if (ongoingTurnsWithNarrative.length >= 2) {
+            // 2턴 이상 진행된 장면: sceneFrame 완전 억제 — 직전 서술의 흐름만 따름
+            parts.push('⚠️ 장면 연속성 절대 우선: [이번 방문 대화]의 직전 서술에서 등장한 인물, 장소, 대화 흐름을 그대로 이어가세요. 새로운 인물이나 장소로 전환하지 마세요.');
+          } else if (ongoingTurnsWithNarrative.length === 1) {
+            // 1턴만 진행: sceneFrame을 약하게 참고
+            parts.push(`[참고 배경 — 분위기 참고만, 인물/장소 전환 금지] ${actionCtx.eventSceneFrame}`);
+            parts.push('⚠️ 직전 서술의 장면(등장 인물, 장소)을 유지하세요. 위 배경은 분위기 참고용이며, 직전 서술과 다른 인물이 언급되어 있으면 무시하세요.');
           } else {
+            // 첫 턴: sceneFrame으로 새 장면 설정
             parts.push(`현재 장면 상황: ${actionCtx.eventSceneFrame}`);
             parts.push('서술 규칙: 플레이어의 행동을 먼저 묘사한 뒤, 위 장면 상황이 자연스럽게 펼쳐지도록 연결하세요. 예: "~하려던 도중, ~" 또는 "~하며 걸어가는데, ~" 형태로 행동과 상황을 매끄럽게 이어붙이세요.');
           }

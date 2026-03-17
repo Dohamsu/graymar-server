@@ -5,6 +5,7 @@ import type {
   IncidentImpactPatch,
   IncidentHistoryEntry,
   IncidentOutcome,
+  IncidentVectorState,
   WorldState,
   ResolveOutcome,
 } from '../../db/types/index.js';
@@ -210,11 +211,30 @@ export class IncidentManagementService {
       controlDelta,
     };
 
+    // User-Driven System v3: 확장 필드 업데이트
+    let newPlayerProgress = incident.playerProgress ?? 0;
+    let newRivalProgress = incident.rivalProgress ?? 0;
+    let newSuspicion = incident.suspicion ?? 0;
+
+    if (outcome === 'SUCCESS') {
+      newPlayerProgress = Math.min(100, newPlayerProgress + 10);
+    } else if (outcome === 'FAIL') {
+      newRivalProgress = Math.min(100, newRivalProgress + 5);
+      newSuspicion = Math.min(100, newSuspicion + 3);
+    } else {
+      // PARTIAL
+      newPlayerProgress = Math.min(100, newPlayerProgress + 3);
+      newSuspicion = Math.min(100, newSuspicion + 1);
+    }
+
     return {
       ...incident,
       control: newControl,
       stage: newStage,
       historyLog: [...incident.historyLog, entry],
+      playerProgress: newPlayerProgress,
+      rivalProgress: newRivalProgress,
+      suspicion: newSuspicion,
     };
   }
 
@@ -288,6 +308,75 @@ export class IncidentManagementService {
           detail: `Incident spawned: ${def.title}`,
         },
       ],
+      // User-Driven System v3 확장 기본값
+      suspicion: 0,
+      security: this.seedSecurity(def.locationId),
+      playerProgress: 0,
+      rivalProgress: 0,
+      vectors: this.seedVectors(def),
+      mutationFlags: [],
     };
+  }
+
+  /** locationId 기반 초기 security 값 */
+  private seedSecurity(locationId: string): number {
+    const map: Record<string, number> = {
+      market: 10,
+      harbor: 30,
+      guard_post: 50,
+      slum: 15,
+    };
+    return map[locationId] ?? 20;
+  }
+
+  /** incident kind + locationId 기반 초기 벡터 세트 생성 */
+  private seedVectors(def: IncidentDef): IncidentVectorState[] {
+    const vectors: IncidentVectorState[] = [];
+
+    // kind 기반 기본 벡터
+    const kindVectors: Record<string, Array<{ vector: string; preferred: boolean; failForward: IncidentVectorState['failForwardMode'] }>> = {
+      CRIMINAL: [
+        { vector: 'STEALTH', preferred: true, failForward: 'SUSPICION' },
+        { vector: 'SOCIAL', preferred: false, failForward: 'HEAT' },
+        { vector: 'VIOLENT', preferred: false, failForward: 'ESCALATION' },
+      ],
+      POLITICAL: [
+        { vector: 'SOCIAL', preferred: true, failForward: 'SUSPICION' },
+        { vector: 'OBSERVATIONAL', preferred: false, failForward: 'HEAT' },
+        { vector: 'PRESSURE', preferred: false, failForward: 'RIVAL_PROGRESS' },
+      ],
+      ECONOMIC: [
+        { vector: 'ECONOMIC', preferred: true, failForward: 'RIVAL_PROGRESS' },
+        { vector: 'SOCIAL', preferred: false, failForward: 'HEAT' },
+        { vector: 'STEALTH', preferred: false, failForward: 'SUSPICION' },
+      ],
+      SOCIAL: [
+        { vector: 'SOCIAL', preferred: true, failForward: 'HEAT' },
+        { vector: 'OBSERVATIONAL', preferred: false, failForward: 'SUSPICION' },
+        { vector: 'PRESSURE', preferred: false, failForward: 'ESCALATION' },
+      ],
+      MILITARY: [
+        { vector: 'VIOLENT', preferred: true, failForward: 'ESCALATION' },
+        { vector: 'STEALTH', preferred: false, failForward: 'SUSPICION' },
+        { vector: 'PRESSURE', preferred: false, failForward: 'RIVAL_PROGRESS' },
+      ],
+    };
+
+    const entries = kindVectors[def.kind] ?? [
+      { vector: 'SOCIAL', preferred: true, failForward: 'HEAT' as const },
+    ];
+
+    for (const entry of entries) {
+      vectors.push({
+        vector: entry.vector,
+        enabled: true,
+        preferred: entry.preferred,
+        friction: entry.preferred ? 0 : 1,
+        effectivenessBase: entry.preferred ? 0.8 : 0.5,
+        failForwardMode: entry.failForward,
+      });
+    }
+
+    return vectors;
   }
 }

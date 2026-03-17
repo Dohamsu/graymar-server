@@ -16,6 +16,8 @@ import { summarizeRelationship, computeEffectivePosture, getNpcDisplayName } fro
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { StructuredMemory } from '../db/types/structured-memory.js';
 import { MemoryRendererService } from './memory-renderer.service.js';
+import { MidSummaryService } from './mid-summary.service.js';
+import { IntentMemoryService } from '../engine/hub/intent-memory.service.js';
 
 export interface RecentTurnEntry {
   turnNo: number;
@@ -67,6 +69,14 @@ export interface LlmContext {
   incidentChronicleText: string | null; // 사건 연대기
   milestonesText: string | null; // 서사 이정표
   llmFactsText: string | null; // LLM 추출 사실
+  // 장면 연속성: 현재 장면 상태
+  currentSceneContext: string | null; // 대화 상대, 세부 위치, 진행 중인 상황
+  // PR2: Mid Summary (설계문서 18)
+  midSummary: string | null;
+  // PR3: Intent Memory (설계문서 18)
+  intentMemory: string | null;
+  // PR4: Active Clues (설계문서 18)
+  activeClues: string | null;
 }
 
 @Injectable()
@@ -75,6 +85,8 @@ export class ContextBuilderService {
     @Inject(DB) private readonly db: DrizzleDB,
     private readonly memoryRenderer: MemoryRendererService,
     private readonly content: ContentLoaderService,
+    private readonly midSummaryService: MidSummaryService,
+    private readonly intentMemoryService: IntentMemoryService,
   ) {}
 
   async build(
@@ -370,13 +382,131 @@ export class ContextBuilderService {
       llmFactsText = this.memoryRenderer.renderLlmFacts(structured.llmExtracted, currentLocationId ?? undefined, encounterNpcIds) || null;
     }
 
+    // 장면 연속성: 현재 장면 상태 구축
+    let currentSceneContext: string | null = null;
+    if (locationSessionTurns.length > 0) {
+      const sceneParts: string[] = [];
+
+      // 1. 대화 상대 추출: actionContext에서 primaryNpcId 확인
+      const uiData = serverResult.ui as Record<string, unknown>;
+      const actionCtx = uiData?.actionContext as Record<string, unknown> | undefined;
+      const primaryNpcId = actionCtx?.primaryNpcId as string | null | undefined;
+      if (primaryNpcId) {
+        const npcStates = runState?.npcStates as Record<string, NPCState> | undefined;
+        const npc = npcStates?.[primaryNpcId];
+        if (npc) {
+          const npcDef = this.content.getNpc(primaryNpcId);
+          const displayName = getNpcDisplayName(npc, npcDef);
+          const posture = computeEffectivePosture(npc);
+          sceneParts.push(`대화/상호작용 상대: ${displayName} (${posture})`);
+        }
+      } else {
+        // 직전 턴들에서 NPC 추적 (최근 3턴 내 actionContext에서 primaryNpcId 검색)
+        const recentLocationTurns = allLocationTurnRows.slice(-3);
+        for (const t of recentLocationTurns.reverse()) {
+          const sr = t.serverResult as ServerResultV1 | null;
+          const prevActionCtx = (sr?.ui as Record<string, unknown>)?.actionContext as Record<string, unknown> | undefined;
+          const prevNpcId = prevActionCtx?.primaryNpcId as string | null | undefined;
+          if (prevNpcId) {
+            const npcStates = runState?.npcStates as Record<string, NPCState> | undefined;
+            const npc = npcStates?.[prevNpcId];
+            if (npc) {
+              const npcDef = this.content.getNpc(prevNpcId);
+              const displayName = getNpcDisplayName(npc, npcDef);
+              sceneParts.push(`최근 상호작용 상대: ${displayName}`);
+            }
+            break;
+          }
+        }
+      }
+
+      // 2. 세부 위치: 진행 중인 장면에서는 sceneFrame 대신 직전 내러티브 마지막 문장 활용
+      const ongoingNarrativeTurns = locationSessionTurns.filter(t => t.narrative && t.narrative.length > 0);
+      if (ongoingNarrativeTurns.length >= 2) {
+        // 2턴 이상 진행: sceneFrame 완전 무시, 직전 내러티브의 마지막 150자로 장면 파악
+        const lastNarrative = ongoingNarrativeTurns[ongoingNarrativeTurns.length - 1].narrative;
+        if (lastNarrative) {
+          const tail = lastNarrative.length > 150 ? lastNarrative.slice(-150) : lastNarrative;
+          sceneParts.push(`직전 장면(이어쓸 지점): ...${tail}`);
+        }
+      } else {
+        // 첫/두번째 턴: sceneFrame 활용
+        const sceneFrame = actionCtx?.eventSceneFrame as string | undefined;
+        if (sceneFrame) {
+          sceneParts.push(`장면 배경: ${sceneFrame}`);
+        } else {
+          const lastTurn = allLocationTurnRows[allLocationTurnRows.length - 1];
+          if (lastTurn) {
+            const sr = lastTurn.serverResult as ServerResultV1 | null;
+            const prevSceneFrame = ((sr?.ui as Record<string, unknown>)?.actionContext as Record<string, unknown>)?.eventSceneFrame as string | undefined;
+            if (prevSceneFrame) {
+              sceneParts.push(`장면 배경: ${prevSceneFrame}`);
+            }
+          }
+        }
+      }
+
+      // 3. 현재 위치 (locationId → 한국어)
+      const ws = runState?.worldState as Record<string, unknown> | undefined;
+      const currentLocationId = ws?.currentLocationId as string | undefined;
+      if (currentLocationId) {
+        const locNames: Record<string, string> = {
+          LOC_MARKET: '시장 거리', LOC_GUARD: '경비대 지구',
+          LOC_HARBOR: '항만 부두', LOC_SLUMS: '빈민가',
+        };
+        sceneParts.push(`현재 위치: ${locNames[currentLocationId] ?? currentLocationId}`);
+      }
+
+      // 4. 이번 방문 턴 수
+      sceneParts.push(`이번 방문 ${locationSessionTurns.length}턴째`);
+
+      // 5. 직전 행동 요약
+      const lastSessionTurn = locationSessionTurns[locationSessionTurns.length - 1];
+      if (lastSessionTurn) {
+        const outcomeText = lastSessionTurn.resolveOutcome === 'SUCCESS' ? '성공'
+          : lastSessionTurn.resolveOutcome === 'PARTIAL' ? '부분 성공'
+          : lastSessionTurn.resolveOutcome === 'FAIL' ? '실패' : '';
+        const outcomePart = outcomeText ? ` → ${outcomeText}` : '';
+        sceneParts.push(`직전 행동: "${lastSessionTurn.rawInput}"${outcomePart}`);
+      }
+
+      if (sceneParts.length > 0) {
+        currentSceneContext = sceneParts.join('\n');
+      }
+    }
+
+    // PR2: Mid Summary — locationSessionTurns > 6 → 초기 턴 압축
+    let midSummary: string | null = null;
+    let finalLocationSessionTurns = locationSessionTurns;
+    if (locationSessionTurns.length > 6) {
+      const earlyTurns = locationSessionTurns.slice(0, -6);
+      midSummary = this.midSummaryService.generate(earlyTurns, runState);
+      finalLocationSessionTurns = locationSessionTurns.slice(-6);
+    }
+
+    // PR3: Intent Memory — actionHistory에서 패턴 감지
+    let intentMemory: string | null = null;
+    if (runState) {
+      const actionHistory = (runState.actionHistory as Array<{ actionType: string }>) ?? [];
+      const patterns = this.intentMemoryService.analyze(actionHistory);
+      if (patterns) {
+        intentMemory = this.intentMemoryService.renderForContext(patterns);
+      }
+    }
+
+    // PR4: Active Clues — StructuredMemory에서 유효 단서 추출
+    let activeClues: string | null = null;
+    if (structured) {
+      activeClues = this.memoryRenderer.renderActiveClues(structured, runState?.worldState as Record<string, unknown> | undefined) || null;
+    }
+
     return {
       theme: memory?.theme ?? [],
       storySummary: memory?.storySummary ?? null,
       nodeFacts: nodeMem?.nodeFacts ?? [],
       recentSummaries: recents.map((r) => r.summary),
       recentTurns,
-      locationSessionTurns,
+      locationSessionTurns: finalLocationSessionTurns,
       currentEvents: serverResult.events,
       summary: serverResult.summary.short + resolveCtx,
       worldSnapshot,
@@ -405,6 +535,12 @@ export class ContextBuilderService {
       incidentChronicleText,
       milestonesText,
       llmFactsText,
+      // 장면 연속성
+      currentSceneContext,
+      // PR2/3/4: 신규 컨텍스트
+      midSummary,
+      intentMemory,
+      activeClues,
     };
   }
 }

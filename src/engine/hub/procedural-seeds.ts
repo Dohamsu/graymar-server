@@ -1,0 +1,80 @@
+// PR7: Procedural Event Seed 데이터 (설계문서 20)
+
+import type { ProceduralSeed } from '../../db/types/procedural-event.js';
+
+export const TRIGGERS: ProceduralSeed[] = [
+  { id: 'TRG_NOISE', text: '갑작스러운 소음이 들린다' },
+  { id: 'TRG_CROWD', text: '군중이 모여들고 있다' },
+  { id: 'TRG_PATROL', text: '경비대 순찰이 지나간다', locationIds: ['LOC_GUARD', 'LOC_MARKET'] },
+  { id: 'TRG_ARGUMENT', text: '말다툼이 벌어지고 있다' },
+  { id: 'TRG_DELIVERY', text: '누군가 짐을 나르고 있다', locationIds: ['LOC_HARBOR', 'LOC_MARKET'] },
+  { id: 'TRG_FIRE', text: '연기 냄새가 난다', timePhases: ['NIGHT', 'DUSK'] },
+  { id: 'TRG_DRUNK', text: '취한 사람이 비틀거린다', timePhases: ['NIGHT', 'DUSK'] },
+  { id: 'TRG_CHASE', text: '누군가 달려가고 있다' },
+  { id: 'TRG_RAIN', text: '비가 내리기 시작한다' },
+  { id: 'TRG_SHADOW', text: '그림자가 골목으로 사라진다', timePhases: ['NIGHT', 'DUSK'] },
+  { id: 'TRG_VENDOR', text: '행상인이 물건을 펼치고 있다', locationIds: ['LOC_MARKET'] },
+  { id: 'TRG_WHISPER', text: '수군거리는 소리가 들린다' },
+  { id: 'TRG_BELL', text: '종소리가 울린다', timePhases: ['DAWN', 'DAY'] },
+  { id: 'TRG_SHIP', text: '배가 입항하고 있다', locationIds: ['LOC_HARBOR'] },
+  { id: 'TRG_CRY', text: '누군가 도움을 요청한다', locationIds: ['LOC_SLUMS'] },
+  { id: 'TRG_DOG', text: '개가 짖으며 무언가를 물고 있다' },
+  { id: 'TRG_POSTER', text: '새로운 공고문이 붙어 있다', locationIds: ['LOC_GUARD', 'LOC_MARKET'] },
+  { id: 'TRG_SPILL', text: '물건이 쏟아져 있다' },
+  { id: 'TRG_FLICKER', text: '등불이 깜빡거린다', timePhases: ['NIGHT'] },
+  { id: 'TRG_SMELL', text: '이상한 냄새가 풍긴다' },
+];
+
+export const SUBJECTS: ProceduralSeed[] = [
+  { id: 'SUB_MERCHANT', text: '상인', tags: ['MERCHANT'] },
+  { id: 'SUB_GUARD', text: '경비병', tags: ['GUARD'], locationIds: ['LOC_GUARD'] },
+  { id: 'SUB_CHILD', text: '아이', locationIds: ['LOC_MARKET', 'LOC_SLUMS'] },
+  { id: 'SUB_BEGGAR', text: '거지', locationIds: ['LOC_SLUMS'] },
+  { id: 'SUB_SAILOR', text: '선원', locationIds: ['LOC_HARBOR'] },
+  { id: 'SUB_THIEF', text: '소매치기', locationIds: ['LOC_MARKET', 'LOC_SLUMS'] },
+  { id: 'SUB_ELDER', text: '노인' },
+  { id: 'SUB_WORKER', text: '인부', locationIds: ['LOC_HARBOR'] },
+  { id: 'SUB_WOMAN', text: '여인' },
+  { id: 'SUB_DRUNK', text: '술취한 사내', timePhases: ['NIGHT', 'DUSK'] },
+  { id: 'SUB_PRIEST', text: '사제' },
+  { id: 'SUB_STRANGER', text: '낯선 이방인' },
+  { id: 'SUB_OFFICIAL', text: '관리', locationIds: ['LOC_GUARD'] },
+  { id: 'SUB_CAT', text: '길고양이' },
+  { id: 'SUB_COURIER', text: '전령' },
+];
+
+export const ACTIONS: ProceduralSeed[] = [
+  { id: 'ACT_HIDE', text: '무언가를 감추고 있다' },
+  { id: 'ACT_ARGUE', text: '말다툼을 벌이고 있다' },
+  { id: 'ACT_DROP', text: '물건을 떨어뜨렸다' },
+  { id: 'ACT_BEG', text: '도움을 구하고 있다' },
+  { id: 'ACT_WATCH', text: '누군가를 지켜보고 있다' },
+  { id: 'ACT_SELL', text: '은밀하게 물건을 팔고 있다' },
+  { id: 'ACT_FIGHT', text: '몸싸움이 벌어지고 있다' },
+  { id: 'ACT_FLEE', text: '도망치고 있다' },
+  { id: 'ACT_SEARCH', text: '무언가를 찾고 있다' },
+  { id: 'ACT_TRADE', text: '거래를 제안하고 있다' },
+  { id: 'ACT_STEAL', text: '물건을 훔치려 하고 있다' },
+  { id: 'ACT_WHISPER', text: '비밀스럽게 대화하고 있다' },
+  { id: 'ACT_COLLAPSE', text: '쓰러져 있다' },
+  { id: 'ACT_BLOCK', text: '길을 막고 있다' },
+  { id: 'ACT_SING', text: '노래를 부르고 있다' },
+];
+
+export const OUTCOMES: ProceduralSeed[] = [
+  { id: 'OUT_CLUE', text: '단서를 발견할 수 있다', tags: ['INVESTIGATE'] },
+  { id: 'OUT_GOLD', text: '금화를 얻을 수 있다', tags: ['TRADE'] },
+  { id: 'OUT_INFO', text: '유용한 정보를 들을 수 있다', tags: ['TALK'] },
+  { id: 'OUT_ITEM', text: '유용한 물건을 발견할 수 있다', tags: ['SEARCH'] },
+  { id: 'OUT_TRUST', text: '누군가의 신뢰를 얻을 수 있다', tags: ['HELP'] },
+  { id: 'OUT_RUMOR', text: '소문을 듣게 된다', tags: ['GOSSIP'] },
+  { id: 'OUT_DANGER', text: '위험한 상황이 될 수 있다', tags: ['THREAT'] },
+  { id: 'OUT_ESCAPE', text: '기회를 놓칠 수 있다' },
+  { id: 'OUT_FAME', text: '평판이 변할 수 있다' },
+  { id: 'OUT_ALLY', text: '도움이 될 만한 사람을 만날 수 있다' },
+  { id: 'OUT_SUPPLY', text: '물자를 확보할 수 있다' },
+  { id: 'OUT_WARNING', text: '경고를 받을 수 있다' },
+  { id: 'OUT_CONFLICT', text: '갈등이 생길 수 있다' },
+  { id: 'OUT_PEACE', text: '분쟁을 해결할 수 있다' },
+  { id: 'OUT_MYSTERY', text: '의문이 깊어진다' },
+];

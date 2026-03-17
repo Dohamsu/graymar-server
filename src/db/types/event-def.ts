@@ -84,4 +84,9 @@ export type EventDefV2 = {
   arcRouteTag?: string;
   commitmentDeltaOnSuccess?: number;
   payload: EventPayload;
+  // PR5: Event Director 확장 (optional)
+  eventCategory?: string;   // 'atmosphere' | 'discovery' | 'interaction' | 'conflict' | 'plot'
+  cooldownTurns?: number;   // 간편 쿨다운 (gates COOLDOWN_TURNS 대체)
+  stages?: string[];         // mainArcClock.stage 필터
+  effects?: { progress?: number }; // 이벤트 진행도 효과
 };

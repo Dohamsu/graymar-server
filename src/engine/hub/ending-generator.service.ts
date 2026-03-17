@@ -56,6 +56,8 @@ export class EndingGeneratorService {
     narrativeMarks: NarrativeMark[],
     worldState: Record<string, unknown>,
     arcState: Record<string, unknown> | null,
+    actionHistory?: Array<{ actionType: string; [k: string]: unknown }>,
+    playerThreads?: Array<{ approachVector: string; goalCategory: string; actionCount: number; successCount: number; status: string }>,
   ): EndingInput {
     const incidentOutcomes = activeIncidents
       .filter((inc) => inc.resolved)
@@ -80,6 +82,12 @@ export class EndingGeneratorService {
       };
     });
 
+    // User-Driven System v3: dominant vectors 계산
+    const dominantVectors = this.computeDominantVectors(actionHistory);
+
+    // User-Driven System v3: consequence footprint
+    const consequenceFootprint = this.computeConsequenceFootprint(activeIncidents);
+
     return {
       incidentOutcomes,
       npcEpilogues,
@@ -90,6 +98,9 @@ export class EndingGeneratorService {
       reputation: (worldState.reputation as Record<string, number>) ?? {},
       arcRoute: (arcState?.currentRoute as string) ?? null,
       arcCommitment: (arcState?.commitment as number) ?? 0,
+      dominantVectors,
+      playerThreads: playerThreads ?? [],
+      consequenceFootprint,
     };
   }
 
@@ -164,12 +175,19 @@ export class EndingGeneratorService {
         ? 'DEADLINE' as const
         : 'NATURAL' as const;
 
+    // User-Driven System v3: playstyle summary
+    const playstyleSummary = this.buildPlaystyleSummary(input.dominantVectors);
+    const threadSummary = this.buildThreadSummary(input.playerThreads);
+
+    // closingLine 변형 (dominant vector 기반)
+    const finalClosingLine = this.adjustClosingLine(cityStatus.summary, input.dominantVectors);
+
     return {
       endingType,
       npcEpilogues,
       cityStatus,
       narrativeMarks: input.narrativeMarks,
-      closingLine: cityStatus.summary,
+      closingLine: finalClosingLine,
       statistics: {
         daysSpent: input.daysSpent,
         incidentsContained: containedCount,
@@ -177,7 +195,111 @@ export class EndingGeneratorService {
         incidentsExpired: expiredCount,
         totalTurns,
       },
+      playstyleSummary,
+      dominantVectors: input.dominantVectors,
+      threadSummary,
     };
+  }
+
+  // --- User-Driven System v3 확장 헬퍼 ---
+
+  private computeDominantVectors(
+    actionHistory?: Array<{ actionType: string; [k: string]: unknown }>,
+  ): string[] {
+    if (!actionHistory || actionHistory.length === 0) return [];
+
+    // actionType → approachVector 간이 매핑 (IntentV3Builder와 동일)
+    const vectorMap: Record<string, string> = {
+      TALK: 'SOCIAL', PERSUADE: 'SOCIAL', HELP: 'SOCIAL',
+      SNEAK: 'STEALTH', STEAL: 'STEALTH',
+      THREATEN: 'PRESSURE',
+      BRIBE: 'ECONOMIC', TRADE: 'ECONOMIC',
+      INVESTIGATE: 'OBSERVATIONAL', OBSERVE: 'OBSERVATIONAL', SEARCH: 'OBSERVATIONAL',
+      FIGHT: 'VIOLENT',
+    };
+
+    const counts: Record<string, number> = {};
+    for (const h of actionHistory) {
+      const vector = vectorMap[h.actionType] ?? 'OBSERVATIONAL';
+      counts[vector] = (counts[vector] ?? 0) + 1;
+    }
+
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([v]) => v);
+  }
+
+  private computeConsequenceFootprint(
+    incidents: IncidentRuntime[],
+  ): { totalSuspicion: number; totalPlayerProgress: number; totalRivalProgress: number } {
+    let totalSuspicion = 0;
+    let totalPlayerProgress = 0;
+    let totalRivalProgress = 0;
+
+    for (const inc of incidents) {
+      totalSuspicion += inc.suspicion ?? 0;
+      totalPlayerProgress += inc.playerProgress ?? 0;
+      totalRivalProgress += inc.rivalProgress ?? 0;
+    }
+
+    return { totalSuspicion, totalPlayerProgress, totalRivalProgress };
+  }
+
+  private buildPlaystyleSummary(dominantVectors?: string[]): string | undefined {
+    if (!dominantVectors || dominantVectors.length === 0) return undefined;
+
+    const labels: Record<string, string> = {
+      SOCIAL: '외교적인',
+      STEALTH: '은밀한',
+      PRESSURE: '강압적인',
+      ECONOMIC: '상업적인',
+      OBSERVATIONAL: '관찰력 있는',
+      POLITICAL: '정치적인',
+      VIOLENT: '거친',
+      LOGISTICAL: '전략적인',
+    };
+
+    const adjectives = dominantVectors
+      .slice(0, 2)
+      .map((v) => labels[v] ?? v)
+      .join('이며 ');
+
+    return `${adjectives} 용병`;
+  }
+
+  private buildThreadSummary(
+    threads?: Array<{ approachVector: string; goalCategory: string; actionCount: number; successCount: number; status: string }>,
+  ): string | undefined {
+    if (!threads || threads.length === 0) return undefined;
+
+    const active = threads.filter((t) => t.status === 'ACTIVE' || t.status === 'COMPLETED');
+    if (active.length === 0) return undefined;
+
+    const sorted = [...active].sort((a, b) => b.actionCount - a.actionCount);
+    const top = sorted[0];
+    const rate = top.actionCount > 0 ? Math.round((top.successCount / top.actionCount) * 100) : 0;
+
+    return `주요 행동 패턴: ${top.approachVector} × ${top.goalCategory} (${top.actionCount}회, 성공률 ${rate}%)`;
+  }
+
+  private adjustClosingLine(
+    baseLine: string,
+    dominantVectors?: string[],
+  ): string {
+    if (!dominantVectors || dominantVectors.length === 0) return baseLine;
+
+    const primary = dominantVectors[0];
+    const suffixes: Record<string, string> = {
+      VIOLENT: ' 피 냄새가 아직 골목에 배어 있었다.',
+      STEALTH: ' 그림자 속에서 누군가 웃고 있었다.',
+      SOCIAL: ' 사람들은 그의 이름을 기억했다.',
+      ECONOMIC: ' 금화의 흔적이 그의 여정을 말해주었다.',
+      PRESSURE: ' 두려움은 오래 남는 법이었다.',
+    };
+
+    const suffix = suffixes[primary];
+    return suffix ? baseLine + suffix : baseLine;
   }
 
   /**

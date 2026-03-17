@@ -17,9 +17,22 @@ import { OperationSessionService } from './operation-session.service.js';
 import { NpcEmotionalService } from './npc-emotional.service.js';
 import { NarrativeMarkService } from './narrative-mark.service.js';
 import { EndingGeneratorService } from './ending-generator.service.js';
+// User-Driven System v3
+import { IntentV3BuilderService } from './intent-v3-builder.service.js';
+import { IncidentRouterService } from './incident-router.service.js';
+import { WorldDeltaService } from './world-delta.service.js';
+import { PlayerThreadService } from './player-thread.service.js';
+import { IncidentResolutionBridgeService } from './incident-resolution-bridge.service.js';
+// Notification System
+import { NotificationAssemblerService } from './notification-assembler.service.js';
 // Structured Memory v2
 import { MemoryCollectorService } from './memory-collector.service.js';
 import { MemoryIntegrationService } from './memory-integration.service.js';
+// Event Director + Procedural Event (설계문서 19, 20)
+import { EventDirectorService } from './event-director.service.js';
+import { ProceduralEventService } from './procedural-event.service.js';
+// Intent Memory (설계문서 18)
+import { IntentMemoryService } from './intent-memory.service.js';
 
 const providers = [
   WorldStateService,
@@ -40,9 +53,22 @@ const providers = [
   NpcEmotionalService,
   NarrativeMarkService,
   EndingGeneratorService,
+  // User-Driven System v3
+  IntentV3BuilderService,
+  IncidentRouterService,
+  WorldDeltaService,
+  PlayerThreadService,
+  IncidentResolutionBridgeService,
+  // Notification System
+  NotificationAssemblerService,
   // Structured Memory v2
   MemoryCollectorService,
   MemoryIntegrationService,
+  // Event Director + Procedural Event (설계문서 19, 20)
+  EventDirectorService,
+  ProceduralEventService,
+  // Intent Memory (설계문서 18)
+  IntentMemoryService,
 ];
 
 @Module({
