@@ -11,6 +11,7 @@ export interface AiTurnLogEntry {
   response?: LlmProviderResponse;
   messages?: LlmMessage[];
   error?: string;
+  type?: string; // 'NARRATIVE' | 'MID_SUMMARY_LIGHT' 등
 }
 
 @Injectable()

@@ -179,11 +179,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         narrative = callResult.response.text;
         modelUsed = callResult.response.model;
 
-        // 4-a-0. [MEMORY] 태그 파싱 및 스트립 (최대 2개)
+        // 4-a-0. [MEMORY] 태그 파싱 및 스트립 (최대 4개, 80자)
         const memoryMatches = [...narrative.matchAll(/\[MEMORY:(\w+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g)];
-        for (const m of memoryMatches.slice(0, 2)) {
+        for (const m of memoryMatches.slice(0, 4)) {
           const category = m[1] as string;
-          const text = m[2].trim().slice(0, 50);
+          const text = m[2].trim().slice(0, 80);
           if (LLM_FACT_CATEGORY.includes(category as LlmFactCategory) && text.length > 0) {
             extractedFacts.push({
               turnNo: pending.turnNo,
@@ -193,8 +193,51 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             });
           }
         }
-        // 서술 본문에서 [MEMORY] 태그 제거
-        narrative = narrative.replace(/\s*\[MEMORY:\w+\][\s\S]*?\[\/MEMORY\]/g, '').trim();
+        // 4-a-0b. [MEMORY:NPC_KNOWLEDGE:NPC_ID] 파싱 → npcKnowledge 저장
+        const npcKnowledgeMatches = [...narrative.matchAll(
+          /\[MEMORY:NPC_KNOWLEDGE:(\w+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
+        )];
+        if (npcKnowledgeMatches.length > 0) {
+          try {
+            const memRow = await this.db.query.runMemories.findFirst({
+              where: eq(runMemories.runId, pending.runId),
+            });
+            if (memRow) {
+              const structured = (memRow.structuredMemory ?? null) as StructuredMemory | null;
+              if (structured) {
+                const knowledge = structured.npcKnowledge ?? {};
+                for (const km of npcKnowledgeMatches.slice(0, 3)) {
+                  const npcId = km[1];
+                  const text = km[2].trim().slice(0, 80);
+                  if (!text) continue;
+                  const entries = knowledge[npcId] ?? [];
+                  entries.push({
+                    factId: `nk_llm_${pending.turnNo}_${npcId}`,
+                    text,
+                    source: 'WITNESSED' as const,
+                    turnNo: pending.turnNo,
+                    locationId: '',
+                    importance: 0.7,
+                  });
+                  if (entries.length > 5) {
+                    entries.sort((a, b) => b.importance - a.importance || b.turnNo - a.turnNo);
+                    entries.length = 5;
+                  }
+                  knowledge[npcId] = entries;
+                }
+                structured.npcKnowledge = knowledge;
+                await this.db.update(runMemories)
+                  .set({ structuredMemory: structured, updatedAt: new Date() })
+                  .where(eq(runMemories.runId, pending.runId));
+              }
+            }
+          } catch (err) {
+            this.logger.warn(`Failed to save NPC_KNOWLEDGE for turn ${pending.turnNo}: ${err}`);
+          }
+        }
+
+        // 서술 본문에서 [MEMORY] 태그 제거 (NPC_KNOWLEDGE 포함)
+        narrative = narrative.replace(/\s*\[MEMORY:[\w:]+\][\s\S]*?\[\/MEMORY\]/g, '').trim();
 
         // 4-a. [THREAD] 태그 파싱 및 스트립
         const threadMatch = narrative.match(/\[THREAD\]([\s\S]*?)\[\/THREAD\]/);
@@ -353,10 +396,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               for (const fact of extractedFacts) {
                 structured.llmExtracted.push(fact);
               }
-              // 예산 체크 (최대 15개, importance 낮은 것부터 제거)
-              if (structured.llmExtracted.length > 15) {
+              // 예산 체크 (최대 20개, importance 낮은 것부터 제거)
+              if (structured.llmExtracted.length > 20) {
                 structured.llmExtracted.sort((a, b) => b.importance - a.importance || b.turnNo - a.turnNo);
-                structured.llmExtracted = structured.llmExtracted.slice(0, 15);
+                structured.llmExtracted = structured.llmExtracted.slice(0, 20);
               }
               await this.db.update(runMemories)
                 .set({ structuredMemory: structured, updatedAt: new Date() })

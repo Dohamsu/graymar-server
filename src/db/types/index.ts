@@ -39,3 +39,5 @@ export * from './player-thread.js';
 export * from './event-director.js';
 // Procedural Event
 export * from './procedural-event.js';
+// NPC Knowledge
+export * from './npc-knowledge.js';

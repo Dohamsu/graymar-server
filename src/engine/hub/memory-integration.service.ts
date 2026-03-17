@@ -12,6 +12,7 @@ import type {
   StructuredMemory,
   VisitContextCache,
   VisitLogEntry,
+  VisitExitSummary,
   NpcJournalEntry,
   NpcInteraction,
   IncidentChronicleEntry,
@@ -41,7 +42,7 @@ const MAX_VISIT_LOG = 15;
 const MAX_NPC_INTERACTIONS = 5;
 const MAX_INCIDENT_INVOLVEMENTS = 5;
 const MAX_MILESTONES = 20;
-const MAX_LLM_FACTS = 15;
+const MAX_LLM_FACTS = 20;
 const MAX_JSON_SIZE = 10 * 1024; // 10KB
 
 @Injectable()
@@ -99,6 +100,9 @@ export class MemoryIntegrationService {
     if (memory.visitLog.length > MAX_VISIT_LOG) {
       memory.visitLog = this.pruneVisitLog(memory.visitLog, MAX_VISIT_LOG);
     }
+
+    // 4.5 Exit Summary 생성 — 다음 장소에서 참조할 직전 장소 요약
+    memory.lastExitSummary = this.buildExitSummary(ctx, locName, memory);
 
     // 5. NpcJournal 업데이트 — ctx.npcsEncountered + runState에서 변동 있는 NPC도 추가
     const npcIdsToProcess = new Set(ctx.npcsEncountered);
@@ -236,6 +240,41 @@ export class MemoryIntegrationService {
     return result.length >= 8 ? result : log.slice(-max);
   }
 
+  // ── ExitSummary 생성 ──
+
+  private buildExitSummary(
+    ctx: VisitContextCache,
+    locName: string,
+    memory: StructuredMemory,
+  ): VisitExitSummary {
+    // keyActions: SUCCESS/PARTIAL 판정 중 상위 3개
+    const keyActions = ctx.actions
+      .filter((a) => a.outcome === 'SUCCESS' || a.outcome === 'PARTIAL')
+      .slice(-3)
+      .map((a) => `${this.actionTypeKorean(a.actionType)}(${a.outcome === 'SUCCESS' ? '성공' : '부분성공'}): ${a.brief}`.slice(0, 80));
+
+    // keyDialogues: NPC 관련 행동 (TALK/PERSUADE 등)
+    const keyDialogues = ctx.actions
+      .filter((a) => ['TALK', 'PERSUADE', 'BRIBE', 'THREATEN'].includes(a.actionType))
+      .slice(-3)
+      .map((a) => `${a.brief}`.slice(0, 80));
+
+    // unresolvedLeads: 해당 location의 PLOT_HINT 최근 2개
+    const unresolvedLeads = memory.llmExtracted
+      .filter((f) => f.category === 'PLOT_HINT' && f.relatedLocationId === ctx.locationId)
+      .slice(-2)
+      .map((f) => f.text.slice(0, 60));
+
+    return {
+      locationId: ctx.locationId,
+      locationName: locName,
+      turnCount: ctx.actions.length,
+      keyActions,
+      keyDialogues,
+      unresolvedLeads,
+    };
+  }
+
   // ── NpcJournal 업데이트 ──
 
   private updateNpcJournal(
@@ -263,10 +302,17 @@ export class MemoryIntegrationService {
       journal.push(entry);
     }
 
-    // 이번 방문에서 관련 행동 추출 — NPC와 같은 방문의 행동 중 이벤트가 있는 것 우선
-    const npcActions = ctx.actions.filter((a) => a.eventId);
-    // 이벤트가 없으면 전체 행동에서 추출
-    const relevantActions = npcActions.length > 0 ? npcActions : ctx.actions;
+    // PR-B: NPC별 관련 행동만 필터링 — relatedNpcId 매칭 우선, 없으면 이벤트 기반
+    const npcSpecificActions = ctx.actions.filter((a) => a.relatedNpcId === npcId);
+    const npcEventActions = npcSpecificActions.length > 0
+      ? npcSpecificActions
+      : ctx.actions.filter((a) => a.eventId); // fallback: 이벤트가 있는 행동
+    // npcsEncountered에 포함되었지만 관련 행동이 없으면 스킵 (오염 방지)
+    const relevantActions = npcSpecificActions.length > 0 ? npcSpecificActions : npcEventActions;
+    if (relevantActions.length === 0 && !ctx.npcsEncountered.includes(npcId)) {
+      // trust delta만으로 추가된 NPC는 행동 없으면 interaction 미기록
+      return journal;
+    }
     for (const action of relevantActions.slice(0, 2)) {
       const interaction: NpcInteraction = {
         turnNo,
@@ -274,7 +320,8 @@ export class MemoryIntegrationService {
         actionType: action.actionType,
         outcome: action.outcome,
         emotionalDelta: ctx.npcEmotionalDeltas[npcId] ?? {},
-        snippet: action.brief.slice(0, 50),
+        // PR-B: snippet을 summaryShort 기반으로 (실제 행동 요약)
+        snippet: (action.summaryShort ?? action.rawInput ?? action.brief).slice(0, 50),
       };
       entry.interactions.push(interaction);
       if (entry.interactions.length > MAX_NPC_INTERACTIONS) {

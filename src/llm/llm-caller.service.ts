@@ -82,6 +82,40 @@ export class LlmCallerService {
     }
   }
 
+  /**
+   * 경량 LLM 호출 — Mid Summary 등 보조 작업용.
+   * 재시도 1회, 타임아웃 5초. 실패 시 빈 문자열.
+   */
+  async callLight(params: {
+    messages: { role: string; content: string }[];
+    maxTokens: number;
+    temperature: number;
+  }): Promise<string> {
+    const lightConfig = this.configService.getLightModelConfig();
+    const provider = this.registry.getByName(lightConfig.provider) ?? this.registry.getPrimary();
+
+    const request: LlmProviderRequest = {
+      messages: params.messages.map(m => ({ role: m.role as 'system' | 'user' | 'assistant', content: m.content })),
+      maxTokens: params.maxTokens,
+      temperature: params.temperature,
+      model: lightConfig.model,
+    };
+
+    try {
+      const response = await provider.generate(request);
+      return response.text;
+    } catch (err) {
+      this.logger.debug(`Light LLM call failed: ${String(err)}`);
+      // 1회 재시도
+      try {
+        const response = await provider.generate(request);
+        return response.text;
+      } catch {
+        return '';
+      }
+    }
+  }
+
   private classifyError(err: unknown): ErrorCategory {
     const message = String(err).toLowerCase();
     const status =

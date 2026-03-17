@@ -16,7 +16,9 @@ import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
 describe('Narrative Pipeline Integration Tests (PR8)', () => {
   // ── 서비스 인스턴스 ──
   const tokenBudget = new TokenBudgetService();
-  const midSummary = new MidSummaryService();
+  const mockLlmCaller = { callLight: jest.fn().mockResolvedValue('') };
+  const mockAiTurnLog = { log: jest.fn() };
+  const midSummary = new MidSummaryService(mockLlmCaller as any, mockAiTurnLog as any);
   const intentMemory = new IntentMemoryService();
   const memoryRenderer = new MemoryRendererService();
   const eventMatcher = new EventMatcherService();
@@ -100,7 +102,7 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
   });
 
   // ── 시나리오 2: 8턴 방문 → midSummary 존재, locationSessionTurns ≤ 6 ──
-  it('2. 8턴 방문: midSummary 존재, locationSessionTurns ≤ 6', () => {
+  it('2. 8턴 방문: midSummary 존재, locationSessionTurns ≤ 6', async () => {
     const allTurns = Array.from({ length: 8 }, (_, i) =>
       makeTurn({ turnNo: i + 1, rawInput: `행동${i + 1}`, resolveOutcome: i % 2 === 0 ? 'SUCCESS' : 'PARTIAL' }),
     );
@@ -110,10 +112,10 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
 
     const earlyTurns = allTurns.slice(0, -6);
     const recentTurns = allTurns.slice(-6);
-    const summary = midSummary.generate(earlyTurns);
+    const summary = await midSummary.generate(earlyTurns);
 
     expect(summary.length).toBeGreaterThan(0);
-    expect(summary.length).toBeLessThanOrEqual(200);
+    expect(summary.length).toBeLessThanOrEqual(400);
     expect(recentTurns.length).toBe(6);
   });
 
