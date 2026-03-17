@@ -20,3 +20,8 @@ Thumbs.db
 # Debug
 npm-debug.log*
 pnpm-debug.log*
+
+# Playtest scripts
+playtest-*.sh
+test-*.sh
+test-*.py
