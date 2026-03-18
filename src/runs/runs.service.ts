@@ -491,6 +491,7 @@ export class RunsService {
         ? {
             theme: memory.theme,
             storySummary: memory.storySummary,
+            structuredMemory: memory.structuredMemory ?? null,
           }
         : null,
       turns: recentTurns.map((t) => ({

@@ -37,7 +37,7 @@ const PRESSURE_DECAY = 3;
 const PRESSURE_MAX = 100;
 
 // NPC agenda 관련 키워드 → LOCATION 매칭
-const NPC_LOCATION_AFFINITY: Record<string, string[]> = {
+export const NPC_LOCATION_AFFINITY: Record<string, string[]> = {
   NPC_YOON_HAMIN: ['LOC_HARBOR', 'LOC_SLUMS'],
   NPC_SEO_DOYUN: ['LOC_MARKET'],
   NPC_KANG_CHAERIN: ['LOC_GUARD', 'LOC_MARKET'],
@@ -45,6 +45,11 @@ const NPC_LOCATION_AFFINITY: Record<string, string[]> = {
   NPC_MOON_SEA: ['LOC_MARKET', 'LOC_GUARD'],
   NPC_INFO_BROKER: ['LOC_SLUMS', 'LOC_HARBOR'],
   NPC_GUARD_CAPTAIN: ['LOC_GUARD'],
+  // Fixplan4-F2: 누락 NPC 추가
+  NPC_MIRELA: ['LOC_MARKET', 'LOC_SLUMS'],
+  NPC_RENNICK: ['LOC_MARKET', 'LOC_SLUMS'],
+  NPC_ROSA: ['LOC_SLUMS', 'LOC_MARKET'],
+  NPC_CAPTAIN_BREN: ['LOC_HARBOR', 'LOC_GUARD'],
 };
 
 @Injectable()
@@ -65,13 +70,20 @@ export class TurnOrchestrationService {
     const npcStates = runState.npcStates ?? {};
     const relationships = runState.relationships ?? {};
 
-    // Step 5: NPC Injection Check
+    // Step 5: NPC Injection Check (연속 등장 방지: actionHistory에서 직전 2턴 NPC 확인)
+    const actionHistory = (runState.actionHistory ?? []) as Array<Record<string, unknown>>;
+    const recentNpcIds = actionHistory
+      .slice(-2)
+      .filter((h) => h.primaryNpcId)
+      .map((h) => h.primaryNpcId as string);
+
     const npcInjection = this.checkNpcInjection(
       npcStates,
       relationships,
       locationId,
       resolveOutcome,
       eventTags,
+      recentNpcIds,
     );
 
     // Step 6: Emotional Peak Check
@@ -168,6 +180,7 @@ export class TurnOrchestrationService {
     locationId: string,
     resolveOutcome: string,
     eventTags: string[],
+    recentNpcIds: string[] = [],
   ): NpcInjection | null {
     // 이벤트 태그에 NPC 관련 태그가 이미 있으면 중복 주입 방지
     if (eventTags.some((t) => t.startsWith('NPC_'))) return null;
@@ -203,9 +216,13 @@ export class TurnOrchestrationService {
 
     if (candidates.length === 0) return null;
 
+    // 연속 등장 방지: 직전 2턴에 등장한 NPC는 후보에서 제외
+    const filtered = candidates.filter((c) => !recentNpcIds.includes(c.npcId));
+    const pool = filtered.length > 0 ? filtered : candidates;
+
     // 가장 높은 점수의 NPC 선택
-    candidates.sort((a, b) => b.score - a.score);
-    const chosen = candidates[0];
+    pool.sort((a, b) => b.score - a.score);
+    const chosen = pool[0];
     const state = npcStates[chosen.npcId]!;
     const npcData = this.contentLoader.getNpc(chosen.npcId);
     const npcName = getNpcDisplayName(state, npcData);

@@ -52,7 +52,7 @@ import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js';
 import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
-import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
+import { TurnOrchestrationService, NPC_LOCATION_AFFINITY } from '../engine/hub/turn-orchestration.service.js';
 // User-Driven System v3
 import { IntentV3BuilderService } from '../engine/hub/intent-v3-builder.service.js';
 import { IncidentRouterService } from '../engine/hub/incident-router.service.js';
@@ -833,6 +833,25 @@ export class TurnsService {
           npcStates[tagNpcId].introduced = true;
           newlyIntroducedNpcIds.push(tagNpcId);
         }
+      }
+    }
+
+    // Fixplan5: primaryNpcId도 없고 TAG_TO_NPC도 매칭 안 될 때, 장소 대표 NPC encounterCount 보충
+    // LLM이 NPC 목록에서 자발적으로 서술하므로, 해당 장소의 대표 NPC를 만남으로 처리
+    if (!eventPrimaryNpc && newlyEncounteredNpcIds.length === 0) {
+      for (const [npcId, affinityLocs] of Object.entries(NPC_LOCATION_AFFINITY)) {
+        if (!affinityLocs.includes(locationId)) continue;
+        if (!npcStates[npcId]) continue;
+        const alreadyMet = actionHistory.some((h) => h.primaryNpcId === npcId);
+        if (alreadyMet) continue;
+        // 이 장소의 첫 번째 미만남 NPC의 encounterCount 1 증가 (턴당 최대 1명)
+        npcStates[npcId].encounterCount = (npcStates[npcId].encounterCount ?? 0) + 1;
+        const posture = computePosture(npcStates[npcId]);
+        if (shouldIntroduce(npcStates[npcId], posture)) {
+          npcStates[npcId].introduced = true;
+          newlyIntroducedNpcIds.push(npcId);
+        }
+        break; // 턴당 1명만
       }
     }
 
