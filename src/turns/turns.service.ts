@@ -544,7 +544,7 @@ export class TurnsService {
     let matchedEvent: import('../db/types/event-def.js').EventDefV2 | null = null;
 
     // Step 1: CHOICE의 sourceEventId → 명시적 씬 유지 (플레이어의 선택)
-    //   제한: 같은 이벤트가 CHOICE로 3턴 이상 연속되면 새 이벤트 매칭으로 전환 (다양성 보장)
+    //   제한: 같은 이벤트가 CHOICE로 2턴 이상 연속되면 새 이벤트 매칭으로 전환 (다양성 보장)
     if (sourceEventId) {
       let choiceConsecutive = 0;
       for (let i = actionHistory.length - 1; i >= 0; i--) {
@@ -554,7 +554,7 @@ export class TurnsService {
           break;
         }
       }
-      if (choiceConsecutive < 3) {
+      if (choiceConsecutive < 2) {
         matchedEvent = this.content.getEventById(sourceEventId) ?? null;
       }
     }
@@ -577,7 +577,7 @@ export class TurnsService {
             }
           }
           // Fixplan3-P5: 연속 1턴만 씬 유지, 2턴째부터는 새 이벤트 매칭으로 전환
-          if (consecutiveCount < 1) {
+          if (consecutiveCount <= 1) {
             matchedEvent = lastEvent;
           }
         }
