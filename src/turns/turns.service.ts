@@ -544,8 +544,19 @@ export class TurnsService {
     let matchedEvent: import('../db/types/event-def.js').EventDefV2 | null = null;
 
     // Step 1: CHOICE의 sourceEventId → 명시적 씬 유지 (플레이어의 선택)
+    //   제한: 같은 이벤트가 CHOICE로 3턴 이상 연속되면 새 이벤트 매칭으로 전환 (다양성 보장)
     if (sourceEventId) {
-      matchedEvent = this.content.getEventById(sourceEventId) ?? null;
+      let choiceConsecutive = 0;
+      for (let i = actionHistory.length - 1; i >= 0; i--) {
+        if (actionHistory[i].eventId === sourceEventId) {
+          choiceConsecutive++;
+        } else {
+          break;
+        }
+      }
+      if (choiceConsecutive < 3) {
+        matchedEvent = this.content.getEventById(sourceEventId) ?? null;
+      }
     }
 
     // Step 2: ACTION(자유 텍스트) → 현재 씬 유지 (플레이어가 씬과 능동적으로 대화 중)
@@ -1223,6 +1234,7 @@ export class TurnsService {
       );
     } catch (err) {
       // 수집 실패는 게임 진행에 영향 없음
+      this.logger.warn(`[MemoryCollector] collectFromTurn failed: ${(err as Error).message}`);
     }
 
     await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, postTickRunState, body.options?.skipLlm);
