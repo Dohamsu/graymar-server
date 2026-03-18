@@ -560,7 +560,7 @@ export class SceneShellService {
       const needed = TARGET_COUNT - choices.length;
       const picked = shuffled.slice(0, needed);
 
-      // 첫 번째 보충 선택지에만 sourceEventId (이벤트 고유 선택지가 없었을 경우)
+      // 보충 선택지에는 sourceEventId를 부여하지 않음 (이벤트 전환 기회 보장)
       for (let i = 0; i < picked.length; i++) {
         const c = picked[i];
         choices.push({
@@ -569,7 +569,6 @@ export class SceneShellService {
             ...c.action,
             payload: {
               ...c.action.payload,
-              ...(i === 0 && choices.length === 0 && sourceEventId ? { sourceEventId } : {}),
             },
           },
         });
