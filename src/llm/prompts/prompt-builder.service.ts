@@ -178,22 +178,22 @@ export class PromptBuilderService {
         let narrativePart = '';
         if (t.narrative) {
           if (distFromEnd === 0) {
-            // 직전 턴: 마지막 300자 표시 (LLM이 '이어쓸' 지점 명확화)
-            const trimmed = t.narrative.length > 300
-              ? '...' + t.narrative.slice(-300)
+            // 직전 턴: 마지막 500자 표시 (핵심 발견/대화 유실 방지)
+            const trimmed = t.narrative.length > 500
+              ? '...' + t.narrative.slice(-500)
               : t.narrative;
             narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
           } else if (distFromEnd <= 2) {
-            // 2~3번째 이전 턴: 250/150자
-            const maxLen = distFromEnd === 1 ? 250 : 150;
+            // 2~3번째 이전 턴: 300/200자
+            const maxLen = distFromEnd === 1 ? 300 : 200;
             const trimmed = t.narrative.length > maxLen
               ? '...' + t.narrative.slice(-maxLen)
               : t.narrative;
             narrativePart = `\n서술(맥락 참고 — 복사 금지): ${trimmed}`;
           } else {
-            // 4번째 이전부터: 핵심 맥락 유지를 위해 NPC 대사와 핵심 정보 100자 포함
-            const trimmed = t.narrative.length > 100
-              ? '...' + t.narrative.slice(-100)
+            // 4번째 이전부터: 핵심 맥락 유지를 위해 NPC 대사와 핵심 정보 150자 포함
+            const trimmed = t.narrative.length > 150
+              ? '...' + t.narrative.slice(-150)
               : t.narrative;
             narrativePart = `\n서술(요약 참고): ${trimmed}`;
           }
@@ -217,6 +217,34 @@ export class PromptBuilderService {
           sessionLines.join('\n---\n'),
         ].join('\n'),
       );
+
+      // Mod4: 직전 턴 핵심 정보 — 맥락 유지 강화
+      if (ctx.locationSessionTurns.length >= 1) {
+        const lastTurn = ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1];
+        const actionLabel = lastTurn.inputType === 'ACTION' ? '행동' : '선택';
+        const outcomeLabel = lastTurn.resolveOutcome === 'SUCCESS' ? '성공'
+          : lastTurn.resolveOutcome === 'PARTIAL' ? '부분 성공'
+          : lastTurn.resolveOutcome === 'FAIL' ? '실패' : '';
+        const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
+        const keyInfoLines: string[] = [];
+        keyInfoLines.push(`- ${actionLabel}: "${sanitizeUserInput(lastTurn.rawInput)}"${outcomePart}`);
+        // narrative에서 핵심 정보 추출 (마지막 150자 — 대화/발견 집중)
+        if (lastTurn.narrative) {
+          const snippet = lastTurn.narrative.length > 150
+            ? lastTurn.narrative.slice(-150)
+            : lastTurn.narrative;
+          keyInfoLines.push(`- 직전 장면: ...${snippet}`);
+        }
+        // NPC delta 정보 (context에 포함된 경우)
+        if (ctx.npcEmotionalContext) {
+          const deltaMatch = ctx.npcEmotionalContext.match(/⚡ 이번 턴 변화: (.+)/);
+          if (deltaMatch) {
+            keyInfoLines.push(`- NPC 반응: ${deltaMatch[1]}`);
+          }
+        }
+        keyInfoLines.push('→ 위 정보를 이번 턴 서술의 출발점으로 삼으세요. 직전 장면과 단절되지 않게 이어쓰세요.');
+        memoryParts.push(`[직전 턴 핵심 정보]\n${keyInfoLines.join('\n')}`);
+      }
     } else if (ctx.recentTurns && ctx.recentTurns.length > 0) {
       // LOCATION 세션 없으면 글로벌 최근 이력 사용
       const turnLines = ctx.recentTurns.map((t) => {

@@ -319,7 +319,7 @@ export class ContextBuilderService {
         incidentContext = `활성 사건 ${activeIncidents.length}건:\n${lines.join('\n')}`;
       }
 
-      // NPC 감정 상태 요약 (displayName 사용)
+      // NPC 감정 상태 요약 (자연어 행동 힌트 포함)
       const npcStates = runState.npcStates as Record<string, NPCState> | undefined;
       if (npcStates) {
         const emotionalLines: string[] = [];
@@ -329,8 +329,39 @@ export class ContextBuilderService {
             const npcDef = this.content.getNpc(npcId);
             const displayName = getNpcDisplayName(npc, npcDef);
             const posture = computeEffectivePosture(npc);
-            emotionalLines.push(`- ${displayName}: ${posture} (신뢰${em.trust} 공포${em.fear} 존경${em.respect} 의심${em.suspicion} 유대${em.attachment})`);
+            // 감정 수치를 행동 묘사 힌트로 변환
+            const hints: string[] = [];
+            if (em.trust > 40) hints.push('당신을 신뢰하며 편하게 대한다');
+            else if (em.trust > 15) hints.push('조금씩 마음을 열고 있다');
+            else if (em.trust < -20) hints.push('당신을 불신하며 거리를 둔다');
+            if (em.fear > 40) hints.push('겁에 질려 있다');
+            else if (em.fear > 15) hints.push('불안해하고 있다');
+            if (em.respect > 30) hints.push('당신을 존경하는 눈빛이다');
+            else if (em.respect < -20) hints.push('당신을 얕보고 있다');
+            if (em.suspicion > 40) hints.push('당신의 의도를 의심하고 있다');
+            else if (em.suspicion > 15) hints.push('경계심을 늦추지 않는다');
+            if (em.attachment > 30) hints.push('당신에게 애착을 느끼고 있다');
+            const hintText = hints.length > 0 ? ` — ${hints.join(', ')}` : '';
+            const behaviorHint = posture === 'FRIENDLY' ? '먼저 다가오거나 귓속말로 정보를 준다'
+              : posture === 'CAUTIOUS' ? '짧게 끊어 말하고 시선을 피한다'
+              : posture === 'HOSTILE' ? '적대적으로 가로막거나 위협한다'
+              : posture === 'FEARFUL' ? '몸을 움츠리고 주위를 두리번거린다'
+              : posture === 'CALCULATING' ? '무표정하게 관찰하다 계산된 말을 꺼낸다'
+              : '';
+            emotionalLines.push(`- ${displayName}: ${posture}${hintText}. 행동: ${behaviorHint}`);
           }
+        }
+        // 이번 턴 NPC 감정 변화 delta
+        const lastDelta = (runState as any).lastNpcDelta as { npcId: string; delta: Record<string, number>; actionType: string; outcome: string } | undefined;
+        if (lastDelta && Object.keys(lastDelta.delta).length > 0) {
+          const axisNames: Record<string, string> = { trust: '신뢰', fear: '공포', respect: '존경', suspicion: '의심', attachment: '유대' };
+          const deltaDesc = Object.entries(lastDelta.delta)
+            .map(([k, v]) => `${axisNames[k] ?? k}${v > 0 ? '+' : ''}${v}`)
+            .join(', ');
+          const npcDef = this.content.getNpc(lastDelta.npcId);
+          const npcState = npcStates[lastDelta.npcId];
+          const dName = npcState ? getNpcDisplayName(npcState, npcDef) : lastDelta.npcId;
+          emotionalLines.push(`⚡ 이번 턴 변화: ${dName}의 감정이 변했다 (${deltaDesc}). 이 변화를 NPC의 표정, 목소리, 행동에 반영하세요.`);
         }
         if (emotionalLines.length > 0) {
           npcEmotionalContext = `NPC 감정:\n${emotionalLines.join('\n')}`;
