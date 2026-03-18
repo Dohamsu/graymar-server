@@ -802,10 +802,23 @@ export class TurnsService {
       }
 
       const npc = npcStates[npcId];
+      // 감정 변화 delta 계산을 위해 before 저장
+      const emoBefore = npc.emotional ? { ...npc.emotional } : undefined;
       npc.emotional = this.npcEmotional.applyActionImpact(
         npc.emotional, intent.actionType, resolveResult.outcome, true,
       );
       npcStates[npcId] = this.npcEmotional.syncLegacyFields(npc);
+      // delta 계산 및 runState에 저장 (LLM 컨텍스트 전달용)
+      if (emoBefore && npc.emotional) {
+        const delta: Record<string, number> = {};
+        for (const axis of ['trust', 'fear', 'respect', 'suspicion', 'attachment'] as const) {
+          const d = Math.round(((npc.emotional as any)[axis] ?? 0) - ((emoBefore as any)[axis] ?? 0));
+          if (d !== 0) delta[axis] = d;
+        }
+        if (Object.keys(delta).length > 0) {
+          (runState as any).lastNpcDelta = { npcId, delta, actionType: intent.actionType, outcome: resolveResult.outcome };
+        }
+      }
     }
 
     // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC를 추론하여 encounterCount 보충
