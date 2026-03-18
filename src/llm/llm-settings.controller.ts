@@ -6,12 +6,15 @@ import {
   Get,
   Patch,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
+import { AuthGuard } from '../common/guards/auth.guard.js';
 import { LlmConfigService, type LlmConfigPatch } from './llm-config.service.js';
 
 const VALID_PROVIDERS = ['mock', 'openai', 'claude', 'gemini'] as const;
 
 @Controller('v1/settings/llm')
+@UseGuards(AuthGuard)
 export class LlmSettingsController {
   constructor(private readonly configService: LlmConfigService) {}
 

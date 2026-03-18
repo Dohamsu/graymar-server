@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { DrizzleModule } from './db/drizzle.module.js';
@@ -13,6 +14,18 @@ import { AuthModule } from './auth/auth.module.js';
 
 @Module({
   imports: [
+    ThrottlerModule.forRoot([
+      {
+        name: 'short',
+        ttl: 1000,
+        limit: 5,
+      },
+      {
+        name: 'medium',
+        ttl: 60000,
+        limit: 60,
+      },
+    ]),
     DrizzleModule,
     AuthModule,
     ContentModule,
@@ -27,6 +40,10 @@ import { AuthModule } from './auth/auth.module.js';
     {
       provide: APP_FILTER,
       useClass: GameExceptionFilter,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
     },
   ],
 })

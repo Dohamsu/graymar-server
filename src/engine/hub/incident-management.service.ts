@@ -93,8 +93,8 @@ export class IncidentManagementService {
 
     if (eligible.length === 0) return null;
 
-    // spawn 확률: 20% per tick
-    if (!rng.chance(20)) return null;
+    // spawn 확률: 40% per tick (Fixplan4-F1: 20→40% 상향)
+    if (!rng.chance(40)) return null;
 
     const weights = eligible.map((e) => e.weight);
     const totalWeight = weights.reduce((s, w) => s + w, 0);

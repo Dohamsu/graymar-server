@@ -18,7 +18,7 @@ export class WorldStateService {
       currentLocationId: null,
       timePhase: 'DAY',
       timeCounter: 0,
-      hubHeat: 0,
+      hubHeat: 15,
       hubSafety: 'SAFE',
       hubHeatReasons: [],
       tension: 0,

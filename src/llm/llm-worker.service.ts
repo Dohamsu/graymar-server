@@ -236,8 +236,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
-        // 서술 본문에서 [MEMORY] 태그 제거 (NPC_KNOWLEDGE 포함)
-        narrative = narrative.replace(/\s*\[MEMORY:[\w:]+\][\s\S]*?\[\/MEMORY\]/g, '').trim();
+        // 서술 본문에서 [MEMORY] 태그 제거 (NPC_KNOWLEDGE 포함, 한국어 NPC 이름 대응)
+        narrative = narrative.replace(/\s*\[MEMORY:[^\]]+\][\s\S]*?\[\/MEMORY\]/g, '').trim();
 
         // 4-a. [THREAD] 태그 파싱 및 스트립
         const threadMatch = narrative.match(/\[THREAD\]([\s\S]*?)\[\/THREAD\]/);

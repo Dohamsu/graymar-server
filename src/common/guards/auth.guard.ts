@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import { UnauthorizedError } from '../errors/game-errors.js';
 
 export const USER_ID_KEY = 'userId';
+const COOKIE_NAME = 'graymar_token';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -15,17 +16,16 @@ export class AuthGuard implements CanActivate {
     // 1. Bearer token 확인
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.slice(7);
-      try {
-        const payload = this.jwtService.verify(token);
-        (req as unknown as Record<string, unknown>)[USER_ID_KEY] = payload.sub;
-        return true;
-      } catch {
-        throw new UnauthorizedError('Invalid or expired token');
-      }
+      return this.verifyToken(req, authHeader.slice(7));
     }
 
-    // 2. Dev fallback: x-user-id (non-production only)
+    // 2. httpOnly cookie 확인
+    const cookieToken = (req.cookies as Record<string, string> | undefined)?.[COOKIE_NAME];
+    if (cookieToken) {
+      return this.verifyToken(req, cookieToken);
+    }
+
+    // 3. Dev fallback: x-user-id (non-production only)
     if (process.env.NODE_ENV !== 'production') {
       const userId = req.headers['x-user-id'];
       if (userId && typeof userId === 'string') {
@@ -37,5 +37,15 @@ export class AuthGuard implements CanActivate {
     throw new UnauthorizedError(
       'Authorization header with Bearer token is required',
     );
+  }
+
+  private verifyToken(req: Request, token: string): boolean {
+    try {
+      const payload = this.jwtService.verify(token);
+      (req as unknown as Record<string, unknown>)[USER_ID_KEY] = payload.sub;
+      return true;
+    } catch {
+      throw new UnauthorizedError('Invalid or expired token');
+    }
   }
 }

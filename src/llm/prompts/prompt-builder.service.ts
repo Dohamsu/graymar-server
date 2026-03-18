@@ -8,6 +8,16 @@ import { NARRATIVE_SYSTEM_PROMPT } from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { TokenBudgetService } from '../token-budget.service.js';
 
+/** 사용자 입력을 프롬프트에 삽입할 때 구조 파괴를 방지하는 sanitizer */
+function sanitizeUserInput(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+}
+
 @Injectable()
 export class PromptBuilderService {
   constructor(
@@ -188,7 +198,7 @@ export class PromptBuilderService {
             narrativePart = `\n서술(요약 참고): ${trimmed}`;
           }
         }
-        return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${t.rawInput}"${outcomePart}${narrativePart}`;
+        return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
       });
       memoryParts.push(
         [
@@ -216,7 +226,7 @@ export class PromptBuilderService {
           : t.resolveOutcome === 'FAIL' ? '실패' : '';
         const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
         const narrativePart = t.narrative ? `\n서술: ${t.narrative.slice(0, 200)}${t.narrative.length > 200 ? '...' : ''}` : '';
-        return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${t.rawInput}"${outcomePart}${narrativePart}`;
+        return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
       });
       memoryParts.push(`[최근 대화 이력]\n${turnLines.join('\n---\n')}`);
     } else if (ctx.recentSummaries.length > 0) {
@@ -246,7 +256,7 @@ export class PromptBuilderService {
           return `- ${npc.name}${title}: ${npc.role} [이번 장면에서 이름이 자연스럽게 드러납니다 — 다른 인물이 이름을 부르거나, 상황 단서(문서, 간판, 대화)를 통해 알게 되는 식으로 서술하세요. 직접 자기소개하지 않습니다]`;
         } else if (isNewlyEncountered && !isNewlyIntroduced) {
           // 첫 만남이지만 소개 안 함 (CAUTIOUS 등) → 별칭만
-          return `- "${alias}": ${npc.role} [첫 만남 — 이름을 밝히지 않습니다. "${alias}"로만 지칭하세요]`;
+          return `- "${alias}": ${npc.role} [첫 만남 — 이름을 밝히지 않습니다. 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "그 인물", "그", "그녀" 등 짧은 대명사로 자연스럽게 대체하세요]`;
         } else if (isIntroduced) {
           // 이미 소개됨 → 실명 + knowledge
           const knowledgeEntries = (ctx.npcKnowledge ?? {})[npc.npcId];
@@ -256,7 +266,7 @@ export class PromptBuilderService {
           return `- ${npc.name}${title}: ${npc.role} [이미 소개됨]${knowledgePart}`;
         } else {
           // 아직 만나지 않았거나 소개 안 됨 → 별칭
-          return `- "${alias}": ${npc.role} [이름 미공개 — "${alias}"로만 지칭하세요]`;
+          return `- "${alias}": ${npc.role} [이름 미공개 — 첫 등장 시 "${alias}"로 지칭하고, 같은 장면 내에서는 "그 인물", "그", "그녀" 등 짧은 대명사로 대체하세요]`;
         }
       });
       const relationPart = ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0
@@ -267,7 +277,7 @@ export class PromptBuilderService {
           '[등장 가능 NPC 목록]',
           '아래 NPC만 서술에 이름 있는 캐릭터로 등장할 수 있습니다. 이 목록에 없는 새로운 이름 있는 캐릭터를 만들지 마세요.',
           '배경 인물이 필요하면 "한 사내", "노점 상인" 등 익명 표현만 사용하세요.',
-          '⚠️ [이름 미공개] 표시가 있는 NPC는 반드시 별칭으로만 지칭하세요. 실명을 사용하면 안 됩니다.',
+          '⚠️ [이름 미공개] 표시가 있는 NPC는 실명을 사용하면 안 됩니다. 첫 등장 시 별칭을 사용하고, 이후 같은 장면에서는 "그", "그녀", "그 인물" 등 짧은 대명사로 자연스럽게 대체하세요.',
           '',
           npcLines.join('\n'),
           relationPart,
@@ -341,7 +351,7 @@ export class PromptBuilderService {
         const actionCtx = sr.ui?.actionContext as { parsedType?: string; originalInput?: string; tone?: string; escalated?: boolean; insistenceCount?: number; eventSceneFrame?: string; eventMatchPolicy?: string } | undefined;
         const parts = [
           `⚠️ [이번 턴 플레이어 행동 — 서술의 핵심]`,
-          `플레이어 원문: "${rawInput}"`,
+          `플레이어 원문: "${sanitizeUserInput(rawInput)}"`,
           `이 행동이 이번 서술의 주제입니다. 반드시 이 행동을 시도하는 장면으로 시작하세요.`,
         ];
         if (actionCtx?.parsedType) {
@@ -377,7 +387,7 @@ export class PromptBuilderService {
       } else if (inputType === 'CHOICE') {
         const actionCtx = sr.ui?.actionContext as { parsedType?: string; originalInput?: string; tone?: string } | undefined;
         const parts = [
-          `[플레이어 선택] 당신은 "${rawInput}"을(를) 선택했습니다.`,
+          `[플레이어 선택] 당신은 "${sanitizeUserInput(rawInput)}"을(를) 선택했습니다.`,
           '서술 규칙: 먼저 플레이어가 이 선택을 실행하는 장면을 구체적으로 묘사하세요.',
           '직전 턴의 장면·장소·NPC에서 자연스럽게 이어져야 합니다. 장면을 갑자기 다른 장소로 옮기지 마세요.',
           '선택의 결과를 충분히 보여준 뒤, 자연스럽게 다음 상황으로 전환하세요.',
