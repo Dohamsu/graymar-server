@@ -67,7 +67,7 @@ export type CityStatus = {
 };
 
 export type EndingResult = {
-  endingType: 'NATURAL' | 'DEADLINE' | 'PLAYER_CHOICE';
+  endingType: 'NATURAL' | 'DEADLINE' | 'PLAYER_CHOICE' | 'DEFEAT';
   npcEpilogues: NpcEpilogue[];
   cityStatus: CityStatus;
   narrativeMarks: NarrativeMark[];

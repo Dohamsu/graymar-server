@@ -124,7 +124,7 @@ export class EndingGeneratorService {
    */
   generateEnding(
     input: EndingInput,
-    endingReason: 'ALL_RESOLVED' | 'DEADLINE' | 'PLAYER_CHOICE',
+    endingReason: 'ALL_RESOLVED' | 'DEADLINE' | 'PLAYER_CHOICE' | 'DEFEAT',
     totalTurns: number,
   ): EndingResult {
     const endingsData = this.content.getEndingsData();
@@ -188,14 +188,18 @@ export class EndingGeneratorService {
       ? 'PLAYER_CHOICE' as const
       : endingReason === 'DEADLINE'
         ? 'DEADLINE' as const
-        : 'NATURAL' as const;
+        : endingReason === 'DEFEAT'
+          ? 'DEFEAT' as const
+          : 'NATURAL' as const;
 
     // User-Driven System v3: playstyle summary
     const playstyleSummary = this.buildPlaystyleSummary(input.dominantVectors);
     const threadSummary = this.buildThreadSummary(input.playerThreads);
 
     // closingLine 변형 (dominant vector 기반)
-    const finalClosingLine = this.adjustClosingLine(cityStatus.summary, input.dominantVectors);
+    const finalClosingLine = endingReason === 'DEFEAT'
+      ? '시야가 어두워진다. 이름 없는 용병의 이야기는 여기서 끝났다.'
+      : this.adjustClosingLine(cityStatus.summary, input.dominantVectors);
 
     return {
       endingType,
