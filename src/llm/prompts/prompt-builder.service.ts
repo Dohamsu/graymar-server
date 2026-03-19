@@ -293,8 +293,8 @@ export class PromptBuilderService {
             : '';
           return `- ${npc.name}${title}: ${npc.role} [이미 소개됨]${knowledgePart}`;
         } else {
-          // 아직 만나지 않았거나 소개 안 됨 → 별칭
-          return `- "${alias}": ${npc.role} [이름 미공개 — 첫 등장 시 "${alias}"로 지칭하고, 같은 장면 내에서는 "그 인물", "그", "그녀" 등 짧은 대명사로 대체하세요]`;
+          // 아직 만나지 않았거나 소개 안 됨 → 별칭 (간략히)
+          return `- "${alias}": ${npc.role} [이름 미공개]`;
         }
       });
       const relationPart = ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0
@@ -305,7 +305,8 @@ export class PromptBuilderService {
           '[등장 가능 NPC 목록]',
           '아래 NPC만 서술에 이름 있는 캐릭터로 등장할 수 있습니다. 이 목록에 없는 새로운 이름 있는 캐릭터를 만들지 마세요.',
           '배경 인물이 필요하면 "한 사내", "노점 상인" 등 익명 표현만 사용하세요.',
-          '⚠️ [이름 미공개] 표시가 있는 NPC는 실명을 사용하면 안 됩니다. 첫 등장 시 별칭을 사용하고, 이후 같은 장면에서는 "그", "그녀", "그 인물" 등 짧은 대명사로 자연스럽게 대체하세요.',
+          '⚠️ [이름 미공개] NPC: 별칭은 참고용입니다. 서술에서 별칭 전체를 반복하지 말고, 첫 등장 후에는 "그", "그녀", "그 인물" 등 대명사로 자연스럽게 대체하세요.',
+          '⚠️ 같은 NPC 별칭을 연속 턴에서 동일한 표현으로 반복하지 마세요. 다양한 묘사를 사용하세요.',
           '',
           npcLines.join('\n'),
           relationPart,
@@ -323,23 +324,25 @@ export class PromptBuilderService {
     }
 
     // Narrative Engine v1: Incident/감정/마크/시그널 컨텍스트
-    // 구조화 메모리가 있으면 [사건 일지], [NPC 관계], [서사 이정표]에 통합되므로 건너뜀
     const hasStructured = !!(ctx.structuredSummary || ctx.npcJournalText || ctx.incidentChronicleText);
     if (!hasStructured) {
       if (ctx.incidentContext) {
         memoryParts.push(`[도시 사건]\n${ctx.incidentContext}\n플레이어의 행동이 사건의 통제/압력에 영향을 줍니다. 사건의 긴장감을 서술에 자연스럽게 반영하세요.`);
-      }
-      if (ctx.npcEmotionalContext) {
-        memoryParts.push(`[NPC 감정 상태]\n${ctx.npcEmotionalContext}\nNPC의 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요.`);
-      }
-      if (ctx.narrativeMarkContext) {
-        memoryParts.push(`[서사 표식]\n${ctx.narrativeMarkContext}\n이 표식들은 이야기에 영구적 영향을 줍니다. 관련 장면에서 자연스럽게 참조하세요.`);
       }
     } else {
       // 구조화 메모리 사용 시에도 활성 Incident의 런타임 수치는 보충 (chronicle은 과거 기록, 런타임은 현재 수치)
       if (ctx.incidentContext) {
         memoryParts.push(`[활성 사건 현황]\n${ctx.incidentContext}`);
       }
+    }
+    // NPC 감정 상태: 구조화 메모리 유무와 무관하게 항상 포함
+    // npcJournalText는 과거 관계 요약이고, npcEmotionalContext는 현재 감정 수치 + 행동 힌트
+    if (ctx.npcEmotionalContext) {
+      memoryParts.push(`[NPC 감정 상태]\n${ctx.npcEmotionalContext}\n⚠️ NPC의 현재 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요. 위 행동 힌트를 반드시 반영하세요.`);
+    }
+    // 서사 표식: 구조화 메모리 유무와 무관하게 항상 포함
+    if (ctx.narrativeMarkContext) {
+      memoryParts.push(`[서사 표식]\n${ctx.narrativeMarkContext}\n이 표식들은 이야기에 영구적 영향을 줍니다. 관련 장면에서 자연스럽게 참조하세요.`);
     }
     if (ctx.signalContext) {
       memoryParts.push(`[도시 시그널]\n${ctx.signalContext}\n배경 분위기와 NPC 대화에 시그널 정보를 자연스럽게 녹여내세요.`);
@@ -366,7 +369,28 @@ export class PromptBuilderService {
 
     if (memoryParts.length > 0) {
       // PR1: Token Budget — 총합 2500 토큰 예산 내로 트리밍
-      const trimmedParts = this.tokenBudget.enforceTotal(memoryParts);
+      // 우선순위: 낮은 인덱스 = 먼저 트리밍 대상 (저우선)
+      // enforceTotal은 priorityOrder를 역순으로 순회하므로, 배열 앞쪽이 먼저 제거됨
+      const LOW_PRIORITY_TAGS = ['[서사 이정표]', '[장비 인상]', '[기억된 사실]', '[직전 장소 정보]', '[성향/아크]', '[플레이어 프로필]'];
+      const HIGH_PRIORITY_TAGS = ['[이번 방문 대화]', '[직전 턴 핵심 정보]', '[NPC 감정 상태]', '[현재 장면 상태]', '[현재 노드 사실]', '[장면 흐름]', '[현재 장소]'];
+
+      const getPriority = (part: string): number => {
+        for (const tag of HIGH_PRIORITY_TAGS) {
+          if (part.startsWith(tag)) return 2; // high — trim last
+        }
+        for (const tag of LOW_PRIORITY_TAGS) {
+          if (part.startsWith(tag)) return 0; // low — trim first
+        }
+        return 1; // medium
+      };
+
+      // Build index array sorted by priority ascending (low-priority indices first)
+      const priorityOrder = memoryParts
+        .map((part, idx) => ({ idx, priority: getPriority(part) }))
+        .sort((a, b) => a.priority - b.priority)
+        .map(item => item.idx);
+
+      const trimmedParts = this.tokenBudget.enforceTotal(memoryParts, priorityOrder);
       messages.push({ role: 'assistant', content: trimmedParts.join('\n\n'), cacheControl: 'ephemeral' });
     }
 
@@ -452,12 +476,22 @@ export class PromptBuilderService {
       } else if (isNewlyIntroduced) {
         introInstruction = '\n이 NPC의 이름이 이번 장면에서 드러납니다. 다른 인물의 언급이나 상황 단서를 통해 자연스럽게 이름이 밝혀지도록 서술하세요.';
       } else if (npc.introduced === false) {
-        introInstruction = `\n이 NPC는 아직 이름이 밝혀지지 않았습니다. "${npc.npcName}"으로만 지칭하세요.`;
+        const npcDef = npc.npcId ? this.content.getNpc(npc.npcId) : undefined;
+        const alias = npcDef?.unknownAlias || '낯선 인물';
+        introInstruction = `\n이 NPC는 아직 이름이 밝혀지지 않았습니다. "${alias}"으로만 지칭하세요.`;
       }
+
+      const npcDisplayName = (() => {
+        if (npc.introduced === false && !isNewlyIntroduced) {
+          const npcDef = npc.npcId ? this.content.getNpc(npc.npcId) : undefined;
+          return npcDef?.unknownAlias || '낯선 인물';
+        }
+        return npc.npcName;
+      })();
 
       factsParts.push(
         [
-          `[NPC 등장] ${npc.npcName}이(가) 이 장면에 나타납니다.`,
+          `[NPC 등장] ${npcDisplayName}이(가) 이 장면에 나타납니다.`,
           `이유: ${npc.reason}`,
           `자세: ${npc.posture}`,
           `대화 시드: ${npc.dialogueSeed}`,
@@ -489,10 +523,26 @@ export class PromptBuilderService {
         FEARFUL: '두려움. 말을 아끼고, 시선을 피하며, 압박에 쉽게 무너짐.',
         CALCULATING: '타산적. 대가 없는 정보 제공 금지. 교환 조건 제시.',
       };
+      // NPC ID → 표시 이름 해석: 콘텐츠 정의에서 이름/별칭 조회, 소개 상태 반영
+      const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
+
       const postureLines = Object.entries(ctx.npcPostures).map(
         ([npcId, posture]) => {
           const guide = POSTURE_GUIDE[posture as string] ?? '';
-          return `- ${npcId}: ${posture} — ${guide}`;
+          let displayName: string;
+          const npcDef = this.content.getNpc(npcId);
+          if (npcDef) {
+            displayName = introducedNpcIds.has(npcId)
+              ? npcDef.name
+              : (npcDef.unknownAlias || '낯선 인물');
+          } else {
+            // fallback: format raw ID more readably
+            displayName = npcId
+              .replace(/^NPC_/i, '')
+              .replace(/_/g, ' ')
+              .replace(/\b\w/g, c => c.toUpperCase());
+          }
+          return `- ${displayName}: ${posture} — ${guide}`;
         },
       );
       factsParts.push(
