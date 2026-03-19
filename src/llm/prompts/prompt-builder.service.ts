@@ -480,12 +480,30 @@ export class PromptBuilderService {
       );
     }
 
-    // Phase 3: NPC 대화 자세 (Step 7)
+    // Phase 3: NPC 대화 자세 (Step 7) — posture별 행동 가이드 포함
     if (ctx.npcPostures && Object.keys(ctx.npcPostures).length > 0) {
+      const POSTURE_GUIDE: Record<string, string> = {
+        FRIENDLY: '호의적. 자발적 도움 가능. 단, resolve 결과(FAIL)에 따라 제한.',
+        CAUTIOUS: '경계. 질문에 모호하게 답함. 자발적 정보 제공 금지. SUCCESS 판정 없이 핵심 정보를 알려주면 안 됩니다.',
+        HOSTILE: '적대. 대화 거부 가능. 위협적 어조. PARTIAL 이하 판정에서 협조적으로 서술 금지.',
+        FEARFUL: '두려움. 말을 아끼고, 시선을 피하며, 압박에 쉽게 무너짐.',
+        CALCULATING: '타산적. 대가 없는 정보 제공 금지. 교환 조건 제시.',
+      };
       const postureLines = Object.entries(ctx.npcPostures).map(
-        ([npcId, posture]) => `- ${npcId}: ${posture}`,
+        ([npcId, posture]) => {
+          const guide = POSTURE_GUIDE[posture as string] ?? '';
+          return `- ${npcId}: ${posture} — ${guide}`;
+        },
       );
-      factsParts.push(`[NPC 대화 자세]\n이 장소의 NPC들이 보이는 태도입니다. 대사와 행동에 반영하세요.\n${postureLines.join('\n')}`);
+      factsParts.push(
+        [
+          '[NPC 대화 자세]',
+          '이 장소의 NPC들이 보이는 태도입니다. 대사와 행동은 반드시 아래 태도에 맞춰 서술하세요.',
+          '⚠️ 태도에 맞지 않는 행동(CAUTIOUS NPC의 자발적 정보 제공, HOSTILE NPC의 호의적 태도 등)은 절대 서술하지 마세요.',
+          '',
+          postureLines.join('\n'),
+        ].join('\n'),
+      );
     }
 
     // 프롤로그 힌트 (첫 장면)

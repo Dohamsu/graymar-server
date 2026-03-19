@@ -359,9 +359,13 @@ export class IntentParserV2Service {
     // 고집 에스컬레이션: 같은 actionType이 연속 3회(history 2회 + 현재) → 강한 타입으로 승격
     // 에스컬레이션은 primary에만 적용
     let escalated = false;
+    let insistenceWarning = false;
     if (insistenceCount >= 2 && actionType === repeatedType && ESCALATION_MAP[actionType]) {
       actionType = ESCALATION_MAP[actionType]!;
       escalated = true;
+    } else if (insistenceCount === 1 && actionType === repeatedType && ESCALATION_MAP[actionType]) {
+      // 2회째 경고: 다음에 같은 행동을 하면 에스컬레이션됨
+      insistenceWarning = true;
     }
 
     // 에스컬레이션 후 secondary가 primary와 같아지면 제거
@@ -385,6 +389,7 @@ export class IntentParserV2Service {
       source,
       suppressedActionType: escalated ? undefined : suppressedActionType,
       escalated,
+      insistenceWarning,
     };
   }
 

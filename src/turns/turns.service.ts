@@ -398,11 +398,41 @@ export class TurnsService {
   ) {
     // HP≤0 방어: 전투 패배 등으로 HP가 0 이하인 상태에서 행동 방지
     if (runState.hp <= 0) {
+      // 패배 엔딩 생성
+      const result = this.buildSystemResult(turnNo, currentNode, '더 이상 버틸 수 없다...');
+      try {
+        const ws = runState.worldState ?? this.worldStateService.initWorldState();
+        const endingThreads = (ws.playerThreads ?? []).map((t) => ({
+          approachVector: t.approachVector,
+          goalCategory: t.goalCategory,
+          actionCount: t.actionCount,
+          successCount: t.successCount,
+          status: t.status,
+        }));
+        const endingInput = this.endingGenerator.gatherEndingInputs(
+          ws.activeIncidents ?? [],
+          (runState.npcStates ?? {}) as Record<string, NPCState>,
+          ws.narrativeMarks ?? [],
+          ws as unknown as Record<string, unknown>,
+          runState.arcState ?? null,
+          runState.actionHistory ?? [],
+          endingThreads,
+        );
+        const endingResult = this.endingGenerator.generateEnding(endingInput, 'DEFEAT', turnNo);
+        result.events.push({
+          id: `ending_${turnNo}`,
+          kind: 'SYSTEM',
+          text: `[엔딩] ${endingResult.closingLine}`,
+          tags: ['RUN_ENDED'],
+          data: { endingResult },
+        });
+      } catch (e) {
+        this.logger.warn(`HP≤0 DEFEAT ending generation failed: ${e}`);
+      }
+
       await this.db.update(runSessions)
         .set({ status: 'RUN_ENDED', updatedAt: new Date() })
         .where(eq(runSessions.id, run.id));
-
-      const result = this.buildSystemResult(turnNo, currentNode, '더 이상 버틸 수 없다...');
       await this.commitTurnRecord(run, currentNode, turnNo, body, '', result, runState);
 
       return {
@@ -1075,6 +1105,19 @@ export class TurnsService {
       totalScore: resolveResult.score,
     });
 
+    // 고집 2회째 경고 이벤트 — 다음 반복 시 에스컬레이션 예고
+    if (intent.insistenceWarning) {
+      const nextType = this.actionTypeToKorean(
+        ({ THREATEN: 'FIGHT', PERSUADE: 'THREATEN', OBSERVE: 'INVESTIGATE', TALK: 'PERSUADE', BRIBE: 'THREATEN', SNEAK: 'STEAL' } as Record<string, string>)[intent.actionType] ?? intent.actionType,
+      );
+      result.events.push({
+        id: `warn_insistence_${turnNo}`,
+        kind: 'SYSTEM',
+        text: `분위기가 험악해지고 있다. 같은 행동을 계속하면 ${nextType}(으)로 상황이 격화될 것이다.`,
+        tags: ['warning', 'escalation'],
+      });
+    }
+
     // 골드 변동 이벤트 (순 변동 기준 — 비용+보상 합산)
     if (totalGoldDelta > 0) {
       result.events.push({
@@ -1444,8 +1487,43 @@ export class TurnsService {
       const ws = updatedRunState.worldState ?? this.worldStateService.initWorldState();
       const arcState = updatedRunState.arcState ?? this.arcService.initArcState();
 
-      // 패배 시 RUN_ENDED
+      // 패배 시 RUN_ENDED + 엔딩 내러티브 생성
       if (resolveResult.combatOutcome === 'DEFEAT') {
+        // structuredMemory 통합
+        try {
+          await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, updatedRunState, turnNo);
+        } catch { /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */ }
+
+        // 패배 엔딩 생성
+        try {
+          const endingThreads = (ws.playerThreads ?? []).map((t) => ({
+            approachVector: t.approachVector,
+            goalCategory: t.goalCategory,
+            actionCount: t.actionCount,
+            successCount: t.successCount,
+            status: t.status,
+          }));
+          const endingInput = this.endingGenerator.gatherEndingInputs(
+            ws.activeIncidents ?? [],
+            (updatedRunState.npcStates ?? {}) as Record<string, NPCState>,
+            ws.narrativeMarks ?? [],
+            ws as unknown as Record<string, unknown>,
+            updatedRunState.arcState ?? null,
+            updatedRunState.actionHistory ?? [],
+            endingThreads,
+          );
+          const endingResult = this.endingGenerator.generateEnding(endingInput, 'DEFEAT', turnNo);
+          (response as any).serverResult.events.push({
+            id: `ending_${turnNo}`,
+            kind: 'SYSTEM',
+            text: `[엔딩] ${endingResult.closingLine}`,
+            tags: ['RUN_ENDED'],
+            data: { endingResult },
+          });
+        } catch (e) {
+          this.logger.warn(`DEFEAT ending generation failed: ${e}`);
+        }
+
         await this.db.update(runSessions).set({ status: 'RUN_ENDED', updatedAt: new Date() }).where(eq(runSessions.id, run.id));
         (response as any).meta.nodeOutcome = 'RUN_ENDED';
         return response;

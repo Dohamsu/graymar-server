@@ -60,7 +60,7 @@ const DEFAULT_MIN_TOKENS: Record<string, number> = {
   NARRATIVE_THREAD: 50,
   ACTIVE_CLUES: 50,
   NPC_KNOWLEDGE: 30,
-  PREVIOUS_VISIT: 0,
+  PREVIOUS_VISIT: 50,     // fixplan5 I-08: 장소 전환 시 직전 맥락 최소 보존
   LOCATION_REVISIT: 0,
   NPC_ROSTER: 50,
   STORY_SUMMARY: 100,

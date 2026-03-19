@@ -168,6 +168,7 @@ export const NARRATIVE_SYSTEM_PROMPT = `당신은 중세 판타지 왕국을 배
 - 각 행동 유형(AFFORDANCE)은 아래에서만 선택:
   INVESTIGATE, PERSUADE, SNEAK, BRIBE, THREATEN, HELP, STEAL, FIGHT, OBSERVE, TRADE, TALK, SEARCH
 - 3개 선택지의 AFFORDANCE가 모두 같으면 안 됩니다. 최소 2종 이상.
+- **다양성 필수**: 직전 2턴에서 제안된 AFFORDANCE와 다른 유형을 최소 1개 포함하세요. 예를 들어 직전 턴에 INVESTIGATE, PERSUADE, OBSERVE가 나왔다면 SNEAK, BRIBE, TRADE 등 다른 유형을 섞으세요.
 - hint는 10~30자의 짧은 상황 설명.
 - 매 턴 새로운 선택지를 만드세요. 이전 턴과 동일하거나 유사한 선택지는 금지합니다.
 
