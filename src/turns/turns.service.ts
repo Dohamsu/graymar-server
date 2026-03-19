@@ -75,7 +75,7 @@ import { MemoryIntegrationService } from '../engine/hub/memory-integration.servi
 import { EventDirectorService } from '../engine/hub/event-director.service.js';
 import { ProceduralEventService } from '../engine/hub/procedural-event.service.js';
 import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
-import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture } from '../db/types/npc-state.js';
+import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders } from '../db/types/npc-state.js';
 import type { IncidentDef, IncidentRuntime, IncidentRoutingResult, NarrativeMarkCondition, NPCState, NpcEmotionalState } from '../db/types/index.js';
 import type { IncidentSummaryUI, SignalFeedItemUI, NpcEmotionalUI } from '../db/types/server-result.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
@@ -527,7 +527,7 @@ export class TurnsService {
     );
 
     // MOVE_LOCATION: 자유 텍스트로 다른 LOCATION 이동 요청 시 실제 전환
-    if (intent.actionType === 'MOVE_LOCATION' && body.input.type === 'ACTION') {
+    if (intent.actionType === 'MOVE_LOCATION' && (body.input.type === 'ACTION' || body.input.type === 'CHOICE')) {
       const targetLocationId = this.extractTargetLocation(rawInput, locationId);
       if (targetLocationId && targetLocationId !== locationId) {
         return this.performLocationTransition(
@@ -643,8 +643,9 @@ export class TurnsService {
       };
 
       // PR5: EventDirector로 교체 (기존 EventMatcher를 내부적으로 위임)
+      // IntentV3 전달: 목표(goalCategory)/접근방식(approachVector) 기반 이벤트 가중치 부스트
       const directorResult = this.eventDirector.select(
-        allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds, routingResult, sessionNpcContext,
+        allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds, routingResult, sessionNpcContext, intentV3,
       );
       matchedEvent = directorResult.selectedEvent;
 
@@ -700,9 +701,14 @@ export class TurnsService {
       ws = { ...ws, combatWindowCount: ws.combatWindowCount + 1 };
       updatedRunState.worldState = ws;
 
+      const combatSceneFrame = resolveNpcPlaceholders(
+        matchedEvent.payload.sceneFrame,
+        runState.npcStates ?? {},
+        (id) => this.content.getNpc(id),
+      );
       const preResult = this.buildLocationResult(
         turnNo, currentNode,
-        `${matchedEvent.payload.sceneFrame} — 전투가 시작된다!`,
+        `${combatSceneFrame} — 전투가 시작된다!`,
         resolveResult.outcome, [], ws,
       );
       await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, preResult, updatedRunState, body.options?.skipLlm);
@@ -851,8 +857,10 @@ export class TurnsService {
       }
     }
 
-    // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC를 추론하여 encounterCount 보충
+    // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC 상태 초기화 + encounterCount 증가
+    // 태그 매칭도 간접 대면으로 인정 — 반복 만남 시 이름 공개 트리거 허용
     if (!eventPrimaryNpc && matchedEvent.payload.tags) {
+      let tagNpcFound = false;
       for (const tag of matchedEvent.payload.tags) {
         const tagNpcId = TAG_TO_NPC[tag];
         if (!tagNpcId) continue;
@@ -867,36 +875,26 @@ export class TurnsService {
           });
           newlyEncounteredNpcIds.push(tagNpcId);
         }
-        const alreadyMet = actionHistory.some((h) => h.primaryNpcId === tagNpcId);
-        if (!alreadyMet) {
-          npcStates[tagNpcId].encounterCount = (npcStates[tagNpcId].encounterCount ?? 0) + 1;
-        }
-        const posture = computePosture(npcStates[tagNpcId]);
-        if (shouldIntroduce(npcStates[tagNpcId], posture)) {
-          npcStates[tagNpcId].introduced = true;
-          newlyIntroducedNpcIds.push(tagNpcId);
+        // 태그 기반 NPC에 대해서도 encounterCount 증가 (방문 단위 1회)
+        if (!tagNpcFound) {
+          const alreadyMetTag = actionHistory.some((h) => h.primaryNpcId === tagNpcId);
+          if (!alreadyMetTag) {
+            npcStates[tagNpcId].encounterCount = (npcStates[tagNpcId].encounterCount ?? 0) + 1;
+            tagNpcFound = true; // 태그당 1 NPC만 카운트 (중복 방지)
+          }
         }
       }
     }
 
-    // Fixplan5: primaryNpcId도 없고 TAG_TO_NPC도 매칭 안 될 때, 장소 대표 NPC encounterCount 보충
-    // LLM이 NPC 목록에서 자발적으로 서술하므로, 해당 장소의 대표 NPC를 만남으로 처리
-    if (!eventPrimaryNpc && newlyEncounteredNpcIds.length === 0) {
-      for (const [npcId, affinityLocs] of Object.entries(NPC_LOCATION_AFFINITY)) {
-        if (!affinityLocs.includes(locationId)) continue;
-        if (!npcStates[npcId]) continue;
-        const alreadyMet = actionHistory.some((h) => h.primaryNpcId === npcId);
-        if (alreadyMet) continue;
-        // 이 장소의 첫 번째 미만남 NPC의 encounterCount 1 증가 (턴당 최대 1명)
-        npcStates[npcId].encounterCount = (npcStates[npcId].encounterCount ?? 0) + 1;
-        const posture = computePosture(npcStates[npcId]);
-        if (shouldIntroduce(npcStates[npcId], posture)) {
-          npcStates[npcId].introduced = true;
-          newlyIntroducedNpcIds.push(npcId);
-        }
-        break; // 턴당 1명만
-      }
-    }
+    // === NPC 플레이스홀더 치환 (introduced 상태 반영) ===
+    const npcResolve = (text: string) =>
+      resolveNpcPlaceholders(text, npcStates, (id) => this.content.getNpc(id));
+    const resolvedSceneFrame = npcResolve(matchedEvent.payload.sceneFrame);
+    const resolvedChoices = matchedEvent.payload.choices?.map((c: any) => ({
+      ...c,
+      label: c.label ? npcResolve(c.label) : c.label,
+      hint: c.hint ? npcResolve(c.hint) : c.hint,
+    }));
 
     // === Narrative Engine v1: Narrative Marks 체크 ===
     const markConditions = this.content.getNarrativeMarkConditions();
@@ -911,9 +909,12 @@ export class TurnsService {
     }
     // resolve outcome 횟수 집계
     const resolveOutcomeCounts: Record<string, number> = {};
-    for (const h of [...actionHistory, { actionType: intent.actionType }]) {
-      // 간단히 현재 결과만 카운트
+    for (const h of actionHistory) {
+      if (h.resolveOutcome) {
+        resolveOutcomeCounts[h.resolveOutcome] = (resolveOutcomeCounts[h.resolveOutcome] ?? 0) + 1;
+      }
     }
+    // 현재 턴의 결과도 추가
     resolveOutcomeCounts[resolveResult.outcome] = (resolveOutcomeCounts[resolveResult.outcome] ?? 0) + 1;
 
     const newMarks = this.narrativeMarkService.checkAndApply(
@@ -962,6 +963,7 @@ export class TurnsService {
       eventId: matchedEvent.eventId,
       choiceId: body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
       primaryNpcId: eventPrimaryNpcId ?? undefined,
+      resolveOutcome: resolveResult.outcome,
     }].slice(-10); // 최대 10개 유지
 
     // LOCATION 보상 계산 (resolve 주사위 이후 같은 RNG로 수행)
@@ -1071,10 +1073,10 @@ export class TurnsService {
     let choices: ChoiceItem[];
     if (eventAlreadyInteracted) {
       // 이미 상호작용한 이벤트 → resolve 결과 기반 후속 선택지 (sourceEventId 부분 적용 + eventType별 풀)
-      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds, matchedEvent.eventId, matchedEvent.eventType, turnNo, matchedEvent.payload.choices);
+      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds, matchedEvent.eventId, matchedEvent.eventType, turnNo, resolvedChoices);
     } else {
       // 첫 만남 이벤트 → 이벤트 고유 선택지
-      choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, matchedEvent.payload.choices, selectedChoiceIds, matchedEvent.eventId);
+      choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, resolvedChoices, selectedChoiceIds, matchedEvent.eventId);
     }
     // summary.short: "이번 턴의 핵심 한 문장" — 행동 + 판정결과만 (sceneFrame 분리하여 중복 전달 방지)
     const outcomeLabel = resolveResult.outcome === 'SUCCESS' ? '성공' : resolveResult.outcome === 'PARTIAL' ? '부분 성공' : '실패';
@@ -1088,7 +1090,7 @@ export class TurnsService {
       tone: intent.tone,
       escalated: intent.escalated,
       insistenceCount: insistenceCount > 0 ? insistenceCount : undefined,
-      eventSceneFrame: matchedEvent.payload.sceneFrame,
+      eventSceneFrame: resolvedSceneFrame,
       eventMatchPolicy: matchedEvent.matchPolicy,
       eventId: matchedEvent.eventId,
       primaryNpcId: matchedEvent.payload.primaryNpcId ?? null,
@@ -1290,7 +1292,7 @@ export class TurnsService {
           rawInput: rawInput.slice(0, 30),
           outcome: resolveResult.outcome,
           eventId: matchedEvent.eventId,
-          sceneFrame: matchedEvent.payload.sceneFrame,
+          sceneFrame: resolvedSceneFrame,
           primaryNpcId: effectiveNpcId ?? undefined,
           eventTags: matchedEvent.payload.tags ?? [],
           summaryShort: summaryText ?? undefined,
@@ -1299,8 +1301,8 @@ export class TurnsService {
           incidentImpact: relevantIncident
             ? {
                 incidentId: relevantIncident.incident.incidentId,
-                controlDelta: relevantIncident.incident.control - (ws.activeIncidents?.find((i) => i.incidentId === relevantIncident.incident.incidentId)?.control ?? 0),
-                pressureDelta: relevantIncident.incident.pressure - (ws.activeIncidents?.find((i) => i.incidentId === relevantIncident.incident.incidentId)?.pressure ?? 0),
+                controlDelta: relevantIncident.incident.control - (priorWsSnapshot.activeIncidents?.find((i) => i.incidentId === relevantIncident.incident.incidentId)?.control ?? 0),
+                pressureDelta: relevantIncident.incident.pressure - (priorWsSnapshot.activeIncidents?.find((i) => i.incidentId === relevantIncident.incident.incidentId)?.pressure ?? 0),
               }
             : undefined,
           npcEmotionalDelta: npcEmoDelta as any,
