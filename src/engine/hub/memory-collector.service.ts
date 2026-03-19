@@ -9,7 +9,7 @@ import type {
   VisitAction,
   StructuredMemory,
 } from '../../db/types/structured-memory.js';
-import { createEmptyVisitContext } from '../../db/types/structured-memory.js';
+import { createEmptyVisitContext, createEmptyStructuredMemory } from '../../db/types/structured-memory.js';
 import type { IntentActionType } from '../../db/types/parsed-intent-v2.js';
 import type { ResolveOutcome } from '../../db/types/resolve-result.js';
 import type { NpcEmotionalState } from '../../db/types/npc-state.js';
@@ -57,6 +57,14 @@ export const TAG_TO_NPC: Record<string, string> = {
   NPC_RENNICK: 'NPC_RENNICK',
   NPC_CAPTAIN_BREN: 'NPC_CAPTAIN_BREN',
   NPC_ROSA: 'NPC_ROSA',
+  // 장소별 분위기/일상 태그 → 해당 장소의 핵심 NPC 매핑
+  GUARD_MORALE: 'NPC_GUARD_CAPTAIN',
+  PATROL: 'NPC_GUARD_CAPTAIN',
+  SHIFT_CHANGE: 'NPC_GUARD_CAPTAIN',
+  BLACKSMITH: 'NPC_GUARD_CAPTAIN',
+  SMUGGLING: 'NPC_BAEK_SEUNGHO',
+  DOCK_WORKERS: 'NPC_YOON_HAMIN',
+  HERB: 'NPC_MIRELA',
 };
 
 @Injectable()
@@ -249,8 +257,10 @@ export class MemoryCollectorService {
       });
       if (!memRow) return;
 
-      const structured = (memRow.structuredMemory ?? null) as StructuredMemory | null;
-      if (!structured) return;
+      let structured = (memRow.structuredMemory ?? null) as StructuredMemory | null;
+      if (!structured) {
+        structured = createEmptyStructuredMemory();
+      }
 
       const knowledge = structured.npcKnowledge ?? {};
       const entries = knowledge[npcId] ?? [];

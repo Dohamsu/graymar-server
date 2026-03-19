@@ -195,9 +195,9 @@ export class TurnOrchestrationService {
 
       let score = 0;
 
-      // agenda가 설정되어 있고 currentGoal이 있으면 높은 점수
+      // agenda가 설정되어 있으면 기본 등장 자격 부여
       if (state.agenda && state.currentGoal) score += 3;
-      else if (state.agenda) score += 1;
+      else if (state.agenda) score += 2;
 
       // trust가 극단적이면 등장 확률 증가 (극적 상황)
       if (Math.abs(state.trustToPlayer) > 30) score += 2;
@@ -208,8 +208,8 @@ export class TurnOrchestrationService {
       // FAIL 결과 시 적대적 NPC가 나타날 수 있음
       if (resolveOutcome === 'FAIL' && state.posture === 'HOSTILE') score += 2;
 
-      // 최소 점수 임계치
-      if (score >= 3) {
+      // 최소 점수 임계치 (agenda만 있어도 등장 가능)
+      if (score >= 2) {
         candidates.push({ npcId, score });
       }
     }
