@@ -56,16 +56,18 @@ export class MemoryRendererService {
     for (const [snippet, count] of snippetCounts) {
       if (count >= 3) pollutedSnippets.add(snippet);
     }
-    if (pollutedSnippets.size > 0) {
-      for (const entry of journal) {
-        entry.interactions = entry.interactions.filter(
-          (int) => !int.snippet || !pollutedSnippets.has(int.snippet),
-        );
-      }
-    }
+    // 오염 snippet이 있으면 원본을 변형하지 않고 복사본에서 필터링
+    const cleanJournal = pollutedSnippets.size > 0
+      ? journal.map(entry => ({
+          ...entry,
+          interactions: entry.interactions.filter(
+            (int) => !int.snippet || !pollutedSnippets.has(int.snippet),
+          ),
+        }))
+      : journal;
 
     // activeNpcIds가 있으면 해당 NPC 우선, 나머지는 최근 상호작용 기준
-    let sorted = [...journal];
+    let sorted = [...cleanJournal];
     if (activeNpcIds && activeNpcIds.length > 0) {
       const activeSet = new Set(activeNpcIds);
       sorted.sort((a, b) => {

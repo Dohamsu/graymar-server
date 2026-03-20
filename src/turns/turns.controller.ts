@@ -32,6 +32,14 @@ export class TurnsController {
     return this.turnsService.submitTurn(runId, userId, body);
   }
 
+  @Get('llm-usage')
+  async getLlmUsage(
+    @Param('runId') runId: string,
+    @UserId() userId: string,
+  ) {
+    return this.turnsService.getLlmUsage(runId, userId);
+  }
+
   @Get(':turnNo')
   async getTurnDetail(
     @Param('runId') runId: string,

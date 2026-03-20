@@ -24,12 +24,17 @@ const ACTION_IMPACT: Record<string, Partial<Record<keyof NpcEmotionalState, numb
   TALK: { trust: 5, attachment: 3 },
 };
 
-// outcome별 감정 변동 배율
-const OUTCOME_MULTIPLIER: Record<ResolveOutcome, number> = {
+// outcome별 감정 변동 배율 (SUCCESS, PARTIAL만 — FAIL은 부호별 분기 처리)
+const OUTCOME_MULTIPLIER: Record<string, number> = {
   SUCCESS: 1.0,
   PARTIAL: 0.6,
-  FAIL: -0.5, // 실패 시 역효과 강화
 };
+
+// FAIL 시 부호별 배율:
+// - 적대 행동(delta < 0): 실패해도 방향 유지, 약화 (0.3)
+// - 우호 행동(delta > 0): 실패 시 반전, 약한 역효과 (-0.3)
+const FAIL_MULTIPLIER_NEGATIVE = 0.3;
+const FAIL_MULTIPLIER_POSITIVE = -0.3;
 
 // 클램프 범위
 const CLAMP_BIPOLAR = { min: -100, max: 100 }; // trust, respect
@@ -62,11 +67,24 @@ export class NpcEmotionalService {
     const baseImpact = ACTION_IMPACT[actionType];
     if (!baseImpact) return state;
 
-    const multiplier = OUTCOME_MULTIPLIER[outcome] * (isDirectTarget ? 1.5 : 1.0);
+    const directMod = isDirectTarget ? 1.5 : 1.0;
     const updated = { ...state };
 
     for (const [axis, delta] of Object.entries(baseImpact) as Array<[keyof NpcEmotionalState, number]>) {
-      const adjustedDelta = Math.round(delta * multiplier);
+      let multiplier: number;
+      if (outcome === 'FAIL') {
+        // Sign-aware FAIL: hostile deltas stay hostile (reduced), beneficial deltas flip (weak)
+        if (delta < 0) {
+          multiplier = FAIL_MULTIPLIER_NEGATIVE;
+        } else if (delta > 0) {
+          multiplier = FAIL_MULTIPLIER_POSITIVE;
+        } else {
+          multiplier = 0;
+        }
+      } else {
+        multiplier = OUTCOME_MULTIPLIER[outcome] ?? 1.0;
+      }
+      const adjustedDelta = Math.round(delta * multiplier * directMod);
       const currentValue = updated[axis];
 
       if (axis === 'trust' || axis === 'respect') {

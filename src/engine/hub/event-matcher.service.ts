@@ -18,8 +18,8 @@ export interface SessionNpcContext {
   interactedNpcIds: string[];
 }
 
-const DANGER_BLOCK_CHANCE = 25;
-const CRACKDOWN_BLOCK_CHANCE = 40;
+const DANGER_BLOCK_CHANCE = 40;
+const CRACKDOWN_BLOCK_CHANCE = 25;
 
 @Injectable()
 export class EventMatcherService {
@@ -127,12 +127,19 @@ export class EventMatcherService {
         npcBonus = this.calcNpcContinuityBonus(e, sessionNpcContext);
       }
 
+      // NPC 전환 페널티: 직전 NPC와 다른 NPC의 이벤트 → 장면 연속성 훼손 방지
+      const npcSwitchPenalty = this.calcNpcSwitchPenalty(e, sessionNpcContext);
+      penalty += npcSwitchPenalty;
+
+      // 이벤트 태그 연속성 보너스 (관련 이벤트 선호 → 내러티브 흐름 유지)
+      const tagBonus = this.calcTagContinuityBonus(e, recentEventIds, events);
+
       // npcBonus가 repeatPenalty의 50% 이상 상쇄 불가
       const effectiveNpcBonus = repeatPenalty > 0
         ? Math.min(npcBonus, repeatPenalty * 0.5)
         : npcBonus;
 
-      return Math.max(1, base + agendaBoost + effectiveNpcBonus - penalty);
+      return Math.max(1, base + agendaBoost + effectiveNpcBonus + tagBonus - penalty);
     });
 
     return this.weightedSelect(candidates, weights, rng);
@@ -240,12 +247,19 @@ export class EventMatcherService {
         npcBonus = this.calcNpcContinuityBonus(e, sessionNpcContext);
       }
 
+      // NPC 전환 페널티: 직전 NPC와 다른 NPC의 이벤트 → 장면 연속성 훼손 방지
+      const npcSwitchPenalty = this.calcNpcSwitchPenalty(e, sessionNpcContext);
+      penalty += npcSwitchPenalty;
+
+      // 이벤트 태그 연속성 보너스 (관련 이벤트 선호 → 내러티브 흐름 유지)
+      const tagBonus = this.calcTagContinuityBonus(e, recentEventIds, events);
+
       // npcBonus가 repeatPenalty의 50% 이상 상쇄 불가
       const effectiveNpcBonus = repeatPenalty > 0
         ? Math.min(npcBonus, repeatPenalty * 0.5)
         : npcBonus;
 
-      return Math.max(1, base + agendaBoost + incidentBoost + effectiveNpcBonus - penalty);
+      return Math.max(1, base + agendaBoost + incidentBoost + effectiveNpcBonus + tagBonus - penalty);
     });
 
     return this.weightedSelect(candidates, weights, rng);
@@ -264,6 +278,32 @@ export class EventMatcherService {
     return 100; // 3연속 이상: 사실상 차단
   }
 
+  /**
+   * 이벤트 태그 연속성 보너스: 직전 이벤트와 태그가 겹치면 +15~20.
+   * 관련 이벤트가 이어지면 내러티브 흐름이 자연스러워진다.
+   */
+  private calcTagContinuityBonus(event: EventDefV2, recentEventIds: string[], allEvents: EventDefV2[]): number {
+    if (recentEventIds.length === 0) return 0;
+    const lastEventId = recentEventIds[recentEventIds.length - 1];
+    if (lastEventId === event.eventId) return 0; // 같은 이벤트면 보너스 없음
+
+    const lastEvent = allEvents.find((e) => e.eventId === lastEventId);
+    if (!lastEvent) return 0;
+
+    const lastTags = new Set((lastEvent.payload?.tags ?? []).map((t: string) => t.toLowerCase()));
+    if (lastTags.size === 0) return 0;
+
+    const currentTags = (event.payload?.tags ?? []).map((t: string) => t.toLowerCase());
+    let matchCount = 0;
+    for (const tag of currentTags) {
+      if (lastTags.has(tag)) matchCount++;
+    }
+
+    if (matchCount === 0) return 0;
+    // 1개 태그 매칭 +12, 2개 이상 +20
+    return matchCount >= 2 ? 20 : 12;
+  }
+
   /** NPC 연속성 보너스: 같은 NPC +25, 방문 내 상호작용 NPC +10 */
   private calcNpcContinuityBonus(event: EventDefV2, ctx: SessionNpcContext): number {
     const eventNpcId = (event.payload as Record<string, unknown>).primaryNpcId as string | undefined;
@@ -276,6 +316,22 @@ export class EventMatcherService {
     if (ctx.interactedNpcIds.includes(eventNpcId)) return 10;
 
     return 0;
+  }
+
+  /**
+   * NPC 전환 페널티: 직전 턴에 상호작용한 NPC가 있을 때,
+   * 다른 NPC의 이벤트가 선택되면 장면 연속성이 깨지므로 페널티 부여.
+   * NPC 없는 이벤트(탐색, 환경 등)에는 페널티 없음.
+   */
+  private calcNpcSwitchPenalty(event: EventDefV2, ctx?: SessionNpcContext): number {
+    if (!ctx?.lastPrimaryNpcId) return 0;
+    const eventNpcId = (event.payload as Record<string, unknown>).primaryNpcId as string | undefined;
+    // NPC 없는 이벤트 → 전환 페널티 없음 (자연스러운 장면 전환)
+    if (!eventNpcId) return 0;
+    // 같은 NPC → 페널티 없음
+    if (eventNpcId === ctx.lastPrimaryNpcId) return 0;
+    // 다른 NPC → 장면 연속성 훼손 페널티 (-30)
+    return 30;
   }
 
   private evaluateCondition(

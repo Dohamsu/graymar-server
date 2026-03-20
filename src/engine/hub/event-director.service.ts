@@ -11,8 +11,35 @@ import type {
   PlayerAgenda,
   IncidentRoutingResult,
 } from '../../db/types/index.js';
+import type { ParsedIntentV3, IntentGoalCategory, ApproachVector } from '../../db/types/parsed-intent-v3.js';
 import type { EventDirectorResult, EventPriority } from '../../db/types/event-director.js';
 import type { Rng } from '../rng/rng.service.js';
+
+// goalCategory → 이벤트 태그 연관 매핑 (목표 기반 이벤트 선호)
+const GOAL_TAG_AFFINITY: Record<IntentGoalCategory, string[]> = {
+  GET_INFO: ['investigation', 'rumor', 'intelligence', 'clue', 'information'],
+  GAIN_ACCESS: ['access', 'passage', 'sneak', 'entry'],
+  SHIFT_RELATION: ['npc', 'dialogue', 'relationship', 'favor'],
+  ACQUIRE_RESOURCE: ['trade', 'merchant', 'loot', 'supply'],
+  BLOCK_RIVAL: ['sabotage', 'opposition', 'guard', 'block'],
+  CREATE_DISTRACTION: ['distraction', 'chaos', 'diversion'],
+  HIDE_TRACE: ['stealth', 'cover', 'sneak', 'escape'],
+  ESCALATE_CONFLICT: ['conflict', 'fight', 'ambush', 'confrontation'],
+  DEESCALATE_CONFLICT: ['peace', 'negotiate', 'calm', 'rest'],
+  TEST_REACTION: ['observe', 'probe', 'watch', 'test'],
+};
+
+// approachVector → 이벤트 태그 연관 매핑
+const VECTOR_TAG_AFFINITY: Record<ApproachVector, string[]> = {
+  SOCIAL: ['dialogue', 'npc', 'negotiation', 'persuade'],
+  STEALTH: ['stealth', 'sneak', 'shadow', 'covert'],
+  PRESSURE: ['threat', 'intimidation', 'force', 'confrontation'],
+  ECONOMIC: ['trade', 'merchant', 'bribe', 'economy'],
+  OBSERVATIONAL: ['observe', 'investigation', 'clue', 'rumor'],
+  POLITICAL: ['faction', 'corruption', 'politics', 'power'],
+  LOGISTICAL: ['travel', 'supply', 'rest', 'passage'],
+  VIOLENT: ['combat', 'fight', 'ambush', 'attack'],
+};
 
 @Injectable()
 export class EventDirectorService {
@@ -39,6 +66,7 @@ export class EventDirectorService {
     recentEventIds: string[],
     routingResult: IncidentRoutingResult | null,
     sessionNpcContext?: SessionNpcContext,
+    intentV3?: ParsedIntentV3 | null,
   ): EventDirectorResult {
     const filterLog: string[] = [];
 
@@ -62,9 +90,21 @@ export class EventDirectorService {
       stageFiltered = allEvents;
     }
 
-    // Stage 4: Priority → weight 리매핑
-    const remapped = stageFiltered.map((e) => this.remapPriority(e));
+    // Stage 4: Priority → weight 리매핑 + IntentV3 목표 기반 가중치 부스트
+    const remapped = stageFiltered.map((e) => {
+      let boosted = this.remapPriority(e);
+      if (intentV3) {
+        const goalBoost = this.computeGoalBoost(e, intentV3);
+        if (goalBoost > 0) {
+          boosted = { ...boosted, weight: boosted.weight + goalBoost };
+        }
+      }
+      return boosted;
+    });
     filterLog.push(`priority 리매핑: ${remapped.length}개`);
+    if (intentV3) {
+      filterLog.push(`intentV3: goal=${intentV3.goalCategory}, vector=${intentV3.approachVector}`);
+    }
 
     // Stage 2,3,5: EventMatcher에 위임 (condition, gates, affordances, heat, weighted random)
     const selected = this.eventMatcher.matchWithIncidentContext(
@@ -110,6 +150,38 @@ export class EventDirectorService {
       ...event,
       weight: Math.max(event.weight, event.priority * weightMultiplier),
     };
+  }
+
+  /**
+   * IntentV3 목표/접근방식과 이벤트 태그의 연관도에 따른 가중치 부스트.
+   * goalCategory 매칭: +15, approachVector 매칭: +10
+   */
+  private computeGoalBoost(event: EventDefV2, intentV3: ParsedIntentV3): number {
+    const tags = event.payload?.tags ?? [];
+    if (tags.length === 0) return 0;
+
+    let boost = 0;
+    const tagsLower = tags.map((t: string) => t.toLowerCase());
+
+    // goalCategory 매칭
+    const goalTags = GOAL_TAG_AFFINITY[intentV3.goalCategory] ?? [];
+    for (const gt of goalTags) {
+      if (tagsLower.some((t) => t.includes(gt))) {
+        boost += 15;
+        break;
+      }
+    }
+
+    // approachVector 매칭
+    const vectorTags = VECTOR_TAG_AFFINITY[intentV3.approachVector] ?? [];
+    for (const vt of vectorTags) {
+      if (tagsLower.some((t) => t.includes(vt))) {
+        boost += 10;
+        break;
+      }
+    }
+
+    return boost;
   }
 
   private getPriorityTier(priority: number): EventPriority {

@@ -147,6 +147,16 @@ export type SuggestedChoice = {
   riskLevel?: 1 | 2 | 3;
 };
 
+export type NpcPersonality = {
+  core: string;           // 한 줄 캐릭터 본질
+  traits: string[];       // 2~3개 성격 특성
+  speechStyle: string;    // 말투/어조
+  innerConflict: string;  // 내면 갈등
+  softSpot: string;       // 약점/인간적 순간 트리거
+  signature: string[];                    // 시그니처 표현 2~3개
+  npcRelations?: Record<string, string>;  // 다른 NPC와의 관계 한 줄 요약
+};
+
 export type NpcDefinition = {
   npcId: string;
   name: string;
@@ -161,6 +171,7 @@ export type NpcDefinition = {
   basePosture?: string;
   initialTrust?: number;
   agenda?: string;
+  personality?: NpcPersonality;
 };
 
 export type SetDefinitionData = {

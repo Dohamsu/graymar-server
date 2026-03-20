@@ -830,9 +830,9 @@ export class TurnsService {
         npcStates[npcId].encounterCount = (npcStates[npcId].encounterCount ?? 0) + 1;
       }
 
-      // 성격 기반 소개 판정
-      const posture = computePosture(npcStates[npcId]);
-      if (shouldIntroduce(npcStates[npcId], posture)) {
+      // 성격 기반 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
+      const introPosture = npcStates[npcId].posture;
+      if (shouldIntroduce(npcStates[npcId], introPosture)) {
         npcStates[npcId].introduced = true;
         newlyIntroducedNpcIds.push(npcId);
       }
@@ -857,10 +857,9 @@ export class TurnsService {
       }
     }
 
-    // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC 상태 초기화 + encounterCount 증가
-    // 태그 매칭도 간접 대면으로 인정 — 반복 만남 시 이름 공개 트리거 허용
+    // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC 상태 초기화
+    // 태그는 간접 참조이므로 encounterCount는 증가하지 않음 (직접 대면=primaryNpcId만 카운트)
     if (!eventPrimaryNpc && matchedEvent.payload.tags) {
-      let tagNpcFound = false;
       for (const tag of matchedEvent.payload.tags) {
         const tagNpcId = TAG_TO_NPC[tag];
         if (!tagNpcId) continue;
@@ -875,14 +874,7 @@ export class TurnsService {
           });
           newlyEncounteredNpcIds.push(tagNpcId);
         }
-        // 태그 기반 NPC에 대해서도 encounterCount 증가 (방문 단위 1회)
-        if (!tagNpcFound) {
-          const alreadyMetTag = actionHistory.some((h) => h.primaryNpcId === tagNpcId);
-          if (!alreadyMetTag) {
-            npcStates[tagNpcId].encounterCount = (npcStates[tagNpcId].encounterCount ?? 0) + 1;
-            tagNpcFound = true; // 태그당 1 NPC만 카운트 (중복 방지)
-          }
-        }
+        // encounterCount는 증가하지 않음 — 태그는 간접 참조, 이름 공개는 직접 대면(primaryNpcId)에서만
       }
     }
 
@@ -1050,9 +1042,9 @@ export class TurnsService {
       if (!alreadyMetInjected) {
         npcStates[injectedNpcId].encounterCount = (npcStates[injectedNpcId].encounterCount ?? 0) + 1;
       }
-      // 소개 판정
-      const posture = computePosture(npcStates[injectedNpcId]);
-      if (shouldIntroduce(npcStates[injectedNpcId], posture)) {
+      // 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
+      const introPosture = npcStates[injectedNpcId].posture;
+      if (shouldIntroduce(npcStates[injectedNpcId], introPosture)) {
         npcStates[injectedNpcId].introduced = true;
         newlyIntroducedNpcIds.push(injectedNpcId);
       }
@@ -2026,5 +2018,63 @@ export class TurnsService {
       .where(eq(turns.id, turn.id));
 
     return { success: true, turnNo, llmStatus: 'PENDING' };
+  }
+
+  /**
+   * 런 전체 턴의 LLM 토큰 사용량 집계
+   */
+  async getLlmUsage(runId: string, userId: string) {
+    const run = await this.db.query.runSessions.findFirst({ where: eq(runSessions.id, runId) });
+    if (!run) throw new NotFoundError('Run not found');
+    if (run.userId !== userId) throw new ForbiddenError('Not your run');
+
+    const allTurns = await this.db
+      .select({
+        turnNo: turns.turnNo,
+        llmModelUsed: turns.llmModelUsed,
+        llmTokenStats: turns.llmTokenStats,
+      })
+      .from(turns)
+      .where(eq(turns.runId, runId))
+      .orderBy(asc(turns.turnNo));
+
+    const usageTurns: Array<{
+      turnNo: number;
+      model: string | null;
+      prompt: number;
+      cached: number;
+      completion: number;
+      latencyMs: number;
+    }> = [];
+
+    let totalPrompt = 0;
+    let totalCached = 0;
+    let totalCompletion = 0;
+
+    for (const t of allTurns) {
+      if (!t.llmTokenStats) continue;
+      const stats = t.llmTokenStats;
+      usageTurns.push({
+        turnNo: t.turnNo,
+        model: t.llmModelUsed,
+        prompt: stats.prompt,
+        cached: stats.cached,
+        completion: stats.completion,
+        latencyMs: stats.latencyMs,
+      });
+      totalPrompt += stats.prompt;
+      totalCached += stats.cached;
+      totalCompletion += stats.completion;
+    }
+
+    return {
+      turns: usageTurns,
+      totals: {
+        prompt: totalPrompt,
+        cached: totalCached,
+        completion: totalCompletion,
+        turns: usageTurns.length,
+      },
+    };
   }
 }

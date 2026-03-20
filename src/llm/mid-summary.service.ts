@@ -28,11 +28,13 @@ export class MidSummaryService {
     runState?: Record<string, unknown> | null,
     llmExtracted?: LlmExtractedFact[],
     npcKnowledge?: NpcKnowledgeLedger,
+    intentMemory?: string | null,
+    activeIncidentNames?: string[],
   ): Promise<string> {
     if (earlyTurns.length === 0) return '';
 
     // Pass 1: 서버 뼈대
-    const skeleton = this.buildServerSkeleton(earlyTurns, runState, llmExtracted, npcKnowledge);
+    const skeleton = this.buildServerSkeleton(earlyTurns, runState, llmExtracted, npcKnowledge, intentMemory, activeIncidentNames);
 
     // Pass 2: 경량 LLM 압축
     const llmCompressed = await this.compressWithLightLlm(earlyTurns);
@@ -49,12 +51,14 @@ export class MidSummaryService {
     return combined;
   }
 
-  /** Pass 1: 서버 뼈대 — 판정/행동/PLOT_HINT/NPC_DIALOGUE 반영 (150자) */
+  /** Pass 1: 서버 뼈대 — 판정/행동/PLOT_HINT/NPC_DIALOGUE/의도/사건 반영 (180자) */
   private buildServerSkeleton(
     earlyTurns: RecentTurnEntry[],
     runState?: Record<string, unknown> | null,
     llmExtracted?: LlmExtractedFact[],
     npcKnowledge?: NpcKnowledgeLedger,
+    intentMemory?: string | null,
+    activeIncidentNames?: string[],
   ): string {
     const parts: string[] = [];
 
@@ -112,10 +116,21 @@ export class MidSummaryService {
       }
     }
 
-    // 150자 제한
+    // 플레이어 의도 반영
+    if (intentMemory) {
+      const intentShort = intentMemory.slice(0, 40);
+      parts.push(`의도: ${intentShort}`);
+    }
+
+    // 활성 사건 반영
+    if (activeIncidentNames && activeIncidentNames.length > 0) {
+      parts.push(`사건: ${activeIncidentNames.slice(0, 2).join(', ')}`);
+    }
+
+    // 180자 제한 (의도/사건 추가로 확장)
     let summary = `이전 방문에서: ${parts.join('. ')}`;
-    if (summary.length > 150) {
-      summary = summary.slice(0, 147) + '…';
+    if (summary.length > 180) {
+      summary = summary.slice(0, 177) + '…';
     }
     return summary;
   }

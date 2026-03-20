@@ -88,11 +88,11 @@ export class LlmConfigService {
     };
   }
 
-  /** 경량 LLM 모델 설정 (Mid Summary 등 보조 작업용) */
+  /** 경량 LLM 모델 설정 (Mid Summary, COMBAT 내러티브 등 보조 작업용) */
   getLightModelConfig(): { provider: string; model: string; timeoutMs: number } {
     return {
-      provider: process.env.LLM_LIGHT_PROVIDER ?? 'claude',
-      model: process.env.LLM_LIGHT_MODEL ?? 'claude-haiku-4-5-20251001',
+      provider: process.env.LLM_LIGHT_PROVIDER ?? 'openai',
+      model: process.env.LLM_LIGHT_MODEL ?? 'gpt-4.1-nano',
       timeoutMs: parseInt(process.env.LLM_LIGHT_TIMEOUT_MS ?? '5000', 10),
     };
   }
