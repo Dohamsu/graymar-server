@@ -11,6 +11,7 @@ import { RunsModule } from './runs/runs.module.js';
 import { TurnsModule } from './turns/turns.module.js';
 import { LlmModule } from './llm/llm.module.js';
 import { AuthModule } from './auth/auth.module.js';
+import { CampaignsModule } from './campaigns/campaigns.module.js';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { AuthModule } from './auth/auth.module.js';
     RunsModule,
     TurnsModule,
     LlmModule,
+    CampaignsModule,
   ],
   controllers: [AppController],
   providers: [
