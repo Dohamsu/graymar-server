@@ -1253,6 +1253,12 @@ export class TurnsService {
       (result.ui as any).playerThreads = ws.playerThreads;
     }
 
+    // Quest UI 번들: arcState, narrativeMarks, mainArcClock, day
+    (result.ui as any).arcState = updatedRunState.arcState ?? null;
+    (result.ui as any).narrativeMarks = ws.narrativeMarks ?? [];
+    (result.ui as any).mainArcClock = ws.mainArcClock ?? null;
+    (result.ui as any).day = ws.day ?? 1;
+
     // 이벤트 추가 (sceneFrame은 actionContext에서 전달, 여기서는 행동 요약만)
     result.events.push({
       id: `event_${matchedEvent.eventId}`,
