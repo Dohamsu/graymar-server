@@ -10,6 +10,7 @@ import {
 import { RUN_STATUS, RUN_TYPE } from '../types/index.js';
 import type { RunState } from '../types/index.js';
 import { users } from './users.js';
+import { campaigns } from './campaigns.js';
 
 export const runSessions = pgTable(
   'run_sessions',
@@ -33,6 +34,9 @@ export const runSessions = pgTable(
     gender: text('gender', { enum: ['male', 'female'] as const }).default('male'),
     routeTag: text('route_tag'),
     currentLocationId: text('current_location_id'), // null = HUB
+    campaignId: uuid('campaign_id').references(() => campaigns.id),
+    scenarioId: text('scenario_id'),
+    scenarioOrder: integer('scenario_order'),
     startedAt: timestamp('started_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

@@ -1,6 +1,6 @@
 // 정본: specs/HUB_system.md — HUB 기반 런 생성
 
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, desc, eq, lt } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
@@ -25,13 +25,16 @@ import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { AgendaService } from '../engine/hub/agenda.service.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
-import type { ServerResultV1, RunState, IncidentDef, NPCState } from '../db/types/index.js';
+import type { ServerResultV1, RunState, IncidentDef, NPCState, CarryOverState, ScenarioMeta, PermanentStats } from '../db/types/index.js';
 import { initNPCState } from '../db/types/npc-state.js';
 import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
+import { CampaignsService } from '../campaigns/campaigns.service.js';
 
 @Injectable()
 export class RunsService {
+  private readonly logger = new Logger(RunsService.name);
+
   constructor(
     @Inject(DB) private readonly db: DrizzleDB,
     private readonly content: ContentLoaderService,
@@ -41,12 +44,43 @@ export class RunsService {
     private readonly sceneShellService: SceneShellService,
     private readonly incidentMgmt: IncidentManagementService,
     private readonly rngService: RngService,
+    private readonly campaignsService: CampaignsService,
   ) {}
 
-  async createRun(userId: string, presetId: string, gender: 'male' | 'female' = 'male') {
-    // 0. 프리셋 검증
+  async createRun(
+    userId: string,
+    presetId: string,
+    gender: 'male' | 'female' = 'male',
+    options?: { campaignId?: string; scenarioId?: string },
+  ) {
+    // 0. 캠페인 CarryOver 조회 (캠페인 모드일 때)
+    let carryOver: CarryOverState | null = null;
+    let scenarioMeta: ScenarioMeta | null = null;
+    let scenarioOrder = 1;
+    const campaignId = options?.campaignId;
+    const scenarioId = options?.scenarioId;
+
+    if (campaignId) {
+      carryOver = await this.campaignsService.getCarryOver(campaignId);
+
+      // 시나리오 콘텐츠 로드
+      if (scenarioId) {
+        await this.content.loadScenario(scenarioId);
+        scenarioMeta = this.content.getScenarioMeta();
+      }
+
+      // scenarioOrder 결정
+      if (carryOver && carryOver.completedScenarios.length > 0) {
+        scenarioOrder = carryOver.completedScenarios.length + 1;
+      }
+    }
+
+    const isFirstScenario = !carryOver || carryOver.completedScenarios.length === 0;
+    const carryOverRules = scenarioMeta?.carryOverRules;
+
+    // 0-1. 프리셋 검증 — 첫 시나리오 또는 캠페인 아닌 경우 필수
     const preset = this.content.getPreset(presetId);
-    if (!preset) {
+    if (isFirstScenario && !preset) {
       throw new BadRequestError(`Unknown presetId: ${presetId}`);
     }
 
@@ -58,19 +92,44 @@ export class RunsService {
       throw new NotFoundError('User not found. Please register first.');
     }
 
-    // 2. PlayerProfile upsert — 매 런마다 프리셋 스탯으로 갱신
-    const presetStats = {
-      maxHP: preset.stats.MaxHP,
-      maxStamina: preset.stats.MaxStamina,
-      atk: preset.stats.ATK,
-      def: preset.stats.DEF,
-      acc: preset.stats.ACC,
-      eva: preset.stats.EVA,
-      crit: preset.stats.CRIT,
-      critDmg: Math.round(preset.stats.CRIT_DMG * 100),
-      resist: preset.stats.RESIST,
-      speed: preset.stats.SPEED,
-    };
+    // 2. PlayerProfile upsert — 프리셋 또는 CarryOver 스탯 기반
+    let presetStats: PermanentStats;
+    if (!isFirstScenario && carryOver) {
+      // 이후 시나리오: CarryOver 스탯 + 보너스 적용
+      const bonuses = carryOver.statBonuses ?? {};
+      const base = carryOver.finalStats ?? {};
+      presetStats = {
+        maxHP: (base.maxHP ?? 100) + (bonuses.maxHP ?? 0),
+        maxStamina: base.maxStamina ?? 80,
+        atk: (base.atk ?? 10) + (bonuses.atk ?? 0),
+        def: (base.def ?? 10) + (bonuses.def ?? 0),
+        acc: (base.acc ?? 10) + (bonuses.acc ?? 0),
+        eva: (base.eva ?? 10) + (bonuses.eva ?? 0),
+        crit: (base.crit ?? 5) + (bonuses.crit ?? 0),
+        critDmg: (base.critDmg ?? 150) + (bonuses.critDmg ?? 0),
+        resist: (base.resist ?? 10) + (bonuses.resist ?? 0),
+        speed: (base.speed ?? 10) + (bonuses.speed ?? 0),
+      };
+    } else if (preset) {
+      presetStats = {
+        maxHP: preset.stats.MaxHP,
+        maxStamina: preset.stats.MaxStamina,
+        atk: preset.stats.ATK,
+        def: preset.stats.DEF,
+        acc: preset.stats.ACC,
+        eva: preset.stats.EVA,
+        crit: preset.stats.CRIT,
+        critDmg: Math.round(preset.stats.CRIT_DMG * 100),
+        resist: preset.stats.RESIST,
+        speed: preset.stats.SPEED,
+      };
+    } else {
+      // fallback: 기본 스탯
+      presetStats = {
+        maxHP: 100, maxStamina: 80, atk: 10, def: 10, acc: 10,
+        eva: 10, crit: 5, critDmg: 150, resist: 10, speed: 10,
+      };
+    }
 
     let profile = await this.db.query.playerProfiles.findFirst({
       where: eq(playerProfiles.userId, userId),
@@ -122,34 +181,88 @@ export class RunsService {
     const npcStates: Record<string, NPCState> = {};
     const allNpcs = this.content.getAllNpcs();
     for (const npcDef of allNpcs) {
+      // CarryOver에서 NPC 상태 반영 (동일 NPC가 새 시나리오에도 있을 때)
+      const carryNpc = carryOver?.npcCarryOver?.[npcDef.npcId];
+      const initialTrust = carryNpc
+        ? carryNpc.trust
+        : (npcDef.initialTrust ?? npcRelations[npcDef.npcId] ?? 0);
+      const basePosture = carryNpc
+        ? (carryNpc.posture as any)
+        : npcDef.basePosture;
+
       npcStates[npcDef.npcId] = initNPCState({
         npcId: npcDef.npcId,
-        basePosture: npcDef.basePosture,
-        initialTrust: npcDef.initialTrust ?? npcRelations[npcDef.npcId] ?? 0,
+        basePosture,
+        initialTrust,
         agenda: npcDef.agenda,
       });
+
+      // CarryOver에서 소개 상태 이어받기
+      if (carryNpc?.introduced) {
+        npcStates[npcDef.npcId].introduced = true;
+      }
     }
 
-    // 초기 RunState — 프리셋 기반 + HUB 확장
-    const initialRunState: RunState = {
-      gold: preset.startingGold,
-      hp: preset.stats.MaxHP,
-      maxHp: preset.stats.MaxHP,
-      stamina: preset.stats.MaxStamina,
-      maxStamina: preset.stats.MaxStamina,
-      inventory: preset.startingItems.map((si) => ({
-        itemId: si.itemId,
-        qty: si.qty,
-      })),
-      worldState,
-      agenda,
-      arcState,
-      npcRelations,
-      eventCooldowns: {},
-      equipped: {},
-      equipmentBag: [],
-      npcStates,
-    };
+    // 초기 RunState 결정 — CarryOver 또는 프리셋 기반
+    let initialRunState: RunState;
+
+    if (!isFirstScenario && carryOver) {
+      // 이후 시나리오: CarryOver 스탯 적용
+      const goldRate = carryOverRules?.goldRate ?? 1.0;
+      const itemsCarry = carryOverRules?.itemsCarry ?? true;
+      const reputationDecay = carryOverRules?.reputationDecay ?? 1.0;
+
+      const carryMaxHp = (carryOver.finalMaxHp ?? 100) + (carryOver.maxHpBonus ?? 0);
+      const carryHp = Math.min(carryOver.finalHp ?? carryMaxHp, carryMaxHp);
+
+      // reputation decay 적용
+      const decayedReputation: Record<string, number> = {};
+      for (const [key, val] of Object.entries(carryOver.reputation ?? {})) {
+        decayedReputation[key] = Math.round(val * reputationDecay);
+      }
+
+      initialRunState = {
+        gold: Math.round((carryOver.gold ?? 0) * goldRate),
+        hp: carryHp,
+        maxHp: carryMaxHp,
+        stamina: presetStats.maxStamina,
+        maxStamina: presetStats.maxStamina,
+        inventory: itemsCarry ? [...(carryOver.items ?? [])] : [],
+        worldState,
+        agenda,
+        arcState,
+        npcRelations: { ...npcRelations, ...decayedReputation },
+        eventCooldowns: {},
+        equipped: {},
+        equipmentBag: [],
+        npcStates,
+      };
+
+      this.logger.log(
+        `Campaign run created with CarryOver: gold=${initialRunState.gold}, hp=${initialRunState.hp}/${initialRunState.maxHp}, items=${initialRunState.inventory.length}`,
+      );
+    } else {
+      // 첫 시나리오 또는 비캠페인: 기존 프리셋 로직
+      initialRunState = {
+        gold: preset?.startingGold ?? 50,
+        hp: presetStats.maxHP,
+        maxHp: presetStats.maxHP,
+        stamina: presetStats.maxStamina,
+        maxStamina: presetStats.maxStamina,
+        inventory: (preset?.startingItems ?? []).map((si) => ({
+          itemId: si.itemId,
+          qty: si.qty,
+        })),
+        worldState,
+        agenda,
+        arcState,
+        npcRelations,
+        eventCooldowns: {},
+        equipped: {},
+        equipmentBag: [],
+        npcStates,
+      };
+    }
 
     // 4. HUB 선택지 생성
     const hubChoices = this.sceneShellService.buildHubChoices(worldState, arcState);
@@ -171,9 +284,12 @@ export class RunsService {
           runState: initialRunState,
           currentGraphNodeId: null,
           currentLocationId: null, // HUB
-          presetId,
+          presetId: preset ? presetId : null,
           gender,
           routeTag: null,
+          campaignId: campaignId ?? null,
+          scenarioId: scenarioId ?? null,
+          scenarioOrder: campaignId ? scenarioOrder : null,
         })
         .returning();
 
@@ -190,10 +306,8 @@ export class RunsService {
         nodeState: { phase: 'HUB' },
       });
 
-      // run_memories INSERT
-      await tx.insert(runMemories).values({
-        runId: run.id,
-        theme: [
+      // run_memories INSERT — L0 theme 구성 (캠페인 요약 포함)
+      const themeEntries = [
           {
             key: 'location',
             value:
@@ -224,11 +338,25 @@ export class RunsService {
           },
           {
             key: 'protagonist',
-            value: `이름 없는 용병 — ${preset.protagonistTheme} 그레이마르에는 일거리를 찾아 며칠 전 도착했다.`,
+            value: `이름 없는 용병 — ${preset?.protagonistTheme ?? '이름 없는 용병.'} 그레이마르에는 일거리를 찾아 며칠 전 도착했다.`,
             importance: 0.8,
             tags: ['PROTAGONIST', 'THEME'],
           },
-        ],
+      ];
+
+      // 캠페인 요약이 있으면 L0 theme에 추가
+      if (carryOver?.campaignSummary) {
+        themeEntries.push({
+          key: 'campaign_history',
+          value: carryOver.campaignSummary,
+          importance: 0.9,
+          tags: ['CAMPAIGN', 'THEME'],
+        });
+      }
+
+      await tx.insert(runMemories).values({
+        runId: run.id,
+        theme: themeEntries,
         storySummary: null,
         structuredMemory: createEmptyStructuredMemory(),
       });
@@ -253,7 +381,7 @@ export class RunsService {
         summary: {
           short: [
             '[배경] 그레이마르 항만 — 왕국 남서부 최대 무역항. 안개 낀 밤, 허름한 선술집 \'잠긴 닻\'.',
-            `[주인공] ${preset.protagonistTheme} 일거리를 찾아 며칠 전 그레이마르에 도착했다. 이 도시에서 아직 이름이 알려지지 않은 떠돌이 용병.`,
+            `[주인공] ${preset?.protagonistTheme ?? '이름 없는 용병.'} 일거리를 찾아 며칠 전 그레이마르에 도착했다. 이 도시에서 아직 이름이 알려지지 않은 떠돌이 용병.`,
             '[NPC] 서기관 로넨 — 항만 노동 길드 말단 서기관. 장부 관리 책임자였으나 도난 당해 쫓기는 처지. 초조하고 겁에 질려 있다. ⚠️ 말투: 중세 하급 관리 특유의 공손하지만 딱딱한 경어체. "~하오", "~이오", "~소"체를 사용. 예: "실례하겠소", "장부가 사라졌소", "찾아주시오". 현대 존댓말("~합니다", "~입니다", "~세요")은 절대 사용하지 마세요.',
             '',
             '[대화 흐름 — 반드시 이 순서대로 전개]',

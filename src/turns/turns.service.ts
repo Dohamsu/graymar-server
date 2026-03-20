@@ -74,6 +74,7 @@ import { MemoryIntegrationService } from '../engine/hub/memory-integration.servi
 // Event Director + Procedural Event (설계문서 19, 20)
 import { EventDirectorService } from '../engine/hub/event-director.service.js';
 import { ProceduralEventService } from '../engine/hub/procedural-event.service.js';
+import { CampaignsService } from '../campaigns/campaigns.service.js';
 import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
 import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders } from '../db/types/npc-state.js';
 import type { IncidentDef, IncidentRuntime, IncidentRoutingResult, NarrativeMarkCondition, NPCState, NpcEmotionalState } from '../db/types/index.js';
@@ -135,7 +136,26 @@ export class TurnsService {
     // Event Director + Procedural Event (설계문서 19, 20)
     private readonly eventDirector: EventDirectorService,
     private readonly proceduralEvent: ProceduralEventService,
+    // Campaign system
+    private readonly campaignsService: CampaignsService,
   ) {}
+
+  /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
+  private async saveCampaignResultIfNeeded(runId: string): Promise<void> {
+    try {
+      const run = await this.db.query.runSessions.findFirst({
+        where: eq(runSessions.id, runId),
+        columns: { campaignId: true },
+      });
+      if (run?.campaignId) {
+        await this.campaignsService.saveScenarioResult(run.campaignId, runId);
+        this.logger.log(`Campaign scenario result saved: campaign=${run.campaignId}, run=${runId}`);
+      }
+    } catch (err) {
+      // 캠페인 결과 저장 실패는 게임 종료에 영향 없음
+      this.logger.warn(`Failed to save campaign scenario result for run ${runId}: ${(err as Error).message}`);
+    }
+  }
 
   async submitTurn(runId: string, userId: string, body: SubmitTurnBody) {
     // 1. 멱등성 체크
@@ -433,6 +453,10 @@ export class TurnsService {
       await this.db.update(runSessions)
         .set({ status: 'RUN_ENDED', updatedAt: new Date() })
         .where(eq(runSessions.id, run.id));
+
+      // Campaign: 시나리오 결과 저장
+      await this.saveCampaignResultIfNeeded(run.id);
+
       await this.commitTurnRecord(run, currentNode, turnNo, body, '', result, runState);
 
       return {
@@ -1340,6 +1364,9 @@ export class TurnsService {
         updatedAt: new Date(),
       }).where(eq(runSessions.id, run.id));
 
+      // Campaign: 시나리오 결과 저장
+      await this.saveCampaignResultIfNeeded(run.id);
+
       // 엔딩 결과를 이벤트에 추가
       result.events.push({
         id: `ending_${turnNo}`,
@@ -1519,6 +1546,10 @@ export class TurnsService {
         }
 
         await this.db.update(runSessions).set({ status: 'RUN_ENDED', updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+
+        // Campaign: 시나리오 결과 저장
+        await this.saveCampaignResultIfNeeded(run.id);
+
         (response as any).meta.nodeOutcome = 'RUN_ENDED';
         return response;
       }

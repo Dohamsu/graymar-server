@@ -1,7 +1,7 @@
 // graymar_v1 JSON 로드 + 메모리 캐시
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { readFile } from 'fs/promises';
+import { readFile, readdir } from 'fs/promises';
 import { join } from 'path';
 import type {
   EnemyDefinition,
@@ -15,14 +15,18 @@ import type {
   NpcDefinition,
   SetDefinitionData,
   ShopDefinition,
+  ScenarioMetaContent,
 } from './content.types.js';
-import type { EventDefV2, HubSafety, TimePhase, AffixKind, RegionAffixDef } from '../db/types/index.js';
+import type { EventDefV2, HubSafety, TimePhase, AffixKind, RegionAffixDef, ScenarioMeta } from '../db/types/index.js';
 
-const CONTENT_DIR = join(process.cwd(), '..', 'content', 'graymar_v1');
+const CONTENT_BASE = join(process.cwd(), '..', 'content');
 
 @Injectable()
 export class ContentLoaderService implements OnModuleInit {
   private readonly logger = new Logger(ContentLoaderService.name);
+  private contentDir = join(CONTENT_BASE, 'graymar_v1');
+  private currentScenarioId = 'graymar_v1';
+  private scenarioMeta: ScenarioMeta | null = null;
   private enemies = new Map<string, EnemyDefinition>();
   private encounters = new Map<string, EncounterDefinition>();
   private items = new Map<string, ItemDefinition>();
@@ -56,25 +60,28 @@ export class ContentLoaderService implements OnModuleInit {
       locationsRaw, eventsV2Raw, sceneShellsRaw, suggestedChoicesRaw, arcEventsRaw,
       npcsRaw, setsRaw, shopsRaw, affixesRaw,
       incidentsRaw, endingsRaw, narrativeMarksRaw,
+      scenarioMetaRaw,
     ] = await Promise.all([
-      readFile(join(CONTENT_DIR, 'enemies.json'), 'utf-8'),
-      readFile(join(CONTENT_DIR, 'encounters.json'), 'utf-8'),
-      readFile(join(CONTENT_DIR, 'items.json'), 'utf-8'),
-      readFile(join(CONTENT_DIR, 'player_defaults.json'), 'utf-8'),
-      readFile(join(CONTENT_DIR, 'presets.json'), 'utf-8'),
-      readFile(join(CONTENT_DIR, 'locations.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(CONTENT_DIR, 'events_v2.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(CONTENT_DIR, 'scene_shells.json'), 'utf-8').catch(() => '{}'),
-      readFile(join(CONTENT_DIR, 'suggested_choices.json'), 'utf-8').catch(() => '{}'),
-      readFile(join(CONTENT_DIR, 'arc_events.json'), 'utf-8').catch(() => '{}'),
-      readFile(join(CONTENT_DIR, 'npcs.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(CONTENT_DIR, 'sets.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(CONTENT_DIR, 'shops.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(CONTENT_DIR, 'region_affixes.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(this.contentDir, 'enemies.json'), 'utf-8'),
+      readFile(join(this.contentDir, 'encounters.json'), 'utf-8'),
+      readFile(join(this.contentDir, 'items.json'), 'utf-8'),
+      readFile(join(this.contentDir, 'player_defaults.json'), 'utf-8'),
+      readFile(join(this.contentDir, 'presets.json'), 'utf-8'),
+      readFile(join(this.contentDir, 'locations.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(this.contentDir, 'events_v2.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(this.contentDir, 'scene_shells.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(this.contentDir, 'suggested_choices.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(this.contentDir, 'arc_events.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(this.contentDir, 'npcs.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(this.contentDir, 'sets.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(this.contentDir, 'shops.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(this.contentDir, 'region_affixes.json'), 'utf-8').catch(() => '[]'),
       // Narrative Engine v1
-      readFile(join(CONTENT_DIR, 'incidents.json'), 'utf-8').catch(() => '{"incidents":[]}'),
-      readFile(join(CONTENT_DIR, 'endings.json'), 'utf-8').catch(() => '{}'),
-      readFile(join(CONTENT_DIR, 'narrative_marks.json'), 'utf-8').catch(() => '{"marks":[]}'),
+      readFile(join(this.contentDir, 'incidents.json'), 'utf-8').catch(() => '{"incidents":[]}'),
+      readFile(join(this.contentDir, 'endings.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(this.contentDir, 'narrative_marks.json'), 'utf-8').catch(() => '{"marks":[]}'),
+      // Scenario meta
+      readFile(join(this.contentDir, 'scenario.json'), 'utf-8').catch(() => 'null'),
     ]);
 
     const enemiesList = JSON.parse(enemiesRaw) as EnemyDefinition[];
@@ -127,6 +134,10 @@ export class ContentLoaderService implements OnModuleInit {
     this.endingsData = JSON.parse(endingsRaw);
     const marksParsed = JSON.parse(narrativeMarksRaw);
     this.narrativeMarkConditions = marksParsed.marks ?? [];
+
+    // Scenario meta 로드
+    const scenarioParsed = JSON.parse(scenarioMetaRaw);
+    this.scenarioMeta = scenarioParsed as ScenarioMeta | null;
   }
 
   getPlayerDefaults(): PlayerDefaults {
@@ -364,5 +375,50 @@ export class ContentLoaderService implements OnModuleInit {
 
   getNarrativeMarkConditions(): unknown[] {
     return this.narrativeMarkConditions;
+  }
+
+  // --- Campaign / Scenario 메서드 ---
+
+  /** 특정 시나리오 콘텐츠를 로드 (캠페인 진행 시 사용) */
+  async loadScenario(scenarioId: string): Promise<void> {
+    const scenarioDir = join(CONTENT_BASE, scenarioId);
+    this.contentDir = scenarioDir;
+    this.currentScenarioId = scenarioId;
+    await this.loadAll();
+    this.logger.log(`Scenario loaded: ${scenarioId}`);
+  }
+
+  /** 현재 로드된 시나리오의 메타 정보 반환 */
+  getScenarioMeta(): ScenarioMeta | null {
+    return this.scenarioMeta;
+  }
+
+  /** 현재 로드된 시나리오 ID */
+  getCurrentScenarioId(): string {
+    return this.currentScenarioId;
+  }
+
+  /** content/ 하위 폴더를 스캔하여 사용 가능한 시나리오 목록 반환 */
+  async listAvailableScenarios(): Promise<ScenarioMeta[]> {
+    const scenarios: ScenarioMeta[] = [];
+    try {
+      const entries = await readdir(CONTENT_BASE, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        try {
+          const metaRaw = await readFile(
+            join(CONTENT_BASE, entry.name, 'scenario.json'),
+            'utf-8',
+          );
+          const meta = JSON.parse(metaRaw) as ScenarioMeta;
+          scenarios.push(meta);
+        } catch {
+          // scenario.json이 없는 폴더는 무시
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to scan content directory: ${err}`);
+    }
+    return scenarios.sort((a, b) => a.order - b.order);
   }
 }

@@ -203,3 +203,17 @@ export type ArcEventDefinition = {
   requirements: Record<string, unknown>;
   rewards: Record<string, unknown>;
 };
+
+export type ScenarioMetaContent = {
+  scenarioId: string;
+  name: string;
+  description: string;
+  order: number;
+  prerequisites: string[];
+  carryOverRules: {
+    goldRate: number;
+    itemsCarry: boolean;
+    reputationDecay: number;
+    statBonusPerScenario: Record<string, number>;
+  };
+};
