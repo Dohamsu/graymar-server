@@ -19,7 +19,7 @@ import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { toDisplayText } from '../common/text-utils.js';
 import type { ServerResultV1, ChoiceItem } from '../db/types/index.js';
 import type { StructuredMemory, LlmExtractedFact, LlmFactCategory } from '../db/types/structured-memory.js';
-import { LLM_FACT_CATEGORY } from '../db/types/structured-memory.js';
+import { LLM_FACT_CATEGORY, createEmptyStructuredMemory } from '../db/types/structured-memory.js';
 
 const POLL_INTERVAL_MS = 2000;
 const LOCK_TIMEOUT_S = 60;
@@ -157,13 +157,16 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       );
 
       // 4. LLM 호출 (재시도/fallback 포함)
-      // Reasoning 모델의 경우 메모리 컨텍스트 양에 따라 추론 강도 결정
+      // COMBAT 턴은 경량 모델(nano) 사용 — 정형화된 짧은 전투 서술이라 충분
+      const isCombat = pending.nodeType === 'COMBAT';
+      const lightConfig = isCombat ? this.configService.getLightModelConfig() : null;
       const reasoningEffort = this.determineReasoningEffort(llmContext);
       const callResult = await this.llmCaller.call({
         messages,
-        maxTokens: config.maxTokens,
+        maxTokens: isCombat ? Math.min(config.maxTokens, 512) : config.maxTokens,
         temperature: config.temperature,
         reasoningEffort,
+        ...(lightConfig ? { model: lightConfig.model } : {}),
       });
 
       // 5. 내러티브 결정 — 실패 또는 mock fallback 시 SceneShell로 graceful degradation
@@ -203,8 +206,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               where: eq(runMemories.runId, pending.runId),
             });
             if (memRow) {
-              const structured = (memRow.structuredMemory ?? null) as StructuredMemory | null;
-              if (structured) {
+              const structured = ((memRow.structuredMemory ?? null) as StructuredMemory | null) ?? createEmptyStructuredMemory();
+              {
                 const knowledge = structured.npcKnowledge ?? {};
                 for (const km of npcKnowledgeMatches.slice(0, 3)) {
                   const npcId = km[1];
@@ -390,8 +393,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             where: eq(runMemories.runId, pending.runId),
           });
           if (memRow) {
-            const structured = (memRow.structuredMemory ?? null) as StructuredMemory | null;
-            if (structured) {
+            const structured = ((memRow.structuredMemory ?? null) as StructuredMemory | null) ?? createEmptyStructuredMemory();
+            {
               // NPC 자동 매칭: 텍스트에서 NPC 이름 탐지
               for (const fact of extractedFacts) {
                 structured.llmExtracted.push(fact);

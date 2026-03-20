@@ -115,6 +115,7 @@ export class SignalFeedService {
           text: `[${def.title}] ${incident.outcome === 'CONTAINED' ? '해결됨' : incident.outcome === 'ESCALATED' ? '악화됨' : '시효 만료'}`,
           sourceIncidentId: incident.incidentId,
           createdAtClock: currentClock,
+          expiresAtClock: currentClock + 8, // M6 fix: resolved signals expire after ~8 ticks
         });
       } else {
         const urgency = incident.pressure > 70 ? 4 : incident.pressure > 40 ? 3 : 2;

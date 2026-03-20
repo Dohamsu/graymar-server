@@ -18,6 +18,7 @@ import {
   ForbiddenError,
   NotFoundError,
 } from '../common/errors/game-errors.js';
+import { createEmptyStructuredMemory } from '../db/types/structured-memory.js';
 import type { GetRunQuery } from './dto/get-run.dto.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { WorldStateService } from '../engine/hub/world-state.service.js';
@@ -229,6 +230,7 @@ export class RunsService {
           },
         ],
         storySummary: null,
+        structuredMemory: createEmptyStructuredMemory(),
       });
 
       // 첫 HUB 노드 진입 — turnNo=0 SYSTEM 턴

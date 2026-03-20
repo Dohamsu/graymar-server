@@ -70,4 +70,5 @@ export type ActionHistoryEntry = {
   eventId?: string; // 매칭된 이벤트 ID (FALLBACK 페널티 계산용)
   choiceId?: string; // 선택된 choice ID (선택지 중복 방지용)
   primaryNpcId?: string; // 이 턴에서 상호작용한 NPC ID
+  resolveOutcome?: string; // SUCCESS | PARTIAL | FAIL
 };

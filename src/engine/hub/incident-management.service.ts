@@ -62,7 +62,8 @@ export class IncidentManagementService {
     ws: WorldState,
     rng: Rng,
   ): IncidentRuntime | null {
-    if (ws.activeIncidents.length >= 3) return null;
+    // H3 fix: only count unresolved incidents toward the cap
+    if (ws.activeIncidents.filter((i) => !i.outcome).length >= 3) return null;
 
     const activeIds = new Set(ws.activeIncidents.map((i) => i.incidentId));
     const eligible = allIncidents.filter((inc) => {

@@ -87,21 +87,42 @@ export function initNPCState(npcData: {
 }
 
 /**
- * NPCState + 플레이어 톤 + 최근 히스토리를 기반으로 effective posture 계산.
- * trust > 30 → FRIENDLY, suspicion > 60 → HOSTILE, 그 외 basePosture 유지.
+ * NPCState + 5축 감정을 기반으로 effective posture 계산.
+ * 히스테리시스 적용: 현재 posture에서 벗어나려면 더 높은 임계값 필요.
+ * 이렇게 하면 단일 턴에 CAUTIOUS→HOSTILE 같은 급변이 방지된다.
  */
 export function computeEffectivePosture(
   state: NPCState,
 ): NpcPosture {
   const emo = state.emotional;
+  const currentPosture = state.posture;
+
   // emotional 기반 posture 계산 (emotional이 있으면 우선)
   if (emo) {
-    if (emo.fear > 60) return 'FEARFUL';
-    if (emo.trust > 30 && emo.respect > 20) return 'FRIENDLY';
-    if (emo.suspicion > 60 || emo.trust < -30) return 'HOSTILE';
-    if (emo.suspicion > 30) return 'CALCULATING';
-    if (emo.trust > 20) return 'FRIENDLY';
-    if (emo.trust < -20) return 'CAUTIOUS';
+    // 히스테리시스: 현재 posture 유지에 필요한 임계값은 낮고, 전환에 필요한 임계값은 높음
+    const isCurrentPosture = (p: NpcPosture) => currentPosture === p;
+
+    // FEARFUL: 현재 FEARFUL이면 fear > 40으로 유지, 아니면 fear > 60 필요
+    if (emo.fear > (isCurrentPosture('FEARFUL') ? 40 : 60)) return 'FEARFUL';
+
+    // FRIENDLY: 현재 FRIENDLY이면 trust > 15, 아니면 trust > 30 필요
+    const friendlyThreshold = isCurrentPosture('FRIENDLY') ? 15 : 30;
+    if (emo.trust > friendlyThreshold && emo.respect > (isCurrentPosture('FRIENDLY') ? 10 : 20)) return 'FRIENDLY';
+
+    // HOSTILE: 현재 HOSTILE이면 유지 조건 완화
+    const hostileThreshold = isCurrentPosture('HOSTILE') ? 45 : 60;
+    const hostileTrustThreshold = isCurrentPosture('HOSTILE') ? -20 : -30;
+    if (emo.suspicion > hostileThreshold || emo.trust < hostileTrustThreshold) return 'HOSTILE';
+
+    // FRIENDLY (낮은 임계값) — CALCULATING보다 먼저 평가하여
+    // 중간 수준의 trust가 중간 수준의 suspicion에 밀리지 않도록 함 (e.g. BRIBE 후)
+    if (emo.trust > (isCurrentPosture('FRIENDLY') ? 12 : 20)) return 'FRIENDLY';
+
+    // CALCULATING: 현재 CALCULATING이면 유지 조건 완화
+    if (emo.suspicion > (isCurrentPosture('CALCULATING') ? 20 : 30)) return 'CALCULATING';
+
+    // CAUTIOUS
+    if (emo.trust < (isCurrentPosture('CAUTIOUS') ? -10 : -20)) return 'CAUTIOUS';
   }
   // v1 호환 fallback
   if (state.trustToPlayer > 30) return 'FRIENDLY';
@@ -146,6 +167,23 @@ export function getNpcDisplayName(
   if (!npcDef) return npcState.npcId;
   if (npcState.introduced) return npcDef.name;
   return npcDef.unknownAlias || '낯선 인물';
+}
+
+/**
+ * 텍스트 내 {npc:NPC_ID} 플레이스홀더를 introduced 상태에 따라 실명/별칭으로 치환
+ */
+export function resolveNpcPlaceholders(
+  text: string,
+  npcStates: Record<string, NPCState>,
+  getNpcDef: (npcId: string) => { name: string; unknownAlias?: string } | undefined,
+): string {
+  return text.replace(/\{npc:([A-Z_]+)\}/g, (_match, npcId: string) => {
+    const state = npcStates[npcId];
+    const def = getNpcDef(npcId);
+    if (!def) return _match;
+    if (state?.introduced) return def.name;
+    return def.unknownAlias || '낯선 인물';
+  });
 }
 
 /**

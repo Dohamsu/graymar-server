@@ -305,7 +305,7 @@ export class PromptBuilderService {
           '[등장 가능 NPC 목록]',
           '아래 NPC만 서술에 이름 있는 캐릭터로 등장할 수 있습니다. 이 목록에 없는 새로운 이름 있는 캐릭터를 만들지 마세요.',
           '배경 인물이 필요하면 "한 사내", "노점 상인" 등 익명 표현만 사용하세요.',
-          '⚠️ [이름 미공개] NPC: 별칭은 참고용입니다. 서술에서 별칭 전체를 반복하지 말고, 첫 등장 후에는 "그", "그녀", "그 인물" 등 대명사로 자연스럽게 대체하세요.',
+          '⚠️ [이름 미공개] NPC: 별칭은 참고용입니다. 서술에서 별칭 전체를 반복하지 말고, 첫 등장 후에는 "그", "그녀", "그 인물" 등 대명사로 자연스럽게 대체하세요. [이름 미공개] NPC가 자기 이름을 밝히거나 자기소개하는 장면은 쓰지 마세요 — 자기소개는 [자기소개] 태그가 붙은 NPC만 합니다.',
           '⚠️ 같은 NPC 별칭을 연속 턴에서 동일한 표현으로 반복하지 마세요. 다양한 묘사를 사용하세요.',
           '',
           npcLines.join('\n'),
@@ -514,35 +514,46 @@ export class PromptBuilderService {
       );
     }
 
-    // Phase 3: NPC 대화 자세 (Step 7) — posture별 행동 가이드 포함
+    // Phase 3: NPC 대화 자세 (Step 7) — posture + personality 기반 개인화 가이드
     if (ctx.npcPostures && Object.keys(ctx.npcPostures).length > 0) {
-      const POSTURE_GUIDE: Record<string, string> = {
+      const POSTURE_BASELINE: Record<string, string> = {
         FRIENDLY: '호의적. 자발적 도움 가능. 단, resolve 결과(FAIL)에 따라 제한.',
         CAUTIOUS: '경계. 질문에 모호하게 답함. 자발적 정보 제공 금지. SUCCESS 판정 없이 핵심 정보를 알려주면 안 됩니다.',
         HOSTILE: '적대. 대화 거부 가능. 위협적 어조. PARTIAL 이하 판정에서 협조적으로 서술 금지.',
         FEARFUL: '두려움. 말을 아끼고, 시선을 피하며, 압박에 쉽게 무너짐.',
-        CALCULATING: '타산적. 대가 없는 정보 제공 금지. 교환 조건 제시.',
+        CALCULATING: '타산적. 대가(금전, 정보, 충성, 복종 등)를 요구한다. 단, 대가의 형태는 이 NPC의 성격과 agenda에 맞춰야 한다.',
       };
-      // NPC ID → 표시 이름 해석: 콘텐츠 정의에서 이름/별칭 조회, 소개 상태 반영
       const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
 
       const postureLines = Object.entries(ctx.npcPostures).map(
         ([npcId, posture]) => {
-          const guide = POSTURE_GUIDE[posture as string] ?? '';
-          let displayName: string;
+          const baseline = POSTURE_BASELINE[posture as string] ?? '';
           const npcDef = this.content.getNpc(npcId);
+          let displayName: string;
           if (npcDef) {
             displayName = introducedNpcIds.has(npcId)
               ? npcDef.name
               : (npcDef.unknownAlias || '낯선 인물');
           } else {
-            // fallback: format raw ID more readably
             displayName = npcId
               .replace(/^NPC_/i, '')
               .replace(/_/g, ' ')
               .replace(/\b\w/g, c => c.toUpperCase());
           }
-          return `- ${displayName}: ${posture} — ${guide}`;
+
+          // personality가 있으면 개인화된 가이드 생성
+          const personality = npcDef?.personality;
+          if (personality) {
+            const parts = [
+              `- ${displayName}: ${posture} — ${baseline}`,
+              `    성격 특성: ${personality.traits.join(' / ')}`,
+            ];
+            if (personality.speechStyle) {
+              parts.push(`    말투: ${personality.speechStyle}`);
+            }
+            return parts.join('\n');
+          }
+          return `- ${displayName}: ${posture} — ${baseline}`;
         },
       );
       factsParts.push(
@@ -550,6 +561,8 @@ export class PromptBuilderService {
           '[NPC 대화 자세]',
           '이 장소의 NPC들이 보이는 태도입니다. 대사와 행동은 반드시 아래 태도에 맞춰 서술하세요.',
           '⚠️ 태도에 맞지 않는 행동(CAUTIOUS NPC의 자발적 정보 제공, HOSTILE NPC의 호의적 태도 등)은 절대 서술하지 마세요.',
+          '⚠️ NPC의 agenda는 배경 동기입니다. 매 대사에서 agenda를 직접 언급하지 마세요. 대화 3번 중 1번 정도만 동기와 관련된 말을 하고, 나머지는 상황 반응, 개인적 감상, 또는 플레이어 평가를 보여주세요.',
+          '⚠️ NPC별 호칭을 구분하세요. "그대"는 마이렐 단 경만의 고유 호칭입니다. 다른 NPC는 "당신", "이보게", "자네", "손님" 등 각자의 말투에 맞는 호칭을 사용하세요.',
           '',
           postureLines.join('\n'),
         ].join('\n'),

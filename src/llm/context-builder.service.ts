@@ -319,7 +319,7 @@ export class ContextBuilderService {
         incidentContext = `활성 사건 ${activeIncidents.length}건:\n${lines.join('\n')}`;
       }
 
-      // NPC 감정 상태 요약 (자연어 행동 힌트 포함)
+      // NPC 감정 상태 요약 (personality + 감정 수치 기반 인격 힌트)
       const npcStates = runState.npcStates as Record<string, NPCState> | undefined;
       if (npcStates) {
         const emotionalLines: string[] = [];
@@ -329,26 +329,122 @@ export class ContextBuilderService {
             const npcDef = this.content.getNpc(npcId);
             const displayName = getNpcDisplayName(npc, npcDef);
             const posture = computeEffectivePosture(npc);
-            // 감정 수치를 행동 묘사 힌트로 변환
+            const personality = npcDef?.personality;
+
+            // 감정 수치를 구체적 행동 변화로 변환 (personality 연동)
             const hints: string[] = [];
-            if (em.trust > 40) hints.push('당신을 신뢰하며 편하게 대한다');
-            else if (em.trust > 15) hints.push('조금씩 마음을 열고 있다');
-            else if (em.trust < -20) hints.push('당신을 불신하며 거리를 둔다');
-            if (em.fear > 40) hints.push('겁에 질려 있다');
-            else if (em.fear > 15) hints.push('불안해하고 있다');
-            if (em.respect > 30) hints.push('당신을 존경하는 눈빛이다');
+
+            // trust 기반 태도 변화
+            if (em.trust > 40) {
+              hints.push('당신을 신뢰하며 경계를 내려놓았다');
+              if (personality?.softSpot) hints.push(`인간적 순간이 드러날 수 있다: ${personality.softSpot}`);
+            } else if (em.trust > 15) {
+              hints.push('마음을 열기 시작했다 — 가끔 본심이 살짝 보인다');
+            } else if (em.trust < -20) {
+              hints.push('당신을 불신하며 거리를 둔다');
+            }
+
+            // fear 기반
+            if (em.fear > 40) hints.push('겁에 질려 있다 — 판단력이 흐려져 있다');
+            else if (em.fear > 15) hints.push('불안해하고 있다 — 평소보다 말이 짧아진다');
+
+            // respect 기반
+            if (em.respect > 30) hints.push('당신을 인정하고 있다 — 말투가 격식에서 벗어나기도 한다');
             else if (em.respect < -20) hints.push('당신을 얕보고 있다');
-            if (em.suspicion > 40) hints.push('당신의 의도를 의심하고 있다');
+
+            // suspicion 기반
+            if (em.suspicion > 40) hints.push('당신의 의도를 강하게 의심한다 — 방어적이고 공격적');
             else if (em.suspicion > 15) hints.push('경계심을 늦추지 않는다');
-            if (em.attachment > 30) hints.push('당신에게 애착을 느끼고 있다');
-            const hintText = hints.length > 0 ? ` — ${hints.join(', ')}` : '';
-            const behaviorHint = posture === 'FRIENDLY' ? '먼저 다가오거나 귓속말로 정보를 준다'
-              : posture === 'CAUTIOUS' ? '짧게 끊어 말하고 시선을 피한다'
-              : posture === 'HOSTILE' ? '적대적으로 가로막거나 위협한다'
-              : posture === 'FEARFUL' ? '몸을 움츠리고 주위를 두리번거린다'
-              : posture === 'CALCULATING' ? '무표정하게 관찰하다 계산된 말을 꺼낸다'
+
+            // attachment 기반
+            if (em.attachment > 30) hints.push('당신에게 개인적 유대를 느끼고 있다');
+
+            // personality 기반 행동 힌트 (핵심: posture와 personality 조합)
+            const behaviorParts: string[] = [];
+            if (personality) {
+              behaviorParts.push(personality.core);
+              if (personality.speechStyle) behaviorParts.push(`말투: ${personality.speechStyle}`);
+              // innerConflict는 trust > 15 또는 respect > 20일 때만 노출 (경계가 풀려야 내면이 보인다)
+              if (personality.innerConflict && (em.trust > 15 || em.respect > 20)) {
+                behaviorParts.push(`내면: ${personality.innerConflict}`);
+              }
+              // signature 표현
+              if (personality.signature?.length) {
+                behaviorParts.push(`시그니처: ${personality.signature.join(' / ')}`);
+              }
+              // npcRelations: introduced된 NPC에 대한 관계만 노출
+              if (personality.npcRelations) {
+                const introducedNpcIdSet = new Set(
+                  Object.entries(runState?.npcStates as Record<string, any> ?? {})
+                    .filter(([, s]) => s.introduced || s.encounterCount > 0)
+                    .map(([id]) => id),
+                );
+                const relLines: string[] = [];
+                for (const [relNpcId, relDesc] of Object.entries(personality.npcRelations)) {
+                  if (introducedNpcIdSet.has(relNpcId) || relNpcId === npcId) {
+                    const relNpcDef = this.content.getNpc(relNpcId);
+                    const relNpcState = (runState?.npcStates as Record<string, any>)?.[relNpcId];
+                    const relDisplayName = relNpcDef && relNpcState
+                      ? getNpcDisplayName(relNpcState, relNpcDef)
+                      : relNpcDef?.unknownAlias ?? relNpcId;
+                    relLines.push(`${relDisplayName}: ${relDesc}`);
+                  }
+                }
+                if (relLines.length > 0) {
+                  behaviorParts.push(`관계: ${relLines.join(' | ')}`);
+                }
+              }
+            }
+
+            // 런타임 currentMood 계산: 월드 상태 -> NPC별 현재 분위기
+            const ws = runState?.worldState as Record<string, unknown> | undefined;
+            let currentMood: string | null = null;
+            if (ws && npcDef) {
+              const heat = (ws.hubHeat as number) ?? 0;
+              const safety = (ws.hubSafety as string) ?? 'SAFE';
+              const activeIncidents = (ws.activeIncidents ?? []) as Array<Record<string, unknown>>;
+              const faction = npcDef.faction;
+
+              const moodParts: string[] = [];
+
+              // Heat 기반 무드
+              if (heat > 70) {
+                if (faction === 'CITY_GUARD') moodParts.push('비상 경계 중 — 극도로 긴장하고 예민하다');
+                else moodParts.push('도시 전체가 긴장 — 불안하고 조심스럽다');
+              } else if (heat > 40) {
+                if (faction === 'CITY_GUARD') moodParts.push('경계 강화 중 — 평소보다 날카롭다');
+                else moodParts.push('거리가 어수선하다 — 경계하고 있다');
+              }
+
+              // Safety 기반 무드
+              if (safety === 'DANGER') {
+                if (faction === 'CITY_GUARD') moodParts.push('치안 위기 대응 중');
+                else moodParts.push('위험을 느끼고 있다');
+              }
+
+              // 관련 인시던트 기반 무드
+              for (const inc of activeIncidents) {
+                const pressure = (inc.pressure as number) ?? 0;
+                if (pressure >= 70) {
+                  moodParts.push('심각한 사건이 진행 중 — 여유가 없다');
+                  break;
+                } else if (pressure >= 40) {
+                  moodParts.push('뭔가 신경 쓰이는 일이 있다');
+                  break;
+                }
+              }
+
+              if (moodParts.length > 0) {
+                currentMood = moodParts.join('. ');
+              }
+            }
+
+            const hintText = hints.length > 0 ? `\n    감정: ${hints.join('. ')}` : '';
+            const behaviorText = behaviorParts.length > 0
+              ? `\n    ${behaviorParts.join('\n    ')}`
               : '';
-            emotionalLines.push(`- ${displayName}: ${posture}${hintText}. 행동: ${behaviorHint}`);
+            const moodText = currentMood ? `\n    현재 상태: ${currentMood}` : '';
+            emotionalLines.push(`- ${displayName} [${posture}]${hintText}${behaviorText}${moodText}`);
           }
         }
         // 이번 턴 NPC 감정 변화 delta
@@ -513,21 +609,7 @@ export class ContextBuilderService {
       }
     }
 
-    // PR2: Mid Summary — locationSessionTurns > 4 → 초기 턴 압축 (async 2-pass)
-    let midSummary: string | null = null;
-    let finalLocationSessionTurns = locationSessionTurns;
-    if (locationSessionTurns.length > 4) {
-      const earlyTurns = locationSessionTurns.slice(0, -4);
-      midSummary = await this.midSummaryService.generate(
-        earlyTurns,
-        runState,
-        structured?.llmExtracted,
-        structured?.npcKnowledge ?? undefined,
-      );
-      finalLocationSessionTurns = locationSessionTurns.slice(-4);
-    }
-
-    // PR3: Intent Memory — actionHistory에서 패턴 감지
+    // PR3: Intent Memory — actionHistory에서 패턴 감지 (midSummary보다 먼저 계산)
     let intentMemory: string | null = null;
     if (runState) {
       const actionHistory = (runState.actionHistory as Array<{ actionType: string }>) ?? [];
@@ -535,6 +617,31 @@ export class ContextBuilderService {
       if (patterns) {
         intentMemory = this.intentMemoryService.renderForContext(patterns);
       }
+    }
+
+    // PR2: Mid Summary — locationSessionTurns > 4 → 초기 턴 압축 (async 2-pass)
+    let midSummary: string | null = null;
+    let finalLocationSessionTurns = locationSessionTurns;
+    if (locationSessionTurns.length > 4) {
+      const earlyTurns = locationSessionTurns.slice(0, -4);
+      // intentMemory + activeIncidents를 Mid Summary에 전달하여 맥락 유지
+      const activeIncidentNames: string[] = [];
+      if (runState) {
+        const ws = runState.worldState as Record<string, unknown> | undefined;
+        const incidents = (ws?.activeIncidents ?? []) as Array<{ incidentId: string; kind?: string }>;
+        for (const inc of incidents) {
+          activeIncidentNames.push(inc.incidentId);
+        }
+      }
+      midSummary = await this.midSummaryService.generate(
+        earlyTurns,
+        runState,
+        structured?.llmExtracted,
+        structured?.npcKnowledge ?? undefined,
+        intentMemory,
+        activeIncidentNames.length > 0 ? activeIncidentNames : undefined,
+      );
+      finalLocationSessionTurns = locationSessionTurns.slice(-4);
     }
 
     // PR4: Active Clues — StructuredMemory에서 유효 단서 추출

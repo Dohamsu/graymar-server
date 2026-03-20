@@ -171,7 +171,15 @@ export class NarrativeMarkService {
         (i) => i.incidentId === cond.conditions.incidentOutcome!.incidentId ||
           (cond.conditions.incidentOutcome!.incidentId === '*critical*' && i.resolved),
       );
-      contextText = contextText.replace('{{incidentTitle}}', inc?.incidentId ?? '사건');
+      // incidentId는 기계용 ID — 사람이 읽을 수 있도록 변환
+      const readableTitle = inc
+        ? inc.incidentId
+            .replace(/^INC_/i, '')     // 접두사 제거
+            .replace(/_/g, ' ')        // 언더스코어 → 공백
+            .toLowerCase()
+            .replace(/\b\w/g, (c) => c.toUpperCase()) // 각 단어 첫 글자 대문자
+        : '사건';
+      contextText = contextText.replace('{{incidentTitle}}', readableTitle);
     }
 
     return {
