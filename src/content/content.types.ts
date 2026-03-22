@@ -157,6 +157,9 @@ export type NpcPersonality = {
   npcRelations?: Record<string, string>;  // 다른 NPC와의 관계 한 줄 요약
 };
 
+/** NPC 계층: CORE(핵심), SUB(서브), BACKGROUND(배경) */
+export type NpcTier = 'CORE' | 'SUB' | 'BACKGROUND';
+
 export type NpcDefinition = {
   npcId: string;
   name: string;
@@ -172,7 +175,8 @@ export type NpcDefinition = {
   initialTrust?: number;
   agenda?: string;
   personality?: NpcPersonality;
-  // Living World v2: NPC 일정
+  // Living World v2
+  tier?: NpcTier;              // 기본값: 'SUB'
   schedule?: import('../db/types/npc-schedule.js').NpcSchedule;
 };
 
