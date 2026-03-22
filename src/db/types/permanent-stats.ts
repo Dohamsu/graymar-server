@@ -1,29 +1,63 @@
 // 정본: specs/combat_system.md Part 0
+// Living World v2: 6개 기본 스탯 + 파생 전투 스탯
 
+/**
+ * 6개 기본 스탯 체계
+ * - str: 힘 — 전투 데미지, FIGHT, THREATEN
+ * - dex: 민첩 — 명중, 회피, SNEAK, STEAL, OBSERVE
+ * - wit: 재치 — 조사, 수색, INVESTIGATE, SEARCH
+ * - con: 체질 — 체력, 방어, 저항, HELP
+ * - per: 통찰 — 관찰, 발견, OBSERVE(보조)
+ * - cha: 카리스마 — 설득, 뇌물, 거래, PERSUADE, BRIBE, TRADE, TALK
+ */
 export type PermanentStats = {
   maxHP: number;
   maxStamina: number;
-  atk: number;
-  def: number;
-  acc: number;
-  eva: number;
-  crit: number; // % (정수)
-  critDmg: number; // 1.5 → 150 (정수 저장, /100으로 사용)
-  resist: number;
-  speed: number;
+  str: number;      // 힘: 전투 공격력, FIGHT/THREATEN 판정
+  dex: number;      // 민첩: 명중/회피, SNEAK/STEAL/OBSERVE 판정
+  wit: number;      // 재치: 분석/조사, INVESTIGATE/SEARCH 판정
+  con: number;      // 체질: 방어/저항, HELP 판정
+  per: number;      // 통찰: 관찰/발견, OBSERVE 보조
+  cha: number;      // 카리스마: 사회적 상호작용, PERSUADE/BRIBE/TRADE 판정
+
+  // v1 호환: 전투 시스템에서 직접 사용하는 파생값
+  // 이 값들은 deriveCombatStats()로 자동 계산되며, 콘텐츠에서 직접 설정할 수도 있음
+  atk?: number;      // 파생: str 기반
+  def?: number;      // 파생: con 기반
+  acc?: number;      // 파생: dex 기반
+  eva?: number;      // 파생: dex 기반
+  crit?: number;     // 파생: dex + wit 기반 (%)
+  critDmg?: number;  // 파생: str 기반 (1.5 → 150)
+  resist?: number;   // 파생: con 기반
+  speed?: number;    // 파생: cha 기반
 };
+
+/**
+ * 기본 6 스탯에서 전투용 파생 스탯 계산
+ */
+export function deriveCombatStats(stats: PermanentStats): Required<PermanentStats> {
+  return {
+    ...stats,
+    atk: stats.atk ?? stats.str,
+    def: stats.def ?? stats.con,
+    acc: stats.acc ?? stats.dex,
+    eva: stats.eva ?? Math.floor(stats.dex * 0.6),
+    crit: stats.crit ?? Math.floor(stats.dex / 3) + 2,
+    critDmg: stats.critDmg ?? Math.round(130 + stats.str * 2),
+    resist: stats.resist ?? Math.floor(stats.con * 0.5),
+    speed: stats.speed ?? stats.cha,
+  };
+}
 
 export const DEFAULT_PERMANENT_STATS: PermanentStats = {
   maxHP: 100,
   maxStamina: 5,
-  atk: 15,
-  def: 10,
-  acc: 5,
-  eva: 3,
-  crit: 5,
-  critDmg: 150,
-  resist: 5,
-  speed: 5,
+  str: 12,    // 힘
+  dex: 10,    // 민첩
+  wit: 8,     // 재치
+  con: 10,    // 체질
+  per: 7,     // 통찰
+  cha: 8,     // 카리스마
 };
 
 export type StoryProgress = {

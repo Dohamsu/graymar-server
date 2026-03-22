@@ -20,18 +20,19 @@ const NON_CHALLENGE_ACTIONS = new Set([
   'TALK',
 ]);
 
-// actionType → 관련 스탯 매핑
+// actionType → 기본 6스탯 매핑 (Living World v2)
 const ACTION_STAT_MAP: Record<string, keyof PermanentStats> = {
-  FIGHT: 'atk',
-  SNEAK: 'eva',
-  THREATEN: 'atk',
-  PERSUADE: 'speed',
-  INVESTIGATE: 'acc',
-  OBSERVE: 'eva',
-  STEAL: 'eva',
-  BRIBE: 'speed',
-  HELP: 'def',
-  TRADE: 'speed',
+  FIGHT: 'str',       // 힘: 전투/강탈
+  THREATEN: 'str',    // 힘: 협박/위협
+  SNEAK: 'dex',       // 민첩: 잠입/은밀
+  STEAL: 'dex',       // 민첩: 절도
+  OBSERVE: 'per',     // 통찰: 관찰/감시
+  INVESTIGATE: 'wit', // 재치: 조사/분석
+  SEARCH: 'wit',      // 재치: 수색/탐색
+  PERSUADE: 'cha',    // 카리스마: 설득
+  BRIBE: 'cha',       // 카리스마: 뇌물
+  TRADE: 'cha',       // 카리스마: 거래
+  HELP: 'con',        // 체질: 도움/보호
 };
 
 @Injectable()
