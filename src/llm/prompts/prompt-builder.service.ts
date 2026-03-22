@@ -499,6 +499,20 @@ export class PromptBuilderService {
           ? '\n이 인물은 핵심 인물입니다. 충분한 대사와 깊이 있는 상호작용을 서술하세요.'
           : '';
 
+      // NPC 연속 등장 턴 수 계산
+      const sessionTurns = ctx.locationSessionTurns ?? [];
+      let consecutiveAppearance = 0;
+      for (let i = sessionTurns.length - 1; i >= 0; i--) {
+        // 이전 턴 서술에 이 NPC 이름/별칭이 포함되어 있으면 연속
+        if (sessionTurns[i].narrative?.includes(npcDisplayName)) consecutiveAppearance++;
+        else break;
+      }
+      const continuityHint = consecutiveAppearance >= 2
+        ? `\n⚠️ 이 인물은 이미 ${consecutiveAppearance}턴 연속 등장했습니다. 이전 대화를 이어가세요. 같은 말이나 같은 묘사를 반복하지 마세요. 대화를 한 단계 진전시키세요.`
+        : consecutiveAppearance === 1
+          ? '\n이 인물은 직전 턴에도 등장했습니다. 대화를 이어가세요.'
+          : '';
+
       factsParts.push(
         [
           `[NPC 등장] ${npcDisplayName}이(가) 이 장면에 나타납니다.`,
@@ -506,9 +520,11 @@ export class PromptBuilderService {
           `자세: ${npc.posture}`,
           `대화 시드: ${npc.dialogueSeed}`,
           '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.',
+          '⚠️ NPC의 personality 설명을 직접 인용하지 마세요. 행동과 대사로 성격을 보여주세요.',
           introInstruction,
           nameRevealHint,
           tierInstruction,
+          continuityHint,
         ].filter(Boolean).join('\n'),
       );
     }
