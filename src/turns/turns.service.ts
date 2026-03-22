@@ -727,7 +727,16 @@ export class TurnsService {
       const selectedChoiceIds = actionHistory
         .filter((h) => h.choiceId)
         .map((h) => h.choiceId!);
-      const choices = this.sceneShellService.buildLocationChoices(locationId, undefined, undefined, selectedChoiceIds);
+      let choices = this.sceneShellService.buildLocationChoices(locationId, undefined, undefined, selectedChoiceIds);
+      // 안전장치: 새 장소 등에서 선택지가 비어있으면 generic choices 생성
+      if (!choices || choices.length === 0) {
+        this.logger.warn(`[Fallback] buildLocationChoices returned empty for ${locationId}, using generic`);
+        choices = [
+          { id: 'generic_observe', label: '주변을 살펴본다', action: { type: 'CHOICE' as const, payload: {} } },
+          { id: 'generic_talk', label: '주변 사람에게 말을 건다', action: { type: 'CHOICE' as const, payload: {} } },
+          { id: 'go_hub', label: '거점으로 돌아간다', action: { type: 'CHOICE' as const, payload: {} } },
+        ];
+      }
       const result = this.buildLocationResult(turnNo, currentNode, '특별한 일이 일어나지 않았다.', 'PARTIAL', choices, ws);
       await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, updatedRunState, body.options?.skipLlm);
       return { accepted: true, turnNo, serverResult: result, llm: { status: 'PENDING' as LlmStatus, narrative: null }, meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' } };
