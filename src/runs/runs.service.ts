@@ -25,7 +25,7 @@ import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { AgendaService } from '../engine/hub/agenda.service.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
-import type { ServerResultV1, RunState, IncidentDef, NPCState, CarryOverState, ScenarioMeta, PermanentStats } from '../db/types/index.js';
+import { type ServerResultV1, type RunState, type IncidentDef, type NPCState, type CarryOverState, type ScenarioMeta, type PermanentStats, DEFAULT_PERMANENT_STATS } from '../db/types/index.js';
 import { initNPCState } from '../db/types/npc-state.js';
 import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
@@ -100,35 +100,28 @@ export class RunsService {
       const base = carryOver.finalStats ?? {};
       presetStats = {
         maxHP: (base.maxHP ?? 100) + (bonuses.maxHP ?? 0),
-        maxStamina: base.maxStamina ?? 80,
-        atk: (base.atk ?? 10) + (bonuses.atk ?? 0),
-        def: (base.def ?? 10) + (bonuses.def ?? 0),
-        acc: (base.acc ?? 10) + (bonuses.acc ?? 0),
-        eva: (base.eva ?? 10) + (bonuses.eva ?? 0),
-        crit: (base.crit ?? 5) + (bonuses.crit ?? 0),
-        critDmg: (base.critDmg ?? 150) + (bonuses.critDmg ?? 0),
-        resist: (base.resist ?? 10) + (bonuses.resist ?? 0),
-        speed: (base.speed ?? 10) + (bonuses.speed ?? 0),
+        maxStamina: base.maxStamina ?? 5,
+        str: (base.str ?? 12) + (bonuses.str ?? 0),
+        dex: (base.dex ?? 10) + (bonuses.dex ?? 0),
+        wit: (base.wit ?? 8) + (bonuses.wit ?? 0),
+        con: (base.con ?? 10) + (bonuses.con ?? 0),
+        per: (base.per ?? 7) + (bonuses.per ?? 0),
+        cha: (base.cha ?? 8) + (bonuses.cha ?? 0),
       };
     } else if (preset) {
+      const s = preset.stats as Record<string, number>;
       presetStats = {
-        maxHP: preset.stats.MaxHP,
-        maxStamina: preset.stats.MaxStamina,
-        atk: preset.stats.ATK,
-        def: preset.stats.DEF,
-        acc: preset.stats.ACC,
-        eva: preset.stats.EVA,
-        crit: preset.stats.CRIT,
-        critDmg: Math.round(preset.stats.CRIT_DMG * 100),
-        resist: preset.stats.RESIST,
-        speed: preset.stats.SPEED,
+        maxHP: s.MaxHP ?? s.maxHP ?? 100,
+        maxStamina: s.MaxStamina ?? s.maxStamina ?? 5,
+        str: s.str ?? s.ATK ?? 12,
+        dex: s.dex ?? s.EVA ?? 10,
+        wit: s.wit ?? s.ACC ?? 8,
+        con: s.con ?? s.DEF ?? 10,
+        per: s.per ?? 7,
+        cha: s.cha ?? s.SPEED ?? 8,
       };
     } else {
-      // fallback: 기본 스탯
-      presetStats = {
-        maxHP: 100, maxStamina: 80, atk: 10, def: 10, acc: 10,
-        eva: 10, crit: 5, critDmg: 150, resist: 10, speed: 10,
-      };
+      presetStats = { ...DEFAULT_PERMANENT_STATS };
     }
 
     let profile = await this.db.query.playerProfiles.findFirst({

@@ -1080,14 +1080,12 @@ export class CombatService {
     const defaultStats: PermanentStats = {
       maxHP: 100,
       maxStamina: 5,
-      atk: 10,
-      def: 10,
-      acc: 5,
-      eva: 3,
-      crit: 5,
-      critDmg: 150,
-      resist: 5,
-      speed: 5,
+      str: 10,
+      dex: 8,
+      wit: 6,
+      con: 10,
+      per: 6,
+      cha: 5,
     };
     const mods = this.statusService.getModifiers(statuses);
     return this.statsService.buildSnapshot(base ?? defaultStats, mods);

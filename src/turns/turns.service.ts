@@ -11,7 +11,7 @@ import {
   playerProfiles,
   runMemories,
 } from '../db/schema/index.js';
-import { DEFAULT_PERMANENT_STATS } from '../db/types/index.js';
+import { DEFAULT_PERMANENT_STATS, deriveCombatStats } from '../db/types/index.js';
 import type {
   BattleStateV1,
   ServerResultV1,
@@ -214,7 +214,7 @@ export class TurnsService {
     const profile = await this.db.query.playerProfiles.findFirst({
       where: eq(playerProfiles.userId, userId),
     });
-    const playerStats = profile?.permanentStats ?? DEFAULT_PERMANENT_STATS;
+    const playerStats = deriveCombatStats(profile?.permanentStats ?? DEFAULT_PERMANENT_STATS);
 
     const runState = run.runState ?? {
       gold: 0,
@@ -1538,10 +1538,15 @@ export class TurnsService {
       const enemyRef = e.id.replace(/_\d+$/, '');
       const def = this.content.getEnemy(enemyRef);
       if (def) {
+        const es = def.stats as Record<string, number>;
         enemyStats[e.id] = {
-          maxHP: def.hp, maxStamina: 5, atk: def.stats.ATK, def: def.stats.DEF,
-          acc: def.stats.ACC, eva: def.stats.EVA, crit: def.stats.CRIT,
-          critDmg: Math.round(def.stats.CRIT_DMG * 100), resist: def.stats.RESIST, speed: def.stats.SPEED,
+          maxHP: def.hp, maxStamina: 5,
+          str: es.str ?? es.ATK ?? 10,
+          dex: es.dex ?? es.EVA ?? 8,
+          wit: es.wit ?? es.ACC ?? 6,
+          con: es.con ?? es.DEF ?? 10,
+          per: es.per ?? 6,
+          cha: es.cha ?? es.SPEED ?? 5,
         };
         enemyNames[e.id] = def.name;
       }

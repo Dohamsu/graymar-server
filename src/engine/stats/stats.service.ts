@@ -1,7 +1,7 @@
 // 정본: specs/combat_resolve_engine_v1.md §2 — 스탯 파이프라인 (Priority 기반)
 
 import { Injectable } from '@nestjs/common';
-import type { PermanentStats } from '../../db/types/index.js';
+import { type PermanentStats, deriveCombatStats } from '../../db/types/index.js';
 import type { Angle } from '../../db/types/index.js';
 
 /** 스탯 스냅샷: 매 턴 계산되는 최종 전투 스탯 */
@@ -44,18 +44,20 @@ export class StatsService {
     base: PermanentStats,
     modifiers: StatModifier[],
   ): StatsSnapshot {
+    // 6개 기본 스탯에서 전투용 파생 스탯 계산
+    const derived = deriveCombatStats(base);
     // 초기 스냅샷 (기본 승수 = 1.0)
     const snap: StatsSnapshot = {
-      maxHP: base.maxHP,
-      maxStamina: base.maxStamina,
-      atk: base.atk,
-      def: base.def,
-      acc: base.acc,
-      eva: base.eva,
-      crit: base.crit,
-      critDmg: base.critDmg,
-      resist: base.resist,
-      speed: base.speed,
+      maxHP: derived.maxHP,
+      maxStamina: derived.maxStamina,
+      atk: derived.atk,
+      def: derived.def,
+      acc: derived.acc,
+      eva: derived.eva,
+      crit: derived.crit,
+      critDmg: derived.critDmg,
+      resist: derived.resist,
+      speed: derived.speed,
       damageMult: 1.0,
       hitMult: 1.0,
       takenDmgMult: 1.0,
