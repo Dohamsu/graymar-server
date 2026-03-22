@@ -240,8 +240,12 @@ const LOCATION_NAMES = [
   '항만', '부두', '항구', '선착장', '포구', '배터',
   // LOC_SLUMS
   '빈민가', '슬럼', '하층가', '빈민굴',
-  // HUB
-  '거점', '선술집', '숙소', '잠긴 닻',
+  // LOC_NOBLE
+  '귀족', '상류', '저택', '귀족가',
+  // LOC_TAVERN (기존 HUB 대체)
+  '선술집', '숙소', '잠긴 닻', '거점',
+  // LOC_DOCKS_WAREHOUSE
+  '창고', '창고구', '하역장',
 ];
 
 // "장소명 + 이 중 하나" → 이동 의도 (예: "항만 쪽으로", "시장에 가", "경비대로 향")
@@ -376,6 +380,7 @@ export class IntentParserV2Service {
     const target = this.extractTarget(normalizedInput);
     const intentTags = this.collectTags(normalizedInput, actionType);
     const confidence = actionType !== 'TALK' ? 1 : 0;
+    const specifiedGold = this.extractGoldAmount(normalizedInput);
 
     return {
       inputText,
@@ -390,6 +395,7 @@ export class IntentParserV2Service {
       suppressedActionType: escalated ? undefined : suppressedActionType,
       escalated,
       insistenceWarning,
+      specifiedGold,
     };
   }
 
@@ -503,6 +509,29 @@ export class IntentParserV2Service {
       // 일반적이지 않으므로 후방만 체크하면 충분
     }
     return false;
+  }
+
+  /**
+   * 입력 텍스트에서 골드 수치 추출 — "10골드", "50 금화", "20gold" 등
+   * 여러 개 매칭 시 첫 번째 값 사용. 1~999 범위만 유효.
+   */
+  private extractGoldAmount(input: string): number | undefined {
+    const patterns = [
+      /(\d+)\s*골드/,
+      /(\d+)\s*금화/,
+      /(\d+)\s*gold/i,
+      /(\d+)\s*g\b/,
+      /금화\s*(\d+)/,
+      /골드\s*(\d+)/,
+    ];
+    for (const pattern of patterns) {
+      const match = input.match(pattern);
+      if (match) {
+        const amount = parseInt(match[1], 10);
+        if (amount >= 1 && amount <= 999) return amount;
+      }
+    }
+    return undefined;
   }
 
   private collectTags(input: string, actionType: IntentActionType): string[] {

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import type {
   WorldState,
   TimePhaseV2,
@@ -7,6 +7,10 @@ import type {
 } from '../../db/types/index.js';
 import { IncidentManagementService } from './incident-management.service.js';
 import { SignalFeedService } from './signal-feed.service.js';
+import { NpcScheduleService } from './npc-schedule.service.js';
+import { LocationStateService } from './location-state.service.js';
+import { WorldFactService } from './world-fact.service.js';
+import { NpcAgendaService } from './npc-agenda.service.js';
 import type { Rng } from '../rng/rng.service.js';
 
 /**
@@ -28,6 +32,10 @@ export class WorldTickService {
   constructor(
     private readonly incidentMgmt: IncidentManagementService,
     private readonly signalFeed: SignalFeedService,
+    @Optional() private readonly npcSchedule?: NpcScheduleService,
+    @Optional() private readonly locationState?: LocationStateService,
+    @Optional() private readonly worldFact?: WorldFactService,
+    @Optional() private readonly npcAgenda?: NpcAgendaService,
   ) {}
 
   /**
@@ -151,6 +159,27 @@ export class WorldTickService {
       ...updated,
       signalFeed: this.signalFeed.expireSignals(updated.signalFeed, updated.globalClock),
     };
+
+    // --- Living World v2 tick ---
+    // NPC 위치 업데이트
+    if (this.npcSchedule) {
+      this.npcSchedule.updateAllNpcLocations(updated);
+    }
+
+    // 장소 조건 만료 체크
+    if (this.locationState) {
+      this.locationState.tickConditions(updated, updated.globalClock);
+    }
+
+    // 만료 fact 정리
+    if (this.worldFact) {
+      this.worldFact.pruneExpired(updated, updated.globalClock);
+    }
+
+    // NPC agenda 진행
+    if (this.npcAgenda) {
+      this.npcAgenda.tickAgendas(updated, updated.globalClock);
+    }
 
     return updated;
   }

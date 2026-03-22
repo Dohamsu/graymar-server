@@ -177,6 +177,30 @@ export class RunsService {
     const initialIncidents = this.incidentMgmt.initIncidents(incidentDefs, worldState, initRng);
     worldState.activeIncidents = initialIncidents;
 
+    // Living World v2: 장소 동적 상태 + NPC 위치 + WorldFacts + PlayerGoals 초기화
+    const allLocations = this.content.getAllLocations();
+    worldState.locationDynamicStates = {};
+    for (const loc of allLocations) {
+      const locDef = loc as Record<string, unknown>;
+      const baseState = locDef.baseState as { controllingFaction: string | null; security: number; prosperity: number; unrest: number } | undefined;
+      worldState.locationDynamicStates[loc.locationId] = {
+        locationId: loc.locationId,
+        controllingFaction: baseState?.controllingFaction ?? null,
+        controlStrength: 70,
+        security: baseState?.security ?? 50,
+        prosperity: baseState?.prosperity ?? 50,
+        unrest: baseState?.unrest ?? 20,
+        activeConditions: [],
+        presentNpcs: [],
+        recentEventIds: [],
+        playerVisitCount: 0,
+        lastVisitTurn: 0,
+      };
+    }
+    worldState.worldFacts = [];
+    worldState.npcLocations = {};
+    worldState.playerGoals = [];
+
     // Narrative Engine v1: NPC State 초기화
     const npcStates: Record<string, NPCState> = {};
     const allNpcs = this.content.getAllNpcs();

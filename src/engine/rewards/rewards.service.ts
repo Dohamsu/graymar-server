@@ -44,14 +44,15 @@ const LOCATION_DROP_TABLE: DropEntry[] = [
   { itemId: 'ITEM_STAMINA_TONIC', chance: 0.4, qtyMin: 1, qtyMax: 1 },
 ];
 
-/** 비보상 행위 (보상 없음) — 골드 소비 행위(BRIBE/TRADE)도 별도 비용 체계가 있으므로 제외 */
-const NON_REWARD_ACTIONS = new Set(['REST', 'SHOP', 'MOVE_LOCATION', 'BRIBE', 'TRADE']);
-
-/** 정보 수집 행위 (보상 없음) — 정보를 얻는 행위로 골드가 생기는 것은 서사적으로 부자연스러움 */
-const INFO_GATHERING_ACTIONS = new Set(['INVESTIGATE', 'PERSUADE', 'HELP']);
-
-/** 수동적 행위 (소액 골드만, 아이템 드랍 없음) — 관찰/대화로 물건을 얻지는 않음 */
-const PASSIVE_ACTIONS = new Set(['OBSERVE', 'TALK']);
+/**
+ * 골드 획득 행위 — 서사적으로 금품을 얻는 것이 논리적인 행동만 포함
+ * STEAL: 훔치기 (고위험/고보상)
+ * THREATEN: 협박으로 금품 요구
+ * FIGHT: 전투/강탈로 전리품
+ * SEARCH: 수색으로 숨긴 금품 발견
+ * HELP: 도움에 대한 감사 보답 (소액)
+ */
+const GOLD_ACTIONS = new Set(['STEAL', 'THREATEN', 'FIGHT', 'SEARCH', 'HELP']);
 
 export interface LocationRewardInput {
   outcome: ResolveOutcome;
@@ -108,16 +109,10 @@ export class RewardsService {
    * RNG 소비: EventMatcher(가중치) → Resolve(1d6) → LocationReward(골드+드랍)
    */
   calculateLocationRewards(input: LocationRewardInput): RewardResult {
-    const { outcome, eventType, actionType, rng } = input;
+    const { outcome, actionType, rng } = input;
 
-    // 비보상 행위: REST, SHOP, MOVE_LOCATION → 보상 없음
-    if (NON_REWARD_ACTIONS.has(actionType)) {
-      return { gold: 0, items: [], exp: 0 };
-    }
-
-    // 정보 수집 행위: INVESTIGATE, PERSUADE, HELP → 보상 없음
-    // 정보를 얻었다고 골드가 생기는 것은 서사적으로 부자연스러움
-    if (INFO_GATHERING_ACTIONS.has(actionType)) {
+    // 골드 획득 행위가 아니면 → 골드 0 (아이템 드랍도 없음)
+    if (!GOLD_ACTIONS.has(actionType)) {
       return { gold: 0, items: [], exp: 0 };
     }
 
@@ -129,51 +124,57 @@ export class RewardsService {
     const items: ItemStack[] = [];
     let gold = 0;
 
-    const isOpportunity = eventType === 'OPPORTUNITY';
+    switch (actionType) {
+      case 'STEAL':
+        // 훔치기: 고위험/고보상 + 아이템 드랍 기회
+        if (outcome === 'SUCCESS') {
+          gold = rng.range(5, 12);
+          if (rng.next() < 0.35) this.rollLocationDrop(rng, items);
+        } else {
+          gold = rng.range(2, 5);
+          if (rng.next() < 0.12) this.rollLocationDrop(rng, items);
+        }
+        break;
 
-    // 수동적 행위: 소액 골드만, 아이템 드랍 없음
-    if (PASSIVE_ACTIONS.has(actionType)) {
-      if (actionType === 'TALK') {
-        // TALK: 30% 확률로 1~2g
-        if (rng.next() < 0.3) {
-          gold = rng.range(1, 2);
+      case 'THREATEN':
+        // 협박: 금품 요구 — 아이템 없음 (현금만 뜯어냄)
+        if (outcome === 'SUCCESS') {
+          gold = rng.range(4, 10);
+        } else {
+          gold = rng.range(1, 4);
         }
-      } else {
-        // OBSERVE: 20% 확률로 1~2g (관찰로 발견한 소액)
-        if (rng.next() < 0.2) {
-          gold = rng.range(1, 2);
-        }
-      }
-      return { gold, items, exp: 0 };
-    }
+        break;
 
-    if (isOpportunity) {
-      if (outcome === 'SUCCESS') {
-        gold = rng.range(5, 12);
-        if (rng.next() < 0.35) {
-          this.rollLocationDrop(rng, items);
+      case 'FIGHT':
+        // 전투/강탈: 전리품 + 아이템 드랍
+        if (outcome === 'SUCCESS') {
+          gold = rng.range(3, 8);
+          if (rng.next() < 0.2) this.rollLocationDrop(rng, items);
+        } else {
+          gold = rng.range(1, 3);
+          if (rng.next() < 0.08) this.rollLocationDrop(rng, items);
         }
-      } else {
-        // PARTIAL
-        gold = rng.range(2, 5);
-        if (rng.next() < 0.12) {
-          this.rollLocationDrop(rng, items);
+        break;
+
+      case 'SEARCH':
+        // 수색: 숨겨진 금품 발견 + 아이템 드랍
+        if (outcome === 'SUCCESS') {
+          gold = rng.range(2, 6);
+          if (rng.next() < 0.25) this.rollLocationDrop(rng, items);
+        } else {
+          gold = rng.range(1, 3);
+          if (rng.next() < 0.1) this.rollLocationDrop(rng, items);
         }
-      }
-    } else {
-      // 일반 Challenge
-      if (outcome === 'SUCCESS') {
-        gold = rng.range(3, 8);
-        if (rng.next() < 0.2) {
-          this.rollLocationDrop(rng, items);
+        break;
+
+      case 'HELP':
+        // 도움 → 감사 보답: 소액, 아이템 없음
+        if (outcome === 'SUCCESS') {
+          gold = rng.range(1, 4);
+        } else {
+          gold = rng.next() < 0.5 ? 1 : 0;
         }
-      } else {
-        // PARTIAL
-        gold = rng.range(1, 3);
-        if (rng.next() < 0.08) {
-          this.rollLocationDrop(rng, items);
-        }
-      }
+        break;
     }
 
     return { gold, items, exp: 0 };

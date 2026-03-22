@@ -481,13 +481,15 @@ export class PromptBuilderService {
         introInstruction = `\n이 NPC는 아직 이름이 밝혀지지 않았습니다. "${alias}"으로만 지칭하세요.`;
       }
 
-      const npcDisplayName = (() => {
-        if (npc.introduced === false && !isNewlyIntroduced) {
-          const npcDef = npc.npcId ? this.content.getNpc(npc.npcId) : undefined;
-          return npcDef?.unknownAlias || '낯선 인물';
-        }
-        return npc.npcName;
-      })();
+      // NPC 표시 이름 결정: introduced=true인 경우만 실명, 나머지는 별칭
+      const npcDef = npc.npcId ? this.content.getNpc(npc.npcId) : undefined;
+      const alias = npcDef?.unknownAlias || '낯선 인물';
+      const npcDisplayName = npc.introduced === true ? npc.npcName : alias;
+
+      // isNewlyIntroduced인 경우: LLM에는 별칭으로 보여주되, 실명을 서술 중에 자연스럽게 밝히라는 지시 추가
+      const nameRevealHint = isNewlyIntroduced
+        ? `\n(LLM 내부 참고: 이 인물의 실명은 "${npc.npcName}"입니다. 서술 중에 자기소개나 상황 단서를 통해 자연스럽게 밝혀지도록 하세요. [NPC 등장] 블록의 별칭으로 시작하세요.)`
+        : '';
 
       factsParts.push(
         [
@@ -497,6 +499,7 @@ export class PromptBuilderService {
           `대화 시드: ${npc.dialogueSeed}`,
           '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.',
           introInstruction,
+          nameRevealHint,
         ].filter(Boolean).join('\n'),
       );
     }

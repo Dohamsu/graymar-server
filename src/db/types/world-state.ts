@@ -7,6 +7,9 @@ import type { SignalFeedItem } from './signal-feed.js';
 import type { NarrativeMark } from './narrative-mark.js';
 import type { MainArcClock } from './ending.js';
 import type { OperationSession } from './operation-session.js';
+import type { WorldFact } from './world-fact.js';
+import type { LocationDynamicState } from './location-state.js';
+import type { PlayerGoal } from './player-goal.js';
 
 export const TIME_PHASE = ['DAY', 'NIGHT'] as const;
 export type TimePhase = (typeof TIME_PHASE)[number];
@@ -79,4 +82,10 @@ export type WorldState = {
   playerThreads?: PlayerThread[];   // 플레이어 행동 패턴 스레드
   // PR7: Procedural Event 히스토리 (최대 15개)
   proceduralHistory?: import('./procedural-event.js').ProceduralHistoryEntry[];
+
+  // --- Living World v2 확장 ---
+  worldFacts?: WorldFact[];                         // 세계 사실 (최대 50개)
+  npcLocations?: Record<string, string>;            // npcId → locationId (현재 위치)
+  locationDynamicStates?: Record<string, LocationDynamicState>; // locationId → 동적 상태
+  playerGoals?: PlayerGoal[];                       // 플레이어 목표 (최대 5개)
 };
