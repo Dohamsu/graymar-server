@@ -257,13 +257,9 @@ export class TurnOrchestrationService {
 
     let seed = toneMap[posture] ?? '다가온다';
 
-    // personality 기반 접근 방식 세분화
+    // personality traits는 [NPC 대화 자세] 블록에서 첫 등장 시에만 전달
+    // dialogueSeed에서는 제거하여 LLM의 personality 직접 인용 반복 방지
     const npcDef = this.contentLoader.getNpc(state.npcId ?? '');
-    const personality = npcDef?.personality;
-    if (personality?.traits?.length) {
-      const trait = personality.traits[0]; // 첫 번째 특성을 접근 방식에 반영
-      seed += `. 특성: ${trait}`;
-    }
 
     if (state.currentGoal) {
       seed += `. 목적: ${state.currentGoal}`;

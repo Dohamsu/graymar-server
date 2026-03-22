@@ -569,13 +569,19 @@ export class PromptBuilderService {
               .replace(/\b\w/g, c => c.toUpperCase());
           }
 
-          // personality가 있으면 개인화된 가이드 생성
+          // personality: 첫 등장 시에만 traits 포함, 이후에는 posture+말투만
+          // 반복 방지: traits를 매 턴 보내면 LLM이 직접 인용하여 반복함
           const personality = npcDef?.personality;
           if (personality) {
-            const parts = [
-              `- ${displayName}: ${posture} — ${baseline}`,
-              `    성격 특성: ${personality.traits.join(' / ')}`,
-            ];
+            const sessionTurns = ctx.locationSessionTurns ?? [];
+            const isFirstAppearance = !sessionTurns.some(
+              (t) => t.narrative?.includes(displayName),
+            );
+
+            const parts = [`- ${displayName}: ${posture} — ${baseline}`];
+            if (isFirstAppearance && personality.traits?.length) {
+              parts.push(`    성격 특성: ${personality.traits.join(' / ')}`);
+            }
             if (personality.speechStyle) {
               parts.push(`    말투: ${personality.speechStyle}`);
             }
