@@ -402,6 +402,8 @@ export class TurnsService {
             hubSafety: ws.hubSafety,
             timePhase: ws.timePhase,
             currentLocationId: null,
+            locationDynamicStates: ws.locationDynamicStates ?? {},
+            playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
           },
         },
         choices: hubChoices,
@@ -1767,7 +1769,7 @@ export class TurnsService {
       ui: {
         availableActions: ['CHOICE'], targetLabels: [],
         actionSlots: { base: 2, bonusAvailable: false, max: 3 }, toneHint: 'neutral',
-        worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: null },
+        worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: null, locationDynamicStates: ws.locationDynamicStates ?? {}, playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed) },
       },
       choices,
     };
@@ -2044,7 +2046,7 @@ export class TurnsService {
         availableActions: ['ACTION', 'CHOICE'], targetLabels: [],
         actionSlots: { base: 2, bonusAvailable: false, max: 3 },
         toneHint: outcome === 'FAIL' ? 'danger' : outcome === 'SUCCESS' ? 'triumph' : 'neutral',
-        worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: ws.currentLocationId },
+        worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: ws.currentLocationId, locationDynamicStates: ws.locationDynamicStates ?? {}, playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed) },
         // 비도전 행위는 주사위 UI를 표시하지 않음
         ...(hideResolve ? {} : { resolveOutcome: outcome as any }),
         ...(resolveBreakdown ? { resolveBreakdown } : {}),

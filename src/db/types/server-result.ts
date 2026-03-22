@@ -103,6 +103,8 @@ export type WorldStateUI = {
   hubSafety: string;
   timePhase: string;
   currentLocationId: string | null;
+  locationDynamicStates?: Record<string, unknown>;
+  playerGoals?: Array<{ id: string; type: string; description: string; progress: number; completed: boolean; milestones: Array<{ description: string; completed: boolean }>; relatedNpcs: string[]; relatedLocations: string[] }>;
 };
 
 export type ActionContext = {
