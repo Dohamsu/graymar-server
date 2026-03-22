@@ -391,9 +391,15 @@ export class ContextBuilderService {
             if (em.attachment > 30) hints.push('당신에게 개인적 유대를 느끼고 있다');
 
             // personality 기반 행동 힌트 (핵심: posture와 personality 조합)
+            // personality.core는 첫 등장 시에만 전달 (반복 인용 방지)
             const behaviorParts: string[] = [];
             if (personality) {
-              behaviorParts.push(personality.core);
+              const isNpcFirstInSession = !(locationSessionTurns ?? []).some(
+                (t: { narrative?: string }) => t.narrative?.includes(displayName),
+              );
+              if (isNpcFirstInSession && personality.core) {
+                behaviorParts.push(personality.core);
+              }
               if (personality.speechStyle) behaviorParts.push(`말투: ${personality.speechStyle}`);
               // innerConflict는 trust > 15 또는 respect > 20일 때만 노출 (경계가 풀려야 내면이 보인다)
               if (personality.innerConflict && (em.trust > 15 || em.respect > 20)) {
