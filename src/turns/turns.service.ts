@@ -76,6 +76,7 @@ import { EventDirectorService } from '../engine/hub/event-director.service.js';
 import { ProceduralEventService } from '../engine/hub/procedural-event.service.js';
 import { SituationGeneratorService } from '../engine/hub/situation-generator.service.js';
 import { ConsequenceProcessorService } from '../engine/hub/consequence-processor.service.js';
+import { PlayerGoalService } from '../engine/hub/player-goal.service.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
 import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders } from '../db/types/npc-state.js';
@@ -143,6 +144,7 @@ export class TurnsService {
     // Living World v2
     @Optional() private readonly situationGenerator?: SituationGeneratorService,
     @Optional() private readonly consequenceProcessor?: ConsequenceProcessorService,
+    @Optional() private readonly playerGoalService?: PlayerGoalService,
   ) {}
 
   /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
@@ -659,13 +661,17 @@ export class TurnsService {
         .filter((h) => h.eventId)
         .map((h) => h.eventId!);
 
-      // Living World v2: SituationGenerator 우선 시도
+      // Living World v2: SituationGenerator 우선 시도 (에러 시 기존 EventMatcher fallback)
       if (this.situationGenerator) {
-        const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
-        const situation = this.situationGenerator.generate(ws, locationId, intent, allEvents, incidentDefs);
-        if (situation) {
-          matchedEvent = situation.eventDef;
-          this.logger.debug(`[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`);
+        try {
+          const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
+          const situation = this.situationGenerator.generate(ws, locationId, intent, allEvents, incidentDefs);
+          if (situation) {
+            matchedEvent = situation.eventDef;
+            this.logger.debug(`[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`);
+          }
+        } catch (err) {
+          this.logger.warn(`[SituationGenerator] error, falling back to EventMatcher: ${err}`);
         }
       }
 
@@ -736,17 +742,51 @@ export class TurnsService {
 
     // Living World v2: 판정 결과 → WorldFact 생성 + LocationState 변경 + NPC 목격
     if (this.consequenceProcessor) {
-      const consequenceOutput = this.consequenceProcessor.process(ws, {
-        resolveResult,
-        intent,
-        event: matchedEvent,
-        locationId,
-        turnNo,
-        day: ws.day,
-        primaryNpcId: matchedEvent.payload.primaryNpcId,
-      });
-      if (consequenceOutput.factsCreated.length > 0) {
-        this.logger.debug(`[ConsequenceProcessor] facts=${consequenceOutput.factsCreated.length} locEffects=${consequenceOutput.locationEffects.length} witnesses=${consequenceOutput.npcWitnesses.length}`);
+      try {
+        const consequenceOutput = this.consequenceProcessor.process(ws, {
+          resolveResult,
+          intent,
+          event: matchedEvent,
+          locationId,
+          turnNo,
+          day: ws.day,
+          primaryNpcId: matchedEvent.payload.primaryNpcId,
+        });
+        if (consequenceOutput.factsCreated.length > 0) {
+          this.logger.debug(`[ConsequenceProcessor] facts=${consequenceOutput.factsCreated.length} locEffects=${consequenceOutput.locationEffects.length} witnesses=${consequenceOutput.npcWitnesses.length}`);
+        }
+      } catch (err) {
+        this.logger.warn(`[ConsequenceProcessor] error (non-fatal): ${err}`);
+      }
+    }
+
+    // Living World v2: PlayerGoal 진행도 체크 + 암시적 목표 감지
+    if (this.playerGoalService) {
+      try {
+        const milestoneResults = this.playerGoalService.checkMilestones(ws);
+        if (milestoneResults.length > 0) {
+          this.logger.debug(`[PlayerGoal] milestones: ${milestoneResults.length} advanced`);
+        }
+
+        if (turnNo % 5 === 0 && actionHistory.length >= 3) {
+          const actionCounts = new Map<string, number>();
+          for (const h of actionHistory) {
+            const at = (h as Record<string, unknown>).actionType as string;
+            if (at) actionCounts.set(at, (actionCounts.get(at) ?? 0) + 1);
+          }
+          const patterns = [...actionCounts.entries()]
+            .filter(([, count]) => count >= 3)
+            .map(([action, count]) => ({
+              pattern: action.toLowerCase(),
+              count,
+              relatedLocations: [locationId],
+            }));
+          if (patterns.length > 0) {
+            this.playerGoalService.detectImplicitGoals(ws, patterns, turnNo, ws.day);
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`[PlayerGoal] error (non-fatal): ${err}`);
       }
     }
 

@@ -178,6 +178,7 @@ export type NpcDefinition = {
   // Living World v2
   tier?: NpcTier;              // 기본값: 'SUB'
   schedule?: import('../db/types/npc-schedule.js').NpcSchedule;
+  longTermAgenda?: import('../db/types/npc-schedule.js').NpcAgenda;
 };
 
 export type SetDefinitionData = {

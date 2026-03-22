@@ -139,9 +139,7 @@ export class NpcAgendaService {
   private getAgendaFromContent(npcId: string): NpcAgenda | undefined {
     const npcDef = this.content.getNpc(npcId);
     if (!npcDef) return undefined;
-    // agenda 데이터는 NPC 정의에서 직접 읽거나, 별도 콘텐츠에서 로드
-    // 현재는 npcDef에 longTermAgenda가 있다고 가정
-    return (npcDef as Record<string, unknown>)['longTermAgenda'] as NpcAgenda | undefined;
+    return npcDef.longTermAgenda;
   }
 
   private getNpcCurrentLocation(ws: WorldState, npcId: string): string {
