@@ -103,6 +103,16 @@ export class EndingGeneratorService {
     // User-Driven System v3: consequence footprint
     const consequenceFootprint = this.computeConsequenceFootprint(activeIncidents);
 
+    // Living World v2: WorldFacts + PlayerGoals 추출
+    const worldFacts = ((worldState.worldFacts as Array<{ text: string; category: string; permanent: boolean }>) ?? [])
+      .filter((f) => f.permanent)
+      .map((f) => f.text);
+    const playerGoals = ((worldState.playerGoals as Array<{ description: string; progress: number; completed: boolean }>) ?? [])
+      .map((g) => ({ description: g.description, progress: g.progress, completed: g.completed }));
+    const locationChanges = Object.entries((worldState.locationDynamicStates ?? {}) as Record<string, { locationId: string; security: number; unrest: number; activeConditions: Array<{ id: string }> }>)
+      .filter(([, s]) => s.activeConditions?.length > 0 || s.security < 30 || s.unrest > 60)
+      .map(([locId, s]) => ({ locationId: locId, security: s.security, unrest: s.unrest, conditions: s.activeConditions?.map((c) => c.id) ?? [] }));
+
     return {
       incidentOutcomes,
       npcEpilogues,
@@ -116,6 +126,10 @@ export class EndingGeneratorService {
       dominantVectors,
       playerThreads: playerThreads ?? [],
       consequenceFootprint,
+      // Living World v2
+      worldFacts,
+      playerGoals,
+      locationChanges,
     };
   }
 

@@ -50,6 +50,10 @@ export type EndingInput = {
     totalPlayerProgress: number;            // 누적 playerProgress
     totalRivalProgress: number;             // 누적 rivalProgress
   };
+  // Living World v2
+  worldFacts?: string[];                    // 영구 사실 텍스트 목록
+  playerGoals?: Array<{ description: string; progress: number; completed: boolean }>;
+  locationChanges?: Array<{ locationId: string; security: number; unrest: number; conditions: string[] }>;
 };
 
 // --- Ending Result ---

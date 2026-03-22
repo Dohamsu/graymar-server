@@ -172,21 +172,40 @@ export class SituationGeneratorService {
     // 상호작용 대상은 CORE + SUB만 (BACKGROUND는 배경)
     const interactableNpcs = [...coreNpcs, ...subNpcs];
 
-    // 우선순위 1: NPC_CONFLICT (CORE/SUB NPC 간 적대 쌍)
+    // 우선순위 1: NPC_CONFLICT (CORE/SUB NPC 간 적대 쌍) — 항상 우선
     const conflict = this.detectNpcConflict(ws, interactableNpcs, locationId, allEvents);
     if (conflict) return conflict;
 
-    // 우선순위 2: CONSEQUENCE (이전 행동의 결과, CORE/SUB만)
-    const consequence = this.detectConsequence(ws, locationId, interactableNpcs, recentFacts, allEvents);
-    if (consequence) return consequence;
+    // 우선순위 2~4: 다양성을 위해 턴 번호 기반 로테이션
+    // 매 턴 같은 CONSEQUENCE만 나오는 것을 방지
+    const turnMod = ws.globalClock % 3;
 
-    // 우선순위 3: ENVIRONMENTAL (장소 조건 기반)
+    if (turnMod === 0) {
+      // CONSEQUENCE 우선
+      const consequence = this.detectConsequence(ws, locationId, interactableNpcs, recentFacts, allEvents);
+      if (consequence) return consequence;
+    }
+
+    // ENVIRONMENTAL (장소 조건 기반)
     if (conditions.length > 0) {
       const envSituation = this.buildEnvironmentalSituation(ws, locationId, conditions, allEvents);
       if (envSituation) return envSituation;
     }
 
-    // 우선순위 4: NPC_ACTIVITY (CORE 우선, 없으면 SUB)
+    // NPC_ACTIVITY (CORE 우선, 없으면 SUB)
+    if (interactableNpcs.length > 0 && turnMod !== 2) {
+      const primaryNpcs = coreNpcs.length > 0 ? coreNpcs : subNpcs;
+      const activity = this.buildNpcActivitySituation(ws, locationId, primaryNpcs, allEvents, bgNpcs);
+      if (activity) return activity;
+    }
+
+    // turnMod 1,2에서 CONSEQUENCE fallback
+    if (turnMod !== 0) {
+      const consequence = this.detectConsequence(ws, locationId, interactableNpcs, recentFacts, allEvents);
+      if (consequence) return consequence;
+    }
+
+    // 마지막: NPC_ACTIVITY fallback
     if (interactableNpcs.length > 0) {
       const primaryNpcs = coreNpcs.length > 0 ? coreNpcs : subNpcs;
       const activity = this.buildNpcActivitySituation(ws, locationId, primaryNpcs, allEvents, bgNpcs);
