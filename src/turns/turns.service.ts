@@ -1891,6 +1891,8 @@ export class TurnsService {
     const locationNames: Record<string, string> = {
       LOC_MARKET: '시장 거리', LOC_GUARD: '경비대 지구',
       LOC_HARBOR: '항만 부두', LOC_SLUMS: '빈민가',
+      LOC_NOBLE: '상류 거리', LOC_TAVERN: '잠긴 닻 선술집',
+      LOC_DOCKS_WAREHOUSE: '항만 창고구',
     };
     const toName = locationNames[toLocationId] ?? toLocationId;
     const moveResult = this.buildSystemResult(turnNo, currentNode, `${toName}(으)로 향한다.`);
@@ -1986,9 +1988,9 @@ export class TurnsService {
       },
       {
         keywords: [
-          '거점',
+          '거점', '본거지', '돌아가',
         ],
-        locationId: 'HUB',
+        locationId: 'LOC_TAVERN',
       },
     ];
     for (const entry of locationKeywords) {
