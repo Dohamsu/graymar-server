@@ -667,7 +667,10 @@ export class TurnsService {
       if (this.situationGenerator) {
         try {
           const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
-          const situation = this.situationGenerator.generate(ws, locationId, intent, allEvents, incidentDefs);
+          const recentPrimaryNpcIds = actionHistory
+            .filter((h) => (h as Record<string, unknown>).primaryNpcId)
+            .map((h) => (h as Record<string, unknown>).primaryNpcId as string);
+          const situation = this.situationGenerator.generate(ws, locationId, intent, allEvents, incidentDefs, recentPrimaryNpcIds);
           if (situation) {
             matchedEvent = situation.eventDef;
             this.logger.debug(`[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`);

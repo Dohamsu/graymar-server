@@ -54,6 +54,7 @@ export class SituationGeneratorService {
     intent: ParsedIntentV2,
     allEvents: EventDefV2[],
     incidentDefs: IncidentDef[],
+    recentPrimaryNpcIds?: string[],
   ): Situation | null {
     // Layer 1: Landmark Event (스토리 체크포인트)
     const landmark = this.tryLandmark(ws, locationId, allEvents);
@@ -64,7 +65,7 @@ export class SituationGeneratorService {
     if (incident) return incident;
 
     // Layer 3: World-State Situation (완전 동적)
-    const worldState = this.tryWorldState(ws, locationId, intent, allEvents);
+    const worldState = this.tryWorldState(ws, locationId, intent, allEvents, recentPrimaryNpcIds);
     if (worldState) return worldState;
 
     return null; // fallback to EventMatcher
@@ -161,6 +162,7 @@ export class SituationGeneratorService {
     locationId: string,
     intent: ParsedIntentV2,
     allEvents: EventDefV2[],
+    recentPrimaryNpcIds?: string[],
   ): Situation | null {
     const locState = ws.locationDynamicStates?.[locationId];
     const allPresentNpcs = locState?.presentNpcs ?? [];
@@ -170,7 +172,11 @@ export class SituationGeneratorService {
     // NPC를 tier별로 분류 (CORE > SUB > BACKGROUND)
     const { coreNpcs, subNpcs, bgNpcs } = this.classifyNpcsByTier(allPresentNpcs);
     // 상호작용 대상은 CORE + SUB만 (BACKGROUND는 배경)
-    const interactableNpcs = [...coreNpcs, ...subNpcs];
+    // 같은 NPC 연속 3턴 방지: 최근 사용된 NPC를 뒤로 밀기
+    const recentNpcs = new Set(recentPrimaryNpcIds?.slice(-2) ?? []);
+    const sortByRecency = (npcs: string[]) =>
+      [...npcs].sort((a, b) => (recentNpcs.has(a) ? 1 : 0) - (recentNpcs.has(b) ? 1 : 0));
+    const interactableNpcs = sortByRecency([...coreNpcs, ...subNpcs]);
 
     // 우선순위 1: NPC_CONFLICT (CORE/SUB NPC 간 적대 쌍) — 항상 우선
     const conflict = this.detectNpcConflict(ws, interactableNpcs, locationId, allEvents);
