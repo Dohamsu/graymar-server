@@ -198,7 +198,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
         // 4-a-0b. [MEMORY:NPC_KNOWLEDGE:NPC_ID] 파싱 → npcKnowledge 저장
         const npcKnowledgeMatches = [...narrative.matchAll(
-          /\[MEMORY:NPC_KNOWLEDGE:(\w+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
+          /\[MEMORY:NPC_KNOWLEDGE:([^\]]+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
         )];
         if (npcKnowledgeMatches.length > 0) {
           try {

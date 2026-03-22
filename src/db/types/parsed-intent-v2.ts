@@ -41,4 +41,5 @@ export type ParsedIntentV2 = {
   suppressedActionType?: IntentActionType; // 키워드 매칭되었으나 우선순위에 밀린 actionType
   escalated?: boolean; // 고집 에스컬레이션으로 승격된 경우 true
   insistenceWarning?: boolean; // 2회째 반복 — 다음에 에스컬레이션 예고
+  specifiedGold?: number; // 플레이어가 명시한 골드 수치 (예: "10골드를 건넨다" → 10)
 };

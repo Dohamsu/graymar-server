@@ -1,6 +1,6 @@
 // 정본: specs/HUB_system.md — Action-First 턴 파이프라인
 
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { and, asc, eq, ne } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import {
@@ -74,6 +74,8 @@ import { MemoryIntegrationService } from '../engine/hub/memory-integration.servi
 // Event Director + Procedural Event (설계문서 19, 20)
 import { EventDirectorService } from '../engine/hub/event-director.service.js';
 import { ProceduralEventService } from '../engine/hub/procedural-event.service.js';
+import { SituationGeneratorService } from '../engine/hub/situation-generator.service.js';
+import { ConsequenceProcessorService } from '../engine/hub/consequence-processor.service.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
 import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders } from '../db/types/npc-state.js';
@@ -138,6 +140,9 @@ export class TurnsService {
     private readonly proceduralEvent: ProceduralEventService,
     // Campaign system
     private readonly campaignsService: CampaignsService,
+    // Living World v2
+    @Optional() private readonly situationGenerator?: SituationGeneratorService,
+    @Optional() private readonly consequenceProcessor?: ConsequenceProcessorService,
   ) {}
 
   /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
@@ -654,24 +659,40 @@ export class TurnsService {
         .filter((h) => h.eventId)
         .map((h) => h.eventId!);
 
-      // NPC 연속성 컨텍스트 구축 (Phase 1: Context Coherence)
-      const lastEntry = actionHistory[actionHistory.length - 1] as Record<string, unknown> | undefined;
-      const sessionNpcContext = {
-        lastPrimaryNpcId: (lastEntry?.primaryNpcId as string) ?? null,
-        sessionTurnCount: actionHistory.length,
-        interactedNpcIds: [...new Set(
-          (actionHistory as Array<Record<string, unknown>>)
-            .filter(a => a.primaryNpcId)
-            .map(a => a.primaryNpcId as string),
-        )],
-      };
+      // Living World v2: SituationGenerator 우선 시도
+      if (this.situationGenerator) {
+        const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
+        const situation = this.situationGenerator.generate(ws, locationId, intent, allEvents, incidentDefs);
+        if (situation) {
+          matchedEvent = situation.eventDef;
+          this.logger.debug(`[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`);
+        }
+      }
 
-      // PR5: EventDirector로 교체 (기존 EventMatcher를 내부적으로 위임)
-      // IntentV3 전달: 목표(goalCategory)/접근방식(approachVector) 기반 이벤트 가중치 부스트
-      const directorResult = this.eventDirector.select(
-        allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds, routingResult, sessionNpcContext, intentV3,
-      );
-      matchedEvent = directorResult.selectedEvent;
+      // Living World v2: SituationGenerator가 이벤트를 잡았으면 기존 매칭 건너뜀
+      if (!matchedEvent) {
+        // NPC 연속성 컨텍스트 구축 (Phase 1: Context Coherence)
+        const lastEntry = actionHistory[actionHistory.length - 1] as Record<string, unknown> | undefined;
+        const sessionNpcContext = {
+          lastPrimaryNpcId: (lastEntry?.primaryNpcId as string) ?? null,
+          sessionTurnCount: actionHistory.length,
+          interactedNpcIds: [...new Set(
+            (actionHistory as Array<Record<string, unknown>>)
+              .filter(a => a.primaryNpcId)
+              .map(a => a.primaryNpcId as string),
+          )],
+        };
+
+        // PR5: EventDirector로 교체 (기존 EventMatcher를 내부적으로 위임)
+        const directorResult = this.eventDirector.select(
+          allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds, routingResult, sessionNpcContext, intentV3,
+        );
+        matchedEvent = directorResult.selectedEvent;
+
+        if (directorResult.filterLog.length > 0) {
+          this.logger.debug(`[EventDirector] ${directorResult.filterLog.join(', ')}`);
+        }
+      }
 
       // PR7: 고정 이벤트 실패 또는 FALLBACK → 절차적 이벤트 시도
       if (!matchedEvent || matchedEvent.eventType === 'FALLBACK') {
@@ -688,9 +709,6 @@ export class TurnsService {
         }
       }
 
-      if (directorResult.filterLog.length > 0) {
-        this.logger.debug(`[EventDirector] ${directorResult.filterLog.join(', ')}`);
-      }
     }
 
     if (!matchedEvent) {
@@ -715,6 +733,22 @@ export class TurnsService {
     this.logger.log(
       `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${matchedEvent.eventId} heat=${resolveResult.heatDelta}`,
     );
+
+    // Living World v2: 판정 결과 → WorldFact 생성 + LocationState 변경 + NPC 목격
+    if (this.consequenceProcessor) {
+      const consequenceOutput = this.consequenceProcessor.process(ws, {
+        resolveResult,
+        intent,
+        event: matchedEvent,
+        locationId,
+        turnNo,
+        day: ws.day,
+        primaryNpcId: matchedEvent.payload.primaryNpcId,
+      });
+      if (consequenceOutput.factsCreated.length > 0) {
+        this.logger.debug(`[ConsequenceProcessor] facts=${consequenceOutput.factsCreated.length} locEffects=${consequenceOutput.locationEffects.length} witnesses=${consequenceOutput.npcWitnesses.length}`);
+      }
+    }
 
     // 전투 트리거?
     if (resolveResult.triggerCombat && resolveResult.combatEncounterId) {
@@ -1884,7 +1918,28 @@ export class TurnsService {
       },
       {
         keywords: [
-          '거점', '선술집', '숙소', '잠긴 닻',
+          '귀족', '상류', '저택', '귀족가', '귀족 거리', '정원',
+          '의회', '노블',
+        ],
+        locationId: 'LOC_NOBLE',
+      },
+      {
+        keywords: [
+          '선술집', '잠긴 닻', '숙소', '주점', '술집',
+          '거점',
+        ],
+        locationId: 'LOC_TAVERN',
+      },
+      {
+        keywords: [
+          '창고', '창고구', '창고 지구', '물류', '하역장',
+          '화물 창고',
+        ],
+        locationId: 'LOC_DOCKS_WAREHOUSE',
+      },
+      {
+        keywords: [
+          '거점',
         ],
         locationId: 'HUB',
       },

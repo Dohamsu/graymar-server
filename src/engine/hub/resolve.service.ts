@@ -36,12 +36,29 @@ const ACTION_STAT_MAP: Record<string, keyof PermanentStats> = {
 
 @Injectable()
 export class ResolveService {
-  // BRIBE/TRADE 골드 비용: 기본 5, PARTIAL이면 3, FAIL이면 0 (돌려받음)
-  private computeGoldCost(actionType: string, outcome: string): number {
+  /**
+   * BRIBE/TRADE 골드 비용 계산
+   * - specifiedGold가 있으면 플레이어가 명시한 수치 사용
+   * - 없으면 기본값 (SUCCESS: 5, PARTIAL: 3)
+   * - FAIL: 거래 불성사 → 비용 0
+   */
+  private computeGoldCost(
+    actionType: string,
+    outcome: string,
+    specifiedGold?: number,
+  ): number {
     if (actionType !== 'BRIBE' && actionType !== 'TRADE') return 0;
+    if (outcome === 'FAIL') return 0; // 거래 성사 안됨 → 비용 없음
+
+    if (specifiedGold != null && specifiedGold > 0) {
+      // 플레이어 명시 금액: SUCCESS면 전액, PARTIAL이면 60% (흥정 실패)
+      if (outcome === 'SUCCESS') return -specifiedGold;
+      return -Math.ceil(specifiedGold * 0.6);
+    }
+
+    // 기본값
     if (outcome === 'SUCCESS') return -5;
-    if (outcome === 'PARTIAL') return -3;
-    return 0; // FAIL: 비용 없음 (거래 성사 안됨)
+    return -3; // PARTIAL
   }
 
   resolve(
@@ -159,7 +176,7 @@ export class ResolveService {
       heatDelta,
       tensionDelta: outcome === 'FAIL' ? 1 : 0,
       influenceDelta: outcome === 'SUCCESS' ? 1 : 0,
-      goldDelta: this.computeGoldCost(intent.actionType, outcome),
+      goldDelta: this.computeGoldCost(intent.actionType, outcome, intent.specifiedGold),
       relationChanges,
       reputationChanges,
       flagsSet: outcome === 'SUCCESS' ? event.payload.tags.filter((t) => t.startsWith('flag_')) : [],

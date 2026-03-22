@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ContentModule } from '../../content/content.module.js';
 import { WorldStateService } from './world-state.service.js';
 import { HeatService } from './heat.service.js';
 import { EventMatcherService } from './event-matcher.service.js';
@@ -33,6 +34,14 @@ import { EventDirectorService } from './event-director.service.js';
 import { ProceduralEventService } from './procedural-event.service.js';
 // Intent Memory (설계문서 18)
 import { IntentMemoryService } from './intent-memory.service.js';
+// Living World v2
+import { LocationStateService } from './location-state.service.js';
+import { WorldFactService } from './world-fact.service.js';
+import { NpcScheduleService } from './npc-schedule.service.js';
+import { NpcAgendaService } from './npc-agenda.service.js';
+import { ConsequenceProcessorService } from './consequence-processor.service.js';
+import { SituationGeneratorService } from './situation-generator.service.js';
+import { PlayerGoalService } from './player-goal.service.js';
 
 const providers = [
   WorldStateService,
@@ -69,9 +78,18 @@ const providers = [
   ProceduralEventService,
   // Intent Memory (설계문서 18)
   IntentMemoryService,
+  // Living World v2
+  LocationStateService,
+  WorldFactService,
+  NpcScheduleService,
+  NpcAgendaService,
+  ConsequenceProcessorService,
+  SituationGeneratorService,
+  PlayerGoalService,
 ];
 
 @Module({
+  imports: [ContentModule],
   providers,
   exports: providers,
 })

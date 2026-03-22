@@ -226,10 +226,41 @@ export class ContextBuilderService {
     if (runState) {
       const ws = runState.worldState as Record<string, unknown> | undefined;
       if (ws) {
-        worldSnapshot = `시간: ${ws.timePhase === 'NIGHT' ? '밤' : '낮'}, 경계도: ${ws.hubHeat}/100 (${ws.hubSafety}), 긴장도: ${ws.tension ?? 0}/10`;
+        const snapshotParts = [
+          `시간: ${ws.timePhase === 'NIGHT' ? '밤' : '낮'}, 경계도: ${ws.hubHeat}/100 (${ws.hubSafety}), 긴장도: ${ws.tension ?? 0}/10`,
+        ];
         if (ws.currentLocationId) {
           locationContext = `현재 위치: ${ws.currentLocationId}`;
+
+          // Living World v2: 장소에 있는 NPC 목록
+          const locDynamic = (ws as Record<string, unknown>).locationDynamicStates as Record<string, { presentNpcs?: string[] }> | undefined;
+          const presentNpcs = locDynamic?.[ws.currentLocationId as string]?.presentNpcs;
+          if (presentNpcs && presentNpcs.length > 0) {
+            const npcNames = presentNpcs.map((id: string) => {
+              const npcDef = this.content.getNpc(id);
+              return npcDef?.name ?? id;
+            });
+            locationContext += ` (이 장소에 있는 인물: ${npcNames.join(', ')})`;
+          }
         }
+
+        // Living World v2: 최근 WorldFacts 요약
+        const worldFacts = (ws as Record<string, unknown>).worldFacts as Array<{ text: string }> | undefined;
+        if (worldFacts && worldFacts.length > 0) {
+          const recentFacts = worldFacts.slice(-5).map((f) => f.text);
+          snapshotParts.push(`최근 사실: ${recentFacts.join('; ')}`);
+        }
+
+        // Living World v2: 활성 목표
+        const playerGoals = (runState.playerGoals ?? (runState as Record<string, unknown>).playerGoals) as Array<{ description: string; completed: boolean; progress: number }> | undefined;
+        if (playerGoals) {
+          const activeGoals = playerGoals.filter((g) => !g.completed);
+          if (activeGoals.length > 0) {
+            snapshotParts.push(`플레이어 목표: ${activeGoals.map((g) => `${g.description} (${g.progress}%)`).join('; ')}`);
+          }
+        }
+
+        worldSnapshot = snapshotParts.join('\n');
       }
 
       const agenda = runState.agenda as Record<string, unknown> | undefined;

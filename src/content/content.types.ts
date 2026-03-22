@@ -172,6 +172,8 @@ export type NpcDefinition = {
   initialTrust?: number;
   agenda?: string;
   personality?: NpcPersonality;
+  // Living World v2: NPC 일정
+  schedule?: import('../db/types/npc-schedule.js').NpcSchedule;
 };
 
 export type SetDefinitionData = {
