@@ -163,16 +163,21 @@ export class SituationGeneratorService {
     allEvents: EventDefV2[],
   ): Situation | null {
     const locState = ws.locationDynamicStates?.[locationId];
-    const presentNpcs = locState?.presentNpcs ?? [];
+    const allPresentNpcs = locState?.presentNpcs ?? [];
     const conditions = locState?.activeConditions ?? [];
     const recentFacts = this.worldFact.findByLocation(ws, locationId);
 
-    // 우선순위 1: NPC_CONFLICT (같은 장소에 적대 NPC 쌍)
-    const conflict = this.detectNpcConflict(ws, presentNpcs, locationId, allEvents);
+    // NPC를 tier별로 분류 (CORE > SUB > BACKGROUND)
+    const { coreNpcs, subNpcs, bgNpcs } = this.classifyNpcsByTier(allPresentNpcs);
+    // 상호작용 대상은 CORE + SUB만 (BACKGROUND는 배경)
+    const interactableNpcs = [...coreNpcs, ...subNpcs];
+
+    // 우선순위 1: NPC_CONFLICT (CORE/SUB NPC 간 적대 쌍)
+    const conflict = this.detectNpcConflict(ws, interactableNpcs, locationId, allEvents);
     if (conflict) return conflict;
 
-    // 우선순위 2: CONSEQUENCE (이전 행동의 결과)
-    const consequence = this.detectConsequence(ws, locationId, presentNpcs, recentFacts, allEvents);
+    // 우선순위 2: CONSEQUENCE (이전 행동의 결과, CORE/SUB만)
+    const consequence = this.detectConsequence(ws, locationId, interactableNpcs, recentFacts, allEvents);
     if (consequence) return consequence;
 
     // 우선순위 3: ENVIRONMENTAL (장소 조건 기반)
@@ -181,9 +186,10 @@ export class SituationGeneratorService {
       if (envSituation) return envSituation;
     }
 
-    // 우선순위 4: NPC_ACTIVITY (NPC 일상 활동)
-    if (presentNpcs.length > 0) {
-      const activity = this.buildNpcActivitySituation(ws, locationId, presentNpcs, allEvents);
+    // 우선순위 4: NPC_ACTIVITY (CORE 우선, 없으면 SUB)
+    if (interactableNpcs.length > 0) {
+      const primaryNpcs = coreNpcs.length > 0 ? coreNpcs : subNpcs;
+      const activity = this.buildNpcActivitySituation(ws, locationId, primaryNpcs, allEvents, bgNpcs);
       if (activity) return activity;
     }
 
@@ -318,11 +324,12 @@ export class SituationGeneratorService {
   private buildNpcActivitySituation(
     ws: WorldState,
     locationId: string,
-    presentNpcs: string[],
+    primaryNpcs: string[],
     allEvents: EventDefV2[],
+    bgNpcs: string[] = [],
   ): Situation | null {
-    // 첫 번째 interactable NPC의 활동 기반 상황
-    const npcId = presentNpcs[0];
+    // 첫 번째 CORE/SUB NPC의 활동 기반 상황
+    const npcId = primaryNpcs[0];
     const npcDef = this.content.getNpc(npcId);
     if (!npcDef) return null;
 
@@ -335,9 +342,18 @@ export class SituationGeneratorService {
     );
     if (!template) return null;
 
-    const sceneFrame = `${npcDef.name}이(가) ${currentActivity}. 말을 걸 수 있을 것 같다.`;
+    // 배경 NPC가 있으면 장면에 생동감 추가
+    let bgDescription = '';
+    if (bgNpcs.length > 0) {
+      const bgNames = bgNpcs.slice(0, 2).map((id) => {
+        const def = this.content.getNpc(id);
+        return def?.unknownAlias ?? def?.role ?? '누군가';
+      });
+      bgDescription = ` 주변에서 ${bgNames.join('과(와) ')}이(가) 각자의 일에 몰두하고 있다.`;
+    }
 
-    // NPC 관련 fact가 있으면 연결
+    const sceneFrame = `${npcDef.name}이(가) ${currentActivity}.${bgDescription}`;
+
     const npcFacts = this.worldFact.findByNpc(ws, npcId);
 
     return {
@@ -354,6 +370,29 @@ export class SituationGeneratorService {
       primaryNpcId: npcId,
       relatedFacts: npcFacts.slice(-3).map((f) => f.id),
     };
+  }
+
+  /** NPC를 tier별로 분류 */
+  private classifyNpcsByTier(npcIds: string[]): {
+    coreNpcs: string[];
+    subNpcs: string[];
+    bgNpcs: string[];
+  } {
+    const coreNpcs: string[] = [];
+    const subNpcs: string[] = [];
+    const bgNpcs: string[] = [];
+
+    for (const npcId of npcIds) {
+      const def = this.content.getNpc(npcId);
+      const tier = def?.tier ?? 'SUB';
+      switch (tier) {
+        case 'CORE': coreNpcs.push(npcId); break;
+        case 'BACKGROUND': bgNpcs.push(npcId); break;
+        default: subNpcs.push(npcId); break;
+      }
+    }
+
+    return { coreNpcs, subNpcs, bgNpcs };
   }
 
   private buildRoutineSituation(

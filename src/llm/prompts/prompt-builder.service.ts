@@ -491,6 +491,14 @@ export class PromptBuilderService {
         ? `\n(LLM 내부 참고: 이 인물의 실명은 "${npc.npcName}"입니다. 서술 중에 자기소개나 상황 단서를 통해 자연스럽게 밝혀지도록 하세요. [NPC 등장] 블록의 별칭으로 시작하세요.)`
         : '';
 
+      // NPC tier 확인
+      const npcTier = npcDef?.tier ?? 'SUB';
+      const tierInstruction = npcTier === 'BACKGROUND'
+        ? '\n⚠️ 이 인물은 배경 인물입니다. 대사는 1~2마디로 제한하고, 서술의 초점은 이 인물이 아닌 플레이어의 행동에 맞추세요.'
+        : npcTier === 'CORE'
+          ? '\n이 인물은 핵심 인물입니다. 충분한 대사와 깊이 있는 상호작용을 서술하세요.'
+          : '';
+
       factsParts.push(
         [
           `[NPC 등장] ${npcDisplayName}이(가) 이 장면에 나타납니다.`,
@@ -500,6 +508,7 @@ export class PromptBuilderService {
           '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.',
           introInstruction,
           nameRevealHint,
+          tierInstruction,
         ].filter(Boolean).join('\n'),
       );
     }
