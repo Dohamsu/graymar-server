@@ -128,10 +128,10 @@ export class RewardsService {
       case 'STEAL':
         // 훔치기: 고위험/고보상 + 아이템 드랍 기회
         if (outcome === 'SUCCESS') {
-          gold = rng.range(5, 12);
+          gold = rng.range(8, 18);
           if (rng.next() < 0.35) this.rollLocationDrop(rng, items);
         } else {
-          gold = rng.range(2, 5);
+          gold = rng.range(3, 8);
           if (rng.next() < 0.12) this.rollLocationDrop(rng, items);
         }
         break;
@@ -139,19 +139,19 @@ export class RewardsService {
       case 'THREATEN':
         // 협박: 금품 요구 — 아이템 없음 (현금만 뜯어냄)
         if (outcome === 'SUCCESS') {
-          gold = rng.range(4, 10);
+          gold = rng.range(6, 14);
         } else {
-          gold = rng.range(1, 4);
+          gold = rng.range(2, 6);
         }
         break;
 
       case 'FIGHT':
         // 전투/강탈: 전리품 + 아이템 드랍
         if (outcome === 'SUCCESS') {
-          gold = rng.range(3, 8);
+          gold = rng.range(5, 12);
           if (rng.next() < 0.2) this.rollLocationDrop(rng, items);
         } else {
-          gold = rng.range(1, 3);
+          gold = rng.range(2, 5);
           if (rng.next() < 0.08) this.rollLocationDrop(rng, items);
         }
         break;
@@ -159,10 +159,10 @@ export class RewardsService {
       case 'SEARCH':
         // 수색: 숨겨진 금품 발견 + 아이템 드랍
         if (outcome === 'SUCCESS') {
-          gold = rng.range(2, 6);
+          gold = rng.range(4, 10);
           if (rng.next() < 0.25) this.rollLocationDrop(rng, items);
         } else {
-          gold = rng.range(1, 3);
+          gold = rng.range(2, 5);
           if (rng.next() < 0.1) this.rollLocationDrop(rng, items);
         }
         break;
@@ -170,9 +170,9 @@ export class RewardsService {
       case 'HELP':
         // 도움 → 감사 보답: 소액, 아이템 없음
         if (outcome === 'SUCCESS') {
-          gold = rng.range(1, 4);
+          gold = rng.range(2, 6);
         } else {
-          gold = rng.next() < 0.5 ? 1 : 0;
+          gold = rng.next() < 0.5 ? 2 : 0;
         }
         break;
     }
