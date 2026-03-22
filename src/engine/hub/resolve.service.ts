@@ -56,9 +56,9 @@ export class ResolveService {
       return -Math.ceil(specifiedGold * 0.6);
     }
 
-    // 기본값
-    if (outcome === 'SUCCESS') return -5;
-    return -3; // PARTIAL
+    // 기본값 (골드 밸런스 조정: LOCATION 보상과 균형)
+    if (outcome === 'SUCCESS') return -3;
+    return -2; // PARTIAL
   }
 
   resolve(
