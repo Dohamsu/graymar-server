@@ -218,8 +218,9 @@ export class SituationGeneratorService {
       if (activity) return activity;
     }
 
-    // 우선순위 5: ROUTINE (일반 장면)
-    return this.buildRoutineSituation(locationId, allEvents);
+    // ROUTINE fallback 제거 — SituationGenerator에서 의미 있는 상황만 생성하고,
+    // 나머지는 EventDirector의 112개 고정 이벤트 라이브러리에 위임한다.
+    return null;
   }
 
   private detectNpcConflict(
@@ -274,8 +275,13 @@ export class SituationGeneratorService {
     allEvents: EventDefV2[],
   ): Situation | null {
     // 최근 PLAYER_ACTION fact 중 NPC가 현재 장소에 있고, 해당 NPC가 fact를 아는 경우
+    // 이미 CONSEQUENCE로 사용된 fact는 제외 (같은 fact에서 반복 생성 방지)
+    const usedFactIds = new Set(
+      (ws as any)._consequenceUsedFacts ?? [],
+    );
     for (const fact of recentFacts.slice(-5)) {
       if (fact.category !== 'PLAYER_ACTION') continue;
+      if (usedFactIds.has(fact.id)) continue; // 이미 사용된 fact 스킵
       if (!fact.impact?.npcKnowledge) continue;
 
       for (const npcId of presentNpcs) {

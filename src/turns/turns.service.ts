@@ -689,6 +689,11 @@ export class TurnsService {
           if (situation) {
             matchedEvent = situation.eventDef;
             this.logger.debug(`[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`);
+            // CONSEQUENCE 반복 방지: 사용된 fact ID를 worldState에 기록
+            if (situation.trigger === 'CONSEQUENCE' && situation.relatedFacts.length > 0) {
+              const usedFacts = (ws as any)._consequenceUsedFacts ?? [];
+              (ws as any)._consequenceUsedFacts = [...usedFacts, ...situation.relatedFacts];
+            }
           }
         } catch (err) {
           this.logger.warn(`[SituationGenerator] error, falling back to EventMatcher: ${err}`);
