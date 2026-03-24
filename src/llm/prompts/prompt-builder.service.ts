@@ -51,12 +51,16 @@ export class PromptBuilderService {
       memoryParts.push(`[세계 상태]\n${ctx.worldSnapshot}`);
     }
 
-    // L0 확장: 주인공 배경 리마인드 — 캐릭터의 과거 경험이 현재 행동과 NPC 반응에 영향
+    // L0 확장: 주인공 배경 — 내면 설정으로만 참조 (매 턴 직접 언급 금지)
     if (ctx.protagonistBackground) {
       memoryParts.push(
-        `[PROTAGONIST_BACKGROUND]\n${ctx.protagonistBackground}\n` +
-        '캐릭터의 배경을 자연스럽게 참조하세요: 과거 경험에서 오는 익숙함, 특정 환경에서의 본능적 반응, ' +
-        'NPC가 캐릭터의 출신을 알아보거나 반응하는 장면 등. 단, 매 턴 반복하지 말고 상황에 맞을 때만 활용하세요.',
+        `[PROTAGONIST_BACKGROUND — 내부 참조용, 매 턴 언급 금지]\n${ctx.protagonistBackground}\n` +
+        '이 배경은 캐릭터의 내면에 깔린 설정입니다. 서술에 직접 언급하지 마세요.\n' +
+        '다음 상황에서만 은연중에 드러내세요:\n' +
+        '- NPC가 캐릭터의 과거를 알아볼 때 (첫 만남, 소문)\n' +
+        '- 캐릭터의 전문 분야 행동 시 (익숙한 동작, 본능적 반응)\n' +
+        '- 감정적으로 과거와 연결되는 순간 (트라우마, 향수)\n' +
+        '평상시에는 언급하지 말고, 5~8턴에 1회 정도만 자연스럽게 스며들게 하세요.',
       );
     }
 
