@@ -228,6 +228,21 @@ export class RunsService {
       }
     }
 
+    // 프리셋별 NPC posture/trust 오버라이드 적용
+    if (preset?.npcPostureOverrides) {
+      for (const [npcId, override] of Object.entries(preset.npcPostureOverrides)) {
+        const npcState = npcStates[npcId];
+        if (npcState) {
+          npcState.posture = override.posture as any;
+          if (override.trustDelta) {
+            npcState.emotional.trust = (npcState.emotional.trust ?? 0) + override.trustDelta;
+            npcState.trustToPlayer = npcState.emotional.trust;
+          }
+          this.logger.log(`[PresetOverride] ${presetId} → ${npcId}: posture=${override.posture}, trustDelta=${override.trustDelta ?? 0}`);
+        }
+      }
+    }
+
     // 초기 RunState 결정 — CarryOver 또는 프리셋 기반
     let initialRunState: RunState;
 

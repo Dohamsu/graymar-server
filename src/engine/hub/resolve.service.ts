@@ -72,6 +72,7 @@ export class ResolveService {
     stats: PermanentStats,
     rng: Rng,
     activeSpecialEffects: string[] = [],
+    presetActionBonuses?: Record<string, number>,
   ): ResolveResult {
     // 비도전 행위 → 주사위 없이 자동 SUCCESS
     if (NON_CHALLENGE_ACTIONS.has(intent.actionType)) {
@@ -98,6 +99,11 @@ export class ResolveService {
       activeSpecialEffects.includes('PERSUADE_BRIBE_BONUS_1')
     ) {
       baseMod += 1;
+    }
+
+    // 프리셋별 actionType 보너스 — 배경 경험에 기반한 판정 보정 (+1 수준)
+    if (presetActionBonuses && presetActionBonuses[intent.actionType]) {
+      baseMod += presetActionBonuses[intent.actionType];
     }
 
     // 최종 점수
