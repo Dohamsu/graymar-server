@@ -103,7 +103,7 @@ export class ResolveService {
     // 최종 점수
     const score = diceRoll + statBonus + baseMod;
 
-    // 결과 판정: SUCCESS >= 6, PARTIAL 3~5, FAIL < 3
+    // 결과 판정: SUCCESS >= 7, PARTIAL 4~6, FAIL < 4
     const outcome = this.computeOutcome(score);
 
     // heatDelta 계산 (±8 clamp)
@@ -231,7 +231,7 @@ export class ResolveService {
     if (tags.includes('chaos')) agendaBucketDelta.profitFromChaos = 2;
 
     return {
-      score: 6, // 자동 SUCCESS 임계값
+      score: 8, // 자동 SUCCESS 임계값
       outcome: 'SUCCESS',
       eventId: event.eventId,
       heatDelta: 0, // 비도전 행위는 열기를 올리지 않음
@@ -249,8 +249,8 @@ export class ResolveService {
   }
 
   private computeOutcome(score: number): ResolveOutcome {
-    if (score >= 6) return 'SUCCESS';
-    if (score >= 3) return 'PARTIAL';
+    if (score >= 7) return 'SUCCESS';
+    if (score >= 4) return 'PARTIAL';
     return 'FAIL';
   }
 

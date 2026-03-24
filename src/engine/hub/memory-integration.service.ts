@@ -65,10 +65,12 @@ export class MemoryIntegrationService {
       where: eq(nodeMemories.nodeInstanceId, nodeInstanceId),
     });
     const ctx = nodeMemory?.visitContext as VisitContextCache | null;
-    if (!ctx || ctx.actions.length === 0) {
-      // visitContext 없으면 기존 saveLocationVisitSummary 와 동일하게 처리
+    if (!ctx) {
+      // visitContext 자체가 없으면 최소한 storySummary에 방문 기록만 남기기
+      await this.saveMinimalVisitSummary(runId, runState);
       return;
     }
+    // actions가 비어있어도 방문 기록은 남긴다 (즉시 이동한 경우)
 
     // 2. 기존 structuredMemory 로드 (없으면 생성)
     const memRow = await this.db.query.runMemories.findFirst({
@@ -179,6 +181,32 @@ export class MemoryIntegrationService {
         updatedAt: new Date(),
       })
       .where(eq(runMemories.runId, runId));
+  }
+
+  /** visitContext가 없을 때 최소한의 storySummary만 기록 */
+  private async saveMinimalVisitSummary(runId: string, runState: RunState): Promise<void> {
+    try {
+      const memRow = await this.db.query.runMemories.findFirst({
+        where: eq(runMemories.runId, runId),
+      });
+      if (!memRow) return;
+
+      const ws = runState.worldState;
+      const locationId = ws?.currentLocationId ?? 'UNKNOWN';
+      const locName = LOCATION_NAMES[locationId] ?? locationId;
+      const summaryLine = `[${locName} 방문] 잠시 들렀다 떠남`;
+      let newStorySummary = memRow.storySummary ?? '';
+      newStorySummary = newStorySummary
+        ? `${newStorySummary}\n${summaryLine}`
+        : summaryLine;
+
+      await this.db
+        .update(runMemories)
+        .set({ storySummary: newStorySummary, updatedAt: new Date() })
+        .where(eq(runMemories.runId, runId));
+    } catch (err) {
+      this.logger.warn(`saveMinimalVisitSummary failed: ${(err as Error).message}`);
+    }
   }
 
   // ── VisitLogEntry 생성 ──

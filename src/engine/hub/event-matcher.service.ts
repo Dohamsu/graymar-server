@@ -344,7 +344,9 @@ export class EventMatcherService {
     const value = this.resolveField(condition.field, ws, arcState);
     if (value === undefined) return false;
 
-    switch (condition.op) {
+    // 연산자 정규화: JSON에서 기호(>=, <=, ==, !=, >, <)와 문자열(gte, lte, eq, ne, gt, lt) 모두 지원
+    const op = this.normalizeOp(condition.op);
+    switch (op) {
       case 'eq':
         return value === condition.value;
       case 'ne':
@@ -362,12 +364,33 @@ export class EventMatcherService {
     }
   }
 
+  /** 연산자 기호를 문자열 형태로 정규화 */
+  private normalizeOp(op: string): string {
+    switch (op) {
+      case '>=': return 'gte';
+      case '<=': return 'lte';
+      case '==': return 'eq';
+      case '!=': return 'ne';
+      case '>': return 'gt';
+      case '<': return 'lt';
+      default: return op;
+    }
+  }
+
   private resolveField(
     field: string,
     ws: WorldState,
     arcState: ArcState,
   ): unknown {
-    const parts = field.split('.');
+    // 필드 별칭 정규화: events_v2.json에서 사용하는 약칭 → 실제 WorldState 필드
+    const aliasMap: Record<string, string> = {
+      'heat': 'hubHeat',
+      'worldState.heat': 'hubHeat',
+      'worldState.hubHeat': 'hubHeat',
+    };
+    const resolved = aliasMap[field] ?? field;
+
+    const parts = resolved.split('.');
     let obj: any = { ...ws, arcState };
     for (const part of parts) {
       if (obj == null) return undefined;
