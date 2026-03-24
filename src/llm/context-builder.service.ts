@@ -84,6 +84,8 @@ export interface LlmContext {
   locationRevisitContext: string | null;
   // Fixplan v1: 직전 장소 이탈 요약
   previousVisitContext: string | null;
+  // 프리셋 배경 강화: 주인공 배경 리마인드
+  protagonistBackground: string | null;
 }
 
 @Injectable()
@@ -102,6 +104,7 @@ export class ContextBuilderService {
     serverResult: ServerResultV1,
     runState?: Record<string, unknown> | null,
     gender?: 'male' | 'female',
+    presetId?: string | null,
   ): Promise<LlmContext> {
     // L0 + L1: run_memories
     const memory = await this.db.query.runMemories.findFirst({
@@ -708,6 +711,24 @@ export class ContextBuilderService {
       }
     }
 
+    // 프리셋 배경 강화: 주인공 배경 리마인드 블록 구축
+    let protagonistBackground: string | null = null;
+    if (presetId) {
+      const presetDef = this.content.getPreset(presetId);
+      if (presetDef) {
+        const bgParts: string[] = [];
+        bgParts.push(`직업: ${presetDef.name} (${presetDef.subtitle})`);
+        bgParts.push(`배경: ${presetDef.protagonistTheme}`);
+        if (presetDef.actionBonuses) {
+          const bonusDesc = Object.entries(presetDef.actionBonuses)
+            .map(([action, bonus]) => `${action} +${bonus}`)
+            .join(', ');
+          bgParts.push(`특기: ${bonusDesc}`);
+        }
+        protagonistBackground = bgParts.join('\n');
+      }
+    }
+
     return {
       theme: memory?.theme ?? [],
       storySummary: memory?.storySummary ?? null,
@@ -762,6 +783,8 @@ export class ContextBuilderService {
             structured.npcKnowledge ?? {},
           )
         : null,
+      // 프리셋 배경 강화
+      protagonistBackground,
     };
   }
 }

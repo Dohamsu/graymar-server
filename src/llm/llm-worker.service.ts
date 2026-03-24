@@ -115,7 +115,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       // RunState 조회 (HUB WorldState 컨텍스트용)
       const runSession = await this.db.query.runSessions.findFirst({
         where: eq(runSessions.id, pending.runId),
-        columns: { runState: true, gender: true },
+        columns: { runState: true, gender: true, presetId: true },
       });
 
       // 1. LLM 컨텍스트 구축
@@ -125,6 +125,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         serverResult,
         runSession?.runState as Record<string, unknown> | null,
         runSession?.gender as 'male' | 'female' | undefined,
+        runSession?.presetId,
       );
 
       // 2. 이전 턴의 LLM 선택지 라벨 조회 (반복 방지용)

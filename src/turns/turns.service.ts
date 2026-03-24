@@ -771,10 +771,14 @@ export class TurnsService {
     // Phase 4c: 세트 specialEffect 수집
     const activeSpecialEffects = this.equipmentService.getActiveSpecialEffects(runState.equipped ?? {});
 
+    // 프리셋별 판정 보너스 조회
+    const presetDef = run.presetId ? this.content.getPreset(run.presetId) : undefined;
+    const presetActionBonuses = presetDef?.actionBonuses;
+
     // ResolveService 판정
-    const resolveResult = this.resolveService.resolve(matchedEvent, intent, ws, playerStats, rng, activeSpecialEffects);
+    const resolveResult = this.resolveService.resolve(matchedEvent, intent, ws, playerStats, rng, activeSpecialEffects, presetActionBonuses);
     this.logger.log(
-      `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${matchedEvent.eventId} heat=${resolveResult.heatDelta}`,
+      `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${matchedEvent.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}`,
     );
 
     // Living World v2: 판정 결과 → WorldFact 생성 + LocationState 변경 + NPC 목격

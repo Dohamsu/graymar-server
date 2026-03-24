@@ -125,6 +125,10 @@ export type PresetDefinition = {
   stats: PlayerDefaults['stats'];
   startingGold: number;
   startingItems: Array<{ itemId: string; qty: number }>;
+  /** 프리셋별 NPC 초기 posture/trust 오버라이드 (optional) */
+  npcPostureOverrides?: Record<string, { posture: string; trustDelta?: number }>;
+  /** 프리셋별 actionType 판정 보너스 (optional, +1 수준) */
+  actionBonuses?: Record<string, number>;
 };
 
 // HUB 시스템 콘텐츠 타입

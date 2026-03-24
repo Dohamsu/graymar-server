@@ -51,6 +51,15 @@ export class PromptBuilderService {
       memoryParts.push(`[세계 상태]\n${ctx.worldSnapshot}`);
     }
 
+    // L0 확장: 주인공 배경 리마인드 — 캐릭터의 과거 경험이 현재 행동과 NPC 반응에 영향
+    if (ctx.protagonistBackground) {
+      memoryParts.push(
+        `[PROTAGONIST_BACKGROUND]\n${ctx.protagonistBackground}\n` +
+        '캐릭터의 배경을 자연스럽게 참조하세요: 과거 경험에서 오는 익숙함, 특정 환경에서의 본능적 반응, ' +
+        'NPC가 캐릭터의 출신을 알아보거나 반응하는 장면 등. 단, 매 턴 반복하지 말고 상황에 맞을 때만 활용하세요.',
+      );
+    }
+
     // Structured Memory v2: 서사 이정표 (milestones)
     if (ctx.milestonesText) {
       memoryParts.push(`[서사 이정표]\n${ctx.milestonesText}\n이 이정표들은 플레이어의 여정에서 중요한 순간입니다. NPC 대사나 배경 묘사에서 자연스럽게 콜백하세요.`);
