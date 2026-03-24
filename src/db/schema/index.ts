@@ -8,3 +8,4 @@ export { turns } from './turns.js';
 export { runMemories, nodeMemories, recentSummaries } from './memories.js';
 export { aiTurnLogs } from './ai-turn-logs.js';
 export { campaigns } from './campaigns.js';
+export { bugReports } from './bug-reports.js';
