@@ -19,7 +19,9 @@ import { RewardsService } from './rewards/rewards.service.js';
 import { InventoryService } from './rewards/inventory.service.js';
 import { EquipmentService } from './rewards/equipment.service.js';
 import { AffixService } from './rewards/affix.service.js';
+import { LegendaryRewardService } from './rewards/legendary-reward.service.js';
 import { NodeTransitionService } from './nodes/node-transition.service.js';
+import { RunPlannerService } from './planner/run-planner.service.js';
 import { HubEngineModule } from './hub/hub-engine.module.js';
 
 const providers = [
@@ -49,9 +51,12 @@ const providers = [
   RewardsService,
   InventoryService,
   AffixService,
+  LegendaryRewardService,
   EquipmentService,
   // Layer 10 — Transition
   NodeTransitionService,
+  // Layer 10 — Planner (DAG)
+  RunPlannerService,
 ];
 
 @Module({

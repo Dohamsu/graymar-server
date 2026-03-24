@@ -24,6 +24,9 @@ const ACTION_TO_VECTOR: Record<IntentActionType, ApproachVector> = {
   MOVE_LOCATION: 'LOGISTICAL',
   REST: 'LOGISTICAL',
   SHOP: 'ECONOMIC',
+  // Phase 4a: 장비 관리
+  EQUIP: 'LOGISTICAL',
+  UNEQUIP: 'LOGISTICAL',
 };
 
 // --- actionType → 기본 goalCategory 매핑 ---
@@ -44,6 +47,9 @@ const ACTION_TO_GOAL: Record<IntentActionType, IntentGoalCategory> = {
   MOVE_LOCATION: 'GAIN_ACCESS',
   REST: 'DEESCALATE_CONFLICT',
   SHOP: 'ACQUIRE_RESOURCE',
+  // Phase 4a: 장비 관리
+  EQUIP: 'ACQUIRE_RESOURCE',
+  UNEQUIP: 'ACQUIRE_RESOURCE',
 };
 
 // --- target 존재 시 goalCategory 보정 ---

@@ -26,10 +26,11 @@ export class RunsController {
     @UserId() userId: string,
     @Body() body: Record<string, unknown>,
   ) {
-    const { presetId, gender, campaignId, scenarioId } = CreateRunBodySchema.parse(body);
+    const { presetId, gender, campaignId, scenarioId, mode } = CreateRunBodySchema.parse(body);
     return this.runsService.createRun(userId, presetId ?? 'DOCKWORKER', gender, {
       campaignId,
       scenarioId,
+      mode,
     });
   }
 

@@ -2,8 +2,11 @@
 
 import { Injectable } from '@nestjs/common';
 import type { ItemStack } from '../../db/types/index.js';
+import type { ItemInstance } from '../../db/types/equipment.js';
 import type { ResolveOutcome } from '../../db/types/resolve-result.js';
 import { Rng } from '../rng/rng.service.js';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
+import { AffixService } from './affix.service.js';
 
 export interface RewardInput {
   enemies: string[];
@@ -61,8 +64,17 @@ export interface LocationRewardInput {
   rng: Rng;
 }
 
+/** 장비 드랍 롤 결과 */
+export interface EquipmentDropResult {
+  droppedInstances: ItemInstance[];
+}
+
 @Injectable()
 export class RewardsService {
+  constructor(
+    private readonly contentLoader: ContentLoaderService,
+    private readonly affixService: AffixService,
+  ) {}
   /**
    * 전투 보상 계산 (보상 RNG는 전투 RNG와 분리)
    * - 잡몹: 전투 단위 1회 롤
@@ -193,6 +205,70 @@ export class RewardsService {
     } else {
       items.push({ itemId: entry.itemId, qty: 1 });
     }
+  }
+
+  /**
+   * 전투 장비 드랍 롤 — 적별/인카운터별 드랍 테이블에서 장비 인스턴스 생성.
+   * VICTORY 시에만 호출. RNG는 전투 보상 RNG 이후 커서 연속 사용.
+   */
+  rollCombatEquipmentDrops(
+    enemyIds: string[],
+    encounterId: string | undefined,
+    isBoss: boolean,
+    locationId: string,
+    rng: Rng,
+  ): EquipmentDropResult {
+    const droppedInstances: ItemInstance[] = [];
+
+    // 보스전: 인카운터 드랍 테이블 우선
+    if (isBoss && encounterId) {
+      const encounterDrops = this.contentLoader.getEncounterEquipmentDropTable(encounterId);
+      if (encounterDrops) {
+        for (const drop of encounterDrops.drops) {
+          if (rng.next() < drop.chance) {
+            const instance = this.affixService.createItemInstance(drop.baseItemId, locationId, rng);
+            droppedInstances.push(instance);
+          }
+        }
+      }
+    }
+
+    // 적별 드랍 (보스전이라도 추가 적이 있을 수 있음)
+    for (const enemyId of enemyIds) {
+      const enemyDrops = this.contentLoader.getEquipmentDropTable(enemyId);
+      if (!enemyDrops) continue;
+      for (const drop of enemyDrops.drops) {
+        if (rng.next() < drop.chance) {
+          const instance = this.affixService.createItemInstance(drop.baseItemId, locationId, rng);
+          droppedInstances.push(instance);
+        }
+      }
+    }
+
+    return { droppedInstances };
+  }
+
+  /**
+   * LOCATION 판정 장비 드랍 롤 — 장소별 드랍 테이블에서 확률 롤.
+   * SEARCH, STEAL, FIGHT 등 GOLD_ACTIONS + SUCCESS/PARTIAL 시 호출.
+   */
+  rollLocationEquipmentDrop(
+    locationId: string,
+    rng: Rng,
+  ): EquipmentDropResult {
+    const droppedInstances: ItemInstance[] = [];
+    const locationDrops = this.contentLoader.getLocationEquipmentDrops(locationId);
+    if (!locationDrops) return { droppedInstances };
+
+    for (const drop of locationDrops.drops) {
+      if (rng.next() < drop.chance) {
+        const instance = this.affixService.createItemInstance(drop.baseItemId, locationId, rng);
+        droppedInstances.push(instance);
+        break; // LOCATION 드랍은 최대 1개
+      }
+    }
+
+    return { droppedInstances };
   }
 
   /** DEFEAT: 보상 몰수 */

@@ -208,6 +208,28 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
       actionType: 'MOVE_LOCATION',
     },
 
+    // ── EQUIP: 장비 착용 ──
+    {
+      keywords: [
+        '장착', '착용', '입는다', '쓴다', '끼운다', '끼다',
+        '장비를 착용', '장비를 장착', '무기를 들', '무기를 꺼',
+        '갑옷을 입', '방어구를 입', '무장', '갈아입',
+        '장비 교체', '장비 변경', '장비 바꿔',
+      ],
+      actionType: 'EQUIP',
+    },
+
+    // ── UNEQUIP: 장비 해제 ──
+    {
+      keywords: [
+        '해제', '벗는다', '벗다', '빼다', '장비를 벗',
+        '장비를 해제', '무기를 내려', '무기를 넣',
+        '갑옷을 벗', '방어구를 벗', '무장 해제',
+        '장비 해제',
+      ],
+      actionType: 'UNEQUIP',
+    },
+
     // ── TALK: 대화 (최하위 — 다른 매칭이 없을 때 fallback) ──
     {
       keywords: [
@@ -321,6 +343,9 @@ const AFFORDANCE_TO_ACTION: Record<string, IntentActionType> = {
   FIGHT: 'FIGHT',
   OBSERVE: 'OBSERVE',
   TRADE: 'TRADE',
+  // Phase 4a: 장비 착용/해제
+  EQUIP: 'EQUIP',
+  UNEQUIP: 'UNEQUIP',
 };
 
 @Injectable()

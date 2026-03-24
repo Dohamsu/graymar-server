@@ -41,6 +41,7 @@ import { NodeTransitionService } from '../engine/nodes/node-transition.service.j
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { InventoryService } from '../engine/rewards/inventory.service.js';
 import { RewardsService } from '../engine/rewards/rewards.service.js';
+import { EquipmentService } from '../engine/rewards/equipment.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
 // HUB 엔진 서비스
 import { WorldStateService } from '../engine/hub/world-state.service.js';
@@ -77,6 +78,9 @@ import { ProceduralEventService } from '../engine/hub/procedural-event.service.j
 import { SituationGeneratorService } from '../engine/hub/situation-generator.service.js';
 import { ConsequenceProcessorService } from '../engine/hub/consequence-processor.service.js';
 import { PlayerGoalService } from '../engine/hub/player-goal.service.js';
+import { ShopService } from '../engine/hub/shop.service.js';
+import { LegendaryRewardService } from '../engine/rewards/legendary-reward.service.js';
+import type { RegionEconomy } from '../db/types/region-state.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
 import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders } from '../db/types/npc-state.js';
@@ -117,6 +121,7 @@ export class TurnsService {
     private readonly llmIntentParser: LlmIntentParserService,
     private readonly orchestration: TurnOrchestrationService,
     private readonly rewardsService: RewardsService,
+    private readonly equipmentService: EquipmentService,
     // User-Driven System v3
     private readonly intentV3Builder: IntentV3BuilderService,
     private readonly incidentRouter: IncidentRouterService,
@@ -142,6 +147,9 @@ export class TurnsService {
     // Campaign system
     private readonly campaignsService: CampaignsService,
     // Living World v2
+    private readonly shopService: ShopService,
+    // Phase 4d: Legendary Quest Rewards
+    private readonly legendaryRewardService: LegendaryRewardService,
     @Optional() private readonly situationGenerator?: SituationGeneratorService,
     @Optional() private readonly consequenceProcessor?: ConsequenceProcessorService,
     @Optional() private readonly playerGoalService?: PlayerGoalService,
@@ -234,6 +242,8 @@ export class TurnsService {
       return this.handleLocationTurn(run, currentNode, expectedTurnNo, body, runState, playerStats);
     } else if (nodeType === 'COMBAT') {
       return this.handleCombatTurn(run, currentNode, expectedTurnNo, body, runState, playerStats);
+    } else if (run.currentGraphNodeId && (nodeType === 'EVENT' || nodeType === 'REST' || nodeType === 'SHOP' || nodeType === 'EXIT')) {
+      return this.handleDagNodeTurn(run, currentNode, expectedTurnNo, body, runState, playerStats);
     }
 
     throw new InvalidInputError(`Unsupported node type: ${nodeType}`);
@@ -559,6 +569,11 @@ export class TurnsService {
       `[IntentV3] goal=${intentV3.goalCategory}, vector=${intentV3.approachVector}, goalText="${intentV3.goalText}"`,
     );
 
+    // Phase 4a: EQUIP/UNEQUIP — 장비 착용/해제 (주사위 판정 없음, 즉시 처리)
+    if ((intent.actionType === 'EQUIP' || intent.actionType === 'UNEQUIP') && (body.input.type === 'ACTION' || body.input.type === 'CHOICE')) {
+      return this.handleEquipAction(run, currentNode, turnNo, body, rawInput, updatedRunState, intent);
+    }
+
     // MOVE_LOCATION: 자유 텍스트로 다른 LOCATION 이동 요청 시 실제 전환
     if (intent.actionType === 'MOVE_LOCATION' && (body.input.type === 'ACTION' || body.input.type === 'CHOICE')) {
       const targetLocationId = this.extractTargetLocation(rawInput, locationId);
@@ -748,8 +763,11 @@ export class TurnsService {
     const prevIncidents = [...(ws.activeIncidents ?? [])];
     const priorWsSnapshot = { ...ws, activeIncidents: [...(ws.activeIncidents ?? [])] };
 
+    // Phase 4c: 세트 specialEffect 수집
+    const activeSpecialEffects = this.equipmentService.getActiveSpecialEffects(runState.equipped ?? {});
+
     // ResolveService 판정
-    const resolveResult = this.resolveService.resolve(matchedEvent, intent, ws, playerStats, rng);
+    const resolveResult = this.resolveService.resolve(matchedEvent, intent, ws, playerStats, rng, activeSpecialEffects);
     this.logger.log(
       `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${matchedEvent.eventId} heat=${resolveResult.heatDelta}`,
     );
@@ -915,6 +933,27 @@ export class TurnsService {
 
     // === Narrative Engine v1: postStepTick (impact patches, safety, signal expire) ===
     ws = this.worldTick.postStepTick(ws, resolvedPatches);
+
+    // === Phase 4d: Legendary Quest Rewards (Incident CONTAINED + commitment 조건) ===
+    const prevContainedSet = new Set(
+      prevIncidents.filter((i) => i.resolved && i.outcome === 'CONTAINED').map((i) => i.incidentId),
+    );
+    const newlyContainedIds = (ws.activeIncidents ?? [])
+      .filter((i) => i.resolved && i.outcome === 'CONTAINED' && !prevContainedSet.has(i.incidentId))
+      .map((i) => i.incidentId);
+    const legendaryResult = this.legendaryRewardService.check(
+      updatedRunState, ws.activeIncidents ?? [], newlyContainedIds,
+    );
+    if (legendaryResult.awarded.length > 0) {
+      if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+      for (const inst of legendaryResult.awarded) {
+        updatedRunState.equipmentBag.push(inst);
+      }
+      updatedRunState.legendaryRewards = [
+        ...(updatedRunState.legendaryRewards ?? []),
+        ...legendaryResult.awarded.map((i) => i.baseItemId),
+      ];
+    }
 
     // === Narrative Engine v1: NPC Emotional 업데이트 ===
     const npcStates = { ...(runState.npcStates ?? {}) } as Record<string, NPCState>;
@@ -1091,6 +1130,136 @@ export class TurnsService {
       else updatedRunState.inventory.push({ itemId: added.itemId, qty: added.qty });
     }
 
+    // Phase 4a: LOCATION 장비 드랍 (GOLD_ACTIONS + SUCCESS/PARTIAL)
+    const locationEquipDropEvents: Array<{ id: string; kind: 'LOOT'; text: string; tags: string[]; data?: Record<string, unknown> }> = [];
+    if (resolveResult.outcome !== 'FAIL') {
+      const equipDrop = this.rewardsService.rollLocationEquipmentDrop(locationId, rng);
+      if (equipDrop.droppedInstances.length > 0) {
+        if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+        for (const inst of equipDrop.droppedInstances) {
+          updatedRunState.equipmentBag.push(inst);
+          locationEquipDropEvents.push({
+            id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
+            kind: 'LOOT' as const,
+            text: `[장비] ${inst.displayName} 획득`,
+            tags: ['LOOT', 'EQUIPMENT_DROP'],
+            data: { baseItemId: inst.baseItemId, instanceId: inst.instanceId, displayName: inst.displayName } as Record<string, unknown>,
+          });
+        }
+      }
+    }
+
+    // === Phase 4b: RegionEconomy — SHOP 액션 + priceIndex + 재고 갱신 ===
+    const shopActionEvents: Array<{ id: string; kind: 'GOLD' | 'LOOT' | 'SYSTEM'; text: string; tags: string[] }> = [];
+    if (this.shopService) {
+      let economy: RegionEconomy = updatedRunState.regionEconomy ?? {
+        priceIndex: 1.0,
+        shopStocks: {},
+      };
+
+      // priceIndex 재계산: heat 기반 (heat 50 기준, ±25% 변동)
+      const locState = ws.locationStates?.[locationId];
+      const avgCrime = locState?.crime ?? 30;
+      economy = {
+        ...economy,
+        priceIndex: this.shopService.calculatePriceIndex(ws.tension, avgCrime),
+      };
+
+      // 재고 갱신: 각 상점별 refreshInterval 체크
+      const allShopDefs = this.content.getShopsByLocation(locationId);
+      for (const shopDef of allShopDefs) {
+        const currentStock = economy.shopStocks[shopDef.shopId];
+        const refreshed = this.shopService.refreshStock(
+          shopDef, currentStock, turnNo, run.seed,
+        );
+        if (refreshed !== currentStock) {
+          economy = {
+            ...economy,
+            shopStocks: { ...economy.shopStocks, [shopDef.shopId]: refreshed },
+          };
+        }
+      }
+
+      // SHOP 액션 시 구매/판매 처리
+      if (intent.actionType === 'SHOP' && intent.target) {
+        const targetItemId = intent.target.toUpperCase().replace(/\s+/g, '_');
+        // 현재 장소의 상점에서 아이템 찾기
+        const locationShops = this.content.getShopsByLocation(locationId);
+        let purchased = false;
+
+        for (const shopDef of locationShops) {
+          const stock = economy.shopStocks[shopDef.shopId];
+          if (!stock) continue;
+
+          // 아이템 ID 직접 매칭 또는 부분 매칭
+          const matchedItem = stock.items.find((si) =>
+            si.itemId === targetItemId ||
+            si.itemId.includes(targetItemId) ||
+            (this.content.getItem(si.itemId)?.name ?? '').includes(intent.target!)
+          );
+
+          if (matchedItem && matchedItem.qty > 0) {
+            const { result: purchaseResult, updatedStock } = this.shopService.purchase(
+              stock, matchedItem.itemId, updatedRunState.gold, economy.priceIndex,
+            );
+
+            if (purchaseResult.success) {
+              // 골드 감소
+              updatedRunState.gold = Math.max(0, updatedRunState.gold - purchaseResult.goldSpent);
+
+              // 아이템 추가 (장비 vs 소비)
+              const itemDef = this.content.getItem(matchedItem.itemId);
+              if (itemDef?.type === 'EQUIPMENT') {
+                if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+                const instance = {
+                  instanceId: `${matchedItem.itemId}_${turnNo}`,
+                  baseItemId: matchedItem.itemId,
+                  displayName: itemDef.name,
+                  affixes: [],
+                };
+                updatedRunState.equipmentBag.push(instance);
+                shopActionEvents.push({
+                  id: `shop_buy_eq_${turnNo}`,
+                  kind: 'LOOT',
+                  text: `[상점] ${itemDef.name}${korParticle(itemDef.name, '을', '를')} ${purchaseResult.goldSpent}G에 구매했다.`,
+                  tags: ['SHOP', 'BUY', 'EQUIPMENT'],
+                });
+              } else {
+                const existing = updatedRunState.inventory.find((i) => i.itemId === matchedItem.itemId);
+                if (existing) existing.qty += 1;
+                else updatedRunState.inventory.push({ itemId: matchedItem.itemId, qty: 1 });
+                shopActionEvents.push({
+                  id: `shop_buy_${turnNo}`,
+                  kind: 'GOLD',
+                  text: `[상점] ${itemDef?.name ?? matchedItem.itemId}${korParticle(itemDef?.name ?? '', '을', '를')} ${purchaseResult.goldSpent}G에 구매했다.`,
+                  tags: ['SHOP', 'BUY'],
+                });
+              }
+
+              // 재고 업데이트
+              economy = {
+                ...economy,
+                shopStocks: { ...economy.shopStocks, [shopDef.shopId]: updatedStock },
+              };
+              purchased = true;
+              break;
+            }
+          }
+        }
+
+        if (!purchased) {
+          shopActionEvents.push({
+            id: `shop_fail_${turnNo}`,
+            kind: 'SYSTEM',
+            text: `[상점] 해당 물건을 구매할 수 없다.`,
+            tags: ['SHOP', 'FAIL'],
+          });
+        }
+      }
+
+      updatedRunState.regionEconomy = economy;
+    }
+
     // === User-Driven System v3: WorldDelta (세계 변화 기록) ===
     const { ws: wsWithDelta } = this.worldDeltaService.build(turnNo, priorWsSnapshot, ws);
     ws = wsWithDelta;
@@ -1251,6 +1420,21 @@ export class TurnsService {
       });
     }
 
+    // Phase 4a: 장비 드랍 이벤트 추가
+    for (const eqEvt of locationEquipDropEvents) {
+      result.events.push(eqEvt);
+    }
+
+    // Phase 4d: Legendary 보상 이벤트 추가
+    for (const legEvt of legendaryResult.events) {
+      result.events.push(legEvt);
+    }
+
+    // Phase 4b: 상점 액션 이벤트 추가
+    for (const shopEvt of shopActionEvents) {
+      result.events.push(shopEvt);
+    }
+
     // Orchestration 결과를 ui에 추가 (LLM context 전달용)
     if (orchestrationResult.npcInjection) {
       (result.ui as any).npcInjection = orchestrationResult.npcInjection;
@@ -1334,6 +1518,27 @@ export class TurnsService {
     }
     if (notifResult.worldDeltaSummary) {
       (result.ui as any).worldDeltaSummary = notifResult.worldDeltaSummary;
+    }
+
+    // Phase 4b: 상점 정보 UI에 포함 (현재 장소에 상점이 있을 때)
+    if (this.shopService && updatedRunState.regionEconomy) {
+      const locShops = this.content.getShopsByLocation(locationId);
+      if (locShops.length > 0) {
+        const shopDisplays = locShops.map((shopDef) => {
+          const stock = updatedRunState.regionEconomy!.shopStocks[shopDef.shopId];
+          return {
+            shopId: shopDef.shopId,
+            name: shopDef.name,
+            items: stock
+              ? this.shopService!.getDisplayItems(stock, updatedRunState.regionEconomy!.priceIndex)
+              : [],
+          };
+        }).filter((s) => s.items.length > 0);
+        if (shopDisplays.length > 0) {
+          (result.ui as any).shops = shopDisplays;
+          (result.ui as any).priceIndex = updatedRunState.regionEconomy.priceIndex;
+        }
+      }
     }
 
     // PlayerThread UI 번들에 포함
@@ -1484,6 +1689,177 @@ export class TurnsService {
     };
   }
 
+  // --- DAG 노드 턴 (EVENT/REST/SHOP/EXIT in DAG mode) ---
+  private async handleDagNodeTurn(
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    body: SubmitTurnBody,
+    runState: RunState,
+    playerStats: PermanentStats,
+  ) {
+    const nodeType = currentNode.nodeType as NodeType;
+    const rawInput = body.input.text ?? body.input.choiceId ?? '';
+    const updatedRunState: RunState = { ...runState };
+
+    // NodeResolver로 노드 처리
+    const resolveResult = this.nodeResolver.resolve({
+      turnNo,
+      nodeId: currentNode.id,
+      nodeIndex: currentNode.nodeIndex,
+      nodeType,
+      nodeMeta: currentNode.nodeMeta as import('../db/types/index.js').NodeMeta,
+      envTags: currentNode.environmentTags ?? [],
+      inputType: body.input.type as 'ACTION' | 'CHOICE' | 'SYSTEM',
+      rawInput,
+      choiceId: body.input.choiceId,
+      playerStats,
+      playerHp: runState.hp,
+      playerMaxHp: runState.maxHp,
+      playerStamina: runState.stamina,
+      playerMaxStamina: runState.maxStamina,
+      playerGold: runState.gold,
+      inventoryCount: runState.inventory.length,
+      inventoryMax: 20,
+      nodeState: (currentNode.nodeState ?? {}) as Record<string, unknown>,
+    });
+
+    // RunState 반영 (gold, hp, stamina 변동)
+    if (resolveResult.goldDelta) updatedRunState.gold += resolveResult.goldDelta;
+    if (resolveResult.hpDelta) {
+      updatedRunState.hp = Math.max(0, Math.min(updatedRunState.maxHp, updatedRunState.hp + resolveResult.hpDelta));
+    }
+    if (resolveResult.staminaDelta) {
+      updatedRunState.stamina = Math.max(0, Math.min(updatedRunState.maxStamina, updatedRunState.stamina + resolveResult.staminaDelta));
+    }
+    if (resolveResult.itemsBought) {
+      for (const item of resolveResult.itemsBought) {
+        const existing = updatedRunState.inventory.find((i) => i.itemId === item.itemId);
+        if (existing) existing.qty += item.qty;
+        else updatedRunState.inventory.push({ itemId: item.itemId, qty: item.qty });
+      }
+    }
+
+    // 턴 커밋
+    const llmStatus: LlmStatus = body.options?.skipLlm ? 'SKIPPED' : 'PENDING';
+    await this.db.insert(turns).values({
+      runId: run.id, turnNo, nodeInstanceId: currentNode.id,
+      nodeType, inputType: body.input.type,
+      rawInput, idempotencyKey: body.idempotencyKey,
+      parsedBy: null, confidence: null, parsedIntent: null,
+      policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
+      serverResult: resolveResult.serverResult, llmStatus,
+    });
+
+    // NODE_ENDED → DAG 다음 노드 전환
+    if (resolveResult.nodeOutcome === 'NODE_ENDED' || resolveResult.nodeOutcome === 'RUN_ENDED') {
+      // 현재 노드 종료
+      await this.db.update(nodeInstances).set({
+        status: 'NODE_ENDED',
+        nodeState: resolveResult.nextNodeState ?? null,
+        updatedAt: new Date(),
+      }).where(eq(nodeInstances.id, currentNode.id));
+
+      if (resolveResult.nodeOutcome === 'RUN_ENDED' || nodeType === 'EXIT') {
+        await this.db.update(runSessions).set({
+          status: 'RUN_ENDED', currentTurnNo: turnNo, runState: updatedRunState, updatedAt: new Date(),
+        }).where(eq(runSessions.id, run.id));
+        await this.saveCampaignResultIfNeeded(run.id);
+        return {
+          accepted: true, turnNo, serverResult: resolveResult.serverResult,
+          llm: { status: llmStatus, narrative: null },
+          meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
+        };
+      }
+
+      // RouteContext 구성
+      const dagRouteContext: import('../db/types/index.js').RouteContext = {
+        lastChoiceId: resolveResult.selectedChoiceId ?? body.input.choiceId,
+        routeTag: run.routeTag ?? undefined,
+        randomSeed: this.rngService.create(run.seed, turnNo + 1).next(),
+      };
+
+      const ws = updatedRunState.worldState ?? this.worldStateService.initWorldState();
+      const dagTransition = await this.nodeTransition.transitionByGraphNode(
+        run.id,
+        run.currentGraphNodeId!,
+        dagRouteContext,
+        turnNo + 1,
+        ws,
+        updatedRunState.hp,
+        updatedRunState.stamina,
+        run.seed,
+      );
+
+      if (!dagTransition || dagTransition.nextNodeType === 'EXIT') {
+        // 그래프 종료 → RUN_ENDED
+        await this.db.update(runSessions).set({
+          status: 'RUN_ENDED', currentTurnNo: turnNo, runState: updatedRunState, updatedAt: new Date(),
+        }).where(eq(runSessions.id, run.id));
+        await this.saveCampaignResultIfNeeded(run.id);
+
+        const response: any = {
+          accepted: true, turnNo, serverResult: resolveResult.serverResult,
+          llm: { status: llmStatus, narrative: null },
+          meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
+        };
+        if (dagTransition) {
+          response.transition = {
+            nextNodeIndex: dagTransition.nextNodeIndex, nextNodeType: dagTransition.nextNodeType,
+            enterResult: dagTransition.enterResult, battleState: null, enterTurnNo: turnNo + 1,
+          };
+        }
+        return response;
+      }
+
+      // routeTag가 결정된 경우 runState에도 반영
+      if (dagTransition.routeTag) {
+        updatedRunState.worldState = {
+          ...(updatedRunState.worldState ?? this.worldStateService.initWorldState()),
+        };
+      }
+
+      dagTransition.enterResult.turnNo = turnNo + 1;
+      await this.db.insert(turns).values({
+        runId: run.id, turnNo: turnNo + 1, nodeInstanceId: dagTransition.enterResult.node.id,
+        nodeType: dagTransition.nextNodeType, inputType: 'SYSTEM', rawInput: '',
+        idempotencyKey: `${run.id}_dag_${dagTransition.nextNodeIndex}`,
+        parsedBy: null, confidence: null, parsedIntent: null,
+        policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
+        serverResult: dagTransition.enterResult, llmStatus: 'PENDING',
+      });
+      await this.db.update(runSessions).set({
+        currentTurnNo: turnNo + 1, runState: updatedRunState, updatedAt: new Date(),
+      }).where(eq(runSessions.id, run.id));
+
+      return {
+        accepted: true, turnNo, serverResult: resolveResult.serverResult,
+        llm: { status: llmStatus, narrative: null },
+        meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
+        transition: {
+          nextNodeIndex: dagTransition.nextNodeIndex, nextNodeType: dagTransition.nextNodeType,
+          enterResult: dagTransition.enterResult, battleState: dagTransition.battleState ?? null, enterTurnNo: turnNo + 1,
+        },
+      };
+    }
+
+    // ONGOING — 노드 상태 업데이트
+    if (resolveResult.nextNodeState) {
+      await this.db.update(nodeInstances).set({
+        nodeState: resolveResult.nextNodeState, updatedAt: new Date(),
+      }).where(eq(nodeInstances.id, currentNode.id));
+    }
+    await this.db.update(runSessions).set({
+      currentTurnNo: turnNo, runState: updatedRunState, updatedAt: new Date(),
+    }).where(eq(runSessions.id, run.id));
+
+    return {
+      accepted: true, turnNo, serverResult: resolveResult.serverResult,
+      llm: { status: llmStatus, narrative: null },
+      meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
+    };
+  }
+
   // --- COMBAT 턴 (기존 전투 엔진 재사용) ---
   private async handleCombatTurn(
     run: any,
@@ -1595,6 +1971,31 @@ export class TurnsService {
       else updatedRunState.inventory.push({ itemId: added.itemId, qty: added.qty });
     }
 
+    // Phase 4a: 전투 승리 시 장비 드랍
+    if (resolveResult.combatOutcome === 'VICTORY') {
+      const locationId = updatedRunState.worldState?.currentLocationId ?? 'LOC_HARBOR';
+      const encounterEnc = currentNode.nodeMeta?.encounterId as string | undefined;
+      const isBoss = !!(currentNode.nodeMeta?.isBoss);
+      const enemyIds = Object.keys(resolveResult.nextBattleState?.enemies ?? {});
+      const combatDropRng = this.rngService.create(run.seed + '_eqdrop', turnNo);
+      const equipDrop = this.rewardsService.rollCombatEquipmentDrops(
+        enemyIds, encounterEnc, isBoss, locationId, combatDropRng,
+      );
+      if (equipDrop.droppedInstances.length > 0) {
+        if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+        for (const inst of equipDrop.droppedInstances) {
+          updatedRunState.equipmentBag.push(inst);
+          resolveResult.serverResult.events.push({
+            id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
+            kind: 'LOOT',
+            text: `[장비] ${inst.displayName} 획득`,
+            tags: ['LOOT', 'EQUIPMENT_DROP'],
+            data: { baseItemId: inst.baseItemId, instanceId: inst.instanceId, displayName: inst.displayName },
+          });
+        }
+      }
+    }
+
     const response = await this.commitCombatTurn(
       run, currentNode, turnNo, body, rawInput, parsedIntent, policyResult,
       transformedIntent, actionPlan ? [actionPlan] : undefined,
@@ -1653,38 +2054,91 @@ export class TurnsService {
         return response;
       }
 
-      // 승리/도주 → 부모 LOCATION 복귀
-      const parentNodeId = currentNode.parentNodeInstanceId ?? (currentNode.nodeState as any)?.parentNodeId;
-      if (parentNodeId) {
-        // 부모 노드의 index 찾기
-        const parentNode = await this.db.query.nodeInstances.findFirst({
-          where: eq(nodeInstances.id, parentNodeId),
-        });
-        const parentNodeIndex = parentNode?.nodeIndex ?? currentNode.nodeIndex - 1;
-        const locationId = ws.currentLocationId ?? 'LOC_MARKET';
+      // DAG 모드: 승리/도주 → 다음 그래프 노드로 전환
+      if (run.currentGraphNodeId) {
+        const dagRouteContext: import('../db/types/index.js').RouteContext = {
+          combatOutcome: resolveResult.combatOutcome,
+          routeTag: run.routeTag ?? undefined,
+          randomSeed: this.rngService.create(run.seed, turnNo + 1).next(),
+        };
 
-        // Heat 반영 (combatWindowCount는 전투 시작 시 이미 증가됨 — 중복 증가 방지)
-        const newWs = this.heatService.applyHeatDelta(ws, 3);
-        updatedRunState.worldState = this.worldStateService.updateHubSafety(newWs);
-
-        const transition = await this.nodeTransition.returnFromCombat(
-          run.id, parentNodeIndex, turnNo + 1, locationId, updatedRunState.worldState!,
+        const dagTransition = await this.nodeTransition.transitionByGraphNode(
+          run.id,
+          run.currentGraphNodeId,
+          dagRouteContext,
+          turnNo + 1,
+          ws,
+          updatedRunState.hp,
+          updatedRunState.stamina,
+          run.seed,
         );
-        transition.enterResult.turnNo = turnNo + 1;
+
+        if (!dagTransition || dagTransition.nextNodeType === 'EXIT') {
+          // 그래프 종료 → RUN_ENDED
+          try {
+            await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, updatedRunState, turnNo);
+          } catch { /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */ }
+          await this.db.update(runSessions).set({ status: 'RUN_ENDED', updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+          await this.saveCampaignResultIfNeeded(run.id);
+          (response as any).meta.nodeOutcome = 'RUN_ENDED';
+          if (dagTransition) {
+            (response as any).transition = {
+              nextNodeIndex: dagTransition.nextNodeIndex, nextNodeType: dagTransition.nextNodeType,
+              enterResult: dagTransition.enterResult, battleState: null, enterTurnNo: turnNo + 1,
+            };
+          }
+          return response;
+        }
+
+        dagTransition.enterResult.turnNo = turnNo + 1;
         await this.db.insert(turns).values({
-          runId: run.id, turnNo: turnNo + 1, nodeInstanceId: transition.enterResult.node.id,
-          nodeType: 'LOCATION', inputType: 'SYSTEM', rawInput: '',
-          idempotencyKey: `${run.id}_return_${turnNo + 1}`,
+          runId: run.id, turnNo: turnNo + 1, nodeInstanceId: dagTransition.enterResult.node.id,
+          nodeType: dagTransition.nextNodeType, inputType: 'SYSTEM', rawInput: '',
+          idempotencyKey: `${run.id}_dag_${dagTransition.nextNodeIndex}`,
           parsedBy: null, confidence: null, parsedIntent: null,
           policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
-          serverResult: transition.enterResult, llmStatus: 'PENDING',
+          serverResult: dagTransition.enterResult, llmStatus: 'PENDING',
         });
         await this.db.update(runSessions).set({ currentTurnNo: turnNo + 1, runState: updatedRunState, updatedAt: new Date() }).where(eq(runSessions.id, run.id));
 
         (response as any).transition = {
-          nextNodeIndex: transition.nextNodeIndex, nextNodeType: 'LOCATION',
-          enterResult: transition.enterResult, battleState: null, enterTurnNo: turnNo + 1,
+          nextNodeIndex: dagTransition.nextNodeIndex, nextNodeType: dagTransition.nextNodeType,
+          enterResult: dagTransition.enterResult, battleState: dagTransition.battleState ?? null, enterTurnNo: turnNo + 1,
         };
+      } else {
+        // HUB 모드: 승리/도주 → 부모 LOCATION 복귀
+        const parentNodeId = currentNode.parentNodeInstanceId ?? (currentNode.nodeState as any)?.parentNodeId;
+        if (parentNodeId) {
+          // 부모 노드의 index 찾기
+          const parentNode = await this.db.query.nodeInstances.findFirst({
+            where: eq(nodeInstances.id, parentNodeId),
+          });
+          const parentNodeIndex = parentNode?.nodeIndex ?? currentNode.nodeIndex - 1;
+          const locationId = ws.currentLocationId ?? 'LOC_MARKET';
+
+          // Heat 반영 (combatWindowCount는 전투 시작 시 이미 증가됨 — 중복 증가 방지)
+          const newWs = this.heatService.applyHeatDelta(ws, 3);
+          updatedRunState.worldState = this.worldStateService.updateHubSafety(newWs);
+
+          const transition = await this.nodeTransition.returnFromCombat(
+            run.id, parentNodeIndex, turnNo + 1, locationId, updatedRunState.worldState!,
+          );
+          transition.enterResult.turnNo = turnNo + 1;
+          await this.db.insert(turns).values({
+            runId: run.id, turnNo: turnNo + 1, nodeInstanceId: transition.enterResult.node.id,
+            nodeType: 'LOCATION', inputType: 'SYSTEM', rawInput: '',
+            idempotencyKey: `${run.id}_return_${turnNo + 1}`,
+            parsedBy: null, confidence: null, parsedIntent: null,
+            policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
+            serverResult: transition.enterResult, llmStatus: 'PENDING',
+          });
+          await this.db.update(runSessions).set({ currentTurnNo: turnNo + 1, runState: updatedRunState, updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+
+          (response as any).transition = {
+            nextNodeIndex: transition.nextNodeIndex, nextNodeType: 'LOCATION',
+            enterResult: transition.enterResult, battleState: null, enterTurnNo: turnNo + 1,
+          };
+        }
       }
     }
 
@@ -1942,6 +2396,156 @@ export class TurnsService {
         battleState: null,
         enterTurnNo: turnNo + 1,
       },
+    };
+  }
+
+  /**
+   * Phase 4a: EQUIP/UNEQUIP 처리 — 장비 착용/해제 (주사위 판정 없음)
+   * - EQUIP: equipmentBag에서 아이템을 equipped 슬롯에 장착
+   * - UNEQUIP: equipped에서 equipmentBag으로 이동
+   * - 입력 텍스트 또는 choiceId에서 대상 아이템/슬롯 추출
+   */
+  private async handleEquipAction(
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    body: any,
+    rawInput: string,
+    runState: RunState,
+    intent: any,
+  ) {
+    const equipped = runState.equipped ?? {};
+    const equipmentBag = [...(runState.equipmentBag ?? [])];
+
+    let summaryText = '';
+    const events: any[] = [];
+
+    if (intent.actionType === 'EQUIP') {
+      // 대상 아이템 탐색: choiceId(instanceId)로 먼저, 없으면 텍스트 매칭
+      const targetInstanceId = body.input.choiceId ?? null;
+      let targetInstance = targetInstanceId
+        ? equipmentBag.find((i) => i.instanceId === targetInstanceId)
+        : null;
+
+      // 텍스트 매칭: displayName 또는 baseItemId 일부 매칭
+      if (!targetInstance) {
+        const normalized = rawInput.toLowerCase();
+        targetInstance = equipmentBag.find((i) =>
+          normalized.includes(i.displayName.toLowerCase()) ||
+          normalized.includes((this.content.getItem(i.baseItemId)?.name ?? '').toLowerCase()),
+        );
+      }
+
+      if (!targetInstance) {
+        // 가방에 장비가 있으면 첫 번째 아이템 자동 선택
+        if (equipmentBag.length > 0) {
+          targetInstance = equipmentBag[0];
+        } else {
+          const result = this.buildSystemResult(turnNo, currentNode, '장착할 장비가 가방에 없다.');
+          await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, runState, true);
+          return {
+            accepted: true, turnNo, serverResult: result,
+            llm: { status: 'SKIPPED' as LlmStatus, narrative: null },
+            meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
+          };
+        }
+      }
+
+      // 장비 착용
+      const { equipped: newEquipped, unequippedInstance } = this.equipmentService.equip(equipped, targetInstance);
+      const updatedBag = equipmentBag.filter((i) => i.instanceId !== targetInstance!.instanceId);
+      if (unequippedInstance) {
+        updatedBag.push(unequippedInstance);
+      }
+
+      runState.equipped = newEquipped;
+      runState.equipmentBag = updatedBag;
+      summaryText = `${targetInstance.displayName}을(를) 장착했다.`;
+      if (unequippedInstance) {
+        summaryText += ` (${unequippedInstance.displayName} 해제)`;
+      }
+      events.push({
+        id: `equip_${turnNo}`,
+        kind: 'SYSTEM',
+        text: `[장비] ${summaryText}`,
+        tags: ['EQUIP'],
+        data: { equipped: targetInstance.baseItemId, unequipped: unequippedInstance?.baseItemId },
+      });
+    } else {
+      // UNEQUIP: 슬롯 이름 또는 아이템 이름으로 대상 탐색
+      const { EQUIPMENT_SLOTS } = await import('../db/types/equipment.js');
+      const normalized = rawInput.toLowerCase();
+      let targetSlot: string | null = null;
+
+      // 슬롯 이름 매칭
+      const slotKeywords: Record<string, string[]> = {
+        WEAPON: ['무기', '검', '칼', '단검', '만도', '단도'],
+        ARMOR: ['갑옷', '방어구', '조끼', '망토', '경갑'],
+        TACTICAL: ['전술', '장화', '부츠', '고글', '장비'],
+        POLITICAL: ['정치', '원장', '반지', '봉인', '인장'],
+        RELIC: ['유물', '나침반', '렐릭'],
+      };
+      for (const [slot, keywords] of Object.entries(slotKeywords)) {
+        if (keywords.some((kw) => normalized.includes(kw)) && equipped[slot as keyof typeof equipped]) {
+          targetSlot = slot;
+          break;
+        }
+      }
+
+      // 아이템 이름 매칭
+      if (!targetSlot) {
+        for (const slot of EQUIPMENT_SLOTS) {
+          const instance = equipped[slot];
+          if (!instance) continue;
+          if (normalized.includes(instance.displayName.toLowerCase()) ||
+              normalized.includes((this.content.getItem(instance.baseItemId)?.name ?? '').toLowerCase())) {
+            targetSlot = slot;
+            break;
+          }
+        }
+      }
+
+      if (!targetSlot) {
+        const result = this.buildSystemResult(turnNo, currentNode, '해제할 장비를 특정할 수 없다.');
+        await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, runState, true);
+        return {
+          accepted: true, turnNo, serverResult: result,
+          llm: { status: 'SKIPPED' as LlmStatus, narrative: null },
+          meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
+        };
+      }
+
+      const { equipped: newEquipped, unequippedInstance } = this.equipmentService.unequip(
+        equipped, targetSlot as import('../db/types/equipment.js').EquipmentSlot,
+      );
+      if (unequippedInstance) {
+        equipmentBag.push(unequippedInstance);
+      }
+      runState.equipped = newEquipped;
+      runState.equipmentBag = equipmentBag;
+      summaryText = unequippedInstance
+        ? `${unequippedInstance.displayName}을(를) 해제했다.`
+        : '해제할 장비가 없다.';
+      if (unequippedInstance) {
+        events.push({
+          id: `unequip_${turnNo}`,
+          kind: 'SYSTEM',
+          text: `[장비] ${summaryText}`,
+          tags: ['UNEQUIP'],
+          data: { unequipped: unequippedInstance.baseItemId, slot: targetSlot },
+        });
+      }
+    }
+
+    const result = this.buildSystemResult(turnNo, currentNode, summaryText);
+    result.events = events;
+    await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, runState, body.options?.skipLlm);
+    await this.db.update(runSessions).set({ runState, updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+
+    return {
+      accepted: true, turnNo, serverResult: result,
+      llm: { status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus, narrative: null },
+      meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
     };
   }
 

@@ -75,7 +75,15 @@ export class CombatService {
     private readonly equipmentService: EquipmentService,
   ) {}
 
+  // Phase 4c: 현재 턴의 활성 세트 specialEffect (턴 단위 캐시)
+  private _activeSpecialEffects: string[] | null = null;
+
   resolveCombatTurn(input: CombatTurnInput): CombatTurnOutput {
+    // Phase 4c: 세트 specialEffect 캐시 (턴 시작 시 계산)
+    this._activeSpecialEffects = input.equipped
+      ? this.equipmentService.getActiveSpecialEffects(input.equipped)
+      : [];
+
     const rng = this.rngService.create(
       input.battleState.rng.seed,
       input.battleState.rng.cursor,
@@ -677,7 +685,17 @@ export class CombatService {
           rng,
           forced,
         );
-        target.hp = Math.max(0, target.hp - dmgResult.damage);
+
+        // Phase 4c: ENGAGED_BONUS_DMG_15 세트 효과 — ENGAGED 거리 적 공격 시 15% 추가 피해
+        let finalDmg = dmgResult.damage;
+        if (
+          target.distance === 'ENGAGED' &&
+          this._activeSpecialEffects?.includes('ENGAGED_BONUS_DMG_15')
+        ) {
+          finalDmg = Math.max(1, Math.floor(finalDmg * 1.15));
+        }
+
+        target.hp = Math.max(0, target.hp - finalDmg);
 
         const eDiff = enemyDiffMap.get(target.id);
         if (eDiff) {
@@ -687,10 +705,10 @@ export class CombatService {
         events.push({
           id: `dmg_${target.id}_${rng.cursor}`,
           kind: 'DAMAGE',
-          text: `${eName(target.id)}에게 ${dmgResult.damage} 피해${dmgResult.isCrit ? ' (치명타!)' : ''}`,
+          text: `${eName(target.id)}에게 ${finalDmg} 피해${dmgResult.isCrit ? ' (치명타!)' : ''}`,
           tags: dmgResult.isCrit ? ['CRIT'] : [],
           data: {
-            damage: dmgResult.damage,
+            damage: finalDmg,
             isCrit: dmgResult.isCrit,
             targetId: target.id,
           },

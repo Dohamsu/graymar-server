@@ -93,6 +93,10 @@ export interface RunState {
   // Phase 4: Equipment
   equipped?: import('./equipment.js').EquippedGear; // slot → ItemInstance
   equipmentBag?: import('./equipment.js').ItemInstance[]; // 미장착 장비 인스턴스
+  // Phase 4b: Region Economy
+  regionEconomy?: import('./region-state.js').RegionEconomy;
+  // Phase 4d: Legendary Quest Rewards (중복 지급 방지)
+  legendaryRewards?: string[];
 }
 
 export type ActionHistoryEntry = {
