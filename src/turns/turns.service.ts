@@ -83,7 +83,7 @@ import { LegendaryRewardService } from '../engine/rewards/legendary-reward.servi
 import type { RegionEconomy } from '../db/types/region-state.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
-import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders } from '../db/types/npc-state.js';
+import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders, recordNpcEncounter, addNpcKnownFact } from '../db/types/npc-state.js';
 import type { IncidentDef, IncidentRuntime, IncidentRoutingResult, NarrativeMarkCondition, NPCState, NpcEmotionalState } from '../db/types/index.js';
 import type { IncidentSummaryUI, SignalFeedItemUI, NpcEmotionalUI } from '../db/types/server-result.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
@@ -1015,6 +1015,22 @@ export class TurnsService {
           (runState as any).lastNpcDelta = { npcId, delta, actionType: intent.actionType, outcome: resolveResult.outcome };
         }
       }
+
+      // === NPC 개인 기록 축적 ===
+      const briefNote = (matchedEvent.payload.sceneFrame ?? rawInput).slice(0, 50);
+      npcStates[npcId] = recordNpcEncounter(
+        npcStates[npcId], turnNo, locationId,
+        intent.actionType, resolveResult.outcome, briefNote,
+      );
+      // knownFacts: 이벤트 결과에서 중요 발견사항 추출 (SUCCESS 판정 + 정보성 행동)
+      if (resolveResult.outcome === 'SUCCESS' && ['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE'].includes(intent.actionType)) {
+        const factNote = matchedEvent.payload.sceneFrame
+          ? matchedEvent.payload.sceneFrame.slice(0, 60)
+          : undefined;
+        if (factNote) {
+          npcStates[npcId] = addNpcKnownFact(npcStates[npcId], factNote);
+        }
+      }
     }
 
     // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC 상태 초기화
@@ -1339,6 +1355,13 @@ export class TurnsService {
         newlyIntroducedNpcIds.push(injectedNpcId);
       }
       updatedRunState.npcStates = npcStates;
+
+      // === 주입된 NPC 개인 기록 축적 ===
+      const injBriefNote = (matchedEvent.payload.sceneFrame ?? rawInput).slice(0, 50);
+      npcStates[injectedNpcId] = recordNpcEncounter(
+        npcStates[injectedNpcId], turnNo, locationId,
+        intent.actionType, resolveResult.outcome, injBriefNote,
+      );
     }
 
     // 비도전 행위 여부 (MOVE_LOCATION, REST, SHOP, TALK → 주사위 UI 숨김)

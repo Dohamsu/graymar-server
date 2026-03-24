@@ -18,6 +18,23 @@ export interface NpcEmotionalState {
   attachment: number; // 0~100 (애착)
 }
 
+/** NPC 개인 기록: 플레이어와의 상호작용 이력 */
+export interface NpcPersonalMemoryEntry {
+  turnNo: number;
+  locationId: string;
+  playerAction: string;      // "거래 시도", "설득", "싸움" 등 행동 요약
+  outcome: string;            // "SUCCESS" | "PARTIAL" | "FAIL"
+  briefNote: string;          // 1줄 요약 (50자 이내)
+}
+
+export interface NpcPersonalMemory {
+  encounters: NpcPersonalMemoryEntry[];  // 최대 10개
+  lastSeenTurn: number;
+  lastSeenLocation: string;
+  knownFacts: string[];         // 플레이어가 이 NPC를 통해 알게 된 사실 (최대 5개)
+  relationSummary: string;      // posture + trust 기반 자동 생성 (1줄)
+}
+
 export interface NPCState {
   npcId: string;
   introduced: boolean;
@@ -34,6 +51,8 @@ export interface NPCState {
   posture: NpcPosture;
   // Narrative Engine v1 확장
   emotional: NpcEmotionalState;
+  // NPC 개인 기록 (플레이어와의 상호작용 이력)
+  personalMemory?: NpcPersonalMemory;
 }
 
 export interface Relationship {
@@ -211,4 +230,107 @@ export function shouldIntroduce(
     default:
       return count >= 2;
   }
+}
+
+// ── NPC 개인 기록 유틸리티 ──
+
+const ACTION_TYPE_KOREAN: Record<string, string> = {
+  INVESTIGATE: '조사', PERSUADE: '설득', SNEAK: '잠입', BRIBE: '뇌물',
+  THREATEN: '위협', HELP: '도움', STEAL: '절도', FIGHT: '전투',
+  OBSERVE: '관찰', TRADE: '거래', TALK: '대화', SEARCH: '수색',
+  MOVE_LOCATION: '이동', REST: '휴식', SHOP: '상점',
+};
+
+const MAX_PERSONAL_ENCOUNTERS = 10;
+const MAX_KNOWN_FACTS = 5;
+
+/**
+ * posture + trust 기반으로 관계 요약 문자열 자동 생성 (LLM 호출 없음).
+ */
+export function generateRelationSummary(posture: NpcPosture, trust: number): string {
+  const postureKr: Record<NpcPosture, string> = {
+    FRIENDLY: '우호적',
+    CAUTIOUS: '경계',
+    HOSTILE: '적대적',
+    FEARFUL: '두려워함',
+    CALCULATING: '계산적',
+  };
+  const postureStr = postureKr[posture] ?? posture;
+
+  if (trust > 40) return `${postureStr}, 깊은 신뢰`;
+  if (trust > 20) return `${postureStr}, 신뢰하기 시작함`;
+  if (trust > 5) return `${postureStr}, 약간의 신뢰`;
+  if (trust >= -5) return `${postureStr}, 중립`;
+  if (trust >= -20) return `${postureStr}, 경계하지만 대화 가능`;
+  if (trust >= -40) return `${postureStr}, 불신`;
+  return `${postureStr}, 완전한 적대`;
+}
+
+/**
+ * NPC personalMemory에 새 만남 기록 추가 + trim.
+ */
+export function recordNpcEncounter(
+  npcState: NPCState,
+  turnNo: number,
+  locationId: string,
+  actionType: string,
+  outcome: string,
+  briefNote: string,
+): NPCState {
+  const pm: NpcPersonalMemory = npcState.personalMemory ?? {
+    encounters: [],
+    lastSeenTurn: 0,
+    lastSeenLocation: '',
+    knownFacts: [],
+    relationSummary: '',
+  };
+
+  const actionKr = ACTION_TYPE_KOREAN[actionType] ?? actionType;
+
+  pm.encounters.push({
+    turnNo,
+    locationId,
+    playerAction: actionKr,
+    outcome,
+    briefNote: briefNote.slice(0, 50),
+  });
+
+  // 최대 10개 유지 (오래된 것 제거)
+  if (pm.encounters.length > MAX_PERSONAL_ENCOUNTERS) {
+    pm.encounters = pm.encounters.slice(-MAX_PERSONAL_ENCOUNTERS);
+  }
+
+  pm.lastSeenTurn = turnNo;
+  pm.lastSeenLocation = locationId;
+
+  // posture + trust 기반 관계 요약 자동 갱신
+  const posture = computeEffectivePosture(npcState);
+  pm.relationSummary = generateRelationSummary(posture, npcState.emotional.trust);
+
+  return { ...npcState, personalMemory: pm };
+}
+
+/**
+ * NPC personalMemory에 알게 된 사실 추가 (최대 5개, 중복 방지).
+ */
+export function addNpcKnownFact(npcState: NPCState, fact: string): NPCState {
+  if (!fact || fact.trim().length === 0) return npcState;
+  const pm: NpcPersonalMemory = npcState.personalMemory ?? {
+    encounters: [],
+    lastSeenTurn: 0,
+    lastSeenLocation: '',
+    knownFacts: [],
+    relationSummary: '',
+  };
+
+  const trimmedFact = fact.slice(0, 60);
+  // 중복 방지
+  if (pm.knownFacts.some((f) => f === trimmedFact)) return npcState;
+
+  pm.knownFacts.push(trimmedFact);
+  if (pm.knownFacts.length > MAX_KNOWN_FACTS) {
+    pm.knownFacts = pm.knownFacts.slice(-MAX_KNOWN_FACTS);
+  }
+
+  return { ...npcState, personalMemory: pm };
 }

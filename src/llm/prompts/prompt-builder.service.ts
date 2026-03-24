@@ -84,8 +84,11 @@ export class PromptBuilderService {
       }
     }
 
-    // Structured Memory v2: NPC 관계 일지 (기존 NPC 감정 상태 흡수)
-    if (ctx.npcJournalText) {
+    // NPC 개인 기록: 현재 턴 관련 NPC의 상세 기록 (relevantNpcMemoryText 우선)
+    if (ctx.relevantNpcMemoryText) {
+      memoryParts.push(`[관련 NPC 기록]\n${ctx.relevantNpcMemoryText}\n⚠️ 이 NPC와의 과거 상호작용을 대사와 행동에 반드시 반영하라. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다. 과거 만남의 결과(성공/실패)가 현재 태도에 영향을 주어야 합니다.`);
+    } else if (ctx.npcJournalText) {
+      // fallback: personalMemory가 없는 경우 기존 NPC 관계 일지 사용
       memoryParts.push(`[NPC 관계]\n${ctx.npcJournalText}\n⚠️ NPC가 등장하면, 위 태도와 과거 상호작용을 반드시 대사 톤과 행동에 반영하세요. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다.`);
     }
 

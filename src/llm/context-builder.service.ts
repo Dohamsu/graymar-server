@@ -11,8 +11,8 @@ import {
   turns,
 } from '../db/schema/index.js';
 import type { ServerResultV1, NPCState, Relationship, PlayerBehaviorProfile, IncidentRuntime, SignalFeedItem, NarrativeMark } from '../db/types/index.js';
-import type { NpcEmotionalState } from '../db/types/npc-state.js';
-import { summarizeRelationship, computeEffectivePosture, getNpcDisplayName } from '../db/types/npc-state.js';
+import type { NpcEmotionalState, NpcPersonalMemory } from '../db/types/npc-state.js';
+import { summarizeRelationship, computeEffectivePosture, getNpcDisplayName, generateRelationSummary } from '../db/types/npc-state.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { StructuredMemory } from '../db/types/structured-memory.js';
 import type { NpcKnowledgeLedger } from '../db/types/npc-knowledge.js';
@@ -86,6 +86,8 @@ export interface LlmContext {
   previousVisitContext: string | null;
   // 프리셋 배경 강화: 주인공 배경 리마인드
   protagonistBackground: string | null;
+  // NPC 개인 기록: 현재 턴 관련 NPC만 선별하여 상세 기록
+  relevantNpcMemoryText: string | null;
 }
 
 @Injectable()
@@ -729,6 +731,51 @@ export class ContextBuilderService {
       }
     }
 
+    // === NPC 개인 기록: 현재 턴 관련 NPC만 선별 ===
+    let relevantNpcMemoryText: string | null = null;
+    if (runState) {
+      const allNpcStates = runState.npcStates as Record<string, NPCState> | undefined;
+      if (allNpcStates) {
+        const relevantNpcIds = new Set<string>();
+
+        // 1. 현재 이벤트의 primaryNpcId
+        const uiForNpc = serverResult.ui as Record<string, unknown>;
+        const acForNpc = uiForNpc?.actionContext as Record<string, unknown> | undefined;
+        const primaryNpc = acForNpc?.primaryNpcId as string | null | undefined;
+        if (primaryNpc) relevantNpcIds.add(primaryNpc);
+
+        // 2. 현재 장소에 present하는 NPC
+        const wsForNpc = runState.worldState as Record<string, unknown> | undefined;
+        const currentLocForNpc = wsForNpc?.currentLocationId as string | undefined;
+        const locDynForNpc = wsForNpc?.locationDynamicStates as Record<string, { presentNpcs?: string[] }> | undefined;
+        if (currentLocForNpc && locDynForNpc?.[currentLocForNpc]?.presentNpcs) {
+          for (const nid of locDynForNpc[currentLocForNpc].presentNpcs!) {
+            relevantNpcIds.add(nid);
+          }
+        }
+
+        // 3. npcInjection의 NPC
+        const injNpc = (uiForNpc?.npcInjection as { npcId?: string } | null)?.npcId;
+        if (injNpc) relevantNpcIds.add(injNpc);
+
+        // 4. 이벤트 sceneFrame/태그에 언급된 NPC (이름 매칭)
+        const sceneFrameForNpc = acForNpc?.eventSceneFrame as string | undefined;
+        if (sceneFrameForNpc) {
+          for (const [npcId] of Object.entries(allNpcStates)) {
+            const npcDef = this.content.getNpc(npcId);
+            if (npcDef?.name && sceneFrameForNpc.includes(npcDef.name)) {
+              relevantNpcIds.add(npcId);
+            }
+          }
+        }
+
+        // 선별된 NPC의 personalMemory 렌더링
+        if (relevantNpcIds.size > 0) {
+          relevantNpcMemoryText = this.renderRelevantNpcMemory(allNpcStates, relevantNpcIds);
+        }
+      }
+    }
+
     return {
       theme: memory?.theme ?? [],
       storySummary: memory?.storySummary ?? null,
@@ -785,6 +832,63 @@ export class ContextBuilderService {
         : null,
       // 프리셋 배경 강화
       protagonistBackground,
+      // NPC 개인 기록
+      relevantNpcMemoryText,
     };
+  }
+
+  /**
+   * 선별된 NPC의 personalMemory를 LLM 컨텍스트용 텍스트로 렌더링.
+   * personalMemory가 없는 NPC는 기본 관계 정보만 출력.
+   */
+  private renderRelevantNpcMemory(
+    allNpcStates: Record<string, NPCState>,
+    relevantNpcIds: Set<string>,
+  ): string | null {
+    const LOCATION_NAMES: Record<string, string> = {
+      LOC_MARKET: '시장', LOC_GUARD: '경비대', LOC_HARBOR: '항만', LOC_SLUMS: '빈민가',
+    };
+    const blocks: string[] = [];
+
+    for (const npcId of relevantNpcIds) {
+      const npc = allNpcStates[npcId];
+      if (!npc) continue;
+
+      const npcDef = this.content.getNpc(npcId);
+      const displayName = getNpcDisplayName(npc, npcDef);
+      const posture = computeEffectivePosture(npc);
+      const pm = npc.personalMemory as NpcPersonalMemory | undefined;
+
+      if (pm && pm.encounters.length > 0) {
+        // 상세 기록 있음
+        const lines: string[] = [];
+        lines.push(`[NPC: ${displayName} (${npcId})]`);
+        lines.push(`관계: ${pm.relationSummary || generateRelationSummary(posture, npc.emotional.trust)} (trust: ${npc.emotional.trust})`);
+
+        // 과거 만남 (최근 5개만 렌더링하여 토큰 절약)
+        const recentEnc = pm.encounters.slice(-5);
+        if (recentEnc.length > 0) {
+          lines.push('과거 만남:');
+          for (const enc of recentEnc) {
+            const locName = LOCATION_NAMES[enc.locationId] ?? enc.locationId;
+            const outcomeKr = enc.outcome === 'SUCCESS' ? '성공' : enc.outcome === 'PARTIAL' ? '부분성공' : '실패';
+            lines.push(`- T${enc.turnNo} ${locName}: ${enc.playerAction} -> ${outcomeKr} "${enc.briefNote}"`);
+          }
+        }
+
+        // 알려진 사실
+        if (pm.knownFacts.length > 0) {
+          lines.push(`알려진 사실: ${pm.knownFacts.join('; ')}`);
+        }
+
+        blocks.push(lines.join('\n'));
+      } else {
+        // personalMemory 없음 — 기본 정보만
+        const relSummary = generateRelationSummary(posture, npc.emotional.trust);
+        blocks.push(`[NPC: ${displayName} (${npcId})]\n관계: ${relSummary} (trust: ${npc.emotional.trust})`);
+      }
+    }
+
+    return blocks.length > 0 ? blocks.join('\n\n') : null;
   }
 }
