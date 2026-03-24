@@ -16,6 +16,7 @@ import type {
   SetDefinitionData,
   ShopDefinition,
   ScenarioMetaContent,
+  EquipmentDropEntry,
 } from './content.types.js';
 import type { EventDefV2, HubSafety, TimePhase, AffixKind, RegionAffixDef, ScenarioMeta } from '../db/types/index.js';
 
@@ -45,6 +46,11 @@ export class ContentLoaderService implements OnModuleInit {
   private shopsByLocation = new Map<string, ShopDefinition[]>();
   // Phase 4.1: Region Affix
   private affixes: RegionAffixDef[] = [];
+  // Phase 4a: Equipment Drops
+  private equipmentDrops: EquipmentDropEntry[] = [];
+  private equipDropsByEnemy = new Map<string, EquipmentDropEntry>();
+  private equipDropsByEncounter = new Map<string, EquipmentDropEntry>();
+  private equipDropsByLocation = new Map<string, EquipmentDropEntry>();
   // Narrative Engine v1
   private incidentsData: unknown[] = [];
   private endingsData: Record<string, unknown> = {};
@@ -58,7 +64,7 @@ export class ContentLoaderService implements OnModuleInit {
     const [
       enemiesRaw, encountersRaw, itemsRaw, defaultsRaw, presetsRaw,
       locationsRaw, eventsV2Raw, sceneShellsRaw, suggestedChoicesRaw, arcEventsRaw,
-      npcsRaw, setsRaw, shopsRaw, affixesRaw,
+      npcsRaw, setsRaw, shopsRaw, affixesRaw, equipDropsRaw,
       incidentsRaw, endingsRaw, narrativeMarksRaw,
       scenarioMetaRaw,
     ] = await Promise.all([
@@ -76,6 +82,8 @@ export class ContentLoaderService implements OnModuleInit {
       readFile(join(this.contentDir, 'sets.json'), 'utf-8').catch(() => '[]'),
       readFile(join(this.contentDir, 'shops.json'), 'utf-8').catch(() => '[]'),
       readFile(join(this.contentDir, 'region_affixes.json'), 'utf-8').catch(() => '[]'),
+      // Phase 4a: Equipment Drops
+      readFile(join(this.contentDir, 'equipment_drops.json'), 'utf-8').catch(() => '[]'),
       // Narrative Engine v1
       readFile(join(this.contentDir, 'incidents.json'), 'utf-8').catch(() => '{"incidents":[]}'),
       readFile(join(this.contentDir, 'endings.json'), 'utf-8').catch(() => '{}'),
@@ -125,6 +133,21 @@ export class ContentLoaderService implements OnModuleInit {
     // Phase 4.1: Region Affix 로드
     this.affixes = JSON.parse(affixesRaw) as RegionAffixDef[];
 
+    // Phase 4a: Equipment Drops 로드 + 인덱스 구축
+    this.equipmentDrops = JSON.parse(equipDropsRaw) as EquipmentDropEntry[];
+    this.equipDropsByEnemy.clear();
+    this.equipDropsByEncounter.clear();
+    this.equipDropsByLocation.clear();
+    for (const entry of this.equipmentDrops) {
+      if (entry.enemyId) {
+        this.equipDropsByEnemy.set(entry.enemyId, entry);
+      } else if (entry.encounterId) {
+        this.equipDropsByEncounter.set(entry.encounterId, entry);
+      } else if (entry.locationId && !entry.enemyId && !entry.encounterId) {
+        this.equipDropsByLocation.set(entry.locationId, entry);
+      }
+    }
+
     // 콘텐츠 무결성 검증: events_v2의 primaryNpcId가 npcs에 존재하는지 확인
     this.validateNpcReferences();
 
@@ -154,6 +177,10 @@ export class ContentLoaderService implements OnModuleInit {
 
   getItem(id: string): ItemDefinition | undefined {
     return this.items.get(id);
+  }
+
+  getAllItems(): ItemDefinition[] {
+    return [...this.items.values()];
   }
 
   getAllEnemies(): EnemyDefinition[] {
@@ -356,6 +383,23 @@ export class ContentLoaderService implements OnModuleInit {
   /** 전체 affix 목록 */
   getAllAffixes(): RegionAffixDef[] {
     return this.affixes;
+  }
+
+  // --- Phase 4a: Equipment Drops 메서드 ---
+
+  /** 적 ID로 장비 드랍 테이블 조회 */
+  getEquipmentDropTable(enemyId: string): EquipmentDropEntry | undefined {
+    return this.equipDropsByEnemy.get(enemyId);
+  }
+
+  /** 인카운터 ID로 보스 장비 드랍 테이블 조회 */
+  getEncounterEquipmentDropTable(encounterId: string): EquipmentDropEntry | undefined {
+    return this.equipDropsByEncounter.get(encounterId);
+  }
+
+  /** 장소 ID로 LOCATION 기본 장비 드랍 테이블 조회 */
+  getLocationEquipmentDrops(locationId: string): EquipmentDropEntry | undefined {
+    return this.equipDropsByLocation.get(locationId);
   }
 
   // --- Narrative Engine v1: Incidents/Endings ---

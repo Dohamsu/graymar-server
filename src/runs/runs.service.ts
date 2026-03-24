@@ -29,7 +29,11 @@ import { type ServerResultV1, type RunState, type IncidentDef, type NPCState, ty
 import { initNPCState } from '../db/types/npc-state.js';
 import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
+import { AffixService } from '../engine/rewards/affix.service.js';
+import { RunPlannerService } from '../engine/planner/run-planner.service.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
+import { ShopService } from '../engine/hub/shop.service.js';
+import type { RegionEconomy } from '../db/types/region-state.js';
 
 @Injectable()
 export class RunsService {
@@ -44,15 +48,19 @@ export class RunsService {
     private readonly sceneShellService: SceneShellService,
     private readonly incidentMgmt: IncidentManagementService,
     private readonly rngService: RngService,
+    private readonly planner: RunPlannerService,
     private readonly campaignsService: CampaignsService,
+    private readonly affixService: AffixService,
+    private readonly shopService: ShopService,
   ) {}
 
   async createRun(
     userId: string,
     presetId: string,
     gender: 'male' | 'female' = 'male',
-    options?: { campaignId?: string; scenarioId?: string },
+    options?: { campaignId?: string; scenarioId?: string; mode?: 'hub' | 'dag' },
   ) {
+    const runMode = options?.mode ?? 'hub';
     // 0. 캠페인 CarryOver 조회 (캠페인 모드일 때)
     let carryOver: CarryOverState | null = null;
     let scenarioMeta: ScenarioMeta | null = null;
@@ -260,31 +268,73 @@ export class RunsService {
       );
     } else {
       // 첫 시나리오 또는 비캠페인: 기존 프리셋 로직
+      // Phase 4a: 시작 아이템 중 장비(EQ_)는 인스턴스 생성 후 equipped에 자동 배치
+      const startingItems = preset?.startingItems ?? [];
+      const consumableItems: Array<{ itemId: string; qty: number }> = [];
+      const startEquipped: import('../db/types/equipment.js').EquippedGear = {};
+      const startBag: import('../db/types/equipment.js').ItemInstance[] = [];
+      const equipRng = this.rngService.create(seed + '_start_eq', 0);
+
+      for (const si of startingItems) {
+        if (si.itemId.startsWith('EQ_')) {
+          // 장비 아이템 → 인스턴스 생성 후 착용 시도
+          const instance = this.affixService.createPlainInstance(si.itemId);
+          const itemDef = this.content.getItem(si.itemId);
+          if (itemDef?.slot) {
+            const slot = itemDef.slot as import('../db/types/equipment.js').EquipmentSlot;
+            if (!startEquipped[slot]) {
+              startEquipped[slot] = instance;
+            } else {
+              startBag.push(instance); // 슬롯 중복 시 가방에
+            }
+          } else {
+            startBag.push(instance);
+          }
+        } else {
+          consumableItems.push({ itemId: si.itemId, qty: si.qty });
+        }
+      }
+
       initialRunState = {
         gold: preset?.startingGold ?? 50,
         hp: presetStats.maxHP,
         maxHp: presetStats.maxHP,
         stamina: presetStats.maxStamina,
         maxStamina: presetStats.maxStamina,
-        inventory: (preset?.startingItems ?? []).map((si) => ({
-          itemId: si.itemId,
-          qty: si.qty,
-        })),
+        inventory: consumableItems,
         worldState,
         agenda,
         arcState,
         npcRelations,
         eventCooldowns: {},
-        equipped: {},
-        equipmentBag: [],
+        equipped: startEquipped,
+        equipmentBag: startBag,
         npcStates,
       };
     }
 
+    // 3-1. Phase 4b: RegionEconomy 초기화 — 상점별 초기 재고 생성
+    const allShops = this.content.getAllShops();
+    const shopStocks: RegionEconomy['shopStocks'] = {};
+    for (const shopDef of allShops) {
+      shopStocks[shopDef.shopId] = this.shopService.refreshStock(
+        shopDef, undefined, 0, seed,
+      );
+    }
+    initialRunState.regionEconomy = {
+      priceIndex: 1.0,
+      shopStocks,
+    };
+
     // 4. HUB 선택지 생성
     const hubChoices = this.sceneShellService.buildHubChoices(worldState, arcState);
 
-    // 5. 트랜잭션: run + HUB 노드 + memory + 첫 턴
+    // 5. 트랜잭션: run + 첫 노드 + memory + 첫 턴
+    // DAG 모드: 첫 노드는 DAG 그래프의 시작 노드 (common_s0)
+    const isDag = runMode === 'dag';
+    const dagStartNodeId = isDag ? this.planner.getStartNodeId() : null;
+    const dagStartNode = dagStartNodeId ? this.planner.findNode(dagStartNodeId) : null;
+
     const result = await this.db.transaction(async (tx) => {
       // run_sessions INSERT
       const [run] = await tx
@@ -299,8 +349,8 @@ export class RunsService {
           currentTurnNo: 0,
           seed,
           runState: initialRunState,
-          currentGraphNodeId: null,
-          currentLocationId: null, // HUB
+          currentGraphNodeId: dagStartNodeId,
+          currentLocationId: null,
           presetId: preset ? presetId : null,
           gender,
           routeTag: null,
@@ -310,18 +360,32 @@ export class RunsService {
         })
         .returning();
 
-      // 첫 노드: HUB 타입
-      await tx.insert(nodeInstances).values({
-        runId: run.id,
-        nodeIndex: 0,
-        graphNodeId: null,
-        nodeType: 'HUB',
-        nodeMeta: { hubEntry: true },
-        environmentTags: ['HUB', 'GRAYMAR'],
-        edges: null,
-        status: 'NODE_ACTIVE',
-        nodeState: { phase: 'HUB' },
-      });
+      // 첫 노드: DAG 모드면 그래프 시작 노드, HUB 모드면 HUB 노드
+      if (isDag && dagStartNode) {
+        await tx.insert(nodeInstances).values({
+          runId: run.id,
+          nodeIndex: 0,
+          graphNodeId: dagStartNodeId,
+          nodeType: dagStartNode.nodeType,
+          nodeMeta: dagStartNode.nodeMeta as Record<string, unknown>,
+          environmentTags: dagStartNode.environmentTags,
+          edges: dagStartNode.edges,
+          status: 'NODE_ACTIVE',
+          nodeState: {},
+        });
+      } else {
+        await tx.insert(nodeInstances).values({
+          runId: run.id,
+          nodeIndex: 0,
+          graphNodeId: null,
+          nodeType: 'HUB',
+          nodeMeta: { hubEntry: true },
+          environmentTags: ['HUB', 'GRAYMAR'],
+          edges: null,
+          status: 'NODE_ACTIVE',
+          nodeState: { phase: 'HUB' },
+        });
+      }
 
       // run_memories INSERT — L0 theme 구성 (캠페인 요약 포함)
       const themeEntries = [
@@ -378,7 +442,7 @@ export class RunsService {
         structuredMemory: createEmptyStructuredMemory(),
       });
 
-      // 첫 HUB 노드 진입 — turnNo=0 SYSTEM 턴
+      // 첫 노드 진입 — turnNo=0 SYSTEM 턴
       const firstNode = await tx.query.nodeInstances.findFirst({
         where: and(
           eq(nodeInstances.runId, run.id),
@@ -386,96 +450,148 @@ export class RunsService {
         ),
       });
 
-      const enterResult: ServerResultV1 = {
-        version: 'server_result_v1',
-        turnNo: 0,
-        node: {
-          id: firstNode!.id,
-          type: 'HUB',
-          index: 0,
-          state: 'NODE_ACTIVE',
-        },
-        summary: {
-          short: [
-            '[배경] 그레이마르 항만 — 왕국 남서부 최대 무역항. 안개 낀 밤, 허름한 선술집 \'잠긴 닻\'.',
-            `[주인공] ${preset?.protagonistTheme ?? '이름 없는 용병.'} 일거리를 찾아 며칠 전 그레이마르에 도착했다. 이 도시에서 아직 이름이 알려지지 않은 떠돌이 용병.`,
-            '[NPC] 서기관 로넨 — 항만 노동 길드 말단 서기관. 장부 관리 책임자였으나 도난 당해 쫓기는 처지. 초조하고 겁에 질려 있다. ⚠️ 말투: 중세 하급 관리 특유의 공손하지만 딱딱한 경어체. "~하오", "~이오", "~소"체를 사용. 예: "실례하겠소", "장부가 사라졌소", "찾아주시오". 현대 존댓말("~합니다", "~입니다", "~세요")은 절대 사용하지 마세요.',
-            '',
-            '[대화 흐름 — 반드시 이 순서대로 전개]',
-            '1단계(자기소개): 로넨이 조심스럽게 다가와 자신이 누구인지 밝힌다. "항만 노동 길드 서기관 로넨이오" 식으로 소속과 직함을 말한다.',
-            `2단계(접근 이유): 왜 당신에게 왔는지 설명한다. 로넨의 대사: "${(preset as any).prologueHook ?? '부두에서 당신이 일하는 것을 봤소. 길드 안 사람은 아무도 믿을 수가 없어서… 외부 사람이 필요했소.'}" 이 대사를 자연스럽게 녹여 넣되, 길드 내부 인물은 믿을 수 없어서 외부인이 필요하다는 점을 강조한다.`,
-            '3단계(문제 고백): 장부가 사라진 사실을 털어놓는다. 처음에는 "장부가 사라졌다"만 말하고, 당신의 반응 후에 뒷거래 기록이 포함되어 있다는 핵심을 밝힌다.',
-            '4단계(제안): 장부를 찾아달라는 의뢰를 명확히 제안한다. 보수를 언급하거나 긴박함을 호소한다.',
-            '',
-            '[서술 지시] 400~700자, 프롤로그.',
-            '- 1막(분위기 ~40%): 선술집의 퇴폐한 분위기(소리, 냄새, 빛)로 장면을 연다. NPC 미등장.',
-            '- 2막(대화 ~40%): 위 1~3단계. NPC가 말함 → 당신의 반응(행동/시선, 대사 아님) → NPC가 더 밝힘.',
-            '- 3막(제안 ~20%): 4단계. 로넨의 절박한 부탁으로 끝낸다.',
-            '- 당신의 내면 심리 금지. 행동/시선/표정으로만 반응.',
-          ].join('\n'),
-          display: [
-            '짙은 안개가 항만을 감싸는 밤이었다. 선술집 \'잠긴 닻\'의 구석 자리에서 당신은 싸구려 에일을 홀짝이고 있었다. 기름때 묻은 등잔이 흔들릴 때마다 주변의 그림자가 일렁였다.',
-            '',
-            '"실례하겠소. 항만 노동 길드 서기관 로넨이라 하오." 초라한 행색의 사내가 테이블 건너편에 조심스럽게 앉았다. 끊임없이 문 쪽을 훔쳐보는 눈동자가 불안을 감추지 못했다.',
-            '',
-            '당신은 잔을 내려놓고 사내를 살폈다. 길드 서기라기엔 너무 핏기 없는 얼굴이었다.',
-            '',
-            `"${(preset as any).prologueHook ?? '부두에서 당신이 일하는 것을 봤소. 길드 안 사람은 아무도 믿을 수가 없어서… 외부 사람이 필요했소.'}" 로넨이 목소리를 한층 낮췄다. "장부가 사라졌소. 이틀 전 밤에 사무실을 털렸는데… 공물 내역만이 아니오. 뒷거래 기록이 전부 들어 있소."`,
-            '',
-            '당신의 눈이 좁아졌다.',
-            '',
-            '"길드 간부들이 해관청에 흘린 뇌물 목록이오." 로넨의 손이 잔 위에서 미세하게 떨렸다. "그 장부를 찾아주시오. 보수는… 넉넉히 치르겠소."',
-          ].join('\n'),
-        },
-        events: [
-          {
-            id: 'enter_quest_0',
-            kind: 'QUEST',
-            text: '[의뢰] 사라진 공물 장부 — 도시의 네 구역을 탐색하여 단서를 모으고 장부의 행방을 추적하라.',
-            tags: ['QUEST', 'QUEST_START'],
-          },
-        ],
-        diff: {
-          player: {
-            hp: { from: 0, to: 0, delta: 0 },
-            stamina: { from: 0, to: 0, delta: 0 },
-            status: [],
-          },
-          enemies: [],
-          inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
-          meta: {
-            battle: { phase: 'NONE' },
-            position: { env: ['HUB', 'GRAYMAR'] },
-          },
-        },
-        ui: {
-          availableActions: ['CHOICE'],
-          targetLabels: [],
-          actionSlots: { base: 2, bonusAvailable: false, max: 3 },
-          toneHint: 'mysterious',
-          worldState: {
-            hubHeat: worldState.hubHeat,
-            hubSafety: worldState.hubSafety,
-            timePhase: worldState.timePhase,
-            currentLocationId: null,
-          },
-        },
-        choices: [
-          {
-            id: 'accept_quest',
-            label: '의뢰를 받아들인다',
-            hint: '로넨의 부탁을 수락하고 장부를 찾기로 한다',
-            action: { type: 'CHOICE' as const, payload: {} },
-          },
-        ],
-        flags: { bonusSlot: false, downed: false, battleEnded: false },
-      };
+      let enterResult: ServerResultV1;
 
+      if (isDag && dagStartNode) {
+        // DAG 모드: 첫 그래프 노드 진입 결과
+        const eventId = (dagStartNode.nodeMeta?.eventId as string) ?? '';
+        enterResult = {
+          version: 'server_result_v1',
+          turnNo: 0,
+          node: {
+            id: firstNode!.id,
+            type: dagStartNode.nodeType,
+            index: 0,
+            state: 'NODE_ACTIVE',
+          },
+          summary: {
+            short: `[${dagStartNode.nodeType}] ${eventId || dagStartNode.nodeType} — DAG 미션 시작.`,
+            display: '미션이 시작되었다.',
+          },
+          events: [
+            {
+              id: 'dag_start_0',
+              kind: 'QUEST',
+              text: '[미션] DAG 미션 모드로 진행한다.',
+              tags: ['QUEST', 'DAG_START', dagStartNodeId!],
+            },
+          ],
+          diff: {
+            player: {
+              hp: { from: 0, to: 0, delta: 0 },
+              stamina: { from: 0, to: 0, delta: 0 },
+              status: [],
+            },
+            enemies: [],
+            inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
+            meta: {
+              battle: { phase: 'NONE' },
+              position: { env: dagStartNode.environmentTags },
+            },
+          },
+          ui: {
+            availableActions: ['ACTION', 'CHOICE'],
+            targetLabels: [],
+            actionSlots: { base: 2, bonusAvailable: false, max: 3 },
+            toneHint: 'mysterious',
+          },
+          choices: [],
+          flags: { bonusSlot: false, downed: false, battleEnded: false },
+        };
+      } else {
+        // HUB 모드: 기존 프롤로그
+        enterResult = {
+          version: 'server_result_v1',
+          turnNo: 0,
+          node: {
+            id: firstNode!.id,
+            type: 'HUB',
+            index: 0,
+            state: 'NODE_ACTIVE',
+          },
+          summary: {
+            short: [
+              '[배경] 그레이마르 항만 — 왕국 남서부 최대 무역항. 안개 낀 밤, 허름한 선술집 \'잠긴 닻\'.',
+              `[주인공] ${preset?.protagonistTheme ?? '이름 없는 용병.'} 일거리를 찾아 며칠 전 그레이마르에 도착했다. 이 도시에서 아직 이름이 알려지지 않은 떠돌이 용병.`,
+              '[NPC] 서기관 로넨 — 항만 노동 길드 말단 서기관. 장부 관리 책임자였으나 도난 당해 쫓기는 처지. 초조하고 겁에 질려 있다. ⚠️ 말투: 중세 하급 관리 특유의 공손하지만 딱딱한 경어체. "~하오", "~이오", "~소"체를 사용. 예: "실례하겠소", "장부가 사라졌소", "찾아주시오". 현대 존댓말("~합니다", "~입니다", "~세요")은 절대 사용하지 마세요.',
+              '',
+              '[대화 흐름 — 반드시 이 순서대로 전개]',
+              '1단계(자기소개): 로넨이 조심스럽게 다가와 자신이 누구인지 밝힌다. "항만 노동 길드 서기관 로넨이오" 식으로 소속과 직함을 말한다.',
+              `2단계(접근 이유): 왜 당신에게 왔는지 설명한다. 로넨의 대사: "${(preset as any).prologueHook ?? '부두에서 당신이 일하는 것을 봤소. 길드 안 사람은 아무도 믿을 수가 없어서… 외부 사람이 필요했소.'}" 이 대사를 자연스럽게 녹여 넣되, 길드 내부 인물은 믿을 수 없어서 외부인이 필요하다는 점을 강조한다.`,
+              '3단계(문제 고백): 장부가 사라진 사실을 털어놓는다. 처음에는 "장부가 사라졌다"만 말하고, 당신의 반응 후에 뒷거래 기록이 포함되어 있다는 핵심을 밝힌다.',
+              '4단계(제안): 장부를 찾아달라는 의뢰를 명확히 제안한다. 보수를 언급하거나 긴박함을 호소한다.',
+              '',
+              '[서술 지시] 400~700자, 프롤로그.',
+              '- 1막(분위기 ~40%): 선술집의 퇴폐한 분위기(소리, 냄새, 빛)로 장면을 연다. NPC 미등장.',
+              '- 2막(대화 ~40%): 위 1~3단계. NPC가 말함 → 당신의 반응(행동/시선, 대사 아님) → NPC가 더 밝힘.',
+              '- 3막(제안 ~20%): 4단계. 로넨의 절박한 부탁으로 끝낸다.',
+              '- 당신의 내면 심리 금지. 행동/시선/표정으로만 반응.',
+            ].join('\n'),
+            display: [
+              '짙은 안개가 항만을 감싸는 밤이었다. 선술집 \'잠긴 닻\'의 구석 자리에서 당신은 싸구려 에일을 홀짝이고 있었다. 기름때 묻은 등잔이 흔들릴 때마다 주변의 그림자가 일렁였다.',
+              '',
+              '"실례하겠소. 항만 노동 길드 서기관 로넨이라 하오." 초라한 행색의 사내가 테이블 건너편에 조심스럽게 앉았다. 끊임없이 문 쪽을 훔쳐보는 눈동자가 불안을 감추지 못했다.',
+              '',
+              '당신은 잔을 내려놓고 사내를 살폈다. 길드 서기라기엔 너무 핏기 없는 얼굴이었다.',
+              '',
+              `"${(preset as any).prologueHook ?? '부두에서 당신이 일하는 것을 봤소. 길드 안 사람은 아무도 믿을 수가 없어서… 외부 사람이 필요했소.'}" 로넨이 목소리를 한층 낮췄다. "장부가 사라졌소. 이틀 전 밤에 사무실을 털렸는데… 공물 내역만이 아니오. 뒷거래 기록이 전부 들어 있소."`,
+              '',
+              '당신의 눈이 좁아졌다.',
+              '',
+              '"길드 간부들이 해관청에 흘린 뇌물 목록이오." 로넨의 손이 잔 위에서 미세하게 떨렸다. "그 장부를 찾아주시오. 보수는… 넉넉히 치르겠소."',
+            ].join('\n'),
+          },
+          events: [
+            {
+              id: 'enter_quest_0',
+              kind: 'QUEST',
+              text: '[의뢰] 사라진 공물 장부 — 도시의 네 구역을 탐색하여 단서를 모으고 장부의 행방을 추적하라.',
+              tags: ['QUEST', 'QUEST_START'],
+            },
+          ],
+          diff: {
+            player: {
+              hp: { from: 0, to: 0, delta: 0 },
+              stamina: { from: 0, to: 0, delta: 0 },
+              status: [],
+            },
+            enemies: [],
+            inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
+            meta: {
+              battle: { phase: 'NONE' },
+              position: { env: ['HUB', 'GRAYMAR'] },
+            },
+          },
+          ui: {
+            availableActions: ['CHOICE'],
+            targetLabels: [],
+            actionSlots: { base: 2, bonusAvailable: false, max: 3 },
+            toneHint: 'mysterious',
+            worldState: {
+              hubHeat: worldState.hubHeat,
+              hubSafety: worldState.hubSafety,
+              timePhase: worldState.timePhase,
+              currentLocationId: null,
+            },
+          },
+          choices: [
+            {
+              id: 'accept_quest',
+              label: '의뢰를 받아들인다',
+              hint: '로넨의 부탁을 수락하고 장부를 찾기로 한다',
+              action: { type: 'CHOICE' as const, payload: {} },
+            },
+          ],
+          flags: { bonusSlot: false, downed: false, battleEnded: false },
+        };
+      }
+
+      const firstNodeType = isDag && dagStartNode ? dagStartNode.nodeType : 'HUB';
       await tx.insert(turns).values({
         runId: run.id,
         turnNo: 0,
         nodeInstanceId: firstNode!.id,
-        nodeType: 'HUB',
+        nodeType: firstNodeType,
         inputType: 'SYSTEM',
         rawInput: '',
         idempotencyKey: `${run.id}_init`,

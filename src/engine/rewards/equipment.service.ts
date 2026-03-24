@@ -207,4 +207,35 @@ export class EquipmentService {
 
     return result;
   }
+
+  /**
+   * 활성화된 세트의 specialEffect 목록 반환.
+   * 세트 보너스 피스 수를 충족한 경우에만 해당 specialEffect를 포함.
+   */
+  getActiveSpecialEffects(equipped: EquippedGear): string[] {
+    const effects: string[] = [];
+    const itemSetMap = this.contentLoader.getItemSetMap();
+
+    // 세트별 장착 피스 수 집계
+    const setCounts = new Map<string, number>();
+    for (const instance of Object.values(equipped)) {
+      if (!instance) continue;
+      const setId = itemSetMap[instance.baseItemId];
+      if (setId) setCounts.set(setId, (setCounts.get(setId) ?? 0) + 1);
+    }
+
+    for (const [setId, count] of setCounts) {
+      const setDef = this.contentLoader.getSet(setId);
+      if (!setDef) continue;
+
+      if (count >= 2 && setDef.bonus2.specialEffect) {
+        effects.push(setDef.bonus2.specialEffect);
+      }
+      if (count >= 3 && setDef.bonus3.specialEffect) {
+        effects.push(setDef.bonus3.specialEffect);
+      }
+    }
+
+    return effects;
+  }
 }

@@ -15,9 +15,10 @@ import type {
   WorldState,
   ArcState,
 } from '../../db/types/index.js';
-import type { NodeType, ToneHint } from '../../db/types/index.js';
+import type { NodeType, ToneHint, RouteContext, RouteTag } from '../../db/types/index.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { SceneShellService } from '../hub/scene-shell.service.js';
+import { RunPlannerService } from '../planner/run-planner.service.js';
 import { InternalError } from '../../common/errors/game-errors.js';
 
 export interface NodeTransitionResult {
@@ -34,6 +35,7 @@ export class NodeTransitionService {
     @Inject(DB) private readonly db: DrizzleDB,
     private readonly content: ContentLoaderService,
     private readonly sceneShell: SceneShellService,
+    private readonly planner: RunPlannerService,
   ) {}
 
   /**
@@ -481,6 +483,277 @@ export class NodeTransitionService {
       nextNodeIndex: parentNodeIndex,
       nextNodeType: 'LOCATION',
       enterResult,
+    };
+  }
+
+  /**
+   * DAG 그래프 기반 노드 전환.
+   * RunPlannerService.resolveNextNodeId()로 다음 그래프 노드를 결정하고,
+   * node_instances에 INSERT + run_sessions 업데이트.
+   *
+   * @returns null if no next node (graph end → RUN_ENDED 처리 필요)
+   */
+  async transitionByGraphNode(
+    runId: string,
+    currentGraphNodeId: string,
+    routeContext: RouteContext,
+    turnNo: number,
+    ws: WorldState,
+    playerHp: number,
+    playerStamina: number,
+    seed: string,
+  ): Promise<NodeTransitionResult | null> {
+    // 1. 다음 그래프 노드 결정
+    const nextGraphNodeId = this.planner.resolveNextNodeId(
+      currentGraphNodeId,
+      routeContext,
+    );
+    if (!nextGraphNodeId) return null; // 그래프 종료
+
+    const plannedNode = this.planner.findNode(nextGraphNodeId);
+    if (!plannedNode) {
+      throw new InternalError(
+        `Graph node not found: ${nextGraphNodeId}`,
+      );
+    }
+
+    // 2. routeTag 결정 (S2 분기점에서 결정됨)
+    const newRouteTag = this.planner.resolveRouteTag(
+      routeContext.lastChoiceId,
+    );
+    const effectiveRouteTag = newRouteTag ?? (routeContext.routeTag as RouteTag | undefined) ?? undefined;
+
+    // 3. nodeIndex 할당
+    const nextIndex = await this.getNextNodeIndex(runId);
+
+    // 4. node_instances INSERT
+    await this.db.insert(nodeInstances).values({
+      runId,
+      nodeIndex: nextIndex,
+      graphNodeId: nextGraphNodeId,
+      nodeType: plannedNode.nodeType,
+      nodeMeta: plannedNode.nodeMeta as Record<string, unknown>,
+      environmentTags: plannedNode.environmentTags,
+      edges: plannedNode.edges,
+      status: 'NODE_ACTIVE',
+      nodeState: {},
+    });
+
+    // 5. run_sessions UPDATE
+    await this.db
+      .update(runSessions)
+      .set({
+        currentNodeIndex: nextIndex,
+        currentGraphNodeId: nextGraphNodeId,
+        ...(effectiveRouteTag ? { routeTag: effectiveRouteTag } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(runSessions.id, runId));
+
+    // 6. 생성된 노드 조회
+    const newNode = await this.db.query.nodeInstances.findFirst({
+      where: and(
+        eq(nodeInstances.runId, runId),
+        eq(nodeInstances.nodeIndex, nextIndex),
+      ),
+    });
+    if (!newNode) {
+      throw new InternalError('Failed to create DAG node');
+    }
+
+    // 7. 노드 타입별 enterResult + 부속 리소스 생성
+    const nodeType = plannedNode.nodeType;
+
+    if (nodeType === 'COMBAT') {
+      // 전투 노드: BattleState 초기화 필요
+      const encounterId = (plannedNode.nodeMeta?.eventId as string) ?? '';
+      const battleState = await this.initBattleState(
+        runId,
+        newNode.id,
+        plannedNode.nodeMeta as Record<string, unknown>,
+        plannedNode.environmentTags,
+        seed,
+        turnNo,
+        playerHp,
+        playerStamina,
+      );
+
+      const enemyDescs = battleState.enemies.map((e) => {
+        const def = this.content.getEnemy(e.id.replace(/_\d+$/, ''));
+        return `${def?.name ?? e.id}(거리:${e.distance}, 각도:${e.angle})`;
+      });
+      const combatChoices = this.buildCombatChoices(
+        battleState,
+        plannedNode.environmentTags,
+      );
+
+      const enterResult: ServerResultV1 = {
+        version: 'server_result_v1',
+        turnNo,
+        node: {
+          id: newNode.id,
+          type: 'COMBAT',
+          index: nextIndex,
+          state: 'NODE_ACTIVE',
+        },
+        summary: {
+          short: `[전투] 전투 발생! [적] ${enemyDescs.join(', ')}.`,
+          display: '전투가 시작되었다!',
+        },
+        events: [],
+        diff: {
+          player: {
+            hp: { from: 0, to: 0, delta: 0 },
+            stamina: { from: 0, to: 0, delta: 0 },
+            status: [],
+          },
+          enemies: [],
+          inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
+          meta: {
+            battle: { phase: 'START' },
+            position: { env: plannedNode.environmentTags },
+          },
+        },
+        ui: {
+          availableActions: [
+            'ATTACK_MELEE',
+            'DEFEND',
+            'EVADE',
+            'FLEE',
+          ],
+          targetLabels: battleState.enemies.map((e) => {
+            const def = this.content.getEnemy(e.id.replace(/_\d+$/, ''));
+            return {
+              id: e.id,
+              name: def?.name ?? e.id,
+              hint: `HP:${e.hp} ${e.distance}/${e.angle}`,
+            };
+          }),
+          actionSlots: { base: 2, bonusAvailable: false, max: 3 },
+          toneHint: 'tense',
+        },
+        choices: combatChoices,
+        flags: { bonusSlot: false, downed: false, battleEnded: false },
+      };
+
+      return {
+        nextNodeIndex: nextIndex,
+        nextNodeType: 'COMBAT',
+        enterResult,
+        battleState,
+        routeTag: effectiveRouteTag,
+      };
+    }
+
+    if (nodeType === 'EXIT') {
+      // EXIT 노드 → RUN 종료 시그널
+      const enterResult: ServerResultV1 = {
+        version: 'server_result_v1',
+        turnNo,
+        node: {
+          id: newNode.id,
+          type: 'EXIT',
+          index: nextIndex,
+          state: 'NODE_ACTIVE',
+        },
+        summary: {
+          short: '[종료] 이야기가 막을 내린다.',
+          display: '이야기가 막을 내린다.',
+        },
+        events: [
+          {
+            id: `exit_${nextIndex}`,
+            kind: 'SYSTEM',
+            text: '런이 종료되었다.',
+            tags: ['RUN_ENDED', 'EXIT'],
+          },
+        ],
+        diff: {
+          player: {
+            hp: { from: 0, to: 0, delta: 0 },
+            stamina: { from: 0, to: 0, delta: 0 },
+            status: [],
+          },
+          enemies: [],
+          inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
+          meta: { battle: { phase: 'NONE' }, position: { env: plannedNode.environmentTags } },
+        },
+        ui: {
+          availableActions: [],
+          targetLabels: [],
+          actionSlots: { base: 2, bonusAvailable: false, max: 3 },
+          toneHint: 'calm',
+        },
+        choices: [],
+        flags: { bonusSlot: false, downed: false, battleEnded: false },
+      };
+
+      return {
+        nextNodeIndex: nextIndex,
+        nextNodeType: 'EXIT',
+        enterResult,
+        routeTag: effectiveRouteTag,
+      };
+    }
+
+    // EVENT / REST / SHOP — 일반 노드 진입
+    const eventId = (plannedNode.nodeMeta?.eventId as string) ?? '';
+    const toneHint: ToneHint = nodeType === 'REST' ? 'calm' : 'neutral';
+    const displayMap: Record<string, string> = {
+      EVENT: `이벤트 노드에 진입했다.`,
+      REST: '쉬어갈 수 있는 장소에 도착했다.',
+      SHOP: '상점에 도착했다.',
+    };
+
+    const enterResult: ServerResultV1 = {
+      version: 'server_result_v1',
+      turnNo,
+      node: {
+        id: newNode.id,
+        type: nodeType,
+        index: nextIndex,
+        state: 'NODE_ACTIVE',
+      },
+      summary: {
+        short: `[${nodeType}] ${eventId || nodeType} 노드 진입.`,
+        display: displayMap[nodeType] ?? '다음 장소에 도착했다.',
+      },
+      events: [
+        {
+          id: `enter_${nextGraphNodeId}`,
+          kind: 'SYSTEM',
+          text: displayMap[nodeType] ?? '다음 장소에 도착했다.',
+          tags: [nodeType, nextGraphNodeId],
+        },
+      ],
+      diff: {
+        player: {
+          hp: { from: 0, to: 0, delta: 0 },
+          stamina: { from: 0, to: 0, delta: 0 },
+          status: [],
+        },
+        enemies: [],
+        inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
+        meta: {
+          battle: { phase: 'NONE' },
+          position: { env: plannedNode.environmentTags },
+        },
+      },
+      ui: {
+        availableActions: ['ACTION', 'CHOICE'],
+        targetLabels: [],
+        actionSlots: { base: 2, bonusAvailable: false, max: 3 },
+        toneHint,
+      },
+      choices: [],
+      flags: { bonusSlot: false, downed: false, battleEnded: false },
+    };
+
+    return {
+      nextNodeIndex: nextIndex,
+      nextNodeType: nodeType,
+      enterResult,
+      routeTag: effectiveRouteTag,
     };
   }
 

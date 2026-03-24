@@ -18,6 +18,9 @@ const NON_CHALLENGE_ACTIONS = new Set([
   'REST',
   'SHOP',
   'TALK',
+  // Phase 4a: 장비 착용/해제는 주사위 판정 없음
+  'EQUIP',
+  'UNEQUIP',
 ]);
 
 // actionType → 기본 6스탯 매핑 (Living World v2)
@@ -68,6 +71,7 @@ export class ResolveService {
     ws: WorldState,
     stats: PermanentStats,
     rng: Rng,
+    activeSpecialEffects: string[] = [],
   ): ResolveResult {
     // 비도전 행위 → 주사위 없이 자동 SUCCESS
     if (NON_CHALLENGE_ACTIONS.has(intent.actionType)) {
@@ -87,6 +91,14 @@ export class ResolveService {
     if (event.matchPolicy === 'BLOCK') baseMod -= 1;
     baseMod -= event.friction;
     if (intent.riskLevel === 3) baseMod -= 1;
+
+    // Phase 4c: PERSUADE_BRIBE_BONUS_1 세트 효과 — PERSUADE/BRIBE 판정 시 +1
+    if (
+      (intent.actionType === 'PERSUADE' || intent.actionType === 'BRIBE') &&
+      activeSpecialEffects.includes('PERSUADE_BRIBE_BONUS_1')
+    ) {
+      baseMod += 1;
+    }
 
     // 최종 점수
     const score = diceRoll + statBonus + baseMod;

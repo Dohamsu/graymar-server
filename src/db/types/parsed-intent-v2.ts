@@ -16,6 +16,9 @@ export const INTENT_ACTION_TYPE = [
   'MOVE_LOCATION',
   'REST',
   'SHOP',
+  // Phase 4a: 장비 착용/해제
+  'EQUIP',
+  'UNEQUIP',
 ] as const;
 export type IntentActionType = (typeof INTENT_ACTION_TYPE)[number];
 

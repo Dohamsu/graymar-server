@@ -211,6 +211,20 @@ export type ArcEventDefinition = {
   rewards: Record<string, unknown>;
 };
 
+// Phase 4a: 장비 드랍 테이블 엔트리
+export type EquipmentDropItem = {
+  baseItemId: string;
+  chance: number; // 0~1 확률
+};
+
+export type EquipmentDropEntry = {
+  enemyId?: string;       // 적별 드랍 (일반 적)
+  encounterId?: string;   // 인카운터별 드랍 (보스전)
+  locationId?: string;    // 장소별 기본 드랍 (LOCATION 판정 보상)
+  isBoss?: boolean;
+  drops: EquipmentDropItem[];
+};
+
 export type ScenarioMetaContent = {
   scenarioId: string;
   name: string;
