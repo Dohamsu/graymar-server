@@ -506,7 +506,7 @@ export class TurnsService {
         .set({ status: 'NODE_ENDED', updatedAt: new Date() })
         .where(eq(nodeInstances.id, currentNode.id));
 
-      const result = this.buildSystemResult(turnNo, currentNode, '거점으로 돌아간다.');
+      const result = this.buildSystemResult(turnNo, currentNode, '잠긴 닻 선술집으로 발걸음을 돌린다.');
       await this.commitTurnRecord(run, currentNode, turnNo, body, body.input.choiceId!, result, updatedRunState, body.options?.skipLlm);
 
       const transition = await this.nodeTransition.transitionToHub(
@@ -592,7 +592,7 @@ export class TurnsService {
         .set({ status: 'NODE_ENDED', updatedAt: new Date() })
         .where(eq(nodeInstances.id, currentNode.id));
 
-      const moveResult = this.buildSystemResult(turnNo, currentNode, '다른 장소를 찾아 거점으로 돌아간다.');
+      const moveResult = this.buildSystemResult(turnNo, currentNode, '잠긴 닻 선술집으로 돌아가기로 한다.');
       await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, moveResult, hubRunState, body.options?.skipLlm);
 
       const transition = await this.nodeTransition.transitionToHub(
@@ -755,7 +755,7 @@ export class TurnsService {
         choices = [
           { id: 'generic_observe', label: '주변을 살펴본다', action: { type: 'CHOICE' as const, payload: {} } },
           { id: 'generic_talk', label: '주변 사람에게 말을 건다', action: { type: 'CHOICE' as const, payload: {} } },
-          { id: 'go_hub', label: '거점으로 돌아간다', action: { type: 'CHOICE' as const, payload: {} } },
+          { id: 'go_hub', label: "'잠긴 닻' 선술집으로 돌아간다", action: { type: 'CHOICE' as const, payload: {} } },
         ];
       }
       const result = this.buildLocationResult(turnNo, currentNode, '특별한 일이 일어나지 않았다.', 'PARTIAL', choices, ws);
@@ -941,6 +941,77 @@ export class TurnsService {
     // === User-Driven System v3: IncidentResolutionBridge (확장 필드 세밀 조정) ===
     ws = this.incidentBridge.apply(ws, resolveResult.outcome, routingResult);
 
+    // === Phase 2: IncidentMemory 축적 (사건별 개인 기록) ===
+    if (routingResult.routeMode !== 'FALLBACK_SCENE' && routingResult.incident) {
+      const incId = routingResult.incident.incidentId;
+      const incidentMemories = { ...(updatedRunState.incidentMemories ?? {}) };
+      const existing = incidentMemories[incId] ?? {
+        discoveredTurn: turnNo,
+        playerInvolvements: [],
+        knownClues: [],
+        relatedNpcIds: [],
+        playerStance: '방관',
+      };
+
+      // control/pressure 변동 계산
+      const prevInc = prevIncidents.find((i) => i.incidentId === incId);
+      const currInc = (ws.activeIncidents ?? []).find((i) => i.incidentId === incId);
+      const controlDelta = (currInc?.control ?? 0) - (prevInc?.control ?? 0);
+      const pressureDelta = (currInc?.pressure ?? 0) - (prevInc?.pressure ?? 0);
+
+      // 행동 요약
+      const actionLabel = `${this.actionTypeToKorean(intent.actionType)} (${resolveResult.outcome})`;
+      const impactParts: string[] = [];
+      if (controlDelta !== 0) impactParts.push(`control${controlDelta > 0 ? '+' : ''}${controlDelta}`);
+      if (pressureDelta !== 0) impactParts.push(`pressure${pressureDelta > 0 ? '+' : ''}${pressureDelta}`);
+      const impactStr = impactParts.length > 0 ? impactParts.join(', ') : 'no change';
+
+      // playerInvolvements 추가 (최대 8개, 오래된 것 trim)
+      const involvements = [
+        ...existing.playerInvolvements,
+        { turnNo, locationId, action: actionLabel, impact: impactStr },
+      ].slice(-8);
+
+      // knownClues: 이벤트 sceneFrame 앞 40자를 단서로 추가 (중복 제거, 최대 5개)
+      const sceneFrame = matchedEvent?.payload?.sceneFrame;
+      const clueFromEvent = sceneFrame ? sceneFrame.slice(0, 40) : (matchedEvent?.eventId ?? null);
+      const clues = [...existing.knownClues];
+      if (clueFromEvent && !clues.includes(clueFromEvent)) {
+        clues.push(clueFromEvent);
+      }
+      const trimmedClues = clues.slice(-5);
+
+      // relatedNpcIds: 이벤트의 primaryNpcId + incident def의 relatedNpcIds
+      const relatedNpcs = new Set(existing.relatedNpcIds);
+      const eventNpc = matchedEvent?.payload?.primaryNpcId;
+      if (eventNpc) relatedNpcs.add(eventNpc);
+      if (routingResult.def?.relatedNpcIds) {
+        for (const nid of routingResult.def.relatedNpcIds) relatedNpcs.add(nid);
+      }
+
+      // playerStance: control 변동 기반 자동 판정
+      const totalControlDelta = involvements.reduce((sum, inv) => {
+        const match = inv.impact.match(/control([+-]\d+)/);
+        return sum + (match ? parseInt(match[1], 10) : 0);
+      }, 0);
+      const totalPressureDelta = involvements.reduce((sum, inv) => {
+        const match = inv.impact.match(/pressure([+-]\d+)/);
+        return sum + (match ? parseInt(match[1], 10) : 0);
+      }, 0);
+      let playerStance = '방관';
+      if (totalControlDelta > 0) playerStance = '적극 개입';
+      else if (totalPressureDelta > 0) playerStance = '상황 악화';
+
+      incidentMemories[incId] = {
+        discoveredTurn: existing.discoveredTurn,
+        playerInvolvements: involvements,
+        knownClues: trimmedClues,
+        relatedNpcIds: [...relatedNpcs],
+        playerStance,
+      };
+      updatedRunState.incidentMemories = incidentMemories;
+    }
+
     // === Narrative Engine v1: postStepTick (impact patches, safety, signal expire) ===
     ws = this.worldTick.postStepTick(ws, resolvedPatches);
 
@@ -958,6 +1029,8 @@ export class TurnsService {
       if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
       for (const inst of legendaryResult.awarded) {
         updatedRunState.equipmentBag.push(inst);
+        // Phase 3: ItemMemory — 전설 보상 기록
+        this.recordItemMemory(updatedRunState, inst, turnNo, '전설 보상', locationId);
       }
       updatedRunState.legendaryRewards = [
         ...(updatedRunState.legendaryRewards ?? []),
@@ -1164,6 +1237,8 @@ export class TurnsService {
         if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
         for (const inst of equipDrop.droppedInstances) {
           updatedRunState.equipmentBag.push(inst);
+          // Phase 3: ItemMemory — LOCATION 드랍 기록
+          this.recordItemMemory(updatedRunState, inst, turnNo, `${locationId} 탐색 드랍`, locationId);
           locationEquipDropEvents.push({
             id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
             kind: 'LOOT' as const,
@@ -1244,6 +1319,8 @@ export class TurnsService {
                   affixes: [],
                 };
                 updatedRunState.equipmentBag.push(instance);
+                // Phase 3: ItemMemory — 상점 구매 기록
+                this.recordItemMemory(updatedRunState, instance, turnNo, '상점 구매', locationId);
                 shopActionEvents.push({
                   id: `shop_buy_eq_${turnNo}`,
                   kind: 'LOOT',
@@ -2017,8 +2094,11 @@ export class TurnsService {
       );
       if (equipDrop.droppedInstances.length > 0) {
         if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+        const acquiredFrom = isBoss ? '보스전 드랍' : '전투 보상';
         for (const inst of equipDrop.droppedInstances) {
           updatedRunState.equipmentBag.push(inst);
+          // Phase 3: ItemMemory — 전투 장비 드랍 기록
+          this.recordItemMemory(updatedRunState, inst, turnNo, acquiredFrom, locationId);
           resolveResult.serverResult.events.push({
             id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
             kind: 'LOOT',
@@ -2280,6 +2360,48 @@ export class TurnsService {
       },
       choices,
     };
+  }
+
+  /**
+   * Phase 3: ItemMemory — RARE 이상 장비 획득 시 아이템 기록 생성.
+   * COMMON 아이템은 기록하지 않음.
+   */
+  private recordItemMemory(
+    runState: RunState,
+    inst: import('../db/types/equipment.js').ItemInstance,
+    turnNo: number,
+    acquiredFrom: string,
+    locationId: string,
+  ): void {
+    const itemDef = this.content.getItem(inst.baseItemId);
+    const rarity = itemDef?.rarity ?? 'COMMON';
+    if (rarity === 'COMMON') return;
+
+    if (!runState.itemMemories) runState.itemMemories = {};
+    runState.itemMemories[inst.instanceId] = {
+      acquiredTurn: turnNo,
+      acquiredFrom,
+      acquiredLocation: locationId,
+      usedInEvents: [],
+      narrativeNote: itemDef?.narrativeTags?.[0] ?? '',
+    };
+  }
+
+  /**
+   * Phase 3: ItemMemory — 아이템 사용 이벤트 기록 추가 (usedInEvents, 최대 5개)
+   */
+  private recordItemUsedEvent(
+    runState: RunState,
+    instanceId: string,
+    turnNo: number,
+    eventDesc: string,
+  ): void {
+    const mem = runState.itemMemories?.[instanceId];
+    if (!mem) return;
+    if (mem.usedInEvents.length >= 5) {
+      mem.usedInEvents.shift(); // 오래된 항목 제거
+    }
+    mem.usedInEvents.push(`T${turnNo} ${eventDesc}`);
   }
 
   /** LOCATION 방문 대화를 결정론적 요약으로 장기기억에 저장 */

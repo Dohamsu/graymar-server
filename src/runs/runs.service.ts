@@ -277,6 +277,8 @@ export class RunsService {
         equipmentBag: [],
         npcStates,
         locationMemories: {},
+        incidentMemories: {},
+        itemMemories: {},
       };
 
       this.logger.log(
@@ -290,6 +292,8 @@ export class RunsService {
       const startEquipped: import('../db/types/equipment.js').EquippedGear = {};
       const startBag: import('../db/types/equipment.js').ItemInstance[] = [];
       const equipRng = this.rngService.create(seed + '_start_eq', 0);
+
+      const startItemMemories: Record<string, import('../db/types/permanent-stats.js').ItemPersonalMemory> = {};
 
       for (const si of startingItems) {
         if (si.itemId.startsWith('EQ_')) {
@@ -305,6 +309,17 @@ export class RunsService {
             }
           } else {
             startBag.push(instance);
+          }
+          // ItemMemory: RARE 이상 시작 장비 기록
+          const rarity = itemDef?.rarity ?? 'COMMON';
+          if (rarity !== 'COMMON') {
+            startItemMemories[instance.instanceId] = {
+              acquiredTurn: 0,
+              acquiredFrom: '시작 장비',
+              acquiredLocation: 'LOC_HARBOR',
+              usedInEvents: [],
+              narrativeNote: itemDef?.narrativeTags?.[0] ?? '',
+            };
           }
         } else {
           consumableItems.push({ itemId: si.itemId, qty: si.qty });
@@ -327,6 +342,8 @@ export class RunsService {
         equipmentBag: startBag,
         npcStates,
         locationMemories: {},
+        incidentMemories: {},
+        itemMemories: startItemMemories,
       };
     }
 
@@ -430,7 +447,7 @@ export class RunsService {
           {
             key: 'hub_system',
             value:
-              'HUB 거점 — 그레이마르 항만의 허름한 선술집. 이곳에서 시장/경비대/항만/빈민가로 이동하며 임무를 수행한다.',
+              "HUB 거점 — '잠긴 닻' 선술집. 항만 한구석의 허름하지만 안전한 선술집. 이곳에서 시장/경비대/항만/빈민가로 이동하며 임무를 수행한다.",
             importance: 0.8,
             tags: ['HUB', 'THEME'],
           },
