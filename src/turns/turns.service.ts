@@ -495,7 +495,8 @@ export class TurnsService {
     // go_hub 선택 시 → HUB 복귀
     if (body.input.type === 'CHOICE' && body.input.choiceId === 'go_hub') {
       // Structured Memory v2: 방문 종료 통합 (기존 saveLocationVisitSummary 역할 포함)
-      await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
+      const locMemUpdate = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
+      if (locMemUpdate) updatedRunState.locationMemories = locMemUpdate;
 
       ws = this.worldStateService.returnToHub(ws);
       updatedRunState.worldState = ws;
@@ -583,9 +584,9 @@ export class TurnsService {
         );
       }
       // Fixplan3-P4: 목표 장소 불명확 시 HUB 복귀 (go_hub와 동일 처리)
-      await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
+      const locMemFallback = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
       const hubWs = this.worldStateService.returnToHub(ws);
-      const hubRunState: RunState = { ...runState, worldState: hubWs, actionHistory: [] };
+      const hubRunState: RunState = { ...runState, worldState: hubWs, actionHistory: [], ...(locMemFallback ? { locationMemories: locMemFallback } : {}) };
 
       await this.db.update(nodeInstances)
         .set({ status: 'NODE_ENDED', updatedAt: new Date() })
@@ -1666,7 +1667,8 @@ export class TurnsService {
     if (shouldEnd && endReason) {
       // Fixplan3-P1: RUN_ENDED 전 structuredMemory 통합 (go_hub 없이 런 종료 시 누락 방지)
       try {
-        await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, postTickRunState, turnNo);
+        const locMemEnd = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, postTickRunState, turnNo);
+        if (locMemEnd) postTickRunState.locationMemories = locMemEnd;
       } catch { /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */ }
 
       // 엔딩 생성
@@ -2044,7 +2046,8 @@ export class TurnsService {
       if (resolveResult.combatOutcome === 'DEFEAT') {
         // structuredMemory 통합
         try {
-          await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, updatedRunState, turnNo);
+          const locMemDefeat = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, updatedRunState, turnNo);
+          if (locMemDefeat) updatedRunState.locationMemories = locMemDefeat;
         } catch { /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */ }
 
         // 패배 엔딩 생성
@@ -2108,7 +2111,8 @@ export class TurnsService {
         if (!dagTransition || dagTransition.nextNodeType === 'EXIT') {
           // 그래프 종료 → RUN_ENDED
           try {
-            await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, updatedRunState, turnNo);
+            const locMemDag = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, updatedRunState, turnNo);
+            if (locMemDag) updatedRunState.locationMemories = locMemDag;
           } catch { /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */ }
           await this.db.update(runSessions).set({ status: 'RUN_ENDED', updatedAt: new Date() }).where(eq(runSessions.id, run.id));
           await this.saveCampaignResultIfNeeded(run.id);
@@ -2373,7 +2377,8 @@ export class TurnsService {
     const updatedRunState: RunState = { ...runState };
 
     // Structured Memory v2: 방문 종료 통합
-    await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
+    const locMemTransition = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
+    if (locMemTransition) updatedRunState.locationMemories = locMemTransition;
 
     // WorldState 업데이트
     const newWs = this.worldStateService.moveToLocation(ws, toLocationId);

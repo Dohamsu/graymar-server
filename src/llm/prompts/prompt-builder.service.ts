@@ -115,8 +115,15 @@ export class PromptBuilderService {
       memoryParts.push(`[현재 장소]\n${ctx.locationContext}`);
     }
 
-    // Phase 4: 장소별 재방문 기억
-    if (ctx.locationRevisitContext) {
+    // LocationMemory: 장소별 개인 기록 (방문 횟수, 사건, 비밀, 평판)
+    if (ctx.locationMemoryText) {
+      memoryParts.push(
+        `${ctx.locationMemoryText}\n이전 방문에서의 경험이 현재 NPC 반응과 분위기에 영향을 준다. 재방문 장소에서는 과거 사건의 흔적과 변화를 묘사하라.`,
+      );
+    }
+
+    // Phase 4: 장소별 재방문 기억 (locationMemory가 없을 때 fallback)
+    if (!ctx.locationMemoryText && ctx.locationRevisitContext) {
       memoryParts.push(
         `[이 장소의 이전 방문]\n${ctx.locationRevisitContext}\n이전 방문의 결과와 변화가 현재 장면에 반영되어야 합니다.`,
       );

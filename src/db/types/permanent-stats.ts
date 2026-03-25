@@ -97,6 +97,22 @@ export interface RunState {
   regionEconomy?: import('./region-state.js').RegionEconomy;
   // Phase 4d: Legendary Quest Rewards (중복 지급 방지)
   legendaryRewards?: string[];
+  // LocationMemory: 장소별 개인 기록 축적
+  locationMemories?: Record<string, LocationPersonalMemory>;
+}
+
+/** 장소별 개인 기록 — 방문 횟수, 체류턴, 주요 사건, 발견한 비밀, 평판 메모 */
+export interface LocationPersonalMemory {
+  visitCount: number;
+  totalTurnsSpent: number;
+  lastVisitTurn: number;
+  significantEvents: Array<{
+    turnNo: number;
+    eventSummary: string;     // "시장 분쟁 목격", "상인에게 정보 획득"
+    outcome: string;           // "SUCCESS", "PARTIAL", "FAIL"
+  }>;  // 최대 8개
+  discoveredSecrets: string[];  // 최대 5개
+  reputationNote: string;       // "상인들이 경계하는 편" (1줄)
 }
 
 export type ActionHistoryEntry = {
