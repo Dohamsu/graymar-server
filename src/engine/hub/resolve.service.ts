@@ -17,7 +17,6 @@ const NON_CHALLENGE_ACTIONS = new Set([
   'MOVE_LOCATION',
   'REST',
   'SHOP',
-  'TALK',
   // Phase 4a: 장비 착용/해제는 주사위 판정 없음
   'EQUIP',
   'UNEQUIP',
@@ -35,6 +34,7 @@ const ACTION_STAT_MAP: Record<string, keyof PermanentStats> = {
   PERSUADE: 'cha',    // 카리스마: 설득
   BRIBE: 'cha',       // 카리스마: 뇌물
   TRADE: 'cha',       // 카리스마: 거래
+  TALK: 'cha',        // 카리스마: 대화/설득
   HELP: 'con',        // 체질: 도움/보호
 };
 
@@ -73,6 +73,7 @@ export class ResolveService {
     rng: Rng,
     activeSpecialEffects: string[] = [],
     presetActionBonuses?: Record<string, number>,
+    npcFaction?: string | null,
   ): ResolveResult {
     // 비도전 행위 → 주사위 없이 자동 SUCCESS
     if (NON_CHALLENGE_ACTIONS.has(intent.actionType)) {
@@ -109,7 +110,7 @@ export class ResolveService {
     // 최종 점수
     const score = diceRoll + statBonus + baseMod;
 
-    // 결과 판정: SUCCESS >= 7, PARTIAL 4~6, FAIL < 4
+    // 결과 판정: SUCCESS >= 6, PARTIAL 3~5, FAIL < 3
     const outcome = this.computeOutcome(score);
 
     // heatDelta 계산 (±8 clamp)
@@ -171,16 +172,22 @@ export class ResolveService {
       else relationChanges[npcId] = -3;
     }
 
-    // reputationChanges — 이벤트 태그 기반 세력 평판 변동
+    // reputationChanges — 이벤트 태그 기반 세력 평판 변동 (PARTIAL도 소량 반영)
     const reputationChanges: Record<string, number> = {};
     if (tags.some((t) => ['GUARD_ALLIANCE', 'GUARD_PATROL', 'CHECKPOINT', 'ARMED_GUARD'].includes(t))) {
-      reputationChanges['CITY_GUARD'] = outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 0;
+      reputationChanges['CITY_GUARD'] = outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 1;
     }
     if (tags.some((t) => ['MERCHANT_GUILD', 'LEDGER', 'MERCHANT_CONSORTIUM'].includes(t))) {
-      reputationChanges['MERCHANT_CONSORTIUM'] = outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 0;
+      reputationChanges['MERCHANT_CONSORTIUM'] = outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 1;
     }
     if (tags.some((t) => ['LABOR_GUILD', 'WORKER_RIGHTS', 'DOCK_THUGS'].includes(t))) {
-      reputationChanges['LABOR_GUILD'] = outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 0;
+      reputationChanges['LABOR_GUILD'] = outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 1;
+    }
+
+    // NPC faction 기반 자동 평판 — 태그 없는 이벤트에서도 NPC 소속 세력에 소량 반영
+    if (Object.keys(reputationChanges).length === 0 && npcFaction) {
+      const factionDelta = outcome === 'SUCCESS' ? 2 : outcome === 'FAIL' ? -1 : 1;
+      reputationChanges[npcFaction] = factionDelta;
     }
 
     return {
@@ -255,8 +262,8 @@ export class ResolveService {
   }
 
   private computeOutcome(score: number): ResolveOutcome {
-    if (score >= 7) return 'SUCCESS';
-    if (score >= 4) return 'PARTIAL';
+    if (score >= 6) return 'SUCCESS';
+    if (score >= 3) return 'PARTIAL';
     return 'FAIL';
   }
 

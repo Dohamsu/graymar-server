@@ -296,7 +296,7 @@ export class SituationGeneratorService {
           );
           if (!template) continue;
 
-          const sceneFrame = `${npcDef.name}이(가) 당신을 알아본다. "${fact.text}"에 대해 할 말이 있는 듯하다.`;
+          const sceneFrame = `${npcDef.name}이(가) 근처에 있다. 그의 태도에서 무언가 달라진 기색이 감지된다.`;
 
           return {
             trigger: 'CONSEQUENCE',

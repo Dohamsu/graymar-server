@@ -106,6 +106,33 @@ export class ContextBuilderService {
     private readonly intentMemoryService: IntentMemoryService,
   ) {}
 
+  /** 텍스트에 포함된 NPC 실명을 introduced 상태에 따라 displayName으로 치환 */
+  private sanitizeNpcNames(text: string, runState: Record<string, unknown> | null | undefined): string {
+    if (!text || !runState) return text;
+    const npcStates = runState.npcStates as Record<string, NPCState> | undefined;
+    if (!npcStates) return text;
+    let result = text;
+    for (const [npcId, state] of Object.entries(npcStates)) {
+      if (state.introduced) continue; // 소개 완료된 NPC는 실명 OK
+      const npcDef = this.content.getNpc(npcId);
+      if (!npcDef || !npcDef.name) continue;
+      const alias = npcDef.unknownAlias || '누군가';
+      // 실명이 텍스트에 포함되어 있으면 alias로 치환
+      if (result.includes(npcDef.name)) {
+        result = result.replaceAll(npcDef.name, alias);
+      }
+      // aliases 배열도 치환
+      if (npcDef.aliases) {
+        for (const a of npcDef.aliases as string[]) {
+          if (result.includes(a)) {
+            result = result.replaceAll(a, alias);
+          }
+        }
+      }
+    }
+    return result;
+  }
+
   async build(
     runId: string,
     nodeInstanceId: string,
@@ -435,7 +462,19 @@ export class ContextBuilderService {
                     const relDisplayName = relNpcDef && relNpcState
                       ? getNpcDisplayName(relNpcState, relNpcDef)
                       : relNpcDef?.unknownAlias ?? relNpcId;
-                    relLines.push(`${relDisplayName}: ${relDesc}`);
+                    // 관계 설명 내 NPC 실명을 강제 치환 (introduced 상태와 무관하게)
+                    let sanitizedDesc = relDesc as string;
+                    // 1. 관계 대상 NPC 실명 → alias 치환
+                    if (relNpcDef?.name) {
+                      const alias = relNpcDef.unknownAlias || '누군가';
+                      sanitizedDesc = sanitizedDesc.replaceAll(relNpcDef.name, alias);
+                      for (const a of (relNpcDef as any).aliases ?? []) {
+                        sanitizedDesc = sanitizedDesc.replaceAll(a as string, alias);
+                      }
+                    }
+                    // 2. 기존 sanitize로 다른 NPC 실명도 처리
+                    sanitizedDesc = this.sanitizeNpcNames(sanitizedDesc, runState);
+                    relLines.push(`${relDisplayName}: ${sanitizedDesc}`);
                   }
                 }
                 if (relLines.length > 0) {
@@ -573,6 +612,26 @@ export class ContextBuilderService {
       const uiData = serverResult.ui as Record<string, unknown>;
       const actionCtx = uiData?.actionContext as Record<string, unknown> | undefined;
       const primaryNpcId = actionCtx?.primaryNpcId as string | null | undefined;
+
+      // 1a. 플레이어 입력(rawInput)에서 NPC 이름 감지 → 서술 중심 NPC 지정
+      const rawInput = ((serverResult as Record<string, unknown>)?.summary as Record<string, unknown>)?.short as string ?? '';
+      const npcStatesAll = runState?.npcStates as Record<string, NPCState> | undefined;
+      let choiceTargetNpcName: string | null = null;
+      if (rawInput && npcStatesAll) {
+        for (const [npcId, npcState] of Object.entries(npcStatesAll)) {
+          const npcDef = this.content.getNpc(npcId);
+          if (!npcDef) continue;
+          const displayName = getNpcDisplayName(npcState, npcDef);
+          if (rawInput.includes(displayName)) {
+            choiceTargetNpcName = displayName;
+            break;
+          }
+        }
+      }
+      if (choiceTargetNpcName) {
+        sceneParts.push(`⚠️ 플레이어가 선택한 대화/행동 대상: ${choiceTargetNpcName} — 이 NPC가 서술의 중심이어야 합니다`);
+      }
+
       if (primaryNpcId) {
         const npcStates = runState?.npcStates as Record<string, NPCState> | undefined;
         const npc = npcStates?.[primaryNpcId];
@@ -580,7 +639,8 @@ export class ContextBuilderService {
           const npcDef = this.content.getNpc(primaryNpcId);
           const displayName = getNpcDisplayName(npc, npcDef);
           const posture = computeEffectivePosture(npc);
-          sceneParts.push(`대화/상호작용 상대: ${displayName} (${posture})`);
+          const isChoiceTarget = choiceTargetNpcName === displayName;
+          sceneParts.push(`이벤트 NPC: ${displayName} (${posture})${isChoiceTarget ? '' : ' — 배경에만 등장, 대화 주도하지 말 것'}`);
         }
       } else {
         // 직전 턴들에서 NPC 추적 (최근 3턴 내 actionContext에서 primaryNpcId 검색)
@@ -615,14 +675,14 @@ export class ContextBuilderService {
         // 첫/두번째 턴: sceneFrame 활용
         const sceneFrame = actionCtx?.eventSceneFrame as string | undefined;
         if (sceneFrame) {
-          sceneParts.push(`장면 배경: ${sceneFrame}`);
+          sceneParts.push(`장면 배경(참고용, NPC가 직접 정보를 전달하지 말 것): ${sceneFrame}`);
         } else {
           const lastTurn = allLocationTurnRows[allLocationTurnRows.length - 1];
           if (lastTurn) {
             const sr = lastTurn.serverResult as ServerResultV1 | null;
             const prevSceneFrame = ((sr?.ui as Record<string, unknown>)?.actionContext as Record<string, unknown>)?.eventSceneFrame as string | undefined;
             if (prevSceneFrame) {
-              sceneParts.push(`장면 배경: ${prevSceneFrame}`);
+              sceneParts.push(`장면 배경(참고용, NPC가 직접 정보를 전달하지 말 것): ${prevSceneFrame}`);
             }
           }
         }
@@ -782,9 +842,17 @@ export class ContextBuilderService {
       }
     }
 
+    // NPC 실명 누출 방지: npcInjection 및 주요 텍스트 필드 sanitize
+    const sanitize = (text: string | null) => text ? this.sanitizeNpcNames(text, runState) : text;
+    const sanitizedNpcInjection = npcInjection ? {
+      ...npcInjection,
+      dialogueSeed: this.sanitizeNpcNames(npcInjection.dialogueSeed, runState),
+      reason: this.sanitizeNpcNames(npcInjection.reason, runState),
+    } : null;
+
     return {
       theme: memory?.theme ?? [],
-      storySummary: memory?.storySummary ?? null,
+      storySummary: sanitize(memory?.storySummary ?? null),
       nodeFacts: nodeMem?.nodeFacts ?? [],
       recentSummaries: recents.map((r) => r.summary),
       recentTurns,
@@ -796,27 +864,27 @@ export class ContextBuilderService {
       agendaArc,
       npcRelationFacts,
       playerProfile,
-      npcInjection,
+      npcInjection: sanitizedNpcInjection,
       peakMode,
       npcPostures,
       equipmentTags,
       activeSetNames,
       gender: gender ?? 'male',
       narrativeThread,
-      incidentContext,
-      npcEmotionalContext,
-      narrativeMarkContext,
-      signalContext,
+      incidentContext: sanitize(incidentContext),
+      npcEmotionalContext: sanitize(npcEmotionalContext),
+      narrativeMarkContext: sanitize(narrativeMarkContext),
+      signalContext: sanitize(signalContext),
       // NPC 소개 시스템
       introducedNpcIds,
       newlyIntroducedNpcIds,
       newlyEncounteredNpcIds,
       // Structured Memory v2
-      structuredSummary,
-      npcJournalText,
-      incidentChronicleText,
-      milestonesText,
-      llmFactsText,
+      structuredSummary: sanitize(structuredSummary),
+      npcJournalText: sanitize(npcJournalText),
+      incidentChronicleText: sanitize(incidentChronicleText),
+      milestonesText: sanitize(milestonesText),
+      llmFactsText: sanitize(llmFactsText),
       // 장면 연속성
       currentSceneContext,
       // PR2/3/4: 신규 컨텍스트
