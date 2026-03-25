@@ -4,7 +4,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../../db/drizzle.module.js';
 import { runMemories, nodeMemories } from '../../db/schema/index.js';
-import type { RunState, WorldState } from '../../db/types/index.js';
+import type { RunState, WorldState, LocationPersonalMemory } from '../../db/types/index.js';
 import type { NPCState, NpcPosture } from '../../db/types/npc-state.js';
 import { computeEffectivePosture } from '../../db/types/npc-state.js';
 import type { IncidentKind } from '../../db/types/incident.js';
@@ -59,7 +59,7 @@ export class MemoryIntegrationService {
     nodeInstanceId: string,
     runState: RunState,
     turnNo: number,
-  ): Promise<void> {
+  ): Promise<Record<string, LocationPersonalMemory> | null> {
     // 1. visitContext 로드
     const nodeMemory = await this.db.query.nodeMemories.findFirst({
       where: eq(nodeMemories.nodeInstanceId, nodeInstanceId),
@@ -68,7 +68,7 @@ export class MemoryIntegrationService {
     if (!ctx) {
       // visitContext 자체가 없으면 최소한 storySummary에 방문 기록만 남기기
       await this.saveMinimalVisitSummary(runId, runState);
-      return;
+      return null;
     }
     // actions가 비어있어도 방문 기록은 남긴다 (즉시 이동한 경우)
 
@@ -78,7 +78,7 @@ export class MemoryIntegrationService {
     });
     if (!memRow) {
       this.logger.warn(`run_memories not found for run ${runId} — skip structured memory update`);
-      return;
+      return null;
     }
 
     let memory: StructuredMemory =
@@ -181,6 +181,12 @@ export class MemoryIntegrationService {
         updatedAt: new Date(),
       })
       .where(eq(runMemories.runId, runId));
+
+    // 10. LocationMemory 갱신 — RunState.locationMemories에 이 방문 기록 축적
+    const updatedLocationMemories = this.buildLocationMemoryUpdate(
+      runState, ctx, locationId, turnNo,
+    );
+    return updatedLocationMemories;
   }
 
   /** visitContext가 없을 때 최소한의 storySummary만 기록 */
@@ -736,6 +742,131 @@ export class MemoryIntegrationService {
     }
 
     return memory;
+  }
+
+  // ── LocationMemory 갱신 ──
+
+  private static readonly MAX_SIGNIFICANT_EVENTS = 8;
+  private static readonly MAX_DISCOVERED_SECRETS = 5;
+  private static readonly SECRET_ACTION_TYPES = new Set(['INVESTIGATE', 'SEARCH', 'OBSERVE']);
+
+  /**
+   * 장소를 떠날 때 RunState.locationMemories 갱신.
+   * 기존 기록에 이번 방문 데이터를 누적하고 반환한다.
+   */
+  private buildLocationMemoryUpdate(
+    runState: RunState,
+    ctx: VisitContextCache,
+    locationId: string,
+    turnNo: number,
+  ): Record<string, LocationPersonalMemory> {
+    const existing = { ...(runState.locationMemories ?? {}) };
+    const prev: LocationPersonalMemory = existing[locationId] ?? {
+      visitCount: 0,
+      totalTurnsSpent: 0,
+      lastVisitTurn: 0,
+      significantEvents: [],
+      discoveredSecrets: [],
+      reputationNote: '',
+    };
+
+    // 체류 턴 수 계산
+    const turnsSpent = Math.max(1, ctx.actions.length);
+
+    // significantEvents 추출: resolve 결과가 있는 행동 (MOVE_LOCATION 제외)
+    const newSignificantEvents: LocationPersonalMemory['significantEvents'] = [];
+    for (const action of ctx.actions) {
+      if (action.actionType === 'MOVE_LOCATION') continue;
+      if (!action.outcome) continue;
+      const summary = (action.summaryShort ?? action.brief ?? this.actionTypeKorean(action.actionType)).slice(0, 40);
+      newSignificantEvents.push({
+        turnNo: ctx.startTurnNo + newSignificantEvents.length,
+        eventSummary: summary,
+        outcome: action.outcome,
+      });
+    }
+
+    // 기존 + 신규 병합, 최대 8개 유지 (최신 우선)
+    const mergedEvents = [...prev.significantEvents, ...newSignificantEvents];
+    const cappedEvents = mergedEvents.length > MemoryIntegrationService.MAX_SIGNIFICANT_EVENTS
+      ? mergedEvents.slice(-MemoryIntegrationService.MAX_SIGNIFICANT_EVENTS)
+      : mergedEvents;
+
+    // discoveredSecrets 추출: SUCCESS 판정 + INVESTIGATE/SEARCH/OBSERVE 행동의 brief
+    const newSecrets: string[] = [];
+    for (const action of ctx.actions) {
+      if (
+        action.outcome === 'SUCCESS' &&
+        MemoryIntegrationService.SECRET_ACTION_TYPES.has(action.actionType) &&
+        action.brief
+      ) {
+        const secret = action.brief.slice(0, 50);
+        // 기존 비밀과 중복 방지
+        if (!prev.discoveredSecrets.includes(secret) && !newSecrets.includes(secret)) {
+          newSecrets.push(secret);
+        }
+      }
+    }
+    const mergedSecrets = [...prev.discoveredSecrets, ...newSecrets];
+    const cappedSecrets = mergedSecrets.length > MemoryIntegrationService.MAX_DISCOVERED_SECRETS
+      ? mergedSecrets.slice(-MemoryIntegrationService.MAX_DISCOVERED_SECRETS)
+      : mergedSecrets;
+
+    // reputationNote: 해당 장소 NPC들의 평균 trust 기반 자동 생성
+    const reputationNote = this.generateReputationNote(runState, ctx, locationId);
+
+    existing[locationId] = {
+      visitCount: prev.visitCount + 1,
+      totalTurnsSpent: prev.totalTurnsSpent + turnsSpent,
+      lastVisitTurn: turnNo,
+      significantEvents: cappedEvents,
+      discoveredSecrets: cappedSecrets,
+      reputationNote,
+    };
+
+    return existing;
+  }
+
+  /**
+   * 장소 NPC들의 평균 trust 기반 평판 메모 생성 (LLM 없이 서버사이드).
+   */
+  private generateReputationNote(
+    runState: RunState,
+    ctx: VisitContextCache,
+    locationId: string,
+  ): string {
+    const npcStates = runState.npcStates as Record<string, NPCState> | undefined;
+    if (!npcStates) return '';
+
+    // 이 장소에서 만난 NPC + 현재 장소에 배치된 NPC
+    const ws = runState.worldState;
+    const locDynamic = ws?.locationDynamicStates?.[locationId];
+    const presentNpcIds = new Set<string>([
+      ...ctx.npcsEncountered,
+      ...(locDynamic?.presentNpcs ?? []),
+    ]);
+
+    if (presentNpcIds.size === 0) return '';
+
+    let totalTrust = 0;
+    let count = 0;
+    for (const npcId of presentNpcIds) {
+      const npc = npcStates[npcId];
+      if (npc?.emotional) {
+        totalTrust += npc.emotional.trust;
+        count++;
+      }
+    }
+    if (count === 0) return '';
+
+    const avgTrust = totalTrust / count;
+    const locName = LOCATION_NAMES[locationId] ?? locationId;
+
+    if (avgTrust >= 30) return `${locName}의 사람들이 호의적인 편`;
+    if (avgTrust >= 10) return `${locName}에서 대체로 환영받는 편`;
+    if (avgTrust >= -10) return `${locName}의 사람들이 중립적`;
+    if (avgTrust >= -30) return `${locName}의 사람들이 경계하는 편`;
+    return `${locName}에서 적대적인 분위기`;
   }
 
   // ── 유틸리티 ──

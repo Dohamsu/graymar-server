@@ -276,6 +276,7 @@ export class RunsService {
         equipped: {},
         equipmentBag: [],
         npcStates,
+        locationMemories: {},
       };
 
       this.logger.log(
@@ -325,6 +326,7 @@ export class RunsService {
         equipped: startEquipped,
         equipmentBag: startBag,
         npcStates,
+        locationMemories: {},
       };
     }
 

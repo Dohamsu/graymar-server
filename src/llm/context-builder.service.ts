@@ -82,6 +82,8 @@ export interface LlmContext {
   npcKnowledge: NpcKnowledgeLedger | null;
   // Phase 4: 장소별 재방문 기억
   locationRevisitContext: string | null;
+  // LocationMemory: 장소별 개인 기록 (방문 횟수, 사건, 비밀, 평판)
+  locationMemoryText: string | null;
   // Fixplan v1: 직전 장소 이탈 요약
   previousVisitContext: string | null;
   // 프리셋 배경 강화: 주인공 배경 리마인드
@@ -830,11 +832,65 @@ export class ContextBuilderService {
             structured.npcKnowledge ?? {},
           )
         : null,
+      // LocationMemory: 장소별 개인 기록
+      locationMemoryText: this.buildLocationMemoryText(runState),
       // 프리셋 배경 강화
       protagonistBackground,
       // NPC 개인 기록
       relevantNpcMemoryText,
     };
+  }
+
+  /**
+   * LocationMemory: 현재 장소의 개인 기록을 LLM 컨텍스트 텍스트로 변환.
+   * 첫 방문이면 "처음 방문하는 장소" 표시, 재방문이면 상세 기록.
+   */
+  private buildLocationMemoryText(
+    runState?: Record<string, unknown> | null,
+  ): string | null {
+    if (!runState) return null;
+
+    const ws = runState.worldState as Record<string, unknown> | undefined;
+    const currentLocationId = ws?.currentLocationId as string | undefined;
+    if (!currentLocationId) return null;
+
+    const locationMemories = runState.locationMemories as Record<string, import('../db/types/permanent-stats.js').LocationPersonalMemory> | undefined;
+    const mem = locationMemories?.[currentLocationId];
+
+    const LOCATION_NAMES: Record<string, string> = {
+      LOC_MARKET: '그레이마르 시장', LOC_GUARD: '경비대 지구',
+      LOC_HARBOR: '항만 부두', LOC_SLUMS: '빈민가',
+      LOC_NOBLE: '상류 거리', LOC_TAVERN: '잠긴 닻 선술집',
+      LOC_DOCKS_WAREHOUSE: '항만 창고구',
+    };
+    const locName = LOCATION_NAMES[currentLocationId] ?? currentLocationId;
+
+    if (!mem || mem.visitCount === 0) {
+      return `[장소 기억: ${locName}]\n처음 방문하는 장소입니다.`;
+    }
+
+    const lines: string[] = [];
+    lines.push(`[장소 기억: ${locName}]`);
+    lines.push(`방문 ${mem.visitCount}회 (총 ${mem.totalTurnsSpent}턴 체류), 최근 T${mem.lastVisitTurn}`);
+
+    if (mem.significantEvents.length > 0) {
+      lines.push('주요 사건:');
+      for (const evt of mem.significantEvents.slice(-5)) {
+        const outcomeKr = evt.outcome === 'SUCCESS' ? '성공'
+          : evt.outcome === 'PARTIAL' ? '부분성공' : '실패';
+        lines.push(`- T${evt.turnNo}: ${evt.eventSummary} (${outcomeKr})`);
+      }
+    }
+
+    if (mem.discoveredSecrets.length > 0) {
+      lines.push(`발견한 비밀: ${mem.discoveredSecrets.join(', ')}`);
+    }
+
+    if (mem.reputationNote) {
+      lines.push(`장소 평판: ${mem.reputationNote}`);
+    }
+
+    return lines.join('\n');
   }
 
   /**
