@@ -394,18 +394,18 @@ export class SceneShellService {
       },
     ];
 
-    // Heat 해결 옵션 (Heat > 0일 때)
-    if (ws.hubHeat > 0) {
+    // Heat 해결 옵션 (Heat 30 이상일 때만 표시)
+    if (ws.hubHeat >= 30) {
       choices.push({
         id: 'contact_ally',
-        label: '협력자에게 연락한다',
-        hint: `Heat ${ws.hubHeat} — NPC 관계로 열기를 식힌다`,
+        label: '믿을 만한 인물에게 도움을 청한다',
+        hint: '도시의 경계가 높아지고 있다. 협력자의 도움으로 소문을 잠재울 수 있다.',
         action: { type: 'CHOICE', payload: { heatAction: 'CONTACT_ALLY' } },
       });
       choices.push({
         id: 'pay_cost',
-        label: '금화로 해결한다',
-        hint: `Heat ${ws.hubHeat} — 비용을 치러 열기를 줄인다`,
+        label: '뒷돈을 써서 소문을 잠재운다',
+        hint: '금화를 써서 목격자들의 입을 막고 흔적을 지운다.',
         action: { type: 'CHOICE', payload: { heatAction: 'PAY_COST' } },
       });
     }
