@@ -68,6 +68,23 @@ export class MemoryIntegrationService {
     if (!ctx) {
       // visitContext 자체가 없으면 최소한 storySummary에 방문 기록만 남기기
       await this.saveMinimalVisitSummary(runId, runState);
+      // LocationMemory는 최소한의 방문 기록이라도 갱신
+      const ws = runState.worldState;
+      const locationId = ws?.currentLocationId;
+      if (locationId) {
+        const existing = { ...(runState.locationMemories ?? {}) };
+        const prev = existing[locationId] ?? {
+          visitCount: 0, totalTurnsSpent: 0, lastVisitTurn: 0,
+          significantEvents: [], discoveredSecrets: [], reputationNote: '',
+        };
+        existing[locationId] = {
+          ...prev,
+          visitCount: prev.visitCount + 1,
+          lastVisitTurn: turnNo,
+          reputationNote: prev.reputationNote || '아직 잘 모르는 장소',
+        };
+        return existing;
+      }
       return null;
     }
     // actions가 비어있어도 방문 기록은 남긴다 (즉시 이동한 경우)

@@ -99,6 +99,10 @@ export interface RunState {
   legendaryRewards?: string[];
   // LocationMemory: 장소별 개인 기록 축적
   locationMemories?: Record<string, LocationPersonalMemory>;
+  // IncidentMemory: 사건별 개인 기록 축적 (Phase 2)
+  incidentMemories?: Record<string, IncidentPersonalMemory>;
+  // Phase 3: ItemMemory — 아이템별 획득/사용 기록 (RARE 이상)
+  itemMemories?: Record<string, ItemPersonalMemory>;
 }
 
 /** 장소별 개인 기록 — 방문 횟수, 체류턴, 주요 사건, 발견한 비밀, 평판 메모 */
@@ -113,6 +117,29 @@ export interface LocationPersonalMemory {
   }>;  // 최대 8개
   discoveredSecrets: string[];  // 최대 5개
   reputationNote: string;       // "상인들이 경계하는 편" (1줄)
+}
+
+/** 사건별 개인 기록 — 플레이어의 관여 이력, 확보 단서, 입장 (Phase 2: IncidentMemory) */
+export interface IncidentPersonalMemory {
+  discoveredTurn: number;              // 처음 관련 이벤트 발생 턴
+  playerInvolvements: Array<{
+    turnNo: number;
+    locationId: string;
+    action: string;                     // "밀수 흔적 발견", "밀수업자 추적"
+    impact: string;                     // "control+10", "pressure+15"
+  }>;  // 최대 8개
+  knownClues: string[];                // 최대 5개
+  relatedNpcIds: string[];             // 관련 NPC
+  playerStance: string;                // "적극 개입" | "상황 악화" | "방관" (자동 판정)
+}
+
+/** 아이템별 개인 기록 — 획득 경위, 사용 이력, 서술 힌트 (RARE 이상만 기록) */
+export interface ItemPersonalMemory {
+  acquiredTurn: number;
+  acquiredFrom: string;         // "항구 보스전 드랍", "시장 상점 구매", "퀘스트 보상"
+  acquiredLocation: string;     // "LOC_HARBOR"
+  usedInEvents: string[];       // 최대 5개 ["T22 암살 시도에 사용"]
+  narrativeNote: string;        // "어둠 속에서 빛나는 단검" (서술 힌트)
 }
 
 export type ActionHistoryEntry = {

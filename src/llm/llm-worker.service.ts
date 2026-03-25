@@ -259,7 +259,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           narrative = choiceResult.cleanedNarrative;
           if (choiceResult.choices) {
             choiceResult.choices.push({
-              id: 'go_hub', label: '거점으로 돌아간다',
+              id: 'go_hub', label: "'잠긴 닻' 선술집으로 돌아간다",
               action: { type: 'CHOICE', payload: { returnToHub: true } },
             });
             llmChoices = choiceResult.choices;

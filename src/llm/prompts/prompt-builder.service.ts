@@ -92,8 +92,14 @@ export class PromptBuilderService {
       memoryParts.push(`[NPC 관계]\n${ctx.npcJournalText}\n⚠️ NPC가 등장하면, 위 태도와 과거 상호작용을 반드시 대사 톤과 행동에 반영하세요. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다.`);
     }
 
-    // Structured Memory v2: 사건 일지 (기존 도시 사건 + 서사 표식 흡수)
-    if (ctx.incidentChronicleText) {
+    // Phase 2: IncidentMemory — 관련 사건 기록이 있으면 우선 사용, 없으면 기존 일지 fallback
+    if (ctx.relevantIncidentMemoryText) {
+      memoryParts.push(
+        `[관련 사건 기록]\n${ctx.relevantIncidentMemoryText}\n` +
+        '플레이어의 이전 행동과 발견한 단서를 대사와 서술에 반영하라. ' +
+        '사건에 적극 개입한 플레이어는 관련 NPC가 알아보고, 방관한 플레이어에게는 상황 변화를 암시하라.',
+      );
+    } else if (ctx.incidentChronicleText) {
       memoryParts.push(`[사건 일지]\n${ctx.incidentChronicleText}\n진행 중인 사건의 여파를 배경 묘사에 반영하세요 — 주민 반응, 경비 변화, 분위기 등.`);
     }
 
@@ -347,7 +353,7 @@ export class PromptBuilderService {
     }
 
     // Narrative Engine v1: Incident/감정/마크/시그널 컨텍스트
-    const hasStructured = !!(ctx.structuredSummary || ctx.npcJournalText || ctx.incidentChronicleText);
+    const hasStructured = !!(ctx.structuredSummary || ctx.npcJournalText || ctx.incidentChronicleText || ctx.relevantIncidentMemoryText);
     if (!hasStructured) {
       if (ctx.incidentContext) {
         memoryParts.push(`[도시 사건]\n${ctx.incidentContext}\n플레이어의 행동이 사건의 통제/압력에 영향을 줍니다. 사건의 긴장감을 서술에 자연스럽게 반영하세요.`);
@@ -390,11 +396,20 @@ export class PromptBuilderService {
       memoryParts.push(`[장비 인상]\n플레이어의 장비가 주는 인상: ${tagLine}${setPart}\n이 인상을 서술의 묘사와 NPC 반응 톤에 자연스럽게 반영하세요. 수치 효과에는 절대 영향 없음.`);
     }
 
+    // Phase 3: ItemMemory — 아이템 획득 배경 서술 참조
+    if (ctx.relevantItemMemoryText) {
+      memoryParts.push(
+        `${ctx.relevantItemMemoryText}\n` +
+        '장비의 획득 배경을 전투/행동 묘사에 자연스럽게 녹여라. ' +
+        '매 턴 언급 금지 — 전투나 해당 장비와 관련된 행동 시에만 간결하게 활용하라.',
+      );
+    }
+
     if (memoryParts.length > 0) {
       // PR1: Token Budget — 총합 2500 토큰 예산 내로 트리밍
       // 우선순위: 낮은 인덱스 = 먼저 트리밍 대상 (저우선)
       // enforceTotal은 priorityOrder를 역순으로 순회하므로, 배열 앞쪽이 먼저 제거됨
-      const LOW_PRIORITY_TAGS = ['[서사 이정표]', '[장비 인상]', '[기억된 사실]', '[직전 장소 정보]', '[성향/아크]', '[플레이어 프로필]'];
+      const LOW_PRIORITY_TAGS = ['[서사 이정표]', '[장비 인상]', '[장비 서술 참조]', '[기억된 사실]', '[직전 장소 정보]', '[성향/아크]', '[플레이어 프로필]'];
       const HIGH_PRIORITY_TAGS = ['[이번 방문 대화]', '[직전 턴 핵심 정보]', '[NPC 감정 상태]', '[현재 장면 상태]', '[현재 노드 사실]', '[장면 흐름]', '[현재 장소]'];
 
       const getPriority = (part: string): number => {

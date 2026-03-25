@@ -90,6 +90,10 @@ export interface LlmContext {
   protagonistBackground: string | null;
   // NPC 개인 기록: 현재 턴 관련 NPC만 선별하여 상세 기록
   relevantNpcMemoryText: string | null;
+  // Phase 2: IncidentMemory — 관련 사건의 개인 기록 (선별 주입)
+  relevantIncidentMemoryText: string | null;
+  // Phase 3: ItemMemory — 관련 아이템 기록 (장착 중 + 신규 획득 + LEGENDARY/UNIQUE)
+  relevantItemMemoryText: string | null;
 }
 
 @Injectable()
@@ -838,6 +842,10 @@ export class ContextBuilderService {
       protagonistBackground,
       // NPC 개인 기록
       relevantNpcMemoryText,
+      // Phase 2: IncidentMemory — 관련 사건 선별 주입
+      relevantIncidentMemoryText: this.buildRelevantIncidentMemoryText(runState, serverResult),
+      // Phase 3: ItemMemory — 관련 아이템 기록 선별 주입
+      relevantItemMemoryText: this.buildRelevantItemMemoryText(runState, serverResult),
     };
   }
 
@@ -891,6 +899,194 @@ export class ContextBuilderService {
     }
 
     return lines.join('\n');
+  }
+
+  /**
+   * Phase 2: IncidentMemory — 관련 사건만 선별하여 LLM 컨텍스트용 텍스트 생성.
+   *
+   * 선별 기준:
+   * 1. 현재 이벤트가 incident와 매칭된 경우 (routingResult)
+   * 2. 현재 장소에서 활성 incident가 있는 경우
+   * 3. 관련 NPC가 등장하는 경우
+   */
+  private buildRelevantIncidentMemoryText(
+    runState?: Record<string, unknown> | null,
+    serverResult?: ServerResultV1,
+  ): string | null {
+    if (!runState) return null;
+
+    const incidentMemories = runState.incidentMemories as Record<string, import('../db/types/permanent-stats.js').IncidentPersonalMemory> | undefined;
+    if (!incidentMemories || Object.keys(incidentMemories).length === 0) return null;
+
+    const ws = runState.worldState as Record<string, unknown> | undefined;
+    const currentLocationId = ws?.currentLocationId as string | undefined;
+    const activeIncidents = (ws?.activeIncidents as Array<{ incidentId: string; resolved?: boolean; control?: number; pressure?: number }>) ?? [];
+
+    // ServerResult에서 routingResult 관련 incidentId 추출
+    const uiAny = serverResult?.ui as Record<string, unknown> | undefined;
+    const actionCtx = uiAny?.actionContext as Record<string, unknown> | undefined;
+    const relatedIncidentId = actionCtx?.relatedIncidentId as string | undefined;
+    const primaryNpcId = actionCtx?.primaryNpcId as string | undefined;
+
+    // 관련 사건 ID 수집
+    const relevantIncidentIds = new Set<string>();
+
+    // 1. 현재 이벤트가 incident와 매칭된 경우
+    if (relatedIncidentId && incidentMemories[relatedIncidentId]) {
+      relevantIncidentIds.add(relatedIncidentId);
+    }
+
+    // 2. 현재 장소에서 활성 incident가 있는 경우
+    if (currentLocationId) {
+      for (const inc of activeIncidents) {
+        if (inc.resolved) continue;
+        const def = this.content.getIncident(inc.incidentId);
+        if (def && incidentMemories[inc.incidentId]) {
+          relevantIncidentIds.add(inc.incidentId);
+        }
+      }
+    }
+
+    // 3. 관련 NPC가 등장하는 경우
+    if (primaryNpcId) {
+      for (const [incId, mem] of Object.entries(incidentMemories)) {
+        if (mem.relatedNpcIds.includes(primaryNpcId)) {
+          relevantIncidentIds.add(incId);
+        }
+      }
+    }
+
+    if (relevantIncidentIds.size === 0) return null;
+
+    const LOCATION_NAMES: Record<string, string> = {
+      LOC_MARKET: '시장', LOC_GUARD: '경비대', LOC_HARBOR: '항만', LOC_SLUMS: '빈민가',
+      LOC_NOBLE: '상류 거리', LOC_TAVERN: '선술집', LOC_DOCKS_WAREHOUSE: '항만 창고구',
+    };
+
+    const blocks: string[] = [];
+
+    for (const incId of relevantIncidentIds) {
+      const mem = incidentMemories[incId];
+      if (!mem) continue;
+
+      const incDef = this.content.getIncident(incId);
+      const title = incDef?.title ?? incId;
+
+      // 현재 control 합산
+      const activeInc = activeIncidents.find((i) => i.incidentId === incId);
+      const controlInfo = activeInc ? ` (control ${activeInc.control ?? 0})` : '';
+
+      const lines: string[] = [];
+      lines.push(`[관련 사건: ${title}]`);
+      lines.push(`플레이어 입장: ${mem.playerStance}${controlInfo}`);
+
+      if (mem.playerInvolvements.length > 0) {
+        lines.push('관여 이력:');
+        for (const inv of mem.playerInvolvements.slice(-5)) {
+          const locName = LOCATION_NAMES[inv.locationId] ?? inv.locationId;
+          lines.push(`- T${inv.turnNo} ${locName}: ${inv.action} -> ${inv.impact}`);
+        }
+      }
+
+      if (mem.knownClues.length > 0) {
+        lines.push(`확보한 단서: ${mem.knownClues.join(', ')}`);
+      }
+
+      if (mem.relatedNpcIds.length > 0) {
+        const npcNames = mem.relatedNpcIds.map((nid) => {
+          const npcDef = this.content.getNpc(nid);
+          return npcDef?.name ?? nid;
+        });
+        lines.push(`관련 NPC: ${npcNames.join(', ')}`);
+      }
+
+      blocks.push(lines.join('\n'));
+    }
+
+    return blocks.length > 0 ? blocks.join('\n\n') : null;
+  }
+
+  /**
+   * Phase 3: ItemMemory — 관련 아이템만 선별하여 LLM 컨텍스트 텍스트 생성.
+   * 선별 기준:
+   *   1. 현재 장착 중인 장비 (equipped)
+   *   2. 이번 턴에 새로 획득한 아이템 (LOOT+EQUIPMENT_DROP 이벤트)
+   *   3. LEGENDARY/UNIQUE 아이템은 항상 포함
+   */
+  private buildRelevantItemMemoryText(
+    runState?: Record<string, unknown> | null,
+    serverResult?: ServerResultV1,
+  ): string | null {
+    if (!runState) return null;
+
+    const itemMemories = runState.itemMemories as Record<string, import('../db/types/permanent-stats.js').ItemPersonalMemory> | undefined;
+    if (!itemMemories || Object.keys(itemMemories).length === 0) return null;
+
+    const equipped = runState.equipped as Record<string, import('../db/types/equipment.js').ItemInstance> | undefined;
+
+    // 이번 턴 새로 획득한 아이템 instanceId 추출
+    const newlyAcquiredIds = new Set<string>();
+    if (serverResult?.events) {
+      for (const ev of serverResult.events) {
+        if (ev.tags?.includes('EQUIPMENT_DROP') && ev.data) {
+          const data = ev.data as Record<string, unknown>;
+          if (data.instanceId) newlyAcquiredIds.add(data.instanceId as string);
+        }
+      }
+    }
+
+    // 장착 중 장비의 instanceId
+    const equippedIds = new Set<string>();
+    if (equipped) {
+      for (const inst of Object.values(equipped)) {
+        if (inst?.instanceId) equippedIds.add(inst.instanceId);
+      }
+    }
+
+    const equippedLines: string[] = [];
+    const newlyAcquiredLines: string[] = [];
+    const legendaryLines: string[] = [];
+
+    for (const [instanceId, mem] of Object.entries(itemMemories)) {
+      // 아이템 정보 조회
+      const allEquipment = [
+        ...Object.values(equipped ?? {}),
+        ...((runState.equipmentBag as import('../db/types/equipment.js').ItemInstance[]) ?? []),
+      ].filter(Boolean);
+      const inst = allEquipment.find((i) => i?.instanceId === instanceId);
+      if (!inst) continue; // 이미 버린 아이템은 스킵
+
+      const itemDef = this.content.getItem(inst.baseItemId);
+      const rarity = itemDef?.rarity ?? 'RARE';
+      const name = inst.displayName;
+      const isLegendaryOrUnique = rarity === 'LEGENDARY' || rarity === 'UNIQUE';
+      const noteText = isLegendaryOrUnique && mem.narrativeNote ? `, "${mem.narrativeNote}"` : '';
+
+      if (equippedIds.has(instanceId)) {
+        equippedLines.push(`${name} (T${mem.acquiredTurn} ${mem.acquiredFrom}${noteText})`);
+      } else if (newlyAcquiredIds.has(instanceId)) {
+        newlyAcquiredLines.push(`${name} (이번 턴 ${mem.acquiredFrom})`);
+      } else if (isLegendaryOrUnique) {
+        legendaryLines.push(`${name} (T${mem.acquiredTurn} ${mem.acquiredFrom}${noteText})`);
+      }
+    }
+
+    if (equippedLines.length === 0 && newlyAcquiredLines.length === 0 && legendaryLines.length === 0) {
+      return null;
+    }
+
+    const parts: string[] = ['[장비 서술 참조]'];
+    if (equippedLines.length > 0) {
+      parts.push(`장착 중: ${equippedLines.join('; ')}`);
+    }
+    if (newlyAcquiredLines.length > 0) {
+      parts.push(`신규 획득: ${newlyAcquiredLines.join('; ')}`);
+    }
+    if (legendaryLines.length > 0) {
+      parts.push(`보유 전설/유니크: ${legendaryLines.join('; ')}`);
+    }
+
+    return parts.join('\n');
   }
 
   /**

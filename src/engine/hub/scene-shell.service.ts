@@ -487,8 +487,8 @@ export class SceneShellService {
     // HUB 복귀 선택지 항상 포함
     choices.push({
       id: 'go_hub',
-      label: '거점으로 돌아간다',
-      hint: '거점에서 다른 지역을 탐색한다',
+      label: "'잠긴 닻' 선술집으로 돌아간다",
+      hint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
       action: { type: 'CHOICE', payload: { returnToHub: true } },
     });
 
@@ -581,8 +581,8 @@ export class SceneShellService {
     // go_hub 항상 포함 (sourceEventId 미포함 — HUB 복귀 시 이벤트 끊김이 맞음)
     choices.push({
       id: 'go_hub',
-      label: '거점으로 돌아간다',
-      hint: '거점에서 다른 지역을 탐색한다',
+      label: "'잠긴 닻' 선술집으로 돌아간다",
+      hint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
       action: { type: 'CHOICE', payload: { returnToHub: true } },
     });
 
