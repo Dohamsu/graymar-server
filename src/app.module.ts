@@ -12,6 +12,7 @@ import { TurnsModule } from './turns/turns.module.js';
 import { LlmModule } from './llm/llm.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CampaignsModule } from './campaigns/campaigns.module.js';
+import { SceneImageModule } from './scene-image/scene-image.module.js';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { CampaignsModule } from './campaigns/campaigns.module.js';
     TurnsModule,
     LlmModule,
     CampaignsModule,
+    SceneImageModule,
   ],
   controllers: [AppController],
   providers: [

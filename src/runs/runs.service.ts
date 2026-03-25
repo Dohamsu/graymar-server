@@ -606,6 +606,7 @@ export class RunsService {
               hubSafety: worldState.hubSafety,
               timePhase: worldState.timePhase,
               currentLocationId: null,
+              reputation: worldState.reputation ?? {},
             },
           },
           choices: [

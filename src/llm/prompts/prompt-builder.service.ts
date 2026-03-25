@@ -524,9 +524,9 @@ export class PromptBuilderService {
       const alias = npcDef?.unknownAlias || '낯선 인물';
       const npcDisplayName = npc.introduced === true ? npc.npcName : alias;
 
-      // isNewlyIntroduced인 경우: LLM에는 별칭으로 보여주되, 실명을 서술 중에 자연스럽게 밝히라는 지시 추가
+      // isNewlyIntroduced인 경우: 실명을 프롬프트에 직접 포함하지 않고 행동 지시만 제공
       const nameRevealHint = isNewlyIntroduced
-        ? `\n(LLM 내부 참고: 이 인물의 실명은 "${npc.npcName}"입니다. 서술 중에 자기소개나 상황 단서를 통해 자연스럽게 밝혀지도록 하세요. [NPC 등장] 블록의 별칭으로 시작하세요.)`
+        ? `\n이 NPC의 이름이 이번 장면에서 자연스럽게 드러납니다. 자기소개, 다른 인물의 언급, 또는 상황 단서를 통해 밝혀지도록 하세요. 별칭으로 시작하세요. (실명: "${npc.npcName}")`
         : '';
 
       // NPC tier 확인

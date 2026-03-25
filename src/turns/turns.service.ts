@@ -414,6 +414,7 @@ export class TurnsService {
             currentLocationId: null,
             locationDynamicStates: ws.locationDynamicStates ?? {},
             playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
+            reputation: ws.reputation ?? {},
           },
         },
         choices: hubChoices,
@@ -680,7 +681,11 @@ export class TurnsService {
         .map((h) => h.eventId!);
 
       // Living World v2: SituationGenerator 우선 시도 (에러 시 기존 EventMatcher fallback)
-      if (this.situationGenerator) {
+      // 동적 이벤트 발동: 직전 이벤트가 동적이면 건너뜀 + 고정이어도 50% 확률로만 시도
+      const lastEventId = recentEventIds[recentEventIds.length - 1] ?? '';
+      const lastWasDynamic = lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
+      const dynamicRoll = rng.range(0, 100);
+      if (this.situationGenerator && !lastWasDynamic && dynamicRoll < 50) {
         try {
           const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
           const recentPrimaryNpcIds = actionHistory
@@ -776,8 +781,12 @@ export class TurnsService {
     const presetDef = run.presetId ? this.content.getPreset(run.presetId) : undefined;
     const presetActionBonuses = presetDef?.actionBonuses;
 
+    // NPC faction 조회 (평판 변동용)
+    const primaryNpcIdForResolve = (matchedEvent.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
+    const primaryNpcFaction = primaryNpcIdForResolve ? this.content.getNpc(primaryNpcIdForResolve)?.faction ?? null : null;
+
     // ResolveService 판정
-    const resolveResult = this.resolveService.resolve(matchedEvent, intent, ws, playerStats, rng, activeSpecialEffects, presetActionBonuses);
+    const resolveResult = this.resolveService.resolve(matchedEvent, intent, ws, playerStats, rng, activeSpecialEffects, presetActionBonuses, primaryNpcFaction);
     this.logger.log(
       `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${matchedEvent.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}`,
     );
@@ -1015,6 +1024,9 @@ export class TurnsService {
     // === Narrative Engine v1: postStepTick (impact patches, safety, signal expire) ===
     ws = this.worldTick.postStepTick(ws, resolvedPatches);
 
+    // diff용 장비 추가 수집기 (클라이언트 즉시 반영)
+    const allEquipmentAdded: import('../db/types/equipment.js').ItemInstance[] = [];
+
     // === Phase 4d: Legendary Quest Rewards (Incident CONTAINED + commitment 조건) ===
     const prevContainedSet = new Set(
       prevIncidents.filter((i) => i.resolved && i.outcome === 'CONTAINED').map((i) => i.incidentId),
@@ -1029,6 +1041,7 @@ export class TurnsService {
       if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
       for (const inst of legendaryResult.awarded) {
         updatedRunState.equipmentBag.push(inst);
+        allEquipmentAdded.push(inst);
         // Phase 3: ItemMemory — 전설 보상 기록
         this.recordItemMemory(updatedRunState, inst, turnNo, '전설 보상', locationId);
       }
@@ -1237,6 +1250,7 @@ export class TurnsService {
         if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
         for (const inst of equipDrop.droppedInstances) {
           updatedRunState.equipmentBag.push(inst);
+          allEquipmentAdded.push(inst);
           // Phase 3: ItemMemory — LOCATION 드랍 기록
           this.recordItemMemory(updatedRunState, inst, turnNo, `${locationId} 탐색 드랍`, locationId);
           locationEquipDropEvents.push({
@@ -1319,6 +1333,7 @@ export class TurnsService {
                   affixes: [],
                 };
                 updatedRunState.equipmentBag.push(instance);
+                allEquipmentAdded.push(instance);
                 // Phase 3: ItemMemory — 상점 구매 기록
                 this.recordItemMemory(updatedRunState, instance, turnNo, '상점 구매', locationId);
                 shopActionEvents.push({
@@ -1443,7 +1458,7 @@ export class TurnsService {
     }
 
     // 비도전 행위 여부 (MOVE_LOCATION, REST, SHOP, TALK → 주사위 UI 숨김)
-    const isNonChallenge = ['MOVE_LOCATION', 'REST', 'SHOP', 'TALK'].includes(intent.actionType);
+    const isNonChallenge = ['MOVE_LOCATION', 'REST', 'SHOP'].includes(intent.actionType);
 
     // 결과 조립 — 선택지 생성 전략:
     // 이벤트 첫 만남 → 이벤트 고유 선택지, 이미 상호작용한 이벤트 → resolve 후속 선택지
@@ -1488,7 +1503,8 @@ export class TurnsService {
       statBonus: resolveResult.statBonus ?? 0,
       baseMod: resolveResult.baseMod ?? 0,
       totalScore: resolveResult.score,
-    });
+    },
+    allEquipmentAdded.length > 0 ? allEquipmentAdded : undefined);
 
     // 고집 2회째 경고 이벤트 — 다음 반복 시 에스컬레이션 예고
     if (intent.insistenceWarning) {
@@ -2094,9 +2110,11 @@ export class TurnsService {
       );
       if (equipDrop.droppedInstances.length > 0) {
         if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+        const combatEquipAdded: import('../db/types/equipment.js').ItemInstance[] = [];
         const acquiredFrom = isBoss ? '보스전 드랍' : '전투 보상';
         for (const inst of equipDrop.droppedInstances) {
           updatedRunState.equipmentBag.push(inst);
+          combatEquipAdded.push(inst);
           // Phase 3: ItemMemory — 전투 장비 드랍 기록
           this.recordItemMemory(updatedRunState, inst, turnNo, acquiredFrom, locationId);
           resolveResult.serverResult.events.push({
@@ -2107,6 +2125,7 @@ export class TurnsService {
             data: { baseItemId: inst.baseItemId, instanceId: inst.instanceId, displayName: inst.displayName },
           });
         }
+        resolveResult.serverResult.diff.equipmentAdded = combatEquipAdded;
       }
     }
 
@@ -2356,7 +2375,7 @@ export class TurnsService {
       ui: {
         availableActions: ['CHOICE'], targetLabels: [],
         actionSlots: { base: 2, bonusAvailable: false, max: 3 }, toneHint: 'neutral',
-        worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: null, locationDynamicStates: ws.locationDynamicStates ?? {}, playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed) },
+        worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: null, locationDynamicStates: ws.locationDynamicStates ?? {}, playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed), reputation: ws.reputation ?? {} },
       },
       choices,
     };
@@ -2812,6 +2831,7 @@ export class TurnsService {
     goldDelta?: number,
     itemsAdded?: import('../db/types/index.js').ItemStack[],
     resolveBreakdown?: import('../db/types/index.js').ResolveBreakdown,
+    equipmentAdded?: import('../db/types/equipment.js').ItemInstance[],
   ): ServerResultV1 {
     const base = this.buildSystemResult(turnNo, node, text);
     if (goldDelta && goldDelta !== 0) {
@@ -2819,6 +2839,9 @@ export class TurnsService {
     }
     if (itemsAdded && itemsAdded.length > 0) {
       base.diff.inventory.itemsAdded = itemsAdded;
+    }
+    if (equipmentAdded && equipmentAdded.length > 0) {
+      base.diff.equipmentAdded = equipmentAdded;
     }
     return {
       ...base,
@@ -2828,7 +2851,7 @@ export class TurnsService {
         availableActions: ['ACTION', 'CHOICE'], targetLabels: [],
         actionSlots: { base: 2, bonusAvailable: false, max: 3 },
         toneHint: outcome === 'FAIL' ? 'danger' : outcome === 'SUCCESS' ? 'triumph' : 'neutral',
-        worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: ws.currentLocationId, locationDynamicStates: ws.locationDynamicStates ?? {}, playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed) },
+        worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: ws.currentLocationId, locationDynamicStates: ws.locationDynamicStates ?? {}, playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed), reputation: ws.reputation ?? {} },
         // 비도전 행위는 주사위 UI를 표시하지 않음
         ...(hideResolve ? {} : { resolveOutcome: outcome as any }),
         ...(resolveBreakdown ? { resolveBreakdown } : {}),

@@ -281,6 +281,55 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           .replace(/\n*\[CHOICES\][\s\S]*?\[\/CHOICES\]/g, '')
           .replace(/\n*\[CHOICES\][\s\S]*$/g, '')
           .trim();
+
+        // 4-a-3. 서술 품질 후처리 필터: 위반 패턴 감지 및 자동 수정
+        const violations: string[] = [];
+
+        // P1. NPC 다가오기 패턴 자동 치환
+        const approachReplacements: [RegExp, string][] = [
+          [/조심스레 다가왔다/g, '멀찍이 서서 당신을 지켜보고 있었다'],
+          [/조심스럽게 다가왔다/g, '멀찍이 서서 당신을 주시하고 있었다'],
+          [/천천히 다가왔다/g, '멀찍이 서 있었다'],
+          [/다가와 낮은 목소리로/g, '멀찍이 서서 낮은 목소리로'],
+          [/다가와 말했다/g, '서서 말했다'],
+          [/다가와 조심스레/g, '서서 조심스레'],
+          [/다가오는 모습이/g, '서 있는 모습이'],
+          [/걸어왔다/g, '서 있었다'],
+          [/다가왔다/g, '서 있었다'],
+          [/다가오며/g, '서서'],
+          [/다가와/g, '서서'],
+        ];
+        let approachFixCount = 0;
+        for (const [pattern, replacement] of approachReplacements) {
+          const before = narrative;
+          narrative = narrative.replace(pattern, replacement);
+          if (narrative !== before) approachFixCount++;
+        }
+        if (approachFixCount > 0) {
+          violations.push(`AUTO_FIX: NPC_APPROACH(${approachFixCount}건 치환)`);
+        }
+
+        // P2. 말투 위반 감지 (대사 내 금지 패턴)
+        const speechViolations = /["""].*?(?:자네|이보게|~일세|말일세|삼가게|하네만|어쩌겠나)["""]|["""].*?(?:해요|세요|합니다|입니다|에요|죠)["""]|["""].*?(?:~야|~해|~지만|~거든|~잖아)["""]/g;
+        const speechMatches = narrative.match(speechViolations);
+        if (speechMatches) {
+          violations.push(`SPEECH_VIOLATION(${speechMatches.length}회)`);
+        }
+
+        // P3. "자네" 직접 치환 (가장 빈번한 위반)
+        if (narrative.includes('자네')) {
+          narrative = narrative.replaceAll('자네', '그대');
+          violations.push('AUTO_FIX: 자네→그대');
+        }
+        // "이보게" → "듣고 계시오"
+        if (narrative.includes('이보게')) {
+          narrative = narrative.replaceAll('이보게', '듣고 계시오');
+          violations.push('AUTO_FIX: 이보게→듣고 계시오');
+        }
+
+        if (violations.length > 0) {
+          this.logger.warn(`[NarrativeFilter] turn=${pending.turnNo} violations: ${violations.join(' | ')}`);
+        }
       } else {
         // LLM 호출 실패 → FAILED로 마킹하여 클라이언트에 알림
         const errorMsg = callResult.error ?? 'LLM provider call failed';
