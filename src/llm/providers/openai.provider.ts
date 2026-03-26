@@ -9,8 +9,9 @@ import type {
 } from '../types/index.js';
 import type { LlmConfig } from '../types/index.js';
 
-// GPT-5, o1, o3 등 reasoning 모델 판별
-const isReasoningModel = (model: string) => /^(gpt-5|o[1-9])/.test(model);
+// GPT-5, o1, o3 등 reasoning 모델 판별 (nano는 reasoning 미지원 → Chat Completions 사용)
+const isReasoningModel = (model: string) =>
+  /^(gpt-5|o[1-9])/.test(model) && !model.includes('nano');
 
 export class OpenAIProvider implements LlmProvider {
   readonly name = 'openai';
@@ -85,6 +86,7 @@ export class OpenAIProvider implements LlmProvider {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       completionTokens: usage.output_tokens ?? 0,
       cachedTokens: 0,
+      cacheCreationTokens: 0,
       latencyMs: Date.now() - start,
     };
   }
@@ -97,13 +99,17 @@ export class OpenAIProvider implements LlmProvider {
     const start = Date.now();
     const client = this.getClient();
 
+    // GPT-5 계열은 max_completion_tokens, 이전 모델은 max_tokens
+    const isGpt5 = /^gpt-5/.test(model);
     const completion = await client.chat.completions.create({
       model,
       messages: request.messages.map((m) => ({
         role: m.role,
         content: m.content,
       })),
-      max_tokens: request.maxTokens,
+      ...(isGpt5
+        ? { max_completion_tokens: request.maxTokens }
+        : { max_tokens: request.maxTokens }),
       temperature: request.temperature,
     });
 
@@ -119,6 +125,7 @@ export class OpenAIProvider implements LlmProvider {
       promptTokens: completion.usage?.prompt_tokens ?? 0,
       completionTokens: completion.usage?.completion_tokens ?? 0,
       cachedTokens: cachedTokens as number,
+      cacheCreationTokens: 0,
       latencyMs: Date.now() - start,
     };
   }

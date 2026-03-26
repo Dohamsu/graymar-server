@@ -103,6 +103,9 @@ export interface RunState {
   incidentMemories?: Record<string, IncidentPersonalMemory>;
   // Phase 3: ItemMemory — 아이템별 획득/사용 기록 (RARE 이상)
   itemMemories?: Record<string, ItemPersonalMemory>;
+  // Quest Progression: 퀘스트 단계 + 발견된 팩트 ID 추적
+  questState?: string;  // "S0_ARRIVE" | "S1_GET_ANGLE" | ... | "S5_RESOLVE"
+  discoveredQuestFacts?: string[];  // ["FACT_LEDGER_EXISTS", "FACT_WAGE_FRAUD_PATTERN", ...]
 }
 
 /** 장소별 개인 기록 — 방문 횟수, 체류턴, 주요 사건, 발견한 비밀, 평판 메모 */

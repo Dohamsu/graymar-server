@@ -128,7 +128,10 @@ export class EventMatcherService {
       }
 
       // NPC 전환 페널티: 직전 NPC와 다른 NPC의 이벤트 → 장면 연속성 훼손 방지
-      const npcSwitchPenalty = this.calcNpcSwitchPenalty(e, sessionNpcContext);
+      // 대화 계열 행동(TALK, PERSUADE, BRIBE, THREATEN, HELP)일 때 페널티 3배 강화 → NPC 유지 우선
+      const _socialActions = new Set(['TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP']);
+      const baseSwitchPenalty = this.calcNpcSwitchPenalty(e, sessionNpcContext);
+      const npcSwitchPenalty = _socialActions.has(intent.actionType) ? baseSwitchPenalty * 3 : baseSwitchPenalty;
       penalty += npcSwitchPenalty;
 
       // 이벤트 태그 연속성 보너스 (관련 이벤트 선호 → 내러티브 흐름 유지)
@@ -248,7 +251,10 @@ export class EventMatcherService {
       }
 
       // NPC 전환 페널티: 직전 NPC와 다른 NPC의 이벤트 → 장면 연속성 훼손 방지
-      const npcSwitchPenalty = this.calcNpcSwitchPenalty(e, sessionNpcContext);
+      // 대화 계열 행동(TALK, PERSUADE, BRIBE, THREATEN, HELP)일 때 페널티 3배 강화 → NPC 유지 우선
+      const _socialActions = new Set(['TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP']);
+      const baseSwitchPenalty = this.calcNpcSwitchPenalty(e, sessionNpcContext);
+      const npcSwitchPenalty = _socialActions.has(intent.actionType) ? baseSwitchPenalty * 3 : baseSwitchPenalty;
       penalty += npcSwitchPenalty;
 
       // 이벤트 태그 연속성 보너스 (관련 이벤트 선호 → 내러티브 흐름 유지)

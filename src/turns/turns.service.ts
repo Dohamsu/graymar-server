@@ -78,6 +78,7 @@ import { ProceduralEventService } from '../engine/hub/procedural-event.service.j
 import { SituationGeneratorService } from '../engine/hub/situation-generator.service.js';
 import { ConsequenceProcessorService } from '../engine/hub/consequence-processor.service.js';
 import { PlayerGoalService } from '../engine/hub/player-goal.service.js';
+import { QuestProgressionService } from '../engine/hub/quest-progression.service.js';
 import { ShopService } from '../engine/hub/shop.service.js';
 import { LegendaryRewardService } from '../engine/rewards/legendary-reward.service.js';
 import type { RegionEconomy } from '../db/types/region-state.js';
@@ -153,6 +154,7 @@ export class TurnsService {
     @Optional() private readonly situationGenerator?: SituationGeneratorService,
     @Optional() private readonly consequenceProcessor?: ConsequenceProcessorService,
     @Optional() private readonly playerGoalService?: PlayerGoalService,
+    @Optional() private readonly questProgression?: QuestProgressionService,
   ) {}
 
   /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
@@ -624,7 +626,7 @@ export class TurnsService {
     let matchedEvent: import('../db/types/event-def.js').EventDefV2 | null = null;
 
     // Step 1: CHOICE의 sourceEventId → 명시적 씬 유지 (플레이어의 선택)
-    //   제한: 같은 이벤트가 CHOICE로 2턴 이상 연속되면 새 이벤트 매칭으로 전환 (다양성 보장)
+    //   제한: 같은 이벤트가 CHOICE로 연속되면 전환 (기본 2턴, 대화 계열 4턴까지 허용)
     if (sourceEventId) {
       let choiceConsecutive = 0;
       for (let i = actionHistory.length - 1; i >= 0; i--) {
@@ -634,14 +636,19 @@ export class TurnsService {
           break;
         }
       }
-      if (choiceConsecutive < 2) {
+      // 대화 계열 선택지(TALK, PERSUADE 등)는 최대 4턴 연속 허용
+      const choiceMaxConsecutive = 4;
+      if (choiceConsecutive < choiceMaxConsecutive) {
         matchedEvent = this.content.getEventById(sourceEventId) ?? null;
       }
     }
 
-    // Step 2: ACTION(자유 텍스트) → 현재 씬 유지 (플레이어가 씬과 능동적으로 대화 중)
+    // Step 2: ACTION(자유 텍스트) → 현재 씬 유지 (대화 잠금 + 기본 연속성)
     //   예외: MOVE_LOCATION 의도, FALLBACK 이벤트(placeholder라 유지 의미 없음)
-    //   예외: 같은 이벤트가 연속 2턴 이상 사용 시 새 이벤트로 전환 (반복 방지)
+    //   대화 계열 행동(TALK, PERSUADE, BRIBE, THREATEN, HELP): 최대 4턴 연속 허용 (깊은 대화)
+    //   비대화 행동: 기존대로 1턴만 연속 허용
+    const SOCIAL_ACTIONS = new Set(['TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP']);
+    const isSocialAction = SOCIAL_ACTIONS.has(intent.actionType);
     if (!matchedEvent && body.input.type === 'ACTION' && intent.actionType !== 'MOVE_LOCATION') {
       const lastEntry = actionHistory[actionHistory.length - 1];
       if (lastEntry?.eventId) {
@@ -656,8 +663,10 @@ export class TurnsService {
               break;
             }
           }
-          // Fixplan3-P5: 연속 1턴만 씬 유지, 2턴째부터는 새 이벤트 매칭으로 전환
-          if (consecutiveCount <= 1) {
+          // 대화 잠금: 대화 계열 행동이면 최대 4턴 연속 유지 (NPC와 깊은 대화 가능)
+          // 비대화 행동: 기존대로 1턴만 연속 (Fixplan3-P5)
+          const maxConsecutive = isSocialAction ? 4 : 1;
+          if (consecutiveCount <= maxConsecutive) {
             matchedEvent = lastEvent;
           }
         }
@@ -709,9 +718,12 @@ export class TurnsService {
       // Living World v2: SituationGenerator가 이벤트를 잡았으면 기존 매칭 건너뜀
       if (!matchedEvent) {
         // NPC 연속성 컨텍스트 구축 (Phase 1: Context Coherence)
+        // 비대화 행동(SNEAK/STEAL/FIGHT)일 때는 이전 NPC 연속성을 끊어 자연스럽게 전환
+        const NON_SOCIAL_BREAK = new Set(['SNEAK', 'STEAL', 'FIGHT']);
+        const shouldBreakNpc = NON_SOCIAL_BREAK.has(intent.actionType);
         const lastEntry = actionHistory[actionHistory.length - 1] as Record<string, unknown> | undefined;
         const sessionNpcContext = {
-          lastPrimaryNpcId: (lastEntry?.primaryNpcId as string) ?? null,
+          lastPrimaryNpcId: shouldBreakNpc ? null : ((lastEntry?.primaryNpcId as string) ?? null),
           sessionTurnCount: actionHistory.length,
           interactedNpcIds: [...new Set(
             (actionHistory as Array<Record<string, unknown>>)
@@ -1407,6 +1419,39 @@ export class TurnsService {
     updatedRunState.npcStates = npcStates; // Narrative Engine v1
     // PBP 집계 (최근 행동 이력 기반)
     updatedRunState.pbp = computePBP(newHistory);
+
+    // === Quest Progression: NPC knownFacts 기반 퀘스트 팩트 발견 + 단계 전환 ===
+    if (this.questProgression) {
+      try {
+        // SUCCESS/PARTIAL + 정보성 행동 시 NPC knownFacts에서 quest FACT 발견 기록
+        const INFO_ACTIONS = new Set(['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE', 'SEARCH']);
+        if (
+          (resolveResult.outcome === 'SUCCESS' || resolveResult.outcome === 'PARTIAL') &&
+          INFO_ACTIONS.has(intent.actionType) &&
+          eventPrimaryNpc
+        ) {
+          const revealedFactId = this.questProgression.getRevealableQuestFact(eventPrimaryNpc, updatedRunState);
+          if (revealedFactId) {
+            const existing = updatedRunState.discoveredQuestFacts ?? [];
+            if (!existing.includes(revealedFactId)) {
+              updatedRunState.discoveredQuestFacts = [...existing, revealedFactId];
+              this.logger.log(`[Quest] Fact discovered: ${revealedFactId} (from ${eventPrimaryNpc})`);
+            }
+          }
+        }
+
+        // 전체 발견 팩트 수집 + 단계 전환 체크
+        const discoveredFacts = this.questProgression.collectDiscoveredFacts(updatedRunState);
+        const currentQuestState = updatedRunState.questState ?? 'S0_ARRIVE';
+        const transition = this.questProgression.checkTransition(currentQuestState, discoveredFacts);
+        if (transition.newState) {
+          updatedRunState.questState = transition.newState;
+          this.logger.log(`[Quest] ${currentQuestState} -> ${transition.newState}`);
+        }
+      } catch (err) {
+        this.logger.warn(`[QuestProgression] error (non-fatal): ${err}`);
+      }
+    }
 
     // Step 5-7: Turn Orchestration (NPC 주입, 감정 피크, 대화 자세)
     const orchestrationResult = this.orchestration.orchestrate(
