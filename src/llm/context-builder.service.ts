@@ -94,6 +94,8 @@ export interface LlmContext {
   relevantIncidentMemoryText: string | null;
   // Phase 3: ItemMemory — 관련 아이템 기록 (장착 중 + 신규 획득 + LEGENDARY/UNIQUE)
   relevantItemMemoryText: string | null;
+  // NPC knownFacts: SUCCESS/PARTIAL 판정 시 NPC가 공개할 정보
+  npcRevealableFact: { npcDisplayName: string; factId: string; detail: string; resolveOutcome: 'SUCCESS' | 'PARTIAL' } | null;
 }
 
 @Injectable()
@@ -842,6 +844,44 @@ export class ContextBuilderService {
       }
     }
 
+    // === NPC knownFacts: SUCCESS/PARTIAL 판정 시 NPC가 공개할 단서 선택 ===
+    let npcRevealableFact: LlmContext['npcRevealableFact'] = null;
+    {
+      const outcome = resolveOutcome as string | undefined;
+      if (outcome === 'SUCCESS' || outcome === 'PARTIAL') {
+        // primaryNpcId 추출 (actionContext에서)
+        const uiForFact = serverResult.ui as Record<string, unknown>;
+        const acForFact = uiForFact?.actionContext as Record<string, unknown> | undefined;
+        const factNpcId = acForFact?.primaryNpcId as string | null | undefined;
+
+        if (factNpcId) {
+          const npcDef = this.content.getNpc(factNpcId);
+          if (npcDef?.knownFacts && npcDef.knownFacts.length > 0) {
+            // 이미 공개된 factId 집합: npcKnowledge 레저에서 확인
+            const knowledgeEntries = structured?.npcKnowledge?.[factNpcId] ?? [];
+            const revealedFactIds = new Set(knowledgeEntries.map(e => e.factId));
+
+            // 첫 번째 미공개 fact 선택 (순서대로 점진적 공개)
+            const unrevealed = npcDef.knownFacts.find(f => !revealedFactIds.has(f.factId));
+            if (unrevealed) {
+              const npcStatesForFact = runState?.npcStates as Record<string, NPCState> | undefined;
+              const npcState = npcStatesForFact?.[factNpcId];
+              const displayName = npcState
+                ? getNpcDisplayName(npcState, npcDef)
+                : (npcDef.unknownAlias || npcDef.name);
+
+              npcRevealableFact = {
+                npcDisplayName: displayName,
+                factId: unrevealed.factId,
+                detail: unrevealed.detail,
+                resolveOutcome: outcome as 'SUCCESS' | 'PARTIAL',
+              };
+            }
+          }
+        }
+      }
+    }
+
     // NPC 실명 누출 방지: npcInjection 및 주요 텍스트 필드 sanitize
     const sanitize = (text: string | null) => text ? this.sanitizeNpcNames(text, runState) : text;
     const sanitizedNpcInjection = npcInjection ? {
@@ -914,6 +954,8 @@ export class ContextBuilderService {
       relevantIncidentMemoryText: this.buildRelevantIncidentMemoryText(runState, serverResult),
       // Phase 3: ItemMemory — 관련 아이템 기록 선별 주입
       relevantItemMemoryText: this.buildRelevantItemMemoryText(runState, serverResult),
+      // NPC knownFacts: SUCCESS/PARTIAL 판정 시 공개할 단서
+      npcRevealableFact,
     };
   }
 

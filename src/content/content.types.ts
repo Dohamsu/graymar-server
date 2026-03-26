@@ -175,6 +175,7 @@ export type NpcDefinition = {
   title: string | null;
   aliases: string[];
   nameStyle: string;
+  gender?: 'male' | 'female';
   basePosture?: string;
   initialTrust?: number;
   agenda?: string;
@@ -183,6 +184,10 @@ export type NpcDefinition = {
   tier?: NpcTier;              // 기본값: 'SUB'
   schedule?: import('../db/types/npc-schedule.js').NpcSchedule;
   longTermAgenda?: import('../db/types/npc-schedule.js').NpcAgenda;
+  /** NPC가 알고 있는 구체적 단서 — SUCCESS 판정 시 순서대로 점진 공개 */
+  knownFacts?: Array<{ factId: string; detail: string }>;
+  /** 이 NPC와 관련된 사건 ID 목록 */
+  linkedIncidents?: string[];
 };
 
 export type SetDefinitionData = {

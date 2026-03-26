@@ -55,6 +55,8 @@ export class ContentLoaderService implements OnModuleInit {
   private incidentsData: unknown[] = [];
   private endingsData: Record<string, unknown> = {};
   private narrativeMarkConditions: unknown[] = [];
+  // Quest data
+  private questData: unknown = null;
 
   async onModuleInit() {
     await this.loadAll();
@@ -66,7 +68,7 @@ export class ContentLoaderService implements OnModuleInit {
       locationsRaw, eventsV2Raw, sceneShellsRaw, suggestedChoicesRaw, arcEventsRaw,
       npcsRaw, setsRaw, shopsRaw, affixesRaw, equipDropsRaw,
       incidentsRaw, endingsRaw, narrativeMarksRaw,
-      scenarioMetaRaw,
+      scenarioMetaRaw, questRaw,
     ] = await Promise.all([
       readFile(join(this.contentDir, 'enemies.json'), 'utf-8'),
       readFile(join(this.contentDir, 'encounters.json'), 'utf-8'),
@@ -90,6 +92,8 @@ export class ContentLoaderService implements OnModuleInit {
       readFile(join(this.contentDir, 'narrative_marks.json'), 'utf-8').catch(() => '{"marks":[]}'),
       // Scenario meta
       readFile(join(this.contentDir, 'scenario.json'), 'utf-8').catch(() => 'null'),
+      // Quest data
+      readFile(join(this.contentDir, 'quest.json'), 'utf-8').catch(() => 'null'),
     ]);
 
     const enemiesList = JSON.parse(enemiesRaw) as EnemyDefinition[];
@@ -161,6 +165,9 @@ export class ContentLoaderService implements OnModuleInit {
     // Scenario meta 로드
     const scenarioParsed = JSON.parse(scenarioMetaRaw);
     this.scenarioMeta = scenarioParsed as ScenarioMeta | null;
+
+    // Quest data 로드
+    this.questData = JSON.parse(questRaw);
   }
 
   getPlayerDefaults(): PlayerDefaults {
@@ -430,6 +437,11 @@ export class ContentLoaderService implements OnModuleInit {
     this.currentScenarioId = scenarioId;
     await this.loadAll();
     this.logger.log(`Scenario loaded: ${scenarioId}`);
+  }
+
+  /** 퀘스트 데이터 반환 (quest.json) */
+  getQuestData(): unknown {
+    return this.questData;
   }
 
   /** 현재 로드된 시나리오의 메타 정보 반환 */

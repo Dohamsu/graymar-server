@@ -20,7 +20,8 @@ export interface LlmProviderResponse {
   model: string;
   promptTokens: number;
   completionTokens: number;
-  cachedTokens: number; // OpenAI: prompt_tokens_details.cached_tokens
+  cachedTokens: number; // OpenAI: prompt_tokens_details.cached_tokens, Claude: cache_read_input_tokens
+  cacheCreationTokens: number; // Claude: cache_creation_input_tokens (캐시 쓰기 토큰)
   latencyMs: number;
 }
 

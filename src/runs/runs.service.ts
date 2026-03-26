@@ -279,6 +279,8 @@ export class RunsService {
         locationMemories: {},
         incidentMemories: {},
         itemMemories: {},
+        questState: 'S0_ARRIVE',
+        discoveredQuestFacts: [],
       };
 
       this.logger.log(
@@ -344,6 +346,8 @@ export class RunsService {
         locationMemories: {},
         incidentMemories: {},
         itemMemories: startItemMemories,
+        questState: 'S0_ARRIVE',
+        discoveredQuestFacts: [],
       };
     }
 

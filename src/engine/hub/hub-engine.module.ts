@@ -42,6 +42,8 @@ import { NpcAgendaService } from './npc-agenda.service.js';
 import { ConsequenceProcessorService } from './consequence-processor.service.js';
 import { SituationGeneratorService } from './situation-generator.service.js';
 import { PlayerGoalService } from './player-goal.service.js';
+// Quest Progression
+import { QuestProgressionService } from './quest-progression.service.js';
 
 const providers = [
   WorldStateService,
@@ -86,6 +88,8 @@ const providers = [
   ConsequenceProcessorService,
   SituationGeneratorService,
   PlayerGoalService,
+  // Quest Progression
+  QuestProgressionService,
 ];
 
 @Module({

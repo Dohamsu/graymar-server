@@ -85,6 +85,7 @@ export class GeminiProvider implements LlmProvider {
       completionTokens: usage?.candidatesTokenCount ?? 0,
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       cachedTokens: usage?.cachedContentTokenCount ?? 0,
+      cacheCreationTokens: 0,
       latencyMs: Date.now() - start,
     };
   }

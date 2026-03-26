@@ -33,6 +33,7 @@ export class PromptBuilderService {
     previousChoiceLabels?: string[],
   ): LlmMessage[] {
     const messages: LlmMessage[] = [];
+    const isHub = sr.node.type === 'HUB';
 
     // 1. System prompt + L0 theme 병합 (Tier 1: 런 전체 고정 → prefix 캐싱 대상)
     const genderHint = ctx.gender === 'female'
@@ -84,23 +85,27 @@ export class PromptBuilderService {
       }
     }
 
-    // NPC 개인 기록: 현재 턴 관련 NPC의 상세 기록 (relevantNpcMemoryText 우선)
-    if (ctx.relevantNpcMemoryText) {
-      memoryParts.push(`[관련 NPC 기록]\n${ctx.relevantNpcMemoryText}\n⚠️ 이 NPC와의 과거 상호작용을 대사와 행동에 반드시 반영하라. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다. 과거 만남의 결과(성공/실패)가 현재 태도에 영향을 주어야 합니다.`);
-    } else if (ctx.npcJournalText) {
-      // fallback: personalMemory가 없는 경우 기존 NPC 관계 일지 사용
-      memoryParts.push(`[NPC 관계]\n${ctx.npcJournalText}\n⚠️ NPC가 등장하면, 위 태도와 과거 상호작용을 반드시 대사 톤과 행동에 반영하세요. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다.`);
+    // NPC 개인 기록: 현재 턴 관련 NPC의 상세 기록 (relevantNpcMemoryText 우선) — HUB에서는 생략
+    if (!isHub) {
+      if (ctx.relevantNpcMemoryText) {
+        memoryParts.push(`[관련 NPC 기록]\n${ctx.relevantNpcMemoryText}\n⚠️ 이 NPC와의 과거 상호작용을 대사와 행동에 반드시 반영하라. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다. 과거 만남의 결과(성공/실패)가 현재 태도에 영향을 주어야 합니다.`);
+      } else if (ctx.npcJournalText) {
+        // fallback: personalMemory가 없는 경우 기존 NPC 관계 일지 사용
+        memoryParts.push(`[NPC 관계]\n${ctx.npcJournalText}\n⚠️ NPC가 등장하면, 위 태도와 과거 상호작용을 반드시 대사 톤과 행동에 반영하세요. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다.`);
+      }
     }
 
-    // Phase 2: IncidentMemory — 관련 사건 기록이 있으면 우선 사용, 없으면 기존 일지 fallback
-    if (ctx.relevantIncidentMemoryText) {
-      memoryParts.push(
-        `[관련 사건 기록]\n${ctx.relevantIncidentMemoryText}\n` +
-        '플레이어의 이전 행동과 발견한 단서를 대사와 서술에 반영하라. ' +
-        '사건에 적극 개입한 플레이어는 관련 NPC가 알아보고, 방관한 플레이어에게는 상황 변화를 암시하라.',
-      );
-    } else if (ctx.incidentChronicleText) {
-      memoryParts.push(`[사건 일지]\n${ctx.incidentChronicleText}\n진행 중인 사건의 여파를 배경 묘사에 반영하세요 — 주민 반응, 경비 변화, 분위기 등.`);
+    // Phase 2: IncidentMemory — 관련 사건 기록이 있으면 우선 사용, 없으면 기존 일지 fallback — HUB에서는 생략
+    if (!isHub) {
+      if (ctx.relevantIncidentMemoryText) {
+        memoryParts.push(
+          `[관련 사건 기록]\n${ctx.relevantIncidentMemoryText}\n` +
+          '플레이어의 이전 행동과 발견한 단서를 대사와 서술에 반영하라. ' +
+          '사건에 적극 개입한 플레이어는 관련 NPC가 알아보고, 방관한 플레이어에게는 상황 변화를 암시하라.',
+        );
+      } else if (ctx.incidentChronicleText) {
+        memoryParts.push(`[사건 일지]\n${ctx.incidentChronicleText}\n진행 중인 사건의 여파를 배경 묘사에 반영하세요 — 주민 반응, 경비 변화, 분위기 등.`);
+      }
     }
 
     // Structured Memory v2: LLM 추출 사실 (PR4: activeClues가 있으면 PLOT_HINT 중복 제거)
@@ -194,8 +199,8 @@ export class PromptBuilderService {
       memoryParts.push(`[중간 요약]\n${ctx.midSummary}`);
     }
 
-    // L3: 현재 LOCATION 방문 전체 대화 (단기 기억 — 우선 사용)
-    if (ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
+    // L3: 현재 LOCATION 방문 전체 대화 (단기 기억 — 우선 사용) — HUB에서는 생략
+    if (!isHub && ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
       const totalTurns = ctx.locationSessionTurns.length;
       const sessionLines = ctx.locationSessionTurns.map((t, idx) => {
         const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
@@ -242,6 +247,7 @@ export class PromptBuilderService {
           '5. [상황 요약]과 [배경 상황]은 이번 턴의 게임 엔진 정보일 뿐, 장면 전환 지시가 아닙니다. 직전 서술의 흐름이 항상 우선합니다.',
           '6. ⚠️ 이전 턴에서 NPC가 알려준 정보, 획득한 물건, 발견한 단서를 반드시 기억하세요. NPC가 같은 정보를 처음 말하는 것처럼 반복하면 안 됩니다. 예: 이미 종이뭉치를 받았으면, 같은 NPC가 다시 종이뭉치를 주거나 같은 정보를 처음 알려주는 식으로 쓰면 안 됩니다.',
           '7. ⚠️ 이미 대화한 NPC가 다시 등장할 때는 이전 대화 내용을 알고 있어야 합니다. "그대, 무슨 일로 여기 돌아다니오?" 같은 반응은 이미 그 NPC에게서 허가/정보를 받은 상황에서는 부자연스럽습니다.',
+          '8. ⚠️ NPC 퇴장 존중: 직전 턴 서술에서 NPC가 "떠났다", "사라졌다", "자리를 피했다", "골목으로 빠졌다" 등 퇴장을 묘사했다면, 이번 턴에서 그 NPC가 아무 이유 없이 다시 같은 장소에 나타나면 안 됩니다. 재등장시키려면 "다시 나타났다", "돌아왔다" 등 명확한 이유가 필요합니다.',
           '',
           sessionLines.join('\n---\n'),
         ].join('\n'),
@@ -291,8 +297,8 @@ export class PromptBuilderService {
       memoryParts.push(`[최근 서술]\n${ctx.recentSummaries.join('\n---\n')}`);
     }
 
-    // L2 확장: NPC 로스터 (콘텐츠 정의 NPC 목록 — 소개 상태 반영)
-    const allNpcs = this.content.getAllNpcs();
+    // L2 확장: NPC 로스터 (콘텐츠 정의 NPC 목록 — 소개 상태 반영) — HUB에서는 생략
+    const allNpcs = isHub ? [] : this.content.getAllNpcs();
     if (allNpcs.length > 0) {
       const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
       const newlyIntroducedNpcIds = new Set(ctx.newlyIntroducedNpcIds ?? []);
@@ -304,6 +310,7 @@ export class PromptBuilderService {
         const isNewlyEncountered = newlyEncounteredNpcIds.has(npc.npcId);
         const isIntroduced = introducedNpcIds.has(npc.npcId);
         const alias = npc.unknownAlias || '낯선 인물';
+        const pronoun = npc.gender === 'female' ? '그녀' : '그';
 
         if (isNewlyIntroduced && isNewlyEncountered) {
           // 첫 만남 + 이번에 소개 (FRIENDLY/FEARFUL) → 자기소개
@@ -313,14 +320,14 @@ export class PromptBuilderService {
           return `- ${npc.name}${title}: ${npc.role} [이번 장면에서 이름이 자연스럽게 드러납니다 — 다른 인물이 이름을 부르거나, 상황 단서(문서, 간판, 대화)를 통해 알게 되는 식으로 서술하세요. 직접 자기소개하지 않습니다]`;
         } else if (isNewlyEncountered && !isNewlyIntroduced) {
           // 첫 만남이지만 소개 안 함 (CAUTIOUS 등) → 별칭만
-          return `- "${alias}": ${npc.role} [첫 만남 — 이름을 밝히지 않습니다. 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "그 인물", "그", "그녀" 등 짧은 대명사로 자연스럽게 대체하세요]`;
+          return `- "${alias}": ${npc.role} [첫 만남 — 이름을 밝히지 않습니다. 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "${pronoun}", "${pronoun} 인물" 등 짧은 대명사로 대체하세요]`;
         } else if (isIntroduced) {
           // 이미 소개됨 → 실명 + knowledge
           const knowledgeEntries = (ctx.npcKnowledge ?? {})[npc.npcId];
           const knowledgePart = knowledgeEntries && knowledgeEntries.length > 0
             ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k: any) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`
             : '';
-          return `- ${npc.name}${title}: ${npc.role} [이미 소개됨]${knowledgePart}`;
+          return `- ${npc.name}${title}: ${npc.role} [이미 소개됨, 대명사: ${pronoun}]${knowledgePart}`;
         } else {
           // 아직 만나지 않았거나 소개 안 됨 → 별칭 (간략히)
           return `- "${alias}": ${npc.role} [이름 미공개]`;
@@ -334,8 +341,12 @@ export class PromptBuilderService {
           '[등장 가능 NPC 목록]',
           '아래 NPC만 서술에 이름 있는 캐릭터로 등장할 수 있습니다. 이 목록에 없는 새로운 이름 있는 캐릭터를 만들지 마세요.',
           '배경 인물이 필요하면 "한 사내", "노점 상인" 등 익명 표현만 사용하세요.',
-          '⚠️ [이름 미공개] NPC: 별칭은 참고용입니다. 서술에서 별칭 전체를 반복하지 말고, 첫 등장 후에는 "그", "그녀", "그 인물" 등 대명사로 자연스럽게 대체하세요. [이름 미공개] NPC가 자기 이름을 밝히거나 자기소개하는 장면은 쓰지 마세요 — 자기소개는 [자기소개] 태그가 붙은 NPC만 합니다.',
-          '⚠️ 같은 NPC 별칭을 연속 턴에서 동일한 표현으로 반복하지 마세요. 다양한 묘사를 사용하세요.',
+          '⚠️ [이름 미공개] NPC 별칭 사용 규칙:',
+          '  - 별칭 전체(예: "권위적인 야간 경비 책임자")는 한 턴에서 최대 1회만 사용하세요.',
+          '  - 첫 등장 이후에는 반드시 "그", "그녀", "그 인물", "그 사내", "책임자" 등 짧은 대명사나 축약 호칭으로 대체하세요.',
+          '  - 나쁜 예: "권위적인 야간 경비 책임자가 말했다... 권위적인 야간 경비 책임자는 고개를 끄덕였다"',
+          '  - 좋은 예: "권위적인 야간 경비 책임자가 말했다... 그는 고개를 끄덕였다"',
+          '  - [이름 미공개] NPC가 자기 이름을 밝히거나 자기소개하는 장면은 쓰지 마세요 — 자기소개는 [자기소개] 태그가 붙은 NPC만 합니다.',
           '',
           npcLines.join('\n'),
           relationPart,
@@ -580,14 +591,14 @@ export class PromptBuilderService {
       );
     }
 
-    // Phase 3: NPC 대화 자세 (Step 7) — posture + personality 기반 개인화 가이드
-    if (ctx.npcPostures && Object.keys(ctx.npcPostures).length > 0) {
+    // Phase 3: NPC 대화 자세 (Step 7) — posture + personality 기반 개인화 가이드 — HUB에서는 생략
+    if (!isHub && ctx.npcPostures && Object.keys(ctx.npcPostures).length > 0) {
       const POSTURE_BASELINE: Record<string, string> = {
-        FRIENDLY: '호의적. 자발적 도움 가능. 단, resolve 결과(FAIL)에 따라 제한.',
-        CAUTIOUS: '경계. 질문에 모호하게 답함. 자발적 정보 제공 금지. SUCCESS 판정 없이 핵심 정보를 알려주면 안 됩니다.',
-        HOSTILE: '적대. 대화 거부 가능. 위협적 어조. PARTIAL 이하 판정에서 협조적으로 서술 금지.',
-        FEARFUL: '두려움. 말을 아끼고, 시선을 피하며, 압박에 쉽게 무너짐.',
-        CALCULATING: '타산적. 대가(금전, 정보, 충성, 복종 등)를 요구한다. 단, 대가의 형태는 이 NPC의 성격과 agenda에 맞춰야 한다.',
+        FRIENDLY: '마음이 열려 있고 상대에게 호감을 느낀다. 대화를 즐기며, 자기 이야기도 기꺼이 꺼낸다. 다만 무조건적인 순종은 아니다 — 자기 선이 있고, 어리석은 부탁은 거절할 수 있다.',
+        CAUTIOUS: '쉽게 믿지 않는다. 속내를 드러내기 전에 상대를 시험하고 떠본다. 말보다 침묵이 많고, 대답할 때도 핵심을 돌려 말한다. 하지만 신뢰를 얻으면 태도가 서서히 달라진다.',
+        HOSTILE: '적의가 있다. 상대의 존재 자체가 불쾌하거나 위협적으로 느껴진다. 대화를 원치 않으며, 응하더라도 짧고 날카롭다. 그러나 적대감 아래에도 이유가 있다 — 두려움, 배신의 기억, 또는 지켜야 할 것.',
+        FEARFUL: '겁을 먹고 있다. 불안이 몸과 목소리에 배어 나온다. 대화를 피하고 싶지만 상황이 허락하지 않을 때, 말이 짧아지거나 엉뚱한 방향으로 튄다. 압박에 약하지만 자존심이 아예 없는 건 아니다.',
+        CALCULATING: '이익을 따진다. 모든 대화에서 자신에게 돌아올 것을 계산하고, 빈손으로 무언가를 내주는 법이 없다. 하지만 계산하는 방식은 다양하다 — 눈앞의 이익, 장기적 관계, 정치적 포석, 또는 자존심.',
       };
       const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
 
@@ -621,7 +632,7 @@ export class PromptBuilderService {
               parts.push(`    성격 특성: ${personality.traits.join(' / ')}`);
             }
             if (personality.speechStyle) {
-              parts.push(`    말투: ${personality.speechStyle}`);
+              parts.push(`    말투 (이 어조로 새 대사를 만들 것): ${personality.speechStyle}`);
             }
             return parts.join('\n');
           }
@@ -634,11 +645,109 @@ export class PromptBuilderService {
           '이 장소의 NPC들이 보이는 태도입니다. 대사와 행동은 반드시 아래 태도에 맞춰 서술하세요.',
           '⚠️ 태도에 맞지 않는 행동(CAUTIOUS NPC의 자발적 정보 제공, HOSTILE NPC의 호의적 태도 등)은 절대 서술하지 마세요.',
           '⚠️ NPC의 agenda는 배경 동기입니다. 매 대사에서 agenda를 직접 언급하지 마세요. 대화 3번 중 1번 정도만 동기와 관련된 말을 하고, 나머지는 상황 반응, 개인적 감상, 또는 플레이어 평가를 보여주세요.',
+          '⚠️ NPC 대사 다양성: 같은 NPC가 연속 턴에서 비슷한 말("조심하시오", "위험하오" 등)을 반복하면 안 됩니다. 턴마다 다른 화제를 꺼내세요: 자기 사정, 주변 상황 관찰, 과거 경험, 플레이어 행동에 대한 평가, 질문, 침묵과 행동 등. 사람은 같은 말만 반복하지 않습니다.',
           '⚠️ NPC별 호칭을 구분하세요. "그대"는 마이렐 단 경만의 고유 호칭입니다. 다른 NPC는 "당신", "이보게", "자네", "손님" 등 각자의 말투에 맞는 호칭을 사용하세요.',
+          '⚠️ 각 NPC의 "말투" 항목을 반드시 적용하세요. 더듬기, 비유, 횡설수설, 한숨 등 말투 특성이 대사에 드러나야 합니다. 말투 예시가 있다면 그 톤을 참고하세요.',
           '',
           postureLines.join('\n'),
         ].join('\n'),
       );
+    }
+
+    // === 작업 1: 직전 NPC 대사 추출 & 반복 방지 지시 (LOCATION only) ===
+    if (!isHub && ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
+      const lastSessionTurn = ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1];
+      if (lastSessionTurn.narrative) {
+        const dialogueMatches = lastSessionTurn.narrative.match(/\u201c([^\u201d]+)\u201d|"([^"]+)"/g);
+        if (dialogueMatches && dialogueMatches.length > 0) {
+          // 마지막 1~2개 대사 추출
+          const recentDialogues = dialogueMatches.slice(-2);
+          factsParts.push(
+            `[직전 NPC 대사]\n${recentDialogues.join('\n')}\n` +
+            '⚠️ 이 대사를 반복하지 마세요. 이전 대사에 이어지는 새로운 반응이나 화제로 시작하세요. ' +
+            '같은 질문("무슨 용무요?", "조심하시오" 등)을 다시 하면 안 됩니다.',
+          );
+        }
+      }
+    }
+
+    // === 작업 2: NPC 대화 턴 카운터 — 연속 대화 단계별 가이드 (LOCATION only) ===
+    if (!isHub && ctx.npcPostures && Object.keys(ctx.npcPostures).length > 0) {
+      const sessionTurnsForCounter = ctx.locationSessionTurns ?? [];
+      const introducedNpcIdsForCounter = new Set(ctx.introducedNpcIds ?? []);
+      const npcAppearanceCounts: Record<string, number> = {};
+
+      for (const npcId of Object.keys(ctx.npcPostures)) {
+        const npcDef = this.content.getNpc(npcId);
+        const displayName = npcDef
+          ? (introducedNpcIdsForCounter.has(npcId) ? npcDef.name : (npcDef.unknownAlias || '낯선 인물'))
+          : npcId;
+        const count = sessionTurnsForCounter.filter(t => t.narrative?.includes(displayName)).length;
+        if (count >= 2) {
+          npcAppearanceCounts[displayName] = count;
+        }
+      }
+
+      if (Object.keys(npcAppearanceCounts).length > 0) {
+        const lines = Object.entries(npcAppearanceCounts).map(([name, count]) => {
+          if (count === 2) return `- ${name}: 2턴째 대화 → 플레이어 행동에 대한 평가, 자기 입장 표명`;
+          if (count === 3) return `- ${name}: 3턴째 대화 → 자기 사정 토로, 감정 변화(한숨, 자조, 초조), 새로운 화제`;
+          return `- ${name}: ${count}턴째 대화 → 거래 제안, 비밀 암시, 또는 대화 종료 시도. 더 이상 같은 경고를 반복하지 마세요.`;
+        });
+        factsParts.push(
+          '[NPC 대화 단계]\n이 NPC와 연속 대화 중입니다. 대화 단계에 맞는 반응을 하세요:\n' + lines.join('\n'),
+        );
+      }
+    }
+
+    // === 작업 3: 행동-반응 매핑 강화 — 플레이어 행동 유형별 NPC 반응 가이드 (LOCATION only) ===
+    if (inputType === 'ACTION' && !isHub) {
+      const inputLower = rawInput.toLowerCase();
+      let reactionGuide = '';
+
+      if (inputLower.includes('훔') || inputLower.includes('절도') || inputLower.includes('빼앗') || inputLower.includes('슬쩍')) {
+        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 절도를 시도합니다. NPC는 "조심하시오" 경고가 아니라, 놀람/분노/공포/목격자로서의 반응을 보여야 합니다. 예: 눈이 커지며 뒷걸음질, 물건을 움켜쥠, 경비를 부르려는 시선 등.';
+      } else if (inputLower.includes('싸움') || inputLower.includes('때') || inputLower.includes('공격') || inputLower.includes('위협')) {
+        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 폭력/위협을 시도합니다. NPC는 경고가 아니라, 공포/도주/방관/대항 중 하나로 반응하세요. CAUTIOUS NPC는 움츠러들거나 물러남. HOSTILE은 대항. FEARFUL은 도주.';
+      } else if (inputLower.includes('말을 건') || inputLower.includes('설득') || inputLower.includes('대화')) {
+        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 대화를 시도합니다. NPC는 경고 대신 되묻기, 자기 사정 이야기, 조건 제시, 또는 화제 전환으로 반응하세요.';
+      } else if (inputLower.includes('뇌물') || inputLower.includes('거래') || inputLower.includes('돈을')) {
+        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 뇌물/거래를 시도합니다. NPC는 경고가 아니라, 탐욕/망설임/거래 조건 제시/주변 경계로 반응하세요.';
+      } else if (inputLower.includes('관찰') || inputLower.includes('살핀') || inputLower.includes('살펴')) {
+        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 관찰합니다. NPC는 플레이어의 시선을 의식하거나, 무심히 행동하거나, 뭔가를 숨기는 행동으로 반응하세요.';
+      } else if (inputLower.includes('잠입') || inputLower.includes('숨') || inputLower.includes('몰래')) {
+        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 은밀히 행동합니다. NPC는 발각 시 경악/추격, 미발각 시 무관심하게 행동하세요.';
+      }
+
+      if (reactionGuide) {
+        factsParts.push(reactionGuide);
+      }
+    }
+
+    // === NPC knownFacts: SUCCESS/PARTIAL 판정 시 NPC가 공개할 단서 ===
+    if (ctx.npcRevealableFact) {
+      const { npcDisplayName, detail, resolveOutcome: factOutcome } = ctx.npcRevealableFact;
+      if (factOutcome === 'SUCCESS') {
+        factsParts.push(
+          [
+            `[이번 턴 NPC가 공개할 정보]`,
+            `${npcDisplayName}이(가) 플레이어에게 다음 정보를 알려줍니다 (SUCCESS 판정 결과):`,
+            `"${detail}"`,
+            `이 정보를 NPC의 대사나 행동을 통해 자연스럽게 서술에 반영하세요. 직접 읽어주듯 전달하지 말고, NPC의 성격과 말투에 맞게 간접적으로 드러내세요.`,
+          ].join('\n'),
+        );
+      } else {
+        // PARTIAL: 힌트만 흘림
+        const hintText = detail.length > 20 ? detail.slice(0, 20) + '...' : detail;
+        factsParts.push(
+          [
+            `[이번 턴 정보 힌트]`,
+            `${npcDisplayName}이(가) 다음 정보를 일부만 흘립니다 (PARTIAL 판정):`,
+            `"${hintText}"`,
+            `핵심은 감추고 일부만 암시하세요. NPC가 말을 아끼거나 핵심을 돌려 말합니다.`,
+          ].join('\n'),
+        );
+      }
     }
 
     // 프롤로그 힌트 (첫 장면)

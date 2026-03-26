@@ -380,6 +380,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           llmTokenStats: {
             prompt: callResult.response?.promptTokens ?? 0,
             cached: callResult.response?.cachedTokens ?? 0,
+            cacheCreation: callResult.response?.cacheCreationTokens ?? 0,
             completion: callResult.response?.completionTokens ?? 0,
             latencyMs: callResult.response?.latencyMs ?? 0,
           },
