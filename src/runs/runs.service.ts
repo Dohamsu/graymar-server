@@ -33,6 +33,8 @@ import { AffixService } from '../engine/rewards/affix.service.js';
 import { RunPlannerService } from '../engine/planner/run-planner.service.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import { ShopService } from '../engine/hub/shop.service.js';
+import { EquipmentService } from '../engine/rewards/equipment.service.js';
+import type { EquipmentSlot, ItemInstance } from '../db/types/equipment.js';
 import type { RegionEconomy } from '../db/types/region-state.js';
 
 @Injectable()
@@ -52,6 +54,7 @@ export class RunsService {
     private readonly campaignsService: CampaignsService,
     private readonly affixService: AffixService,
     private readonly shopService: ShopService,
+    private readonly equipmentService: EquipmentService,
   ) {}
 
   async createRun(
@@ -681,6 +684,7 @@ export class RunsService {
         ],
         storySummary: null,
       },
+      setDefinitions: this.content.getAllSets(),
       turns: [],
       page: { hasMore: false, nextCursor: undefined },
     };
@@ -818,10 +822,209 @@ export class RunsService {
         })),
         displaySummary: t.serverResult?.summary?.display ?? null,
       })),
+      setDefinitions: this.content.getAllSets(),
       page: {
         hasMore,
         nextCursor,
       },
+    };
+  }
+
+  // --- 장착/해제 API (턴 미소모) ---
+
+  async equipItem(userId: string, runId: string, instanceId: string) {
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+    });
+    if (!run) throw new NotFoundError('Run not found');
+    if (run.userId !== userId) throw new ForbiddenError('Not your run');
+    if (run.status !== 'RUN_ACTIVE') throw new BadRequestError('Run is not active');
+
+    const runState = run.runState as RunState;
+    const equipped = runState.equipped ?? {};
+    const bag = runState.equipmentBag ?? [];
+
+    // 가방에서 해당 인스턴스 찾기
+    const bagIndex = bag.findIndex((item) => item.instanceId === instanceId);
+    if (bagIndex === -1) {
+      throw new BadRequestError('Item not found in equipment bag');
+    }
+    const instance = bag[bagIndex];
+
+    // EquipmentService.equip() 호출
+    const { equipped: newEquipped, unequippedInstance } =
+      this.equipmentService.equip(equipped, instance);
+
+    // equipped가 변경되지 않았으면 (장비 불가 아이템)
+    if (newEquipped === equipped) {
+      throw new BadRequestError('Cannot equip this item');
+    }
+
+    // 가방 업데이트: 장착한 아이템 제거, 교체된 아이템 추가
+    const newBag = [...bag];
+    newBag.splice(bagIndex, 1);
+    if (unequippedInstance) {
+      newBag.push(unequippedInstance);
+    }
+
+    // RunState 업데이트
+    const updatedRunState: RunState = {
+      ...runState,
+      equipped: newEquipped,
+      equipmentBag: newBag,
+    };
+
+    await this.db
+      .update(runSessions)
+      .set({ runState: updatedRunState })
+      .where(eq(runSessions.id, runId));
+
+    return {
+      equipped: newEquipped,
+      equipmentBag: newBag,
+      unequippedInstance,
+      message: unequippedInstance
+        ? `장비 교체 완료 (해제: ${unequippedInstance.displayName})`
+        : '장비 착용 완료',
+    };
+  }
+
+  async unequipItem(userId: string, runId: string, slot: string) {
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+    });
+    if (!run) throw new NotFoundError('Run not found');
+    if (run.userId !== userId) throw new ForbiddenError('Not your run');
+    if (run.status !== 'RUN_ACTIVE') throw new BadRequestError('Run is not active');
+
+    const runState = run.runState as RunState;
+    const equipped = runState.equipped ?? {};
+    const bag = runState.equipmentBag ?? [];
+
+    const eqSlot = slot as EquipmentSlot;
+    if (!equipped[eqSlot]) {
+      throw new BadRequestError(`No equipment in slot: ${slot}`);
+    }
+
+    // EquipmentService.unequip() 호출
+    const { equipped: newEquipped, unequippedInstance } =
+      this.equipmentService.unequip(equipped, eqSlot);
+
+    // 가방에 해제된 아이템 추가
+    const newBag = [...bag];
+    if (unequippedInstance) {
+      newBag.push(unequippedInstance);
+    }
+
+    // RunState 업데이트
+    const updatedRunState: RunState = {
+      ...runState,
+      equipped: newEquipped,
+      equipmentBag: newBag,
+    };
+
+    await this.db
+      .update(runSessions)
+      .set({ runState: updatedRunState })
+      .where(eq(runSessions.id, runId));
+
+    return {
+      equipped: newEquipped,
+      equipmentBag: newBag,
+      message: unequippedInstance
+        ? `장비 해제 완료: ${unequippedInstance.displayName}`
+        : '장비 해제 완료',
+    };
+  }
+
+  // --- 소모품 사용 API (턴 미소모) ---
+
+  async useItem(userId: string, runId: string, itemId: string) {
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+    });
+    if (!run) throw new NotFoundError('Run not found');
+    if (run.userId !== userId) throw new ForbiddenError('Not your run');
+    if (run.status !== 'RUN_ACTIVE') throw new BadRequestError('Run is not active');
+
+    // 전투 중이면 거부
+    const currentNode = await this.db.query.nodeInstances.findFirst({
+      where: and(
+        eq(nodeInstances.runId, runId),
+        eq(nodeInstances.nodeIndex, run.currentNodeIndex),
+      ),
+    });
+    if (currentNode?.nodeType === 'COMBAT') {
+      throw new BadRequestError('Cannot use items during combat. Use ACTION turn instead.');
+    }
+
+    const runState = run.runState as RunState;
+    const inventory = [...(runState.inventory ?? [])];
+
+    // 인벤토리에서 아이템 확인
+    const invIndex = inventory.findIndex((item) => item.itemId === itemId);
+    if (invIndex === -1 || inventory[invIndex].qty <= 0) {
+      throw new BadRequestError('Item not found in inventory or quantity is 0');
+    }
+
+    // 아이템 정의 조회
+    const itemDef = this.content.getItem(itemId);
+    if (!itemDef || itemDef.type !== 'CONSUMABLE') {
+      throw new BadRequestError('Item is not a consumable');
+    }
+
+    const effect = itemDef.combat?.effect;
+    const value = itemDef.combat?.value ?? 0;
+
+    let hp = runState.hp;
+    let stamina = runState.stamina;
+    let effectMessage = '';
+
+    switch (effect) {
+      case 'HEAL_HP': {
+        const maxHp = runState.maxHp;
+        const healed = Math.min(value, maxHp - hp);
+        hp = hp + healed;
+        effectMessage = `HP +${healed} (${hp}/${maxHp})`;
+        break;
+      }
+      case 'RESTORE_STAMINA': {
+        const maxStamina = runState.maxStamina;
+        const restored = Math.min(value, maxStamina - stamina);
+        stamina = stamina + restored;
+        effectMessage = `Stamina +${restored} (${stamina}/${maxStamina})`;
+        break;
+      }
+      default:
+        throw new BadRequestError(
+          `Item effect "${effect}" cannot be used outside of combat`,
+        );
+    }
+
+    // 수량 감소
+    inventory[invIndex] = { ...inventory[invIndex], qty: inventory[invIndex].qty - 1 };
+    if (inventory[invIndex].qty <= 0) {
+      inventory.splice(invIndex, 1);
+    }
+
+    // RunState 업데이트
+    const updatedRunState: RunState = {
+      ...runState,
+      hp,
+      stamina,
+      inventory,
+    };
+
+    await this.db
+      .update(runSessions)
+      .set({ runState: updatedRunState })
+      .where(eq(runSessions.id, runId));
+
+    return {
+      hp,
+      stamina,
+      inventory,
+      message: `${itemDef.name} 사용 - ${effectMessage}`,
     };
   }
 }
