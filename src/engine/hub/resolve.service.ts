@@ -83,9 +83,9 @@ export class ResolveService {
     // 1d6 주사위 (결정적 RNG)
     const diceRoll = rng.range(1, 6);
 
-    // 그라데이션 스탯 보너스: floor(stat / 3)
+    // 그라데이션 스탯 보너스: floor(stat / 4) — 고스탯 과도 성공 방지
     const statKey = ACTION_STAT_MAP[intent.actionType];
-    const statBonus = statKey ? Math.floor((stats[statKey] as number) / 3) : 0;
+    const statBonus = statKey ? Math.floor((stats[statKey] as number) / 4) : 0;
 
     // base modifier: matchPolicy + friction + riskLevel
     let baseMod = 0;
