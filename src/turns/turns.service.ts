@@ -1420,22 +1420,53 @@ export class TurnsService {
     // PBP 집계 (최근 행동 이력 기반)
     updatedRunState.pbp = computePBP(newHistory);
 
-    // === Quest Progression: NPC knownFacts 기반 퀘스트 팩트 발견 + 단계 전환 ===
+    // === Quest Progression: 3경로 FACT 발견 + 단계 전환 ===
     if (this.questProgression) {
       try {
-        // SUCCESS/PARTIAL + 정보성 행동 시 NPC knownFacts에서 quest FACT 발견 기록
-        const INFO_ACTIONS = new Set(['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE', 'SEARCH']);
+        const existing = updatedRunState.discoveredQuestFacts ?? [];
+        const addFact = (factId: string, source: string) => {
+          if (factId && !existing.includes(factId)) {
+            updatedRunState.discoveredQuestFacts = [...(updatedRunState.discoveredQuestFacts ?? []), factId];
+            existing.push(factId); // 같은 턴 중복 방지
+            this.logger.log(`[Quest] Fact discovered: ${factId} (source: ${source})`);
+          }
+        };
+
+        // 경로 1: 이벤트 discoverableFact — SUCCESS 시 자동 발견
+        if (resolveResult.outcome === 'SUCCESS' && matchedEvent) {
+          const eventFact = (matchedEvent.payload as Record<string, unknown>)?.discoverableFact as string | undefined
+            ?? (matchedEvent as Record<string, unknown>).discoverableFact as string | undefined;
+          if (eventFact) {
+            addFact(eventFact, `event:${matchedEvent.eventId}`);
+          }
+        }
+
+        // 경로 2: NPC knownFacts — SUCCESS/PARTIAL + 정보성 행동
+        const INFO_ACTIONS = new Set(['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE', 'SEARCH', 'HELP', 'BRIBE']);
         if (
           (resolveResult.outcome === 'SUCCESS' || resolveResult.outcome === 'PARTIAL') &&
-          INFO_ACTIONS.has(intent.actionType) &&
-          eventPrimaryNpc
+          INFO_ACTIONS.has(intent.actionType)
         ) {
-          const revealedFactId = this.questProgression.getRevealableQuestFact(eventPrimaryNpc, updatedRunState);
-          if (revealedFactId) {
-            const existing = updatedRunState.discoveredQuestFacts ?? [];
-            if (!existing.includes(revealedFactId)) {
-              updatedRunState.discoveredQuestFacts = [...existing, revealedFactId];
-              this.logger.log(`[Quest] Fact discovered: ${revealedFactId} (from ${eventPrimaryNpc})`);
+          // primaryNpc가 있으면 그 NPC에서, 없으면 이벤트 payload.primaryNpcId에서 시도
+          const npcId = eventPrimaryNpc
+            ?? ((matchedEvent?.payload as Record<string, unknown>)?.primaryNpcId as string | undefined)
+            ?? null;
+          if (npcId) {
+            const revealedFactId = this.questProgression.getRevealableQuestFact(npcId, updatedRunState);
+            if (revealedFactId) {
+              addFact(revealedFactId, `npc:${npcId}`);
+            }
+          }
+        }
+
+        // 경로 3: PARTIAL + 이벤트 discoverableFact — 30% 확률로 발견
+        if (resolveResult.outcome === 'PARTIAL' && matchedEvent) {
+          const eventFact = (matchedEvent.payload as Record<string, unknown>)?.discoverableFact as string | undefined
+            ?? (matchedEvent as Record<string, unknown>).discoverableFact as string | undefined;
+          if (eventFact && !existing.includes(eventFact)) {
+            const roll = rng.range(0, 100);
+            if (roll < 30) {
+              addFact(eventFact, `event_partial:${matchedEvent.eventId}`);
             }
           }
         }
