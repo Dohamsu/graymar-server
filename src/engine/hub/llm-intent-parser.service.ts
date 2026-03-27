@@ -9,6 +9,7 @@ import { LlmProviderRegistryService } from '../../llm/providers/llm-provider-reg
 import {
   INTENT_SYSTEM_PROMPT,
   buildIntentUserMessage,
+  type NpcForIntent,
 } from '../../llm/prompts/intent-system-prompt.js';
 import {
   INTENT_ACTION_TYPE,
@@ -66,6 +67,7 @@ export class LlmIntentParserService implements OnModuleInit {
     insistenceCount: number = 0,
     repeatedType: string | null = null,
     locationId?: string,
+    npcsAtLocation?: NpcForIntent[],
   ): Promise<ParsedIntentV2> {
     // CHOICE → 키워드 파서 직접 위임 (affordance 매핑으로 충분)
     if (source === 'CHOICE') {
@@ -76,7 +78,7 @@ export class LlmIntentParserService implements OnModuleInit {
 
     // 키워드 파서를 먼저 실행 (fallback 확보)
     const keywordResult = this.keywordParser.parseWithInsistence(
-      inputText, source, choicePayload, insistenceCount, repeatedType,
+      inputText, source, choicePayload, insistenceCount, repeatedType, npcsAtLocation,
     );
 
     // LLM 비활성화 시 키워드 결과 반환
@@ -87,12 +89,12 @@ export class LlmIntentParserService implements OnModuleInit {
     // LLM 호출 (전용 경량 모델)
     const startMs = Date.now();
     try {
-      const llmResult = await this.callLlm(inputText, locationId);
+      const llmResult = await this.callLlm(inputText, locationId, npcsAtLocation);
       const latencyMs = Date.now() - startMs;
 
       if (llmResult) {
         const merged = this.mergeResults(
-          llmResult, keywordResult, inputText, insistenceCount, repeatedType,
+          llmResult, keywordResult, inputText, insistenceCount, repeatedType, npcsAtLocation,
         );
         const llmSecondary = llmResult.secondaryActionType ? `+${llmResult.secondaryActionType}` : '';
         const kwSecondary = keywordResult.secondaryActionType ? `+${keywordResult.secondaryActionType}` : '';
@@ -131,7 +133,8 @@ export class LlmIntentParserService implements OnModuleInit {
   private async callLlm(
     inputText: string,
     locationId?: string,
-  ): Promise<{ actionType: IntentActionType; secondaryActionType: IntentActionType | null; tone: IntentTone; target: string | null; riskLevel: 1 | 2 | 3 } | null> {
+    npcsAtLocation?: NpcForIntent[],
+  ): Promise<{ actionType: IntentActionType; secondaryActionType: IntentActionType | null; tone: IntentTone; target: string | null; riskLevel: 1 | 2 | 3; targetNpc: string | null } | null> {
     const provider = this.providerRegistry.getByName(this.intentProvider);
     if (!provider) return null;
 
@@ -140,7 +143,7 @@ export class LlmIntentParserService implements OnModuleInit {
       provider.generate({
         messages: [
           { role: 'system', content: INTENT_SYSTEM_PROMPT },
-          { role: 'user', content: buildIntentUserMessage(inputText, locationId) },
+          { role: 'user', content: buildIntentUserMessage(inputText, locationId, npcsAtLocation) },
         ],
         maxTokens: 256,
         temperature: 0,
@@ -161,7 +164,7 @@ export class LlmIntentParserService implements OnModuleInit {
   /** JSON 응답 파싱 3단계: 직접 → 코드블록 → {…} 추출 */
   private parseJsonResponse(
     text: string,
-  ): { actionType: IntentActionType; secondaryActionType: IntentActionType | null; tone: IntentTone; target: string | null; riskLevel: 1 | 2 | 3 } | null {
+  ): { actionType: IntentActionType; secondaryActionType: IntentActionType | null; tone: IntentTone; target: string | null; riskLevel: 1 | 2 | 3; targetNpc: string | null } | null {
     const candidates = [
       text.trim(),
       this.extractFromCodeBlock(text),
@@ -182,12 +185,15 @@ export class LlmIntentParserService implements OnModuleInit {
           const tone: IntentTone = VALID_TONES.has(parsed.tone as IntentTone) ? (parsed.tone as IntentTone) : 'NEUTRAL';
           const riskLevel: 1 | 2 | 3 = ([1, 2, 3] as const).includes(parsed.riskLevel as 1 | 2 | 3)
             ? (parsed.riskLevel as 1 | 2 | 3) : 1;
+          const targetNpc: string | null =
+            typeof parsed.targetNpc === 'string' && parsed.targetNpc ? parsed.targetNpc : null;
           return {
             actionType,
             secondaryActionType: secondaryActionType !== actionType ? secondaryActionType : null,
             tone,
             target: (parsed.target as string) ?? null,
             riskLevel,
+            targetNpc,
           };
         }
       } catch {
@@ -220,7 +226,7 @@ export class LlmIntentParserService implements OnModuleInit {
     return text.slice(start, end + 1);
   }
 
-  private validateParsed(obj: unknown): obj is { actionType: string; secondaryActionType?: string | null; tone?: string; target?: string | null; riskLevel?: number } {
+  private validateParsed(obj: unknown): obj is { actionType: string; secondaryActionType?: string | null; tone?: string; target?: string | null; riskLevel?: number; targetNpc?: string | null } {
     if (typeof obj !== 'object' || obj === null) return false;
     const o = obj as Record<string, unknown>;
     if (typeof o.actionType !== 'string') return false;
@@ -237,11 +243,12 @@ export class LlmIntentParserService implements OnModuleInit {
    *    - KW 결과는 secondary로 보존하여 정보 손실 방지
    */
   private mergeResults(
-    llmResult: { actionType: IntentActionType; secondaryActionType: IntentActionType | null; tone: IntentTone; target: string | null; riskLevel: 1 | 2 | 3 },
+    llmResult: { actionType: IntentActionType; secondaryActionType: IntentActionType | null; tone: IntentTone; target: string | null; riskLevel: 1 | 2 | 3; targetNpc: string | null },
     keywordResult: ParsedIntentV2,
     inputText: string,
     insistenceCount: number,
     repeatedType: string | null,
+    npcsAtLocation?: NpcForIntent[],
   ): ParsedIntentV2 {
     const kwAndLlmDisagree = keywordResult.actionType !== llmResult.actionType;
 
@@ -289,6 +296,25 @@ export class LlmIntentParserService implements OnModuleInit {
     // secondary가 primary와 같으면 제거
     if (secondaryActionType === actionType) secondaryActionType = undefined;
 
+    // targetNpcId: LLM 결과 우선, 없으면 키워드 파서 결과 사용
+    // LLM이 이름/별칭을 반환할 수 있으므로 NPC ID로 리졸브
+    let targetNpcId = keywordResult.targetNpcId ?? null;
+    if (llmResult.targetNpc && npcsAtLocation?.length) {
+      const llmVal = llmResult.targetNpc.toLowerCase();
+      const match = npcsAtLocation.find(
+        (n) =>
+          n.npcId === llmResult.targetNpc ||
+          n.name.toLowerCase() === llmVal ||
+          (n.unknownAlias && n.unknownAlias.toLowerCase() === llmVal) ||
+          n.name.toLowerCase().includes(llmVal) ||
+          (n.unknownAlias && n.unknownAlias.toLowerCase().includes(llmVal)),
+      );
+      if (match) targetNpcId = match.npcId;
+      else if (!targetNpcId) targetNpcId = llmResult.targetNpc; // fallback: 원본 유지
+    } else if (llmResult.targetNpc && !targetNpcId) {
+      targetNpcId = llmResult.targetNpc;
+    }
+
     return {
       inputText,
       actionType,
@@ -301,6 +327,7 @@ export class LlmIntentParserService implements OnModuleInit {
       source: mergeSource === 'KW_OVERRIDE' ? 'RULE' : 'LLM',
       suppressedActionType: escalated ? undefined : keywordResult.suppressedActionType,
       escalated,
+      targetNpcId: targetNpcId || undefined,
     };
   }
 }

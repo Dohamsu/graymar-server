@@ -4,6 +4,7 @@ import type {
   IntentActionType,
   IntentTone,
 } from '../../db/types/index.js';
+import type { NpcForIntent } from '../../llm/prompts/intent-system-prompt.js';
 
 // ============================================================
 // HUB 키워드 → ActionType 매핑 (우선순위 높은 것이 위)
@@ -354,8 +355,9 @@ export class IntentParserV2Service {
     inputText: string,
     source: 'RULE' | 'LLM' | 'CHOICE' = 'RULE',
     choicePayload?: Record<string, unknown>,
+    npcsAtLocation?: NpcForIntent[],
   ): ParsedIntentV2 {
-    return this.parseWithInsistence(inputText, source, choicePayload, 0);
+    return this.parseWithInsistence(inputText, source, choicePayload, 0, null, npcsAtLocation);
   }
 
   parseWithInsistence(
@@ -364,6 +366,7 @@ export class IntentParserV2Service {
     choicePayload?: Record<string, unknown>,
     insistenceCount: number = 0,
     repeatedType: string | null = null,
+    npcsAtLocation?: NpcForIntent[],
   ): ParsedIntentV2 {
     // CHOICE 입력 시 payload에서 직접 매핑 (에스컬레이션 불필요)
     if (source === 'CHOICE' && choicePayload) {
@@ -407,6 +410,11 @@ export class IntentParserV2Service {
     const confidence = actionType !== 'TALK' ? 1 : 0;
     const specifiedGold = this.extractGoldAmount(normalizedInput);
 
+    // 키워드 기반 NPC 매칭 (LLM fallback용)
+    const npcMatch = npcsAtLocation
+      ? this.matchTargetNpc(normalizedInput, npcsAtLocation)
+      : undefined;
+
     return {
       inputText,
       actionType,
@@ -421,6 +429,8 @@ export class IntentParserV2Service {
       escalated,
       insistenceWarning,
       specifiedGold,
+      targetNpcId: npcMatch?.npcId,
+      targetNpcAlias: npcMatch?.alias,
     };
   }
 
@@ -554,6 +564,37 @@ export class IntentParserV2Service {
       if (match) {
         const amount = parseInt(match[1], 10);
         if (amount >= 1 && amount <= 999) return amount;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 키워드 기반 NPC 매칭 — LLM fallback용.
+   * 조사("~에게", "~한테", "~와", "~를") 패턴 또는 이름/별칭 직접 매칭.
+   */
+  private matchTargetNpc(
+    input: string,
+    npcs: NpcForIntent[],
+  ): { npcId: string; alias: string } | undefined {
+    for (const npc of npcs) {
+      const nameLower = npc.name?.toLowerCase();
+      const aliasLower = npc.unknownAlias?.toLowerCase();
+
+      // 이름 직접 매칭
+      if (nameLower && input.includes(nameLower)) {
+        return { npcId: npc.npcId, alias: npc.name };
+      }
+      // 별칭 직접 매칭
+      if (aliasLower && input.includes(aliasLower)) {
+        return { npcId: npc.npcId, alias: npc.unknownAlias! };
+      }
+      // 별칭 키워드 부분 매칭 (2글자 이상)
+      const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
+      for (const kw of aliasKeywords) {
+        if (kw.length >= 2 && input.includes(kw.toLowerCase())) {
+          return { npcId: npc.npcId, alias: kw };
+        }
       }
     }
     return undefined;

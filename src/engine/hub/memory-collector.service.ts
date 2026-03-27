@@ -24,6 +24,7 @@ export interface CollectTurnData {
   eventId?: string;
   sceneFrame?: string;
   primaryNpcId?: string;
+  intentTargetNpcId?: string; // IntentParser가 파싱한 대상 NPC ID (우선순위 최상)
   eventTags?: string[];
   summaryShort?: string; // 행동+결과 요약 (resolveResult.summary.short)
   reputationChanges: Record<string, number>;
@@ -184,8 +185,8 @@ export class MemoryCollectorService {
     const knowledgeActionTypes = [
       'TALK', 'PERSUADE', 'BRIBE', 'INVESTIGATE', 'OBSERVE', 'HELP', 'THREATEN',
     ] as const;
-    // NPC ID: primaryNpcId 우선, 없으면 이벤트 태그에서 추론
-    const targetNpcId = data.primaryNpcId ?? this.resolveNpcFromTags(data.eventTags);
+    // NPC ID: intentTargetNpcId 최우선, primaryNpcId 차순, 없으면 이벤트 태그에서 추론
+    const targetNpcId = data.intentTargetNpcId ?? data.primaryNpcId ?? this.resolveNpcFromTags(data.eventTags);
     if (
       knowledgeActionTypes.includes(data.actionType as any) &&
       (data.outcome === 'SUCCESS' || data.outcome === 'PARTIAL') &&

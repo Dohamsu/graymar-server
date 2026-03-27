@@ -561,7 +561,14 @@ export class TurnsService {
     // 고집(insistence) 카운트 계산: 같은 actionType 연속 반복 횟수
     const actionHistory = runState.actionHistory ?? [];
     const { count: insistenceCount, repeatedType } = this.calculateInsistenceCount(actionHistory);
-    const intent = await this.llmIntentParser.parseWithInsistence(rawInput, source, choicePayload, insistenceCount, repeatedType, locationId);
+    // NPC 목록을 NpcForIntent로 변환하여 IntentParser에 전달 (targetNpc 파싱용)
+    const npcsForIntent = this.content.getAllNpcs().map((n) => ({
+      npcId: n.npcId,
+      name: n.name,
+      unknownAlias: n.unknownAlias,
+      title: n.title,
+    }));
+    const intent = await this.llmIntentParser.parseWithInsistence(rawInput, source, choicePayload, insistenceCount, repeatedType, locationId, npcsForIntent);
     const _sec = intent.secondaryActionType ? `+${intent.secondaryActionType}` : '';
     this.logger.log(
       `[Intent] "${rawInput.slice(0, 30)}" → ${intent.actionType}${_sec} (source=${intent.source}, tone=${intent.tone}, conf=${intent.confidence})`,
@@ -643,37 +650,13 @@ export class TurnsService {
       }
     }
 
-    // Step 2: ACTION(자유 텍스트) → 현재 씬 유지 (대화 잠금 + 기본 연속성)
-    //   예외: MOVE_LOCATION 의도, FALLBACK 이벤트(placeholder라 유지 의미 없음)
-    //   대화 계열 행동(TALK, PERSUADE, BRIBE, THREATEN, HELP): 최대 4턴 연속 허용 (깊은 대화)
-    //   비대화 행동: 기존대로 1턴만 연속 허용
+    // Step 2: CHOICE sourceEventId 이벤트 연속 — 선택지로 명시적 연속만 허용
+    // 대화 잠금(ACTION 연속)은 삭제 — 이벤트 없는 자유 턴을 위해
+    // NPC 연속성은 sessionNpcContext + 프롬프트가 담당 (이벤트 강제 아님)
     const SOCIAL_ACTIONS = new Set(['TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP']);
     const isSocialAction = SOCIAL_ACTIONS.has(intent.actionType);
-    if (!matchedEvent && body.input.type === 'ACTION' && intent.actionType !== 'MOVE_LOCATION') {
-      const lastEntry = actionHistory[actionHistory.length - 1];
-      if (lastEntry?.eventId) {
-        const lastEvent = this.content.getEventById(lastEntry.eventId);
-        if (lastEvent && lastEvent.eventType !== 'FALLBACK') {
-          // 같은 이벤트 연속 사용 횟수 계산
-          let consecutiveCount = 0;
-          for (let i = actionHistory.length - 1; i >= 0; i--) {
-            if (actionHistory[i].eventId === lastEntry.eventId) {
-              consecutiveCount++;
-            } else {
-              break;
-            }
-          }
-          // 대화 잠금: 대화 계열 행동이면 최대 4턴 연속 유지 (NPC와 깊은 대화 가능)
-          // 비대화 행동: 기존대로 1턴만 연속 (Fixplan3-P5)
-          const maxConsecutive = isSocialAction ? 4 : 1;
-          if (consecutiveCount <= maxConsecutive) {
-            matchedEvent = lastEvent;
-          }
-        }
-      }
-    }
 
-    // Step 3: 새 이벤트 매칭 (전환 CHOICE, 첫 턴, FALLBACK 탈출, MOVE_LOCATION)
+    // Step 3: 이벤트 매칭 — 트리거 조건이 있을 때만 (플레이어 주도)
     // IncidentRouter: intentV3 기반으로 관련 incident 라우팅
     const incidentDefsForRouting = this.content.getIncidentsData() as IncidentDef[];
     const routingResult = this.incidentRouter.route(ws, locationId, intentV3, incidentDefsForRouting);
@@ -684,107 +667,145 @@ export class TurnsService {
     }
 
     if (!matchedEvent) {
-      const allEvents = this.content.getAllEventsV2();
-      const recentEventIds = actionHistory
-        .filter((h) => h.eventId)
-        .map((h) => h.eventId!);
+      // === 트리거 조건 판단: 이벤트 매칭이 필요한 상황인가? ===
+      const isFirstTurnAtLocation = actionHistory.length === 0; // 장소 첫 진입
+      const incidentPressureHigh = (ws.activeIncidents ?? []).some(
+        (inc: any) => inc.pressure >= 50 && inc.locationId === locationId,
+      ); // 사건 압력 임계 (50 이상이어야 이벤트 강제)
+      // 사건 라우팅: DIRECT_MATCH + 높은 점수(40+)만 트리거로 인정
+      const routingHasStrongIncident = routingResult.routeMode === 'DIRECT_MATCH' && routingResult.matchScore >= 40;
 
-      // Living World v2: SituationGenerator 우선 시도 (에러 시 기존 EventMatcher fallback)
-      // 동적 이벤트 발동: 직전 이벤트가 동적이면 건너뜀 + 고정이어도 50% 확률로만 시도
-      const lastEventId = recentEventIds[recentEventIds.length - 1] ?? '';
-      const lastWasDynamic = lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
-      const dynamicRoll = rng.range(0, 100);
-      if (this.situationGenerator && !lastWasDynamic && dynamicRoll < 50) {
-        try {
-          const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
-          const recentPrimaryNpcIds = actionHistory
-            .filter((h) => (h as Record<string, unknown>).primaryNpcId)
-            .map((h) => (h as Record<string, unknown>).primaryNpcId as string);
-          const situation = this.situationGenerator.generate(ws, locationId, intent, allEvents, incidentDefs, recentPrimaryNpcIds);
-          if (situation) {
-            matchedEvent = situation.eventDef;
-            this.logger.debug(`[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`);
-            // CONSEQUENCE 반복 방지: 사용된 fact ID를 worldState에 기록
-            if (situation.trigger === 'CONSEQUENCE' && situation.relatedFacts.length > 0) {
-              const usedFacts = (ws as any)._consequenceUsedFacts ?? [];
-              (ws as any)._consequenceUsedFacts = [...usedFacts, ...situation.relatedFacts];
+      const shouldMatchEvent = isFirstTurnAtLocation || incidentPressureHigh || routingHasStrongIncident;
+      this.logger.log(`[EventTrigger] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} routing=${routingHasStrongIncident}(${routingResult.routeMode}:${routingResult.matchScore}) → match=${shouldMatchEvent}`);
+
+      if (shouldMatchEvent) {
+        const allEvents = this.content.getAllEventsV2();
+        const recentEventIds = actionHistory
+          .filter((h) => h.eventId)
+          .map((h) => h.eventId!);
+
+        // Living World v2: SituationGenerator 우선 시도
+        const lastEventId = recentEventIds[recentEventIds.length - 1] ?? '';
+        const lastWasDynamic = lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
+        const dynamicRoll = rng.range(0, 100);
+        if (this.situationGenerator && !lastWasDynamic && dynamicRoll < 50) {
+          try {
+            const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
+            const recentPrimaryNpcIds = actionHistory
+              .filter((h) => (h as Record<string, unknown>).primaryNpcId)
+              .map((h) => (h as Record<string, unknown>).primaryNpcId as string);
+            const situation = this.situationGenerator.generate(ws, locationId, intent, allEvents, incidentDefs, recentPrimaryNpcIds);
+            if (situation) {
+              matchedEvent = situation.eventDef;
+              this.logger.debug(`[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`);
+              if (situation.trigger === 'CONSEQUENCE' && situation.relatedFacts.length > 0) {
+                const usedFacts = (ws as any)._consequenceUsedFacts ?? [];
+                (ws as any)._consequenceUsedFacts = [...usedFacts, ...situation.relatedFacts];
+              }
             }
+          } catch (err) {
+            this.logger.warn(`[SituationGenerator] error, falling back to EventMatcher: ${err}`);
           }
-        } catch (err) {
-          this.logger.warn(`[SituationGenerator] error, falling back to EventMatcher: ${err}`);
         }
-      }
 
-      // Living World v2: SituationGenerator가 이벤트를 잡았으면 기존 매칭 건너뜀
-      if (!matchedEvent) {
-        // NPC 연속성 컨텍스트 구축 (Phase 1: Context Coherence)
-        // 비대화 행동(SNEAK/STEAL/FIGHT)일 때는 이전 NPC 연속성을 끊어 자연스럽게 전환
-        const NON_SOCIAL_BREAK = new Set(['SNEAK', 'STEAL', 'FIGHT']);
-        const shouldBreakNpc = NON_SOCIAL_BREAK.has(intent.actionType);
-        const lastEntry = actionHistory[actionHistory.length - 1] as Record<string, unknown> | undefined;
-        const sessionNpcContext = {
-          lastPrimaryNpcId: shouldBreakNpc ? null : ((lastEntry?.primaryNpcId as string) ?? null),
-          sessionTurnCount: actionHistory.length,
-          interactedNpcIds: [...new Set(
-            (actionHistory as Array<Record<string, unknown>>)
-              .filter(a => a.primaryNpcId)
-              .map(a => a.primaryNpcId as string),
-          )],
-        };
+        if (!matchedEvent) {
+          // NPC 연속성 컨텍스트
+          const NON_SOCIAL_BREAK = new Set(['SNEAK', 'STEAL', 'FIGHT']);
+          const shouldBreakNpc = NON_SOCIAL_BREAK.has(intent.actionType);
+          const lastEntry = actionHistory[actionHistory.length - 1] as Record<string, unknown> | undefined;
+          const sessionNpcContext = {
+            lastPrimaryNpcId: shouldBreakNpc ? null : ((lastEntry?.primaryNpcId as string) ?? null),
+            sessionTurnCount: actionHistory.length,
+            interactedNpcIds: [...new Set(
+              (actionHistory as Array<Record<string, unknown>>)
+                .filter(a => a.primaryNpcId)
+                .map(a => a.primaryNpcId as string),
+            )],
+          };
 
-        // PR5: EventDirector로 교체 (기존 EventMatcher를 내부적으로 위임)
-        const directorResult = this.eventDirector.select(
-          allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds, routingResult, sessionNpcContext, intentV3,
-        );
-        matchedEvent = directorResult.selectedEvent;
+          const directorResult = this.eventDirector.select(
+            allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds, routingResult, sessionNpcContext, intentV3,
+          );
+          matchedEvent = directorResult.selectedEvent;
 
-        if (directorResult.filterLog.length > 0) {
-          this.logger.debug(`[EventDirector] ${directorResult.filterLog.join(', ')}`);
+          if (directorResult.filterLog.length > 0) {
+            this.logger.debug(`[EventDirector] ${directorResult.filterLog.join(', ')}`);
+          }
         }
-      }
 
-      // PR7: 고정 이벤트 실패 또는 FALLBACK → 절차적 이벤트 시도
-      if (!matchedEvent || matchedEvent.eventType === 'FALLBACK') {
-        const proceduralHistory = (ws.proceduralHistory ?? []) as ProceduralHistoryEntry[];
-        const proceduralResult = this.proceduralEvent.generate(
-          { locationId, timePhase: ws.phaseV2 ?? ws.timePhase, stage: ws.mainArc?.stage != null ? String(ws.mainArc.stage) : undefined },
-          proceduralHistory,
-          turnNo,
-          rng,
-        );
-        if (proceduralResult) {
-          matchedEvent = proceduralResult;
-          this.logger.debug(`[ProceduralEvent] 생성: ${proceduralResult.eventId}`);
+        // ProceduralEvent fallback — 트리거 있는데 이벤트 못 잡은 경우만
+        if (!matchedEvent || matchedEvent.eventType === 'FALLBACK') {
+          const proceduralHistory = (ws.proceduralHistory ?? []) as ProceduralHistoryEntry[];
+          const proceduralResult = this.proceduralEvent.generate(
+            { locationId, timePhase: ws.phaseV2 ?? ws.timePhase, stage: ws.mainArc?.stage != null ? String(ws.mainArc.stage) : undefined },
+            proceduralHistory,
+            turnNo,
+            rng,
+          );
+          if (proceduralResult) {
+            matchedEvent = proceduralResult;
+            this.logger.debug(`[ProceduralEvent] 생성: ${proceduralResult.eventId}`);
+          }
         }
+      } else {
+        this.logger.log(`[EventSkip] No trigger — player-driven turn (action=${intent.actionType}, historyLen=${actionHistory.length}, pressureHigh=${incidentPressureHigh}, routing=${routingHasStrongIncident})`);
       }
 
     }
 
+    // 이벤트 없는 턴: 플레이어 행동 중심으로 자유 서술 (이벤트가 강제되지 않음)
+    // matchedEvent가 null이면 기본 이벤트 셸을 생성하여 resolve 파이프라인을 통과시킴
     if (!matchedEvent) {
-      // fallback 결과
-      const selectedChoiceIds = actionHistory
-        .filter((h) => h.choiceId)
-        .map((h) => h.choiceId!);
-      let choices = this.sceneShellService.buildLocationChoices(locationId, undefined, undefined, selectedChoiceIds);
-      // 안전장치: 새 장소 등에서 선택지가 비어있으면 generic choices 생성
-      if (!choices || choices.length === 0) {
-        this.logger.warn(`[Fallback] buildLocationChoices returned empty for ${locationId}, using generic`);
-        choices = [
-          { id: 'generic_observe', label: '주변을 살펴본다', action: { type: 'CHOICE' as const, payload: {} } },
-          { id: 'generic_talk', label: '주변 사람에게 말을 건다', action: { type: 'CHOICE' as const, payload: {} } },
-          { id: 'go_hub', label: "'잠긴 닻' 선술집으로 돌아간다", action: { type: 'CHOICE' as const, payload: {} } },
-        ];
-      }
-      const result = this.buildLocationResult(turnNo, currentNode, '특별한 일이 일어나지 않았다.', 'PARTIAL', choices, ws);
-      await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, updatedRunState, body.options?.skipLlm);
-      return { accepted: true, turnNo, serverResult: result, llm: { status: 'PENDING' as LlmStatus, narrative: null }, meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' } };
+      matchedEvent = {
+        eventId: `FREE_${turnNo}`,
+        eventType: 'ENCOUNTER' as any,
+        locationId,
+        affordances: [intent.actionType] as any[],
+        matchPolicy: 'NEUTRAL' as any,
+        priority: 1,
+        weight: 1,
+        friction: 0,
+        payload: {
+          sceneFrame: '', // 분위기 강제 없음 — LLM이 이전 맥락에서 자유 서술
+          tags: [],
+          suggested_choices: [],
+        },
+      } as any;
+      this.logger.debug(`[FreeAction] No event matched — player-driven turn (action=${intent.actionType})`);
     }
+
+    // matchedEvent는 이 시점에서 항상 non-null (FREE 이벤트 셸이 보장)
+    const event = matchedEvent!;
 
     // Notification + WorldDelta: 변경 전 상태 스냅샷
     const prevHeat = ws.hubHeat;
     const prevSafety = ws.hubSafety;
     const prevIncidents = [...(ws.activeIncidents ?? [])];
     const priorWsSnapshot = { ...ws, activeIncidents: [...(ws.activeIncidents ?? [])] };
+
+    // === 플레이어 대상 NPC 오버라이드 ===
+    // 플레이어가 ACTION 텍스트에서 특정 NPC를 지목한 경우, 이벤트의 primaryNpcId를 교체
+    // → 이후 resolve, NPC injection, LLM 프롬프트 등 모든 하위 로직에 자동 반영
+    if (body.input.type === 'ACTION' && rawInput) {
+      const playerInputLower = rawInput.toLowerCase();
+      const allNpcDefs = this.content.getAllNpcs();
+      for (const npcDef of allNpcDefs) {
+        const nameMatch = npcDef.name && playerInputLower.includes(npcDef.name.toLowerCase());
+        const aliasMatch = npcDef.unknownAlias && playerInputLower.includes(npcDef.unknownAlias.toLowerCase());
+        const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
+        const keywordMatch = aliasKeywords.some(
+          (kw: string) => kw.length >= 2 && playerInputLower.includes(kw.toLowerCase()),
+        );
+        if (nameMatch || aliasMatch || keywordMatch) {
+          const prevNpc = (event.payload as Record<string, unknown>)?.primaryNpcId;
+          if (prevNpc !== npcDef.npcId) {
+            (event.payload as Record<string, unknown>).primaryNpcId = npcDef.npcId;
+            this.logger.log(`[NpcOverride] Player targeted ${npcDef.npcId} (was: ${prevNpc ?? 'none'})`);
+          }
+          break;
+        }
+      }
+    }
 
     // Phase 4c: 세트 specialEffect 수집
     const activeSpecialEffects = this.equipmentService.getActiveSpecialEffects(runState.equipped ?? {});
@@ -794,13 +815,13 @@ export class TurnsService {
     const presetActionBonuses = presetDef?.actionBonuses;
 
     // NPC faction 조회 (평판 변동용)
-    const primaryNpcIdForResolve = (matchedEvent.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
+    const primaryNpcIdForResolve = (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
     const primaryNpcFaction = primaryNpcIdForResolve ? this.content.getNpc(primaryNpcIdForResolve)?.faction ?? null : null;
 
     // ResolveService 판정
-    const resolveResult = this.resolveService.resolve(matchedEvent, intent, ws, playerStats, rng, activeSpecialEffects, presetActionBonuses, primaryNpcFaction);
+    const resolveResult = this.resolveService.resolve(event, intent, ws, playerStats, rng, activeSpecialEffects, presetActionBonuses, primaryNpcFaction);
     this.logger.log(
-      `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${matchedEvent.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}`,
+      `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${event.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}`,
     );
 
     // Living World v2: 판정 결과 → WorldFact 생성 + LocationState 변경 + NPC 목격
@@ -809,11 +830,11 @@ export class TurnsService {
         const consequenceOutput = this.consequenceProcessor.process(ws, {
           resolveResult,
           intent,
-          event: matchedEvent,
+          event: event,
           locationId,
           turnNo,
           day: ws.day,
-          primaryNpcId: matchedEvent.payload.primaryNpcId,
+          primaryNpcId: event.payload.primaryNpcId,
         });
         if (consequenceOutput.factsCreated.length > 0) {
           this.logger.debug(`[ConsequenceProcessor] facts=${consequenceOutput.factsCreated.length} locEffects=${consequenceOutput.locationEffects.length} witnesses=${consequenceOutput.npcWitnesses.length}`);
@@ -863,7 +884,7 @@ export class TurnsService {
       updatedRunState.worldState = ws;
 
       const combatSceneFrame = resolveNpcPlaceholders(
-        matchedEvent.payload.sceneFrame,
+        event.payload.sceneFrame,
         runState.npcStates ?? {},
         (id) => this.content.getNpc(id),
       );
@@ -994,8 +1015,8 @@ export class TurnsService {
       ].slice(-8);
 
       // knownClues: 이벤트 sceneFrame 앞 40자를 단서로 추가 (중복 제거, 최대 5개)
-      const sceneFrame = matchedEvent?.payload?.sceneFrame;
-      const clueFromEvent = sceneFrame ? sceneFrame.slice(0, 40) : (matchedEvent?.eventId ?? null);
+      const sceneFrame = event?.payload?.sceneFrame;
+      const clueFromEvent = sceneFrame ? sceneFrame.slice(0, 40) : (event?.eventId ?? null);
       const clues = [...existing.knownClues];
       if (clueFromEvent && !clues.includes(clueFromEvent)) {
         clues.push(clueFromEvent);
@@ -1004,7 +1025,7 @@ export class TurnsService {
 
       // relatedNpcIds: 이벤트의 primaryNpcId + incident def의 relatedNpcIds
       const relatedNpcs = new Set(existing.relatedNpcIds);
-      const eventNpc = matchedEvent?.payload?.primaryNpcId;
+      const eventNpc = event?.payload?.primaryNpcId;
       if (eventNpc) relatedNpcs.add(eventNpc);
       if (routingResult.def?.relatedNpcIds) {
         for (const nid of routingResult.def.relatedNpcIds) relatedNpcs.add(nid);
@@ -1067,8 +1088,8 @@ export class TurnsService {
     const npcStates = { ...(runState.npcStates ?? {}) } as Record<string, NPCState>;
     const newlyIntroducedNpcIds: string[] = [];
     const newlyEncounteredNpcIds: string[] = [];
-    // effectiveNpcId: matchedEvent.payload.primaryNpcId 우선, 없으면 npcInjection은 orchestration 이후 보충
-    const eventPrimaryNpc = matchedEvent.payload.primaryNpcId ?? null;
+    // effectiveNpcId: event.payload.primaryNpcId 우선, 없으면 npcInjection은 orchestration 이후 보충
+    const eventPrimaryNpc = event.payload.primaryNpcId ?? null;
     // 현재 location의 관련 NPC에게 감정 영향 적용
     if (eventPrimaryNpc) {
       const npcId = eventPrimaryNpc;
@@ -1116,15 +1137,15 @@ export class TurnsService {
       }
 
       // === NPC 개인 기록 축적 ===
-      const briefNote = (matchedEvent.payload.sceneFrame ?? rawInput).slice(0, 50);
+      const briefNote = (event.payload.sceneFrame ?? rawInput).slice(0, 50);
       npcStates[npcId] = recordNpcEncounter(
         npcStates[npcId], turnNo, locationId,
         intent.actionType, resolveResult.outcome, briefNote,
       );
       // knownFacts: 이벤트 결과에서 중요 발견사항 추출 (SUCCESS 판정 + 정보성 행동)
       if (resolveResult.outcome === 'SUCCESS' && ['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE'].includes(intent.actionType)) {
-        const factNote = matchedEvent.payload.sceneFrame
-          ? matchedEvent.payload.sceneFrame.slice(0, 60)
+        const factNote = event.payload.sceneFrame
+          ? event.payload.sceneFrame.slice(0, 60)
           : undefined;
         if (factNote) {
           npcStates[npcId] = addNpcKnownFact(npcStates[npcId], factNote);
@@ -1134,8 +1155,8 @@ export class TurnsService {
 
     // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC 상태 초기화
     // 태그는 간접 참조이므로 encounterCount는 증가하지 않음 (직접 대면=primaryNpcId만 카운트)
-    if (!eventPrimaryNpc && matchedEvent.payload.tags) {
-      for (const tag of matchedEvent.payload.tags) {
+    if (!eventPrimaryNpc && event.payload.tags) {
+      for (const tag of event.payload.tags) {
         const tagNpcId = TAG_TO_NPC[tag];
         if (!tagNpcId) continue;
         if (!npcStates[tagNpcId]) {
@@ -1156,8 +1177,8 @@ export class TurnsService {
     // === NPC 플레이스홀더 치환 (introduced 상태 반영) ===
     const npcResolve = (text: string) =>
       resolveNpcPlaceholders(text, npcStates, (id) => this.content.getNpc(id));
-    const resolvedSceneFrame = npcResolve(matchedEvent.payload.sceneFrame);
-    const resolvedChoices = matchedEvent.payload.choices?.map((c: any) => ({
+    const resolvedSceneFrame = npcResolve(event.payload.sceneFrame);
+    const resolvedChoices = event.payload.choices?.map((c: any) => ({
       ...c,
       label: c.label ? npcResolve(c.label) : c.label,
       hint: c.hint ? npcResolve(c.hint) : c.hint,
@@ -1201,7 +1222,7 @@ export class TurnsService {
     ws = wsAfterDeferred;
 
     // Agenda 업데이트
-    agenda = this.agendaService.updateFromResolve(agenda, resolveResult, matchedEvent);
+    agenda = this.agendaService.updateFromResolve(agenda, resolveResult, event);
 
     // Arc commitment 업데이트
     let newArcState = arcState;
@@ -1209,25 +1230,25 @@ export class TurnsService {
       newArcState = this.arcService.progressCommitment(newArcState, resolveResult.commitmentDelta);
     }
     // Arc route tag로 route 설정
-    if (matchedEvent.arcRouteTag && !newArcState.currentRoute) {
-      const route = matchedEvent.arcRouteTag as any;
+    if (event.arcRouteTag && !newArcState.currentRoute) {
+      const route = event.arcRouteTag as any;
       if (this.arcService.canSwitchRoute(newArcState)) {
         newArcState = this.arcService.switchRoute(newArcState, route);
       }
     }
 
     // cooldown 업데이트
-    const newCooldowns = { ...cooldowns, [matchedEvent.eventId]: turnNo };
+    const newCooldowns = { ...cooldowns, [event.eventId]: turnNo };
 
     // 행동 이력 업데이트 (고집 시스템 + FALLBACK 페널티 + 선택지 중복 방지)
-    const eventPrimaryNpcId = (matchedEvent.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
+    const eventPrimaryNpcId = (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
     const newHistory = [...actionHistory, {
       turnNo,
       actionType: intent.actionType,
       secondaryActionType: intent.secondaryActionType,
       suppressedActionType: intent.suppressedActionType,
       inputText: rawInput,
-      eventId: matchedEvent.eventId,
+      eventId: event.eventId,
       choiceId: body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
       primaryNpcId: eventPrimaryNpcId ?? undefined,
       resolveOutcome: resolveResult.outcome,
@@ -1236,7 +1257,7 @@ export class TurnsService {
     // LOCATION 보상 계산 (resolve 주사위 이후 같은 RNG로 수행)
     const locationReward = this.rewardsService.calculateLocationRewards({
       outcome: resolveResult.outcome,
-      eventType: matchedEvent.eventType,
+      eventType: event.eventType,
       actionType: intent.actionType,
       rng,
     });
@@ -1403,7 +1424,7 @@ export class TurnsService {
     // === Signal Feed: 행동 결과 기반 시그널 생성 ===
     const actionSignal = this.signalFeed.generateFromActionResult(
       intent.actionType, resolveResult.outcome, locationId, ws.globalClock,
-      (matchedEvent?.payload as any)?.primaryNpcId ?? intent.target,
+      (event?.payload as any)?.primaryNpcId ?? intent.target,
     );
     if (actionSignal) {
       ws = { ...ws, signalFeed: [...(ws.signalFeed ?? []), actionSignal] };
@@ -1433,11 +1454,11 @@ export class TurnsService {
         };
 
         // 경로 1: 이벤트 discoverableFact — SUCCESS 시 자동 발견
-        if (resolveResult.outcome === 'SUCCESS' && matchedEvent) {
-          const eventFact = (matchedEvent.payload as Record<string, unknown>)?.discoverableFact as string | undefined
-            ?? (matchedEvent as Record<string, unknown>).discoverableFact as string | undefined;
+        if (resolveResult.outcome === 'SUCCESS' && event) {
+          const eventFact = (event.payload as Record<string, unknown>)?.discoverableFact as string | undefined
+            ?? (event as Record<string, unknown>).discoverableFact as string | undefined;
           if (eventFact) {
-            addFact(eventFact, `event:${matchedEvent.eventId}`);
+            addFact(eventFact, `event:${event.eventId}`);
           }
         }
 
@@ -1449,7 +1470,7 @@ export class TurnsService {
         ) {
           // primaryNpc가 있으면 그 NPC에서, 없으면 이벤트 payload.primaryNpcId에서 시도
           const npcId = eventPrimaryNpc
-            ?? ((matchedEvent?.payload as Record<string, unknown>)?.primaryNpcId as string | undefined)
+            ?? ((event?.payload as Record<string, unknown>)?.primaryNpcId as string | undefined)
             ?? null;
           if (npcId) {
             const revealedFactId = this.questProgression.getRevealableQuestFact(npcId, updatedRunState);
@@ -1460,13 +1481,13 @@ export class TurnsService {
         }
 
         // 경로 3: PARTIAL + 이벤트 discoverableFact — 30% 확률로 발견
-        if (resolveResult.outcome === 'PARTIAL' && matchedEvent) {
-          const eventFact = (matchedEvent.payload as Record<string, unknown>)?.discoverableFact as string | undefined
-            ?? (matchedEvent as Record<string, unknown>).discoverableFact as string | undefined;
+        if (resolveResult.outcome === 'PARTIAL' && event) {
+          const eventFact = (event.payload as Record<string, unknown>)?.discoverableFact as string | undefined
+            ?? (event as Record<string, unknown>).discoverableFact as string | undefined;
           if (eventFact && !existing.includes(eventFact)) {
             const roll = rng.range(0, 100);
             if (roll < 30) {
-              addFact(eventFact, `event_partial:${matchedEvent.eventId}`);
+              addFact(eventFact, `event_partial:${event.eventId}`);
             }
           }
         }
@@ -1490,7 +1511,7 @@ export class TurnsService {
       locationId,
       turnNo,
       resolveResult.outcome,
-      matchedEvent.payload.tags ?? [],
+      event.payload.tags ?? [],
     );
     updatedRunState.pressure = orchestrationResult.pressure;
     if (orchestrationResult.peakMode) {
@@ -1526,7 +1547,7 @@ export class TurnsService {
       updatedRunState.npcStates = npcStates;
 
       // === 주입된 NPC 개인 기록 축적 ===
-      const injBriefNote = (matchedEvent.payload.sceneFrame ?? rawInput).slice(0, 50);
+      const injBriefNote = (event.payload.sceneFrame ?? rawInput).slice(0, 50);
       npcStates[injectedNpcId] = recordNpcEncounter(
         npcStates[injectedNpcId], turnNo, locationId,
         intent.actionType, resolveResult.outcome, injBriefNote,
@@ -1539,7 +1560,7 @@ export class TurnsService {
     // 결과 조립 — 선택지 생성 전략:
     // 이벤트 첫 만남 → 이벤트 고유 선택지, 이미 상호작용한 이벤트 → resolve 후속 선택지
     const previousHistory = runState.actionHistory ?? [];
-    const eventAlreadyInteracted = previousHistory.some((h) => h.eventId === matchedEvent.eventId);
+    const eventAlreadyInteracted = previousHistory.some((h) => h.eventId === event.eventId);
     const selectedChoiceIds = newHistory
       .filter((h) => h.choiceId)
       .map((h) => h.choiceId!);
@@ -1547,10 +1568,10 @@ export class TurnsService {
     let choices: ChoiceItem[];
     if (eventAlreadyInteracted) {
       // 이미 상호작용한 이벤트 → resolve 결과 기반 후속 선택지 (sourceEventId 부분 적용 + eventType별 풀)
-      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds, matchedEvent.eventId, matchedEvent.eventType, turnNo, resolvedChoices);
+      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds, event.eventId, event.eventType, turnNo, resolvedChoices);
     } else {
       // 첫 만남 이벤트 → 이벤트 고유 선택지
-      choices = this.sceneShellService.buildLocationChoices(locationId, matchedEvent.eventType, resolvedChoices, selectedChoiceIds, matchedEvent.eventId);
+      choices = this.sceneShellService.buildLocationChoices(locationId, event.eventType, resolvedChoices, selectedChoiceIds, event.eventId);
     }
     // summary.short: "이번 턴의 핵심 한 문장" — 행동 + 판정결과만 (sceneFrame 분리하여 중복 전달 방지)
     const outcomeLabel = resolveResult.outcome === 'SUCCESS' ? '성공' : resolveResult.outcome === 'PARTIAL' ? '부분 성공' : '실패';
@@ -1565,12 +1586,13 @@ export class TurnsService {
       escalated: intent.escalated,
       insistenceCount: insistenceCount > 0 ? insistenceCount : undefined,
       eventSceneFrame: resolvedSceneFrame,
-      eventMatchPolicy: matchedEvent.matchPolicy,
-      eventId: matchedEvent.eventId,
-      primaryNpcId: matchedEvent.payload.primaryNpcId ?? null,
+      eventMatchPolicy: event.matchPolicy,
+      eventId: event.eventId,
+      primaryNpcId: event.payload.primaryNpcId ?? null,
       goalCategory: intentV3.goalCategory,
       approachVector: intentV3.approachVector,
       goalText: intentV3.goalText,
+      targetNpcId: intentV3.targetNpcId ?? undefined,
     }, isNonChallenge, totalGoldDelta, locationReward.items,
     isNonChallenge ? undefined : {
       diceRoll: resolveResult.diceRoll!,
@@ -1704,7 +1726,7 @@ export class TurnsService {
       resolveOutcome: resolveResult.outcome,
       actionType: intent.actionType,
       goalText: intentV3.goalText,
-      targetNpcId: (matchedEvent?.payload as any)?.primaryNpcId ?? intent.target ?? null,
+      targetNpcId: intentV3.targetNpcId ?? (event?.payload as any)?.primaryNpcId ?? intent.target ?? null,
       relatedIncidentId: routingResult?.incident?.incidentId ?? null,
       prevIncidents,
       currentIncidents: finalWs.activeIncidents ?? [],
@@ -1756,10 +1778,10 @@ export class TurnsService {
 
     // 이벤트 추가 (sceneFrame은 actionContext에서 전달, 여기서는 행동 요약만)
     result.events.push({
-      id: `event_${matchedEvent.eventId}`,
+      id: `event_${event.eventId}`,
       kind: 'NPC',
-      text: `${actionLabel} — ${matchedEvent.eventType}`,
-      tags: matchedEvent.payload.tags,
+      text: `${actionLabel} — ${event.eventType}`,
+      tags: event.payload.tags,
     });
 
     // Step 10: Off-screen Tick (턴 커밋 전 RunState에 반영)
@@ -1767,7 +1789,7 @@ export class TurnsService {
       updatedRunState,
       turnNo,
       resolveResult.outcome,
-      matchedEvent.payload.tags ?? [],
+      event.payload.tags ?? [],
     );
 
     // === Narrative Engine v1: NPC passive drift (offscreen) ===
@@ -1808,10 +1830,11 @@ export class TurnsService {
           secondaryActionType: intent.secondaryActionType,
           rawInput: rawInput.slice(0, 30),
           outcome: resolveResult.outcome,
-          eventId: matchedEvent.eventId,
+          eventId: event.eventId,
           sceneFrame: resolvedSceneFrame,
           primaryNpcId: effectiveNpcId ?? undefined,
-          eventTags: matchedEvent.payload.tags ?? [],
+          intentTargetNpcId: intentV3.targetNpcId ?? undefined,
+          eventTags: event.payload.tags ?? [],
           summaryShort: summaryText ?? undefined,
           reputationChanges: resolveResult.reputationChanges,
           goldDelta: totalGoldDelta,
@@ -2902,7 +2925,7 @@ export class TurnsService {
   private buildLocationResult(
     turnNo: number, node: any, text: string, outcome: string,
     choices: ServerResultV1['choices'], ws: WorldState,
-    actionContext?: { parsedType: string; originalInput: string; tone: string; escalated?: boolean; insistenceCount?: number; eventSceneFrame?: string; eventMatchPolicy?: string; eventId?: string; primaryNpcId?: string | null; goalCategory?: string; approachVector?: string; goalText?: string },
+    actionContext?: { parsedType: string; originalInput: string; tone: string; escalated?: boolean; insistenceCount?: number; eventSceneFrame?: string; eventMatchPolicy?: string; eventId?: string; primaryNpcId?: string | null; goalCategory?: string; approachVector?: string; goalText?: string; targetNpcId?: string },
     hideResolve?: boolean,
     goldDelta?: number,
     itemsAdded?: import('../db/types/index.js').ItemStack[],

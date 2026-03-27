@@ -119,6 +119,7 @@ export type ActionContext = {
   goalCategory?: string;      // IntentGoalCategory (GET_INFO, GAIN_ACCESS 등)
   approachVector?: string;    // ApproachVector (SOCIAL, STEALTH 등)
   goalText?: string;          // 목표 텍스트
+  targetNpcId?: string;       // IntentParser가 파싱한 대상 NPC ID
 };
 
 // --- Resolve Breakdown (판정 주사위 분해) ---

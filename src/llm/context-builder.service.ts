@@ -96,6 +96,9 @@ export interface LlmContext {
   relevantItemMemoryText: string | null;
   // NPC knownFacts: SUCCESS/PARTIAL 판정 시 NPC가 공개할 정보
   npcRevealableFact: { npcDisplayName: string; factId: string; detail: string; resolveOutcome: 'SUCCESS' | 'PARTIAL' } | null;
+  // 장소 기반 NPC 필터링용
+  currentLocationId: string | null;
+  currentTimePhase: string | null;
 }
 
 @Injectable()
@@ -704,6 +707,21 @@ export class ContextBuilderService {
       // 4. 이번 방문 턴 수
       sceneParts.push(`이번 방문 ${locationSessionTurns.length}턴째`);
 
+      // 4a. 대화 연속 감지: 직전 턴의 NPC와 이번 턴의 NPC가 같으면 "대화 연속 중" 지시
+      const currentTargetNpcId = (actionCtx?.targetNpcId as string | undefined) ?? primaryNpcId ?? null;
+      if (currentTargetNpcId && allLocationTurnRows.length >= 1) {
+        const prevTurn = allLocationTurnRows[allLocationTurnRows.length - 1];
+        const prevSr = prevTurn?.serverResult as ServerResultV1 | null;
+        const prevAc = (prevSr?.ui as Record<string, unknown>)?.actionContext as Record<string, unknown> | undefined;
+        const prevTargetNpcId = (prevAc?.targetNpcId as string | undefined) ?? (prevAc?.primaryNpcId as string | undefined) ?? null;
+        if (prevTargetNpcId === currentTargetNpcId) {
+          const npcDef = this.content.getNpc(currentTargetNpcId);
+          const npcState = npcStatesAll?.[currentTargetNpcId];
+          const displayName = (npcDef && npcState) ? getNpcDisplayName(npcState, npcDef) : currentTargetNpcId;
+          sceneParts.push(`⚠️ 대화 연속 중: ${displayName}와(과) 대화가 이어지고 있습니다. 이 NPC가 떠나거나 장면이 종료되지 않아야 합니다. 대화가 자연스럽게 계속될 수 있는 열린 상태로 서술을 마무리하세요.`);
+        }
+      }
+
       // 5. 직전 행동 요약
       const lastSessionTurn = locationSessionTurns[locationSessionTurns.length - 1];
       if (lastSessionTurn) {
@@ -956,6 +974,9 @@ export class ContextBuilderService {
       relevantItemMemoryText: this.buildRelevantItemMemoryText(runState, serverResult),
       // NPC knownFacts: SUCCESS/PARTIAL 판정 시 공개할 단서
       npcRevealableFact,
+      // 장소 기반 NPC 필터링
+      currentLocationId: (runState?.worldState as any)?.currentLocationId ?? null,
+      currentTimePhase: (runState?.worldState as any)?.phaseV2 ?? (runState?.worldState as any)?.timePhase ?? null,
     };
   }
 
