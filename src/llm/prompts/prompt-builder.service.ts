@@ -301,9 +301,9 @@ export class PromptBuilderService {
     // L2 확장: NPC 로스터 — 이번 턴에 등장할 NPC만 선별 (1명 원칙)
     // 우선순위: ① 플레이어 행동에서 NPC 이름/별칭 파싱 ② 이벤트 primaryNpc ③ 이전 턴 대화 NPC ④ 장소 NPC
     let allNpcs: ReturnType<typeof this.content.getAllNpcs> = [];
+    const targetNpcIds = new Set<string>(); // [NPC 대화 자세] 필터링에도 사용
     if (!isHub) {
       const fullList = this.content.getAllNpcs();
-      const targetNpcIds = new Set<string>();
 
       // ⓪ IntentParser가 파싱한 targetNpcId 최우선 사용
       const intentTargetNpcId = (sr.ui?.actionContext as any)?.targetNpcId as string | undefined;
@@ -688,8 +688,13 @@ export class PromptBuilderService {
       };
       const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
 
-      const postureLines = Object.entries(ctx.npcPostures).map(
-        ([npcId, posture]) => {
+      // 이번 턴 등장 NPC만 필터링 (말투 오염 방지)
+      const relevantNpcIds = targetNpcIds.size > 0
+        ? targetNpcIds
+        : new Set(Object.keys(ctx.npcPostures)); // fallback: 전체
+      const postureLines = Object.entries(ctx.npcPostures)
+        .filter(([npcId]) => relevantNpcIds.has(npcId))
+        .map(([npcId, posture]) => {
           const baseline = POSTURE_BASELINE[posture as string] ?? '';
           const npcDef = this.content.getNpc(npcId);
           let displayName: string;
@@ -898,6 +903,28 @@ export class PromptBuilderService {
         choiceParts.push('위 선택지와 동일하거나 유사한 선택지를 생성하지 마세요. 이번 서술에 새로 등장한 구체적 디테일을 활용하세요.');
       }
       factsParts.push(choiceParts.join('\n'));
+    }
+
+    // 방안 2: 이번 턴 등장 NPC 말투를 user 메시지 맨 끝에 재강조 (근접 효과)
+    if (!isHub && targetNpcIds.size > 0) {
+      const npcId = [...targetNpcIds][0]; // 1명 원칙
+      const npcDef = this.content.getNpc(npcId);
+      if (npcDef?.personality?.speechStyle) {
+        const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
+        const displayName = introducedNpcIds.has(npcId)
+          ? npcDef.name
+          : (npcDef.unknownAlias || '이번 턴 NPC');
+        const speechParts = [
+          `[이번 턴 NPC 말투 — 반드시 적용]`,
+          `${displayName}의 말투: ${npcDef.personality.speechStyle}`,
+        ];
+        // 긍정 예시: speechStyle에 예시가 있으면 추가
+        if (npcDef.personality.signature?.length) {
+          speechParts.push(`특징적 행동/습관: ${npcDef.personality.signature.join(', ')}`);
+        }
+        speechParts.push(`⚠️ 이전 턴에 등장한 다른 NPC의 말투(자칭, 어미, 호칭)를 이 NPC에게 적용하지 마세요.`);
+        factsParts.push(speechParts.join('\n'));
+      }
     }
 
     messages.push({ role: 'user', content: factsParts.join('\n\n') });
