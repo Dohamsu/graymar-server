@@ -72,7 +72,7 @@ export class LlmIntentParserService implements OnModuleInit {
     // CHOICE → 키워드 파서 직접 위임 (affordance 매핑으로 충분)
     if (source === 'CHOICE') {
       return this.keywordParser.parseWithInsistence(
-        inputText, source, choicePayload, insistenceCount, repeatedType,
+        inputText, source, choicePayload, insistenceCount, repeatedType, npcsAtLocation,
       );
     }
 
