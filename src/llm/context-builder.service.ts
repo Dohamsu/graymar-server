@@ -96,6 +96,8 @@ export interface LlmContext {
   relevantItemMemoryText: string | null;
   // NPC knownFacts: SUCCESS/PARTIAL 판정 시 NPC가 공개할 정보
   npcRevealableFact: { npcDisplayName: string; factId: string; detail: string; resolveOutcome: 'SUCCESS' | 'PARTIAL' } | null;
+  // NPC가 이미 플레이어에게 공개한 정보 리스트 (반복 방지용)
+  npcAlreadyRevealedFacts: { npcDisplayName: string; facts: string[] } | null;
   // 장소 기반 NPC 필터링용
   currentLocationId: string | null;
   currentTimePhase: string | null;
@@ -900,6 +902,27 @@ export class ContextBuilderService {
       }
     }
 
+    // === NPC 이미 공개한 정보 리스트 (LLM 반복 방지용) ===
+    let npcAlreadyRevealedFacts: LlmContext['npcAlreadyRevealedFacts'] = null;
+    {
+      const uiForRev = serverResult.ui as Record<string, unknown>;
+      const acForRev = uiForRev?.actionContext as Record<string, unknown> | undefined;
+      const revNpcId = (acForRev?.targetNpcId as string | undefined) ?? (acForRev?.primaryNpcId as string | undefined);
+      if (revNpcId && structured?.npcKnowledge) {
+        const entries = structured.npcKnowledge[revNpcId] ?? [];
+        if (entries.length > 0) {
+          const npcDef = this.content.getNpc(revNpcId);
+          const npcStatesForRev = runState?.npcStates as Record<string, NPCState> | undefined;
+          const npcState = npcStatesForRev?.[revNpcId];
+          const displayName = (npcDef && npcState) ? getNpcDisplayName(npcState, npcDef) : revNpcId;
+          npcAlreadyRevealedFacts = {
+            npcDisplayName: displayName,
+            facts: entries.map(e => e.text).slice(0, 5),
+          };
+        }
+      }
+    }
+
     // NPC 실명 누출 방지: npcInjection 및 주요 텍스트 필드 sanitize
     const sanitize = (text: string | null) => text ? this.sanitizeNpcNames(text, runState) : text;
     const sanitizedNpcInjection = npcInjection ? {
@@ -974,6 +997,8 @@ export class ContextBuilderService {
       relevantItemMemoryText: this.buildRelevantItemMemoryText(runState, serverResult),
       // NPC knownFacts: SUCCESS/PARTIAL 판정 시 공개할 단서
       npcRevealableFact,
+      // NPC가 이미 공개한 정보 (반복 방지)
+      npcAlreadyRevealedFacts,
       // 장소 기반 NPC 필터링
       currentLocationId: (runState?.worldState as any)?.currentLocationId ?? null,
       currentTimePhase: (runState?.worldState as any)?.phaseV2 ?? (runState?.worldState as any)?.timePhase ?? null,
