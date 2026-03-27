@@ -810,6 +810,19 @@ export class PromptBuilderService {
       }
     }
 
+    // === NPC가 이미 공개한 정보 (반복 방지) ===
+    if (ctx.npcAlreadyRevealedFacts && ctx.npcAlreadyRevealedFacts.facts.length > 0) {
+      const { npcDisplayName, facts } = ctx.npcAlreadyRevealedFacts;
+      factsParts.push(
+        [
+          `[이미 공개된 정보 — 반복 금지]`,
+          `${npcDisplayName}이(가) 이전 턴에서 이미 플레이어에게 알려준 정보:`,
+          ...facts.map((f, i) => `${i + 1}. "${f}"`),
+          `⚠️ 위 정보는 플레이어가 이미 알고 있습니다. NPC가 같은 내용을 다시 처음 말하는 것처럼 반복하면 안 됩니다. 이 정보를 언급할 때는 "이전에 말씀드렸듯이", "아시다시피" 등 이미 공유된 사실임을 전제하세요.`,
+        ].join('\n'),
+      );
+    }
+
     // === NPC knownFacts: SUCCESS/PARTIAL 판정 시 NPC가 공개할 단서 ===
     if (ctx.npcRevealableFact) {
       const { npcDisplayName, detail, resolveOutcome: factOutcome } = ctx.npcRevealableFact;
