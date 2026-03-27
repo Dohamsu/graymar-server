@@ -110,7 +110,7 @@ export class ResolveService {
     // 최종 점수
     const score = diceRoll + statBonus + baseMod;
 
-    // 결과 판정: SUCCESS >= 6, PARTIAL 3~5, FAIL < 3
+    // 결과 판정: SUCCESS >= 5, PARTIAL 3~4, FAIL < 3
     const outcome = this.computeOutcome(score);
 
     // heatDelta 계산 (±8 clamp)
@@ -262,7 +262,7 @@ export class ResolveService {
   }
 
   private computeOutcome(score: number): ResolveOutcome {
-    if (score >= 6) return 'SUCCESS';
+    if (score >= 5) return 'SUCCESS';
     if (score >= 3) return 'PARTIAL';
     return 'FAIL';
   }
