@@ -144,24 +144,57 @@ export const INTENT_SYSTEM_PROMPT = `당신은 중세 판타지 텍스트 RPG의
 - 상점/가게 이용 → TRADE
 - 장소 수색/탐색 → INVESTIGATE
 
+## NPC 대상 판별
+플레이어가 특정 NPC를 대상으로 행동하는 경우, 해당 NPC의 ID를 targetNpc에 넣으세요.
+- NPC 목록이 제공되면 그 중에서만 매칭하세요.
+- NPC 이름, 별칭, 직함 등이 플레이어 입력에 포함되면 해당 NPC를 targetNpc로 지정하세요.
+- "~에게", "~한테", "~와", "~를" 등 조사가 붙은 고유명사를 NPC 목록과 대조하세요.
+- 대상이 불명확하거나 NPC 목록에 없으면 null.
+
 ## 출력 형식
 반드시 아래 JSON만 출력하세요. 다른 텍스트 없이 JSON만.
-{"actionType":"PRIMARY","secondaryActionType":"SECONDARY 또는 null","tone":"CAUTIOUS|AGGRESSIVE|DIPLOMATIC|DECEPTIVE|NEUTRAL","target":"대상 또는 null","riskLevel":1}
+{"actionType":"PRIMARY","secondaryActionType":"SECONDARY 또는 null","tone":"CAUTIOUS|AGGRESSIVE|DIPLOMATIC|DECEPTIVE|NEUTRAL","target":"대상 또는 null","targetNpc":"NPC_ID 또는 null","riskLevel":1}
 
 - tone: 행동의 어조. 확실하지 않으면 "NEUTRAL".
 - target: 대상이 명시되어 있으면 추출, 없으면 null.
+- targetNpc: NPC 목록에서 매칭된 NPC ID. 없으면 null.
 - riskLevel: 1(보통), 2(위험), 3(극단적 위험).`;
+
+export type NpcForIntent = {
+  npcId: string;
+  name: string;
+  unknownAlias?: string;
+  title?: string | null;
+};
 
 export function buildIntentUserMessage(
   inputText: string,
   locationId?: string,
+  npcsAtLocation?: NpcForIntent[],
 ): string {
   const locationNames: Record<string, string> = {
     LOC_MARKET: '시장 거리',
     LOC_GUARD: '경비대 지구',
     LOC_HARBOR: '항만 부두',
     LOC_SLUMS: '빈민가',
+    LOC_NOBLE: '귀족 거리',
+    LOC_TAVERN: '선술집(잠긴 닻)',
+    LOC_DOCKS_WAREHOUSE: '항만 창고구역',
   };
   const locName = locationId ? (locationNames[locationId] ?? locationId) : '알 수 없음';
-  return `현재 장소: ${locName}\n플레이어 입력: ${inputText}`;
+
+  let msg = `현재 장소: ${locName}\n플레이어 입력: ${inputText}`;
+
+  if (npcsAtLocation && npcsAtLocation.length > 0) {
+    const npcLines = npcsAtLocation.map((npc) => {
+      const parts = [npc.npcId];
+      if (npc.name) parts.push(npc.name);
+      if (npc.unknownAlias) parts.push(`별칭: ${npc.unknownAlias}`);
+      if (npc.title) parts.push(`직함: ${npc.title}`);
+      return parts.join(' | ');
+    });
+    msg += `\n\n현재 장소 NPC 목록:\n${npcLines.join('\n')}`;
+  }
+
+  return msg;
 }

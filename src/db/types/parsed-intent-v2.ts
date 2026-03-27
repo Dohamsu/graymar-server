@@ -45,4 +45,6 @@ export type ParsedIntentV2 = {
   escalated?: boolean; // 고집 에스컬레이션으로 승격된 경우 true
   insistenceWarning?: boolean; // 2회째 반복 — 다음에 에스컬레이션 예고
   specifiedGold?: number; // 플레이어가 명시한 골드 수치 (예: "10골드를 건넨다" → 10)
+  targetNpcId?: string | null;    // 플레이어가 지목한 대상 NPC ID (LLM 또는 키워드 파싱)
+  targetNpcAlias?: string | null; // 파싱된 NPC 별칭/이름 원문
 };

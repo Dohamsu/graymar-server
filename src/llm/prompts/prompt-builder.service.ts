@@ -248,6 +248,7 @@ export class PromptBuilderService {
           '6. ⚠️ 이전 턴에서 NPC가 알려준 정보, 획득한 물건, 발견한 단서를 반드시 기억하세요. NPC가 같은 정보를 처음 말하는 것처럼 반복하면 안 됩니다. 예: 이미 종이뭉치를 받았으면, 같은 NPC가 다시 종이뭉치를 주거나 같은 정보를 처음 알려주는 식으로 쓰면 안 됩니다.',
           '7. ⚠️ 이미 대화한 NPC가 다시 등장할 때는 이전 대화 내용을 알고 있어야 합니다. "그대, 무슨 일로 여기 돌아다니오?" 같은 반응은 이미 그 NPC에게서 허가/정보를 받은 상황에서는 부자연스럽습니다.',
           '8. ⚠️ NPC 퇴장 존중: 직전 턴 서술에서 NPC가 "떠났다", "사라졌다", "자리를 피했다", "골목으로 빠졌다" 등 퇴장을 묘사했다면, 이번 턴에서 그 NPC가 아무 이유 없이 다시 같은 장소에 나타나면 안 됩니다. 재등장시키려면 "다시 나타났다", "돌아왔다" 등 명확한 이유가 필요합니다.',
+          '9. ⚠️ 대화 연속 시 퇴장 금지: 플레이어가 NPC와 대화 중(TALK, PERSUADE, BRIBE, THREATEN, HELP)이면 그 NPC가 떠나려 하거나 자리를 뜨는 묘사를 하지 마세요. "멀어지려는", "등을 돌리는", "가려는" 등의 이탈 암시도 피하세요. NPC의 마지막 대사나 표정/몸짓 반응으로 마무리하되, 물리적으로 그 자리에 남아있어야 합니다.',
           '',
           sessionLines.join('\n---\n'),
         ].join('\n'),
@@ -297,8 +298,93 @@ export class PromptBuilderService {
       memoryParts.push(`[최근 서술]\n${ctx.recentSummaries.join('\n---\n')}`);
     }
 
-    // L2 확장: NPC 로스터 (콘텐츠 정의 NPC 목록 — 소개 상태 반영) — HUB에서는 생략
-    const allNpcs = isHub ? [] : this.content.getAllNpcs();
+    // L2 확장: NPC 로스터 — 이번 턴에 등장할 NPC만 선별 (1명 원칙)
+    // 우선순위: ① 플레이어 행동에서 NPC 이름/별칭 파싱 ② 이벤트 primaryNpc ③ 이전 턴 대화 NPC ④ 장소 NPC
+    let allNpcs: ReturnType<typeof this.content.getAllNpcs> = [];
+    if (!isHub) {
+      const fullList = this.content.getAllNpcs();
+      const targetNpcIds = new Set<string>();
+
+      // ⓪ IntentParser가 파싱한 targetNpcId 최우선 사용
+      const intentTargetNpcId = (sr.ui?.actionContext as any)?.targetNpcId as string | undefined;
+      if (intentTargetNpcId) {
+        targetNpcIds.add(intentTargetNpcId);
+      }
+
+      // ① 플레이어 ACTION 텍스트에서 NPC 이름/별칭 파싱 (⓪에서 찾지 못한 경우)
+      const playerInput = rawInput.toLowerCase();
+      let playerTargetedNpc: string | null = intentTargetNpcId ?? null;
+      for (const npc of fullList) {
+        if (intentTargetNpcId) break; // IntentParser 결과가 있으면 스킵
+        const nameMatch = npc.name && playerInput.includes(npc.name.toLowerCase());
+        const aliasMatch = npc.unknownAlias && playerInput.includes(npc.unknownAlias.toLowerCase());
+        // 부분 키워드 매칭 (예: "과일장수" → "웃는 얼굴의 과일장수")
+        const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
+        const keywordMatch = aliasKeywords.length > 0 && aliasKeywords.some(
+          (kw: string) => kw.length >= 2 && playerInput.includes(kw.toLowerCase()),
+        );
+        if (nameMatch || aliasMatch || keywordMatch) {
+          targetNpcIds.add(npc.npcId);
+          playerTargetedNpc = npc.npcId;
+          break; // 1명만
+        }
+      }
+
+      // ② 이벤트 primaryNpc (플레이어 지정이 없을 때만)
+      if (targetNpcIds.size === 0) {
+        const eventPrimaryNpcId = (sr.ui?.actionContext as any)?.primaryNpcId as string | undefined;
+        if (eventPrimaryNpcId) targetNpcIds.add(eventPrimaryNpcId);
+        if (ctx.npcInjection?.npcId) targetNpcIds.add(ctx.npcInjection.npcId);
+      }
+
+      // ③ 새로 만나는 NPC
+      for (const npcId of ctx.newlyEncounteredNpcIds ?? []) targetNpcIds.add(npcId);
+      for (const npcId of ctx.newlyIntroducedNpcIds ?? []) targetNpcIds.add(npcId);
+
+      // ④ 이전 턴 대화 NPC (아무 NPC도 못 찾았을 때)
+      if (targetNpcIds.size === 0 && ctx.locationSessionTurns?.length) {
+        const lastNarr = ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]?.narrative ?? '';
+        for (const npc of fullList) {
+          if (lastNarr.includes(npc.name) || (npc.unknownAlias && lastNarr.includes(npc.unknownAlias))) {
+            targetNpcIds.add(npc.npcId);
+            break;
+          }
+        }
+      }
+
+      // NPC 목록 구성
+      if (targetNpcIds.size > 0) {
+        allNpcs = fullList.filter((npc) => targetNpcIds.has(npc.npcId));
+      } else {
+        // fallback: 현재 장소+시간에 있는 NPC (첫 턴, NPC 미지정 행동)
+        const locId = ctx.currentLocationId;
+        const phase = ctx.currentTimePhase ?? 'DAY';
+        if (locId) {
+          allNpcs = fullList.filter((npc) => {
+            const schedule = (npc as any).schedule?.default;
+            if (!schedule) return false;
+            const phaseEntry = schedule[phase] ?? schedule['DAY'];
+            return phaseEntry?.locationId === locId;
+          });
+        }
+      }
+
+      // 예외: 플레이어가 등록되지 않은 NPC를 언급한 경우 (매칭 실패 + NPC명 포함)
+      // → 목록이 비어있고 플레이어 입력에 고유명사가 있으면 안내 메시지
+      if (playerTargetedNpc === null && allNpcs.length === 0 && /[가-힣]{2,}에게|[가-힣]{2,}을|[가-힣]{2,}와/.test(rawInput)) {
+        // 등록되지 않은 NPC → 장소 NPC fallback으로 처리 (LLM이 익명 인물로 대체)
+        const locId = ctx.currentLocationId;
+        const phase = ctx.currentTimePhase ?? 'DAY';
+        if (locId) {
+          allNpcs = fullList.filter((npc) => {
+            const schedule = (npc as any).schedule?.default;
+            if (!schedule) return false;
+            const phaseEntry = schedule[phase] ?? schedule['DAY'];
+            return phaseEntry?.locationId === locId;
+          });
+        }
+      }
+    }
     if (allNpcs.length > 0) {
       const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
       const newlyIntroducedNpcIds = new Set(ctx.newlyIntroducedNpcIds ?? []);
@@ -338,9 +424,9 @@ export class PromptBuilderService {
         : '';
       memoryParts.push(
         [
-          '[등장 가능 NPC 목록]',
-          '아래 NPC만 서술에 이름 있는 캐릭터로 등장할 수 있습니다. 이 목록에 없는 새로운 이름 있는 캐릭터를 만들지 마세요.',
-          '배경 인물이 필요하면 "한 사내", "노점 상인" 등 익명 표현만 사용하세요.',
+          '[등장 가능 NPC 목록 — 참조용]',
+          '⚠️ 이 목록은 등장 가능한 NPC의 참조 목록입니다. 이 턴에서 등장시킬 NPC는 **1명만** 선택하세요. 플레이어가 특정 NPC에게 행동했으면 그 NPC만 등장합니다. NPC를 지정하지 않은 행동이면 상황에 가장 적합한 1명만 고르세요. 2명 이상 동시 등장은 금지합니다.',
+          '이 목록에 없는 이름 있는 캐릭터를 만들지 마세요. 배경 인물은 "한 사내", "노점 상인" 등 익명만.',
           '⚠️ [이름 미공개] NPC 별칭 사용 규칙:',
           '  - 별칭 전체(예: "권위적인 야간 경비 책임자")는 한 턴에서 최대 1회만 사용하세요.',
           '  - 첫 등장 이후에는 반드시 "그", "그녀", "그 인물", "그 사내", "책임자" 등 짧은 대명사나 축약 호칭으로 대체하세요.',

@@ -51,4 +51,6 @@ export type ParsedIntentV3 = {
   intentTags: string[];
   suppressedActionType?: IntentActionType | null;
   escalated?: boolean;
+  targetNpcId?: string | null;    // 플레이어가 지목한 대상 NPC ID
+  targetNpcAlias?: string | null; // 파싱된 NPC 별칭/이름 원문
 };

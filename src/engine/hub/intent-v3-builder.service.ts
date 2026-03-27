@@ -117,6 +117,8 @@ export class IntentV3BuilderService {
       intentTags: [...intentV2.intentTags],
       suppressedActionType: intentV2.suppressedActionType ?? null,
       escalated: intentV2.escalated ?? false,
+      targetNpcId: intentV2.targetNpcId ?? null,
+      targetNpcAlias: intentV2.targetNpcAlias ?? null,
     };
   }
 
