@@ -361,13 +361,15 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // 5. AI Turn 로그 기록
+      // 5. AI Turn 로그 기록 (파이프라인 로그 포함)
+      const pipelineLog = (serverResult as any)?._pipelineLog ?? undefined;
       await this.aiTurnLog.log({
         runId: pending.runId,
         turnNo: pending.turnNo,
         response: callResult.response,
         messages,
         error: callResult.error,
+        pipelineLog,
       });
 
       // 6. DONE 저장 (토큰 통계 포함)

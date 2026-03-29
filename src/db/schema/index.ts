@@ -10,3 +10,4 @@ export { aiTurnLogs } from './ai-turn-logs.js';
 export { campaigns } from './campaigns.js';
 export { bugReports } from './bug-reports.js';
 export { sceneImages } from './scene-images.js';
+export { playtestResults } from './playtest-results.js';

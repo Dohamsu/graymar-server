@@ -1854,6 +1854,43 @@ export class TurnsService {
       this.logger.warn(`[MemoryCollector] collectFromTurn failed: ${(err as Error).message}`);
     }
 
+    // 파이프라인 로그를 serverResult에 포함 (commitTurnRecord 전에 추가해야 DB에 저장됨)
+    (result as any)._pipelineLog = {
+      intent: {
+        rawInput: rawInput.slice(0, 100),
+        parsedType: intent.actionType,
+        secondaryType: intent.secondaryActionType ?? null,
+        targetNpcId: intentV3.targetNpcId ?? null,
+        tone: intent.tone,
+        confidence: intent.confidence,
+        source: intent.source,
+      },
+      event: {
+        eventId: event.eventId,
+        matchPolicy: event.matchPolicy,
+        friction: event.friction,
+        primaryNpcId: event.payload?.primaryNpcId ?? null,
+        sceneFrame: (resolvedSceneFrame ?? '').slice(0, 100),
+      },
+      resolve: {
+        outcome: resolveResult.outcome,
+        diceRoll: resolveResult.diceRoll,
+        statKey: resolveResult.statKey ?? null,
+        statBonus: resolveResult.statBonus ?? 0,
+        baseMod: resolveResult.baseMod ?? 0,
+        totalScore: resolveResult.score ?? 0,
+      },
+      npc: {
+        targetNpcId: intentV3.targetNpcId ?? effectiveNpcId ?? null,
+        posture: orchestrationResult?.npcPostures?.[effectiveNpcId ?? ''] ?? null,
+      },
+      orchestration: orchestrationResult ? {
+        peakMode: orchestrationResult.peakMode,
+        pressure: orchestrationResult.pressure,
+        npcInjectionId: orchestrationResult.npcInjection?.npcId ?? null,
+      } : undefined,
+    };
+
     await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, postTickRunState, body.options?.skipLlm);
 
     if (shouldEnd && endReason) {
