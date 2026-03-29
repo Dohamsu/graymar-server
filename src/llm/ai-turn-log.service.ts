@@ -3,6 +3,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { aiTurnLogs } from '../db/schema/index.js';
+import type { PipelineLog } from '../db/schema/ai-turn-logs.js';
 import type { LlmProviderResponse, LlmMessage } from './types/index.js';
 
 export interface AiTurnLogEntry {
@@ -12,6 +13,7 @@ export interface AiTurnLogEntry {
   messages?: LlmMessage[];
   error?: string;
   type?: string; // 'NARRATIVE' | 'MID_SUMMARY_LIGHT' 등
+  pipelineLog?: PipelineLog;
 }
 
 @Injectable()
@@ -32,6 +34,7 @@ export class AiTurnLogService {
         rawPrompt: entry.messages ? JSON.stringify(entry.messages) : null,
         rawCompletion: entry.response?.text ?? null,
         error: entry.error ? { error: entry.error } : null,
+        pipelineLog: entry.pipelineLog ?? null,
       });
     } catch (err) {
       this.logger.error(
