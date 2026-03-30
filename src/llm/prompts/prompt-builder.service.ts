@@ -930,10 +930,15 @@ export class PromptBuilderService {
     }
 
     // 첫 문장 다양성: 직전 턴이 "당신"으로 시작했으면 다른 방식 강제
-    if (!isHub && ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
-      const lastNarr = ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]?.narrative ?? '';
-      const lastStartsWithYou = lastNarr.startsWith('당신');
-      if (lastStartsWithYou) {
+    // locationSessionTurns(LOCATION 내) + recentTurns(글로벌) 모두 체크
+    {
+      let lastNarr = '';
+      if (ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
+        lastNarr = ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]?.narrative ?? '';
+      } else if (ctx.recentTurns && ctx.recentTurns.length > 0) {
+        lastNarr = ctx.recentTurns[ctx.recentTurns.length - 1]?.narrative ?? '';
+      }
+      if (lastNarr && lastNarr.startsWith('당신')) {
         factsParts.push(
           [
             `[첫 문장 지시]`,
