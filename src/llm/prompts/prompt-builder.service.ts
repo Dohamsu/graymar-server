@@ -931,12 +931,20 @@ export class PromptBuilderService {
 
     // 첫 문장 다양성: 직전 턴이 "당신"으로 시작했으면 다른 방식 강제
     // locationSessionTurns(LOCATION 내) + recentTurns(글로벌) 모두 체크
+    // 빈 narrative는 건너뛰고 가장 최근 서술이 있는 턴을 찾음
     {
       let lastNarr = '';
-      if (ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
-        lastNarr = ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]?.narrative ?? '';
-      } else if (ctx.recentTurns && ctx.recentTurns.length > 0) {
-        lastNarr = ctx.recentTurns[ctx.recentTurns.length - 1]?.narrative ?? '';
+      const allCandidates = [
+        ...(ctx.locationSessionTurns ?? []),
+        ...(ctx.recentTurns ?? []),
+      ];
+      // 가장 마지막에 서술이 있는 턴을 찾음 (역순 탐색)
+      for (let i = allCandidates.length - 1; i >= 0; i--) {
+        const narr = allCandidates[i]?.narrative ?? '';
+        if (narr.length > 10) { // 의미 있는 서술만
+          lastNarr = narr;
+          break;
+        }
       }
       if (lastNarr && lastNarr.startsWith('당신')) {
         factsParts.push(
