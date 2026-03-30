@@ -929,6 +929,24 @@ export class PromptBuilderService {
       }
     }
 
+    // 첫 문장 다양성: 직전 턴이 "당신"으로 시작했으면 다른 방식 강제
+    if (!isHub && ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
+      const lastNarr = ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]?.narrative ?? '';
+      const lastStartsWithYou = lastNarr.startsWith('당신');
+      if (lastStartsWithYou) {
+        factsParts.push(
+          [
+            `[첫 문장 지시]`,
+            `직전 턴이 "당신"으로 시작했습니다. 이번 턴은 반드시 다른 방식으로 시작하세요:`,
+            `① 감각: 소리, 냄새, 빛, 온도 ("골목 어딘가에서 쇳소리가 울린다")`,
+            `② NPC/환경 동작: ("그의 손가락이 멈춘다", "노점 천막이 바람에 펄럭인다")`,
+            `③ 시간/공간: ("잠시 후", "골목 끝에서")`,
+            `"당신이/당신은"으로 시작하지 마세요.`,
+          ].join('\n'),
+        );
+      }
+    }
+
     messages.push({ role: 'user', content: factsParts.join('\n\n') });
 
     return messages;
