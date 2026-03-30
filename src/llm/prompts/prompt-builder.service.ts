@@ -930,21 +930,19 @@ export class PromptBuilderService {
     }
 
     // 첫 문장 다양성: 직전 턴이 "당신"으로 시작했으면 다른 방식 강제
-    // locationSessionTurns(LOCATION 내) + recentTurns(글로벌) 모두 체크
-    // 빈 narrative는 건너뛰고 가장 최근 서술이 있는 턴을 찾음
+    // locationSessionTurns → recentTurns 순으로 역순 탐색, narrative가 있는 턴만
     {
       let lastNarr = '';
-      const allCandidates = [
-        ...(ctx.locationSessionTurns ?? []),
-        ...(ctx.recentTurns ?? []),
-      ];
-      // 가장 마지막에 서술이 있는 턴을 찾음 (역순 탐색)
-      for (let i = allCandidates.length - 1; i >= 0; i--) {
-        const narr = allCandidates[i]?.narrative ?? '';
-        if (narr.length > 10) { // 의미 있는 서술만
-          lastNarr = narr;
-          break;
+      // 1차: locationSessionTurns에서 서술 있는 마지막 턴
+      for (const turns of [ctx.locationSessionTurns ?? [], ctx.recentTurns ?? []]) {
+        for (let i = turns.length - 1; i >= 0; i--) {
+          const narr = turns[i]?.narrative ?? '';
+          if (narr.length > 20) { // 의미 있는 서술 (현재 턴의 빈 narrative 제외)
+            lastNarr = narr;
+            break;
+          }
         }
+        if (lastNarr) break;
       }
       if (lastNarr && lastNarr.startsWith('당신')) {
         factsParts.push(
