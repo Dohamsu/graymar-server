@@ -372,7 +372,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         pipelineLog,
       });
 
-      // 6. DONE 저장 (토큰 통계 포함)
+      // 6. DONE 저장 (토큰 통계 + 프롬프트 포함)
       await this.db
         .update(turns)
         .set({
@@ -388,6 +388,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           },
           llmCompletedAt: new Date(),
           llmChoices: llmChoices,
+          llmPrompt: messages as unknown[],
         })
         .where(eq(turns.id, pending.id));
 

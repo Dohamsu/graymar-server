@@ -3,6 +3,8 @@
 import { Injectable } from '@nestjs/common';
 import type { LlmContext } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
+import type { NpcEmotionalState } from '../../db/types/npc-state.js';
+import { computeEffectivePosture, getNpcDisplayName } from '../../db/types/npc-state.js';
 import type { LlmMessage } from '../types/index.js';
 import { NARRATIVE_SYSTEM_PROMPT } from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
@@ -272,8 +274,8 @@ export class PromptBuilderService {
           keyInfoLines.push(`- 직전 장면: ...${snippet}`);
         }
         // NPC delta 정보 (context에 포함된 경우)
-        if (ctx.npcEmotionalContext) {
-          const deltaMatch = ctx.npcEmotionalContext.match(/⚡ 이번 턴 변화: (.+)/);
+        if (ctx.npcDeltaHint) {
+          const deltaMatch = ctx.npcDeltaHint.match(/⚡ 이번 턴 변화: (.+)/);
           if (deltaMatch) {
             keyInfoLines.push(`- NPC 반응: ${deltaMatch[1]}`);
           }
@@ -461,10 +463,20 @@ export class PromptBuilderService {
         memoryParts.push(`[활성 사건 현황]\n${ctx.incidentContext}`);
       }
     }
-    // NPC 감정 상태: 구조화 메모리 유무와 무관하게 항상 포함
-    // npcJournalText는 과거 관계 요약이고, npcEmotionalContext는 현재 감정 수치 + 행동 힌트
-    if (ctx.npcEmotionalContext) {
-      memoryParts.push(`[NPC 감정 상태]\n${ctx.npcEmotionalContext}\n⚠️ NPC의 현재 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요. 위 행동 힌트를 반드시 반영하세요.`);
+    // NPC 감정 상태: 대화 자세 블록과 동일한 NPC만 포함
+    // targetNpcIds와 npcPostures의 교집합 + npcInjection = 실제 장면에 등장하는 NPC
+    {
+      const sceneNpcIds = new Set<string>();
+      const postureKeys = new Set(Object.keys(ctx.npcPostures ?? {}));
+      for (const npcId of targetNpcIds) {
+        if (postureKeys.has(npcId)) sceneNpcIds.add(npcId);
+      }
+      // npcInjection은 항상 포함 (targetNpcIds에 있고 postureKeys에 없을 수 있음)
+      if (ctx.npcInjection?.npcId) sceneNpcIds.add(ctx.npcInjection.npcId);
+      const npcEmotionalBlock = this.buildNpcEmotionalBlock(ctx, sceneNpcIds);
+      if (npcEmotionalBlock) {
+        memoryParts.push(`[NPC 감정 상태]\n${npcEmotionalBlock}\n⚠️ NPC의 현재 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요. 위 행동 힌트를 반드시 반영하세요.`);
+      }
     }
     // 서사 표식: 구조화 메모리 유무와 무관하게 항상 포함
     if (ctx.narrativeMarkContext) {
@@ -584,6 +596,17 @@ export class PromptBuilderService {
         }
         factsParts.push(parts.join('\n'));
       }
+    }
+
+    // LOCATION 후속 턴에 장소 컨텍스트 보충 (MOVE 이벤트가 없는 턴)
+    // summary.short에 [장소] 블록이 없으면 현재 위치명을 삽입
+    if (!isHub && !sr.summary.short.includes('[장소]') && ctx.currentLocationId) {
+      const locNames: Record<string, string> = {
+        LOC_MARKET: '시장 거리', LOC_GUARD: '경비대 지구',
+        LOC_HARBOR: '항만 부두', LOC_SLUMS: '빈민가',
+      };
+      const locName = locNames[ctx.currentLocationId] ?? ctx.currentLocationId;
+      factsParts.push(`[현재 장소] ${locName}`);
     }
 
     // summary.short
@@ -971,5 +994,179 @@ export class PromptBuilderService {
     messages.push({ role: 'user', content: factsParts.join('\n\n') });
 
     return messages;
+  }
+
+  /**
+   * NPC 감정 상태 블록을 targetNpcIds 기반으로 빌드.
+   * context-builder에서 이관된 로직 — targetNpcIds를 사용하여
+   * [NPC 대화 자세] 블록과 동일한 NPC 필터링을 적용한다.
+   */
+  private buildNpcEmotionalBlock(ctx: LlmContext, targetNpcIds: Set<string>): string | null {
+    const npcStates = ctx.npcStates;
+    if (!npcStates) return null;
+
+    const newlyIntroducedSet = new Set(ctx.newlyIntroducedNpcIds ?? []);
+
+    const emotionalLines: string[] = [];
+    for (const npcId of targetNpcIds) {
+      const npc = npcStates[npcId];
+      if (!npc) continue;
+      const em = npc.emotional as NpcEmotionalState | undefined;
+      if (!em) continue;
+
+      const npcDef = this.content.getNpc(npcId);
+      // newlyIntroducedNpcIds에 해당하면 별칭 사용 (첫 소개 턴 실명 누출 방지)
+      const displayName = newlyIntroducedSet.has(npcId)
+        ? (npcDef?.unknownAlias || '낯선 인물')
+        : getNpcDisplayName(npc, npcDef);
+      const posture = computeEffectivePosture(npc);
+      const personality = npcDef?.personality;
+
+      // 감정 수치를 구체적 행동 변화로 변환 (personality 연동)
+      const hints: string[] = [];
+
+      // trust 기반 태도 변화
+      if (em.trust > 40) {
+        hints.push('당신을 신뢰하며 경계를 내려놓았다');
+        if (personality?.softSpot) hints.push(`인간적 순간이 드러날 수 있다: ${personality.softSpot}`);
+      } else if (em.trust > 15) {
+        hints.push('마음을 열기 시작했다 — 가끔 본심이 살짝 보인다');
+      } else if (em.trust < -20) {
+        hints.push('당신을 불신하며 거리를 둔다');
+      }
+
+      // fear 기반 (높을수록 성격/말투를 오버라이드)
+      if (em.fear > 40) {
+        hints.push('⚠️ [감정 우선] 겁에 질려 있다 — 판단력이 흐려지고 몸이 굳는다. 말투가 무너지고 더듬거린다. 이 공포가 posture/speechStyle보다 우선 반영되어야 한다');
+      } else if (em.fear > 30) {
+        hints.push('⚠️ [감정 우선] 두려움이 뚜렷하다 — 몸을 움츠리고 시선을 피한다. 평소 말투가 흔들리며 짧고 경계적으로 말한다. 이 감정이 speechStyle보다 우선한다');
+      } else if (em.fear > 15) {
+        hints.push('불안해하고 있다 — 말을 더듬거나 시선을 피한다. 평소보다 짧고 조심스럽게 말한다');
+      }
+
+      // respect 기반
+      if (em.respect > 30) hints.push('당신을 인정하고 있다 — 말투가 격식에서 벗어나기도 한다');
+      else if (em.respect < -20) hints.push('당신을 얕보고 있다');
+
+      // suspicion 기반
+      if (em.suspicion > 40) hints.push('당신의 의도를 강하게 의심한다 — 방어적이고 공격적');
+      else if (em.suspicion > 15) hints.push('경계심을 늦추지 않는다');
+
+      // attachment 기반
+      if (em.attachment > 30) hints.push('당신에게 개인적 유대를 느끼고 있다');
+
+      // personality 기반 행동 힌트 (핵심: posture와 personality 조합)
+      // personality.core는 첫 등장 시에만 전달 (반복 인용 방지)
+      const behaviorParts: string[] = [];
+      if (personality) {
+        const isNpcFirstInSession = !(ctx.locationSessionTurns ?? []).some(
+          (t: { narrative?: string }) => t.narrative?.includes(displayName),
+        );
+        if (isNpcFirstInSession && personality.core) {
+          behaviorParts.push(personality.core);
+        }
+        if (personality.speechStyle) behaviorParts.push(`말투: ${personality.speechStyle}`);
+        // innerConflict는 trust > 15 또는 respect > 20일 때만 노출 (경계가 풀려야 내면이 보인다)
+        if (personality.innerConflict && (em.trust > 15 || em.respect > 20)) {
+          behaviorParts.push(`내면: ${personality.innerConflict}`);
+        }
+        // signature 표현 (매 턴 반복이 아닌 가끔 보이는 습관)
+        if (personality.signature?.length) {
+          behaviorParts.push(`가끔 보이는 습관(매 턴 반복 금지, 2~3턴에 1번 정도): ${personality.signature.join(' / ')}`);
+        }
+        // npcRelations: introduced된 NPC에 대한 관계만 노출
+        if (personality.npcRelations) {
+          const introducedNpcIdSet = new Set(
+            Object.entries(npcStates)
+              .filter(([, s]) => s.introduced || s.encounterCount > 0)
+              .map(([id]) => id),
+          );
+          const relLines: string[] = [];
+          for (const [relNpcId, relDesc] of Object.entries(personality.npcRelations)) {
+            if (introducedNpcIdSet.has(relNpcId) || relNpcId === npcId) {
+              const relNpcDef = this.content.getNpc(relNpcId);
+              const relNpcState = npcStates[relNpcId];
+              const relDisplayName = relNpcDef && relNpcState
+                ? (newlyIntroducedSet.has(relNpcId) ? (relNpcDef.unknownAlias || '낯선 인물') : getNpcDisplayName(relNpcState, relNpcDef))
+                : relNpcDef?.unknownAlias ?? relNpcId;
+              // 관계 설명 내 NPC 실명을 강제 치환 (introduced 상태와 무관하게)
+              let sanitizedDesc = relDesc as string;
+              if (relNpcDef?.name) {
+                const alias = relNpcDef.unknownAlias || '누군가';
+                sanitizedDesc = sanitizedDesc.replaceAll(relNpcDef.name, alias);
+                for (const a of (relNpcDef as any).aliases ?? []) {
+                  sanitizedDesc = sanitizedDesc.replaceAll(a as string, alias);
+                }
+              }
+              // 다른 NPC 실명도 alias 치환
+              for (const [otherNpcId, otherState] of Object.entries(npcStates)) {
+                if (otherState.introduced) continue;
+                const otherDef = this.content.getNpc(otherNpcId);
+                if (!otherDef?.name) continue;
+                const otherAlias = otherDef.unknownAlias || '누군가';
+                if (sanitizedDesc.includes(otherDef.name)) {
+                  sanitizedDesc = sanitizedDesc.replaceAll(otherDef.name, otherAlias);
+                }
+                for (const a of (otherDef as any).aliases ?? []) {
+                  if (sanitizedDesc.includes(a as string)) {
+                    sanitizedDesc = sanitizedDesc.replaceAll(a as string, otherAlias);
+                  }
+                }
+              }
+              relLines.push(`${relDisplayName}: ${sanitizedDesc}`);
+            }
+          }
+          if (relLines.length > 0) {
+            behaviorParts.push(`관계: ${relLines.join(' | ')}`);
+          }
+        }
+      }
+
+      // 런타임 currentMood 계산: 월드 상태 -> NPC별 현재 분위기
+      let currentMood: string | null = null;
+      if (npcDef) {
+        const heat = ctx.hubHeat;
+        const safety = ctx.hubSafety;
+        const faction = npcDef.faction;
+
+        const moodParts: string[] = [];
+
+        // Heat 기반 무드
+        if (heat > 70) {
+          if (faction === 'CITY_GUARD') moodParts.push('비상 경계 중 — 극도로 긴장하고 예민하다');
+          else moodParts.push('도시 전체가 긴장 — 불안하고 조심스럽다');
+        } else if (heat > 40) {
+          if (faction === 'CITY_GUARD') moodParts.push('경계 강화 중 — 평소보다 날카롭다');
+          else moodParts.push('거리가 어수선하다 — 경계하고 있다');
+        }
+
+        // Safety 기반 무드
+        if (safety === 'DANGER') {
+          if (faction === 'CITY_GUARD') moodParts.push('치안 위기 대응 중');
+          else moodParts.push('위험을 느끼고 있다');
+        }
+
+        if (moodParts.length > 0) {
+          currentMood = moodParts.join('. ');
+        }
+      }
+
+      const hintText = hints.length > 0 ? `\n    감정: ${hints.join('. ')}` : '';
+      const behaviorText = behaviorParts.length > 0
+        ? `\n    ${behaviorParts.join('\n    ')}`
+        : '';
+      const moodText = currentMood ? `\n    현재 상태: ${currentMood}` : '';
+      emotionalLines.push(`- ${displayName} [${posture}]${hintText}${behaviorText}${moodText}`);
+    }
+
+    // 이번 턴 NPC 감정 변화 delta
+    if (ctx.npcDeltaHint) {
+      emotionalLines.push(ctx.npcDeltaHint);
+    }
+
+    if (emotionalLines.length > 0) {
+      return `NPC 감정:\n${emotionalLines.join('\n')}`;
+    }
+    return null;
   }
 }

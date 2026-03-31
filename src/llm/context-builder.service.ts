@@ -57,7 +57,11 @@ export interface LlmContext {
   narrativeThread: string | null; // 장면 흐름 캐시
   // Narrative Engine v1
   incidentContext: string | null; // 활성 Incident 요약
-  npcEmotionalContext: string | null; // NPC 감정 상태 요약
+  npcEmotionalContext: string | null; // NPC 감정 상태 요약 (deprecated — prompt-builder에서 직접 빌드)
+  npcStates: Record<string, any> | null; // NPC 상태 (prompt-builder에서 감정 블록 빌드용)
+  npcDeltaHint: string | null; // 이번 턴 NPC 감정 변화 delta
+  hubHeat: number; // HUB Heat 수치 (NPC 감정 블록 mood 계산용)
+  hubSafety: string; // HUB 안전도 (NPC 감정 블록 mood 계산용)
   narrativeMarkContext: string | null; // Narrative Mark 요약
   signalContext: string | null; // Signal Feed 요약
   // NPC 소개 시스템
@@ -379,6 +383,7 @@ export class ContextBuilderService {
     // Narrative Engine v1: Incident / NPC Emotional / Marks / Signals 컨텍스트
     let incidentContext: string | null = null;
     let npcEmotionalContext: string | null = null;
+    let npcDeltaHint: string | null = null;
     let narrativeMarkContext: string | null = null;
     let signalContext: string | null = null;
 
@@ -395,158 +400,10 @@ export class ContextBuilderService {
         incidentContext = `활성 사건 ${activeIncidents.length}건:\n${lines.join('\n')}`;
       }
 
-      // NPC 감정 상태 요약 (personality + 감정 수치 기반 인격 힌트)
+      // NPC 감정 상태 → prompt-builder에서 targetNpcIds 기반으로 빌드
+      // 여기서는 npcDeltaHint(이번 턴 감정 변화 delta)만 추출
       const npcStates = runState.npcStates as Record<string, NPCState> | undefined;
       if (npcStates) {
-        const emotionalLines: string[] = [];
-        for (const [npcId, npc] of Object.entries(npcStates)) {
-          const em = npc.emotional as NpcEmotionalState | undefined;
-          if (em) {
-            const npcDef = this.content.getNpc(npcId);
-            const displayName = getNpcDisplayName(npc, npcDef);
-            const posture = computeEffectivePosture(npc);
-            const personality = npcDef?.personality;
-
-            // 감정 수치를 구체적 행동 변화로 변환 (personality 연동)
-            const hints: string[] = [];
-
-            // trust 기반 태도 변화
-            if (em.trust > 40) {
-              hints.push('당신을 신뢰하며 경계를 내려놓았다');
-              if (personality?.softSpot) hints.push(`인간적 순간이 드러날 수 있다: ${personality.softSpot}`);
-            } else if (em.trust > 15) {
-              hints.push('마음을 열기 시작했다 — 가끔 본심이 살짝 보인다');
-            } else if (em.trust < -20) {
-              hints.push('당신을 불신하며 거리를 둔다');
-            }
-
-            // fear 기반 (높을수록 성격/말투를 오버라이드)
-            if (em.fear > 40) {
-              hints.push('⚠️ [감정 우선] 겁에 질려 있다 — 판단력이 흐려지고 몸이 굳는다. 말투가 무너지고 더듬거린다. 이 공포가 posture/speechStyle보다 우선 반영되어야 한다');
-            } else if (em.fear > 30) {
-              hints.push('⚠️ [감정 우선] 두려움이 뚜렷하다 — 몸을 움츠리고 시선을 피한다. 평소 말투가 흔들리며 짧고 경계적으로 말한다. 이 감정이 speechStyle보다 우선한다');
-            } else if (em.fear > 15) {
-              hints.push('불안해하고 있다 — 말을 더듬거나 시선을 피한다. 평소보다 짧고 조심스럽게 말한다');
-            }
-
-            // respect 기반
-            if (em.respect > 30) hints.push('당신을 인정하고 있다 — 말투가 격식에서 벗어나기도 한다');
-            else if (em.respect < -20) hints.push('당신을 얕보고 있다');
-
-            // suspicion 기반
-            if (em.suspicion > 40) hints.push('당신의 의도를 강하게 의심한다 — 방어적이고 공격적');
-            else if (em.suspicion > 15) hints.push('경계심을 늦추지 않는다');
-
-            // attachment 기반
-            if (em.attachment > 30) hints.push('당신에게 개인적 유대를 느끼고 있다');
-
-            // personality 기반 행동 힌트 (핵심: posture와 personality 조합)
-            // personality.core는 첫 등장 시에만 전달 (반복 인용 방지)
-            const behaviorParts: string[] = [];
-            if (personality) {
-              const isNpcFirstInSession = !(locationSessionTurns ?? []).some(
-                (t: { narrative?: string }) => t.narrative?.includes(displayName),
-              );
-              if (isNpcFirstInSession && personality.core) {
-                behaviorParts.push(personality.core);
-              }
-              if (personality.speechStyle) behaviorParts.push(`말투: ${personality.speechStyle}`);
-              // innerConflict는 trust > 15 또는 respect > 20일 때만 노출 (경계가 풀려야 내면이 보인다)
-              if (personality.innerConflict && (em.trust > 15 || em.respect > 20)) {
-                behaviorParts.push(`내면: ${personality.innerConflict}`);
-              }
-              // signature 표현 (매 턴 반복이 아닌 가끔 보이는 습관)
-              if (personality.signature?.length) {
-                behaviorParts.push(`가끔 보이는 습관(매 턴 반복 금지, 2~3턴에 1번 정도): ${personality.signature.join(' / ')}`);
-              }
-              // npcRelations: introduced된 NPC에 대한 관계만 노출
-              if (personality.npcRelations) {
-                const introducedNpcIdSet = new Set(
-                  Object.entries(runState?.npcStates as Record<string, any> ?? {})
-                    .filter(([, s]) => s.introduced || s.encounterCount > 0)
-                    .map(([id]) => id),
-                );
-                const relLines: string[] = [];
-                for (const [relNpcId, relDesc] of Object.entries(personality.npcRelations)) {
-                  if (introducedNpcIdSet.has(relNpcId) || relNpcId === npcId) {
-                    const relNpcDef = this.content.getNpc(relNpcId);
-                    const relNpcState = (runState?.npcStates as Record<string, any>)?.[relNpcId];
-                    const relDisplayName = relNpcDef && relNpcState
-                      ? getNpcDisplayName(relNpcState, relNpcDef)
-                      : relNpcDef?.unknownAlias ?? relNpcId;
-                    // 관계 설명 내 NPC 실명을 강제 치환 (introduced 상태와 무관하게)
-                    let sanitizedDesc = relDesc as string;
-                    // 1. 관계 대상 NPC 실명 → alias 치환
-                    if (relNpcDef?.name) {
-                      const alias = relNpcDef.unknownAlias || '누군가';
-                      sanitizedDesc = sanitizedDesc.replaceAll(relNpcDef.name, alias);
-                      for (const a of (relNpcDef as any).aliases ?? []) {
-                        sanitizedDesc = sanitizedDesc.replaceAll(a as string, alias);
-                      }
-                    }
-                    // 2. 기존 sanitize로 다른 NPC 실명도 처리
-                    sanitizedDesc = this.sanitizeNpcNames(sanitizedDesc, runState);
-                    relLines.push(`${relDisplayName}: ${sanitizedDesc}`);
-                  }
-                }
-                if (relLines.length > 0) {
-                  behaviorParts.push(`관계: ${relLines.join(' | ')}`);
-                }
-              }
-            }
-
-            // 런타임 currentMood 계산: 월드 상태 -> NPC별 현재 분위기
-            const ws = runState?.worldState as Record<string, unknown> | undefined;
-            let currentMood: string | null = null;
-            if (ws && npcDef) {
-              const heat = (ws.hubHeat as number) ?? 0;
-              const safety = (ws.hubSafety as string) ?? 'SAFE';
-              const activeIncidents = (ws.activeIncidents ?? []) as Array<Record<string, unknown>>;
-              const faction = npcDef.faction;
-
-              const moodParts: string[] = [];
-
-              // Heat 기반 무드
-              if (heat > 70) {
-                if (faction === 'CITY_GUARD') moodParts.push('비상 경계 중 — 극도로 긴장하고 예민하다');
-                else moodParts.push('도시 전체가 긴장 — 불안하고 조심스럽다');
-              } else if (heat > 40) {
-                if (faction === 'CITY_GUARD') moodParts.push('경계 강화 중 — 평소보다 날카롭다');
-                else moodParts.push('거리가 어수선하다 — 경계하고 있다');
-              }
-
-              // Safety 기반 무드
-              if (safety === 'DANGER') {
-                if (faction === 'CITY_GUARD') moodParts.push('치안 위기 대응 중');
-                else moodParts.push('위험을 느끼고 있다');
-              }
-
-              // 관련 인시던트 기반 무드
-              for (const inc of activeIncidents) {
-                const pressure = (inc.pressure as number) ?? 0;
-                if (pressure >= 70) {
-                  moodParts.push('심각한 사건이 진행 중 — 여유가 없다');
-                  break;
-                } else if (pressure >= 40) {
-                  moodParts.push('뭔가 신경 쓰이는 일이 있다');
-                  break;
-                }
-              }
-
-              if (moodParts.length > 0) {
-                currentMood = moodParts.join('. ');
-              }
-            }
-
-            const hintText = hints.length > 0 ? `\n    감정: ${hints.join('. ')}` : '';
-            const behaviorText = behaviorParts.length > 0
-              ? `\n    ${behaviorParts.join('\n    ')}`
-              : '';
-            const moodText = currentMood ? `\n    현재 상태: ${currentMood}` : '';
-            emotionalLines.push(`- ${displayName} [${posture}]${hintText}${behaviorText}${moodText}`);
-          }
-        }
-        // 이번 턴 NPC 감정 변화 delta
         const lastDelta = (runState as any).lastNpcDelta as { npcId: string; delta: Record<string, number>; actionType: string; outcome: string } | undefined;
         if (lastDelta && Object.keys(lastDelta.delta).length > 0) {
           const axisNames: Record<string, string> = { trust: '신뢰', fear: '공포', respect: '존경', suspicion: '의심', attachment: '유대' };
@@ -556,12 +413,10 @@ export class ContextBuilderService {
           const npcDef = this.content.getNpc(lastDelta.npcId);
           const npcState = npcStates[lastDelta.npcId];
           const dName = npcState ? getNpcDisplayName(npcState, npcDef) : lastDelta.npcId;
-          emotionalLines.push(`⚡ 이번 턴 변화: ${dName}의 감정이 변했다 (${deltaDesc}). 이 변화를 NPC의 표정, 목소리, 행동에 반영하세요.`);
-        }
-        if (emotionalLines.length > 0) {
-          npcEmotionalContext = `NPC 감정:\n${emotionalLines.join('\n')}`;
+          npcDeltaHint = `⚡ 이번 턴 변화: ${dName}의 감정이 변했다 (${deltaDesc}). 이 변화를 NPC의 표정, 목소리, 행동에 반영하세요.`;
         }
       }
+      npcEmotionalContext = null; // deprecated — prompt-builder에서 빌드
 
       // Narrative Mark 요약
       const marks = (ws?.narrativeMarks ?? []) as NarrativeMark[];
@@ -966,6 +821,10 @@ export class ContextBuilderService {
       narrativeThread,
       incidentContext: sanitize(incidentContext),
       npcEmotionalContext: sanitize(npcEmotionalContext),
+      npcStates: (runState?.npcStates as Record<string, any>) ?? null,
+      npcDeltaHint: sanitize(npcDeltaHint),
+      hubHeat: ((runState?.worldState as Record<string, unknown> | undefined)?.hubHeat as number) ?? 0,
+      hubSafety: ((runState?.worldState as Record<string, unknown> | undefined)?.hubSafety as string) ?? 'SAFE',
       narrativeMarkContext: sanitize(narrativeMarkContext),
       signalContext: sanitize(signalContext),
       // NPC 소개 시스템
