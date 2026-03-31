@@ -1097,8 +1097,95 @@ export class TurnsService {
     const npcStates = { ...(runState.npcStates ?? {}) } as Record<string, NPCState>;
     const newlyIntroducedNpcIds: string[] = [];
     const newlyEncounteredNpcIds: string[] = [];
-    // effectiveNpcId: event.payload.primaryNpcId 우선, 없으면 npcInjection은 orchestration 이후 보충
-    const eventPrimaryNpc = event.payload.primaryNpcId ?? null;
+
+    // 대화 잠금 NPC 보정: 대화 행동 + targetNpc 미지정/불일치 + 이전 턴에 대화 NPC 존재 → 이전 NPC 유지
+    // IntentParser의 targetNpc보다 입력 텍스트의 NPC 이름/별칭 키워드 매칭이 우선
+    const SOCIAL_ACTIONS_FOR_LOCK = new Set(['TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP', 'INVESTIGATE', 'OBSERVE', 'TRADE']);
+
+    // 입력 텍스트에서 NPC 키워드 직접 매칭 (IntentParser LLM보다 정확)
+    // 우선순위: (1) 실명 전체 매칭 (2) 별칭 전체 매칭 (3) 별칭 키워드 부분 매칭
+    // 부분 키워드("수상한")가 다른 NPC 별칭에 우연히 포함되는 오매칭 방지
+    let textMatchedNpcId: string | null = null;
+    {
+      const inputLower = rawInput.toLowerCase();
+      const allNpcs = this.content.getAllNpcs();
+
+      // Pass 1: 실명 또는 별칭 전체 매칭 (가장 정확)
+      for (const npc of allNpcs) {
+        if (npc.name && inputLower.includes(npc.name.toLowerCase())) {
+          textMatchedNpcId = npc.npcId;
+          break;
+        }
+        if (npc.unknownAlias && inputLower.includes(npc.unknownAlias.toLowerCase())) {
+          textMatchedNpcId = npc.npcId;
+          break;
+        }
+      }
+
+      // Pass 2: "~에게" 패턴에서 대상 NPC 추출 (가장 정확한 플레이어 의도)
+      if (!textMatchedNpcId) {
+        const targetMatch = rawInput.match(/(.+?)에게/);
+        if (targetMatch) {
+          const targetWord = targetMatch[1].trim().toLowerCase();
+          this.logger.debug(`[TextNpcMatch] Pass2 에게 패턴: targetWord="${targetWord}"`);
+          for (const npc of allNpcs) {
+            const nameMatch = npc.name && targetWord.includes(npc.name.toLowerCase());
+            const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
+            const kwMatch = aliasKeywords.some(
+              (kw: string) => kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
+            );
+            if (nameMatch || kwMatch) {
+              textMatchedNpcId = npc.npcId;
+              break;
+            }
+          }
+        }
+      }
+
+      // Pass 3: 별칭 키워드 부분 매칭 (3자 이상)
+      if (!textMatchedNpcId) {
+        for (const npc of allNpcs) {
+          const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
+          const kwMatch = aliasKeywords.some(
+            (kw: string) => kw.length >= 3 && inputLower.includes(kw.toLowerCase()),
+          );
+          if (kwMatch) {
+            textMatchedNpcId = npc.npcId;
+            break;
+          }
+        }
+      }
+    }
+
+    // textMatchedNpcId가 있으면 intentV3.targetNpcId보다 우선 (플레이어가 직접 이름을 언급)
+    const resolvedTargetNpcId = textMatchedNpcId ?? intentV3.targetNpcId ?? null;
+
+    let conversationLockedNpcId: string | null = null;
+    if (SOCIAL_ACTIONS_FOR_LOCK.has(intent.actionType) && !resolvedTargetNpcId) {
+      // 이전 턴의 primaryNpcId를 찾아서 대화 잠금 적용
+      for (let i = actionHistory.length - 1; i >= 0; i--) {
+        const prev = actionHistory[i] as Record<string, unknown>;
+        const prevNpc = prev.primaryNpcId as string | undefined;
+        const prevAction = prev.actionType as string | undefined;
+        if (prevNpc && SOCIAL_ACTIONS_FOR_LOCK.has(prevAction ?? '')) {
+          conversationLockedNpcId = prevNpc;
+          this.logger.debug(`[대화잠금] 이전 대화 NPC ${conversationLockedNpcId} 유지 (action=${intent.actionType}, prevAction=${prevAction})`);
+          break;
+        }
+        // 비대화 행동이면 잠금 해제
+        break;
+      }
+    }
+
+    // effectiveNpcId: (1) 텍스트 매칭 NPC (2) intent.targetNpcId (3) conversationLockedNpcId (4) event.payload.primaryNpcId
+    let eventPrimaryNpc = event.payload.primaryNpcId ?? null;
+    if (resolvedTargetNpcId) {
+      // 입력 텍스트 키워드 또는 IntentParser가 NPC를 지정 → 최우선
+      eventPrimaryNpc = resolvedTargetNpcId;
+    } else if (conversationLockedNpcId && !eventPrimaryNpc) {
+      // 대화 잠금 NPC → event에 NPC가 없을 때 보정
+      eventPrimaryNpc = conversationLockedNpcId;
+    }
     // 현재 location의 관련 NPC에게 감정 영향 적용
     if (eventPrimaryNpc) {
       const npcId = eventPrimaryNpc;
