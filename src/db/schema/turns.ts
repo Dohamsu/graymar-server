@@ -64,6 +64,7 @@ export const turns = pgTable(
     llmTokenStats: jsonb('llm_token_stats').$type<{ prompt: number; cached: number; cacheCreation?: number; completion: number; latencyMs: number }>(),
     llmCompletedAt: timestamp('llm_completed_at'),
     llmChoices: jsonb('llm_choices').$type<ChoiceItem[]>(),
+    llmPrompt: jsonb('llm_prompt').$type<unknown[]>(),
 
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },

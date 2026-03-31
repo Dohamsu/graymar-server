@@ -3094,6 +3094,7 @@ export class TurnsService {
         parsedBy: turn.parsedBy, parseConfidence: turn.confidence,
         parsedIntent: turn.parsedIntent, policyResult: turn.policyResult,
         actionPlan: turn.actionPlan, idempotencyKey: turn.idempotencyKey,
+        llmPrompt: turn.llmPrompt ?? null,
       };
     }
 
