@@ -1,7 +1,17 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { execSync } from 'node:child_process';
 import { desc, eq, count, and } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { bugReports } from '../db/schema/bug-reports.js';
+
+/** 서버 git 버전 — 프로세스 시작 시 1회 캐싱 */
+const SERVER_VERSION = (() => {
+  try {
+    return execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
+  } catch {
+    return 'unknown';
+  }
+})();
 import { runSessions } from '../db/schema/index.js';
 import {
   NotFoundError,
@@ -43,6 +53,7 @@ export class BugReportService {
         category: body.category,
         description: body.description ?? null,
         recentTurns: body.recentTurns,
+        serverVersion: SERVER_VERSION,
       })
       .returning();
 
