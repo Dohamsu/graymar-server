@@ -1607,12 +1607,13 @@ export class TurnsService {
         }
 
         // 경로 2: NPC knownFacts — SUCCESS/PARTIAL + 정보성 행동
-        const INFO_ACTIONS = new Set(['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE', 'SEARCH', 'HELP', 'BRIBE']);
+        // effectiveNpcId: 텍스트 매칭 → IntentParser → 대화 잠금 → 이벤트 NPC 순으로 결정됨
+        const INFO_ACTIONS = new Set(['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE', 'SEARCH', 'HELP', 'BRIBE', 'THREATEN', 'STEAL']);
         if (
           (resolveResult.outcome === 'SUCCESS' || resolveResult.outcome === 'PARTIAL') &&
           INFO_ACTIONS.has(intent.actionType)
         ) {
-          // primaryNpc가 있으면 그 NPC에서, 없으면 이벤트 payload.primaryNpcId에서 시도
+          // eventPrimaryNpc에 대화 잠금/텍스트 매칭 보정이 이미 적용되어 있음 (FREE 턴에서도 작동)
           const npcId = eventPrimaryNpc
             ?? ((event?.payload as Record<string, unknown>)?.primaryNpcId as string | undefined)
             ?? null;
@@ -1620,6 +1621,7 @@ export class TurnsService {
             const revealedFactId = this.questProgression.getRevealableQuestFact(npcId, updatedRunState);
             if (revealedFactId) {
               addFact(revealedFactId, `npc:${npcId}`);
+              this.logger.log(`[Quest] Fact discovered: ${revealedFactId} (source: npc:${npcId})`);
             }
           }
         }
