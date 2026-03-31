@@ -420,9 +420,14 @@ export class ContextBuilderService {
               hints.push('당신을 불신하며 거리를 둔다');
             }
 
-            // fear 기반
-            if (em.fear > 40) hints.push('겁에 질려 있다 — 판단력이 흐려져 있다');
-            else if (em.fear > 15) hints.push('불안해하고 있다 — 평소보다 말이 짧아진다');
+            // fear 기반 (높을수록 성격/말투를 오버라이드)
+            if (em.fear > 40) {
+              hints.push('⚠️ [감정 우선] 겁에 질려 있다 — 판단력이 흐려지고 몸이 굳는다. 말투가 무너지고 더듬거린다. 이 공포가 posture/speechStyle보다 우선 반영되어야 한다');
+            } else if (em.fear > 30) {
+              hints.push('⚠️ [감정 우선] 두려움이 뚜렷하다 — 몸을 움츠리고 시선을 피한다. 평소 말투가 흔들리며 짧고 경계적으로 말한다. 이 감정이 speechStyle보다 우선한다');
+            } else if (em.fear > 15) {
+              hints.push('불안해하고 있다 — 말을 더듬거나 시선을 피한다. 평소보다 짧고 조심스럽게 말한다');
+            }
 
             // respect 기반
             if (em.respect > 30) hints.push('당신을 인정하고 있다 — 말투가 격식에서 벗어나기도 한다');
@@ -450,9 +455,9 @@ export class ContextBuilderService {
               if (personality.innerConflict && (em.trust > 15 || em.respect > 20)) {
                 behaviorParts.push(`내면: ${personality.innerConflict}`);
               }
-              // signature 표현
+              // signature 표현 (매 턴 반복이 아닌 가끔 보이는 습관)
               if (personality.signature?.length) {
-                behaviorParts.push(`시그니처: ${personality.signature.join(' / ')}`);
+                behaviorParts.push(`가끔 보이는 습관(매 턴 반복 금지, 2~3턴에 1번 정도): ${personality.signature.join(' / ')}`);
               }
               // npcRelations: introduced된 NPC에 대한 관계만 노출
               if (personality.npcRelations) {
@@ -575,17 +580,24 @@ export class ContextBuilderService {
     }
 
     // NPC 소개 시스템: 소개 상태 수집
+    // ⚠️ newlyIntroducedNpcIds(이번 턴에 처음 소개되는 NPC)는 제외해야 함.
+    // turns.service에서 introduced=true를 먼저 설정한 후 DB에 커밋하므로,
+    // 비동기 LLM Worker가 읽는 runState에는 이미 introduced=true가 반영되어 있다.
+    // 이들을 introducedNpcIds에 포함하면 sanitizeNpcNames()가 실명을 통과시키고,
+    // prompt-builder가 실명을 사용해서 "이름 공개 전에 실명이 노출"되는 버그가 발생한다.
+    const newlyIntroducedNpcIds = (uiAny?.newlyIntroducedNpcIds as string[]) ?? [];
+    const newlyEncounteredNpcIds = (uiAny?.newlyEncounteredNpcIds as string[]) ?? [];
     const introducedNpcIds: string[] = [];
     if (runState) {
       const allNpcStates = runState.npcStates as Record<string, NPCState> | undefined;
       if (allNpcStates) {
         for (const [npcId, npc] of Object.entries(allNpcStates)) {
-          if (npc.introduced) introducedNpcIds.push(npcId);
+          if (npc.introduced && !newlyIntroducedNpcIds.includes(npcId)) {
+            introducedNpcIds.push(npcId);
+          }
         }
       }
     }
-    const newlyIntroducedNpcIds = (uiAny?.newlyIntroducedNpcIds as string[]) ?? [];
-    const newlyEncounteredNpcIds = (uiAny?.newlyEncounteredNpcIds as string[]) ?? [];
 
     // Structured Memory v2: 렌더링
     let structuredSummary: string | null = null;
