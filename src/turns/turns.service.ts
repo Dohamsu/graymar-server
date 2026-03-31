@@ -1,5 +1,14 @@
 // 정본: specs/HUB_system.md — Action-First 턴 파이프라인
 
+/** NPC portrait URL mapping (only NPCs with dedicated portraits) */
+const NPC_PORTRAITS: Record<string, string> = {
+  NPC_YOON_HAMIN: '/npc-portraits/harulun_boss.png',
+  NPC_SEO_DOYUN: '/npc-portraits/edric_veil.png',
+  NPC_KANG_CHAERIN: '/npc-portraits/mairel_dan.png',
+  NPC_LORD_VANCE: '/npc-portraits/lord_vance.png',
+  NPC_RAT_KING: '/npc-portraits/rat_king.png',
+};
+
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { and, asc, eq, ne } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
@@ -1512,6 +1521,7 @@ export class TurnsService {
       turnNo,
       resolveResult.outcome,
       event.payload.tags ?? [],
+      intent.actionType,
     );
     updatedRunState.pressure = orchestrationResult.pressure;
     if (orchestrationResult.peakMode) {
@@ -1676,6 +1686,16 @@ export class TurnsService {
     }
     if (newlyEncounteredNpcIds.length > 0) {
       (result.ui as any).newlyEncounteredNpcIds = newlyEncounteredNpcIds;
+      // Add portrait for the first newly encountered NPC that has one
+      const portraitNpcId = newlyEncounteredNpcIds.find(id => NPC_PORTRAITS[id]);
+      if (portraitNpcId) {
+        (result.ui as any).npcPortrait = {
+          npcId: portraitNpcId,
+          npcName: npcNames[portraitNpcId] ?? portraitNpcId,
+          imageUrl: NPC_PORTRAITS[portraitNpcId],
+          isNewlyIntroduced: newlyIntroducedNpcIds.includes(portraitNpcId),
+        };
+      }
     }
 
     // === Narrative Engine v1: UI data 추가 ===
