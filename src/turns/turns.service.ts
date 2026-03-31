@@ -794,24 +794,71 @@ export class TurnsService {
 
     // === 플레이어 대상 NPC 오버라이드 ===
     // 플레이어가 ACTION 텍스트에서 특정 NPC를 지목한 경우, 이벤트의 primaryNpcId를 교체
-    // → 이후 resolve, NPC injection, LLM 프롬프트 등 모든 하위 로직에 자동 반영
+    // 우선순위: (1) 실명 전체 매칭 (2) "~에게" 패턴 키워드 (3) 별칭 전체 매칭 (4) 키워드 3자+ 부분 매칭
     if (body.input.type === 'ACTION' && rawInput) {
       const playerInputLower = rawInput.toLowerCase();
       const allNpcDefs = this.content.getAllNpcs();
+      let overrideNpcId: string | null = null;
+
+      // Pass 1: 실명 또는 별칭 전체 매칭
       for (const npcDef of allNpcDefs) {
-        const nameMatch = npcDef.name && playerInputLower.includes(npcDef.name.toLowerCase());
-        const aliasMatch = npcDef.unknownAlias && playerInputLower.includes(npcDef.unknownAlias.toLowerCase());
-        const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
-        const keywordMatch = aliasKeywords.some(
-          (kw: string) => kw.length >= 2 && playerInputLower.includes(kw.toLowerCase()),
-        );
-        if (nameMatch || aliasMatch || keywordMatch) {
-          const prevNpc = (event.payload as Record<string, unknown>)?.primaryNpcId;
-          if (prevNpc !== npcDef.npcId) {
-            (event.payload as Record<string, unknown>).primaryNpcId = npcDef.npcId;
-            this.logger.log(`[NpcOverride] Player targeted ${npcDef.npcId} (was: ${prevNpc ?? 'none'})`);
+        if (npcDef.name && playerInputLower.includes(npcDef.name.toLowerCase())) {
+          overrideNpcId = npcDef.npcId; break;
+        }
+        if (npcDef.unknownAlias && playerInputLower.includes(npcDef.unknownAlias.toLowerCase())) {
+          overrideNpcId = npcDef.npcId; break;
+        }
+      }
+
+      // Pass 2: "~에게" 패턴에서 대상 NPC 추출 (가장 정확한 플레이어 의도)
+      if (!overrideNpcId) {
+        const egeMatch = rawInput.match(/(.+?)에게/);
+        if (egeMatch) {
+          const targetWord = egeMatch[1].trim().toLowerCase();
+          for (const npcDef of allNpcDefs) {
+            if (npcDef.name && targetWord.includes(npcDef.name.toLowerCase())) {
+              overrideNpcId = npcDef.npcId; break;
+            }
+            const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
+            if (aliasKeywords.some((kw: string) => kw.length >= 2 && targetWord.includes(kw.toLowerCase()))) {
+              overrideNpcId = npcDef.npcId; break;
+            }
           }
-          break;
+        }
+      }
+
+      // Pass 3: "~을/를" 패턴에서 대상 NPC 추출
+      if (!overrideNpcId) {
+        const eulMatch = rawInput.match(/(.+?)(?:을|를)\s/);
+        if (eulMatch) {
+          const targetWord = eulMatch[1].trim().toLowerCase();
+          for (const npcDef of allNpcDefs) {
+            if (npcDef.name && targetWord.includes(npcDef.name.toLowerCase())) {
+              overrideNpcId = npcDef.npcId; break;
+            }
+            const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
+            if (aliasKeywords.some((kw: string) => kw.length >= 2 && targetWord.includes(kw.toLowerCase()))) {
+              overrideNpcId = npcDef.npcId; break;
+            }
+          }
+        }
+      }
+
+      // Pass 4: 별칭 키워드 부분 매칭 (3자 이상만 — 오매칭 방지)
+      if (!overrideNpcId) {
+        for (const npcDef of allNpcDefs) {
+          const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
+          if (aliasKeywords.some((kw: string) => kw.length >= 3 && playerInputLower.includes(kw.toLowerCase()))) {
+            overrideNpcId = npcDef.npcId; break;
+          }
+        }
+      }
+
+      if (overrideNpcId) {
+        const prevNpc = (event.payload as Record<string, unknown>)?.primaryNpcId;
+        if (prevNpc !== overrideNpcId) {
+          (event.payload as Record<string, unknown>).primaryNpcId = overrideNpcId;
+          this.logger.log(`[NpcOverride] Player targeted ${overrideNpcId} (was: ${prevNpc ?? 'none'})`);
         }
       }
     }
@@ -1182,9 +1229,10 @@ export class TurnsService {
     if (resolvedTargetNpcId) {
       // 입력 텍스트 키워드 또는 IntentParser가 NPC를 지정 → 최우선
       eventPrimaryNpc = resolvedTargetNpcId;
-    } else if (conversationLockedNpcId && !eventPrimaryNpc) {
-      // 대화 잠금 NPC → event에 NPC가 없을 때 보정
+    } else if (conversationLockedNpcId) {
+      // 대화 잠금 NPC → 이벤트 배정 NPC보다 우선 (연속 대화 중 다른 NPC 끼어들기 방지)
       eventPrimaryNpc = conversationLockedNpcId;
+      (event.payload as Record<string, unknown>).primaryNpcId = conversationLockedNpcId;
     }
     // 현재 location의 관련 NPC에게 감정 영향 적용
     if (eventPrimaryNpc) {
