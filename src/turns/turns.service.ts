@@ -1592,6 +1592,10 @@ export class TurnsService {
         const addFact = (factId: string, source: string) => {
           if (factId && !existing.includes(factId)) {
             updatedRunState.discoveredQuestFacts = [...(updatedRunState.discoveredQuestFacts ?? []), factId];
+            // arcState에도 동기화 (checkTransition + API 응답에서 arcState.discoveredQuestFacts 참조)
+            if (updatedRunState.arcState) {
+              updatedRunState.arcState.discoveredQuestFacts = updatedRunState.discoveredQuestFacts;
+            }
             existing.push(factId); // 같은 턴 중복 방지
             this.logger.log(`[Quest] Fact discovered: ${factId} (source: ${source})`);
           }
@@ -1644,6 +1648,9 @@ export class TurnsService {
         const transition = this.questProgression.checkTransition(currentQuestState, discoveredFacts);
         if (transition.newState) {
           updatedRunState.questState = transition.newState;
+          if (updatedRunState.arcState) {
+            updatedRunState.arcState.questState = transition.newState;
+          }
           this.logger.log(`[Quest] ${currentQuestState} -> ${transition.newState}`);
         }
       } catch (err) {

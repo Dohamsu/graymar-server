@@ -11,4 +11,6 @@ export type ArcState = {
   currentRoute: ArcRoute | null;
   commitment: number; // 0~3 (3 = locked)
   betrayalCount: number; // 0~2
+  questState?: string | null;
+  discoveredQuestFacts?: string[];
 };
