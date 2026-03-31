@@ -12,7 +12,7 @@ import { runSessions } from '../db/schema/run-sessions.js';
 
 const MAX_IMAGES = 100;
 const IMAGE_DIR = path.resolve(process.cwd(), 'public', 'scene-images');
-const IMAGE_MODEL = 'gemini-2.5-flash-image';
+const IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
 @Injectable()
 export class SceneImageService {
