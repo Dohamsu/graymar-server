@@ -1927,7 +1927,7 @@ export class TurnsService {
       } : undefined,
     };
 
-    await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, postTickRunState, body.options?.skipLlm);
+    await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, postTickRunState, body.options?.skipLlm, intent);
 
     if (shouldEnd && endReason) {
       // Fixplan3-P1: RUN_ENDED 전 structuredMemory 통합 (go_hub 없이 런 종료 시 누락 방지)
@@ -2508,13 +2508,16 @@ export class TurnsService {
     run: any, currentNode: any, turnNo: number, body: SubmitTurnBody,
     rawInput: string, serverResult: ServerResultV1, runStateUpdate: RunState,
     skipLlm?: boolean,
+    intent?: Record<string, unknown> | null,
   ) {
     const llmStatus: LlmStatus = skipLlm ? 'SKIPPED' : 'PENDING';
     await this.db.insert(turns).values({
       runId: run.id, turnNo, nodeInstanceId: currentNode.id,
       nodeType: currentNode.nodeType as NodeType, inputType: body.input.type,
       rawInput, idempotencyKey: body.idempotencyKey,
-      parsedBy: null, confidence: null, parsedIntent: null,
+      parsedBy: (intent?.source as any) ?? null,
+      confidence: (intent?.confidence as number) ?? null,
+      parsedIntent: (intent as any) ?? null,
       policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
       serverResult, llmStatus,
     });
