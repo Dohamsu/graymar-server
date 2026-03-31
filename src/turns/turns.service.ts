@@ -1583,6 +1583,22 @@ export class TurnsService {
       // 첫 만남 이벤트 → 이벤트 고유 선택지
       choices = this.sceneShellService.buildLocationChoices(locationId, event.eventType, resolvedChoices, selectedChoiceIds, event.eventId);
     }
+    // === 선택지별 예상 보정치(modifier) 부착 ===
+    {
+      const pBonuses = presetActionBonuses ?? {};
+      for (const c of choices) {
+        const aff = c.action.payload.affordance as string | undefined;
+        const risk = c.action.payload.riskLevel as number | undefined;
+        let mod = 0;
+        if (event.matchPolicy === 'SUPPORT') mod += 1;
+        if (event.matchPolicy === 'BLOCK') mod -= 1;
+        mod -= event.friction;
+        if (risk === 3) mod -= 1;
+        if (aff && pBonuses[aff]) mod += pBonuses[aff];
+        if (mod !== 0) c.modifier = mod;
+      }
+    }
+
     // summary.short: "이번 턴의 핵심 한 문장" — 행동 + 판정결과만 (sceneFrame 분리하여 중복 전달 방지)
     const outcomeLabel = resolveResult.outcome === 'SUCCESS' ? '성공' : resolveResult.outcome === 'PARTIAL' ? '부분 성공' : '실패';
     const actionLabel = this.actionTypeToKorean(intent.actionType);

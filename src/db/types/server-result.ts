@@ -205,6 +205,7 @@ export type ChoiceItem = {
   id: string;
   label: string;
   hint?: string;
+  modifier?: number;
   action: {
     type: InputType;
     payload: Record<string, unknown>;
