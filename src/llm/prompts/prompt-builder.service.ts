@@ -613,7 +613,7 @@ export class PromptBuilderService {
       } else if (npc.introduced === false) {
         const npcDef = npc.npcId ? this.content.getNpc(npc.npcId) : undefined;
         const alias = npcDef?.unknownAlias || '낯선 인물';
-        introInstruction = `\n이 NPC는 아직 이름이 밝혀지지 않았습니다. "${alias}"으로만 지칭하세요.`;
+        introInstruction = `\n이 NPC는 아직 이름이 밝혀지지 않았습니다. "${alias}"으로만 지칭하세요.\n⚠️ 미소개 NPC는 신뢰가 형성되지 않았으므로 대사를 1~3문장으로 제한하세요. 핵심 정보를 주지 않고 떠보거나 경계하는 수준만 표현합니다.`;
       }
 
       // NPC 표시 이름 결정: introduced=true인 경우만 실명, 나머지는 별칭
@@ -626,13 +626,16 @@ export class PromptBuilderService {
         ? `\n이 NPC의 이름이 이번 장면에서 자연스럽게 드러납니다. 자기소개, 다른 인물의 언급, 또는 상황 단서를 통해 밝혀지도록 하세요. 별칭으로 시작하세요. (실명: "${npc.npcName}")`
         : '';
 
-      // NPC tier 확인
+      // NPC tier 확인 (미소개 상태면 CORE tier의 대사량 확장을 억제)
       const npcTier = npcDef?.tier ?? 'SUB';
-      const tierInstruction = npcTier === 'BACKGROUND'
-        ? '\n⚠️ 이 인물은 배경 인물입니다. 대사는 1~2마디로 제한하고, 서술의 초점은 이 인물이 아닌 플레이어의 행동에 맞추세요.'
-        : npcTier === 'CORE'
-          ? '\n이 인물은 핵심 인물입니다. 충분한 대사와 깊이 있는 상호작용을 서술하세요.'
-          : '';
+      let tierInstruction = '';
+      if (npcTier === 'BACKGROUND') {
+        tierInstruction = '\n⚠️ 이 인물은 배경 인물입니다. 대사는 1~2마디로 제한하고, 서술의 초점은 이 인물이 아닌 플레이어의 행동에 맞추세요.';
+      } else if (npcTier === 'CORE' && npc.introduced === true) {
+        tierInstruction = '\n이 인물은 핵심 인물입니다. 충분한 대사와 깊이 있는 상호작용을 서술하세요.';
+      } else if (npcTier === 'CORE' && npc.introduced === false) {
+        tierInstruction = '\n이 인물은 핵심 인물이지만 아직 미소개 상태입니다. 짧고 의미심장한 대사로 존재감만 드러내세요. 소개 후부터 깊이 있는 상호작용이 가능합니다.';
+      }
 
       // NPC 연속 등장 턴 수 계산
       const sessionTurns = ctx.locationSessionTurns ?? [];
@@ -648,13 +651,19 @@ export class PromptBuilderService {
           ? '\n이 인물은 직전 턴에도 등장했습니다. 대화를 이어가세요.'
           : '';
 
+      // OBSERVE/SEARCH 등 관찰 행동 시 NPC 대사 금지
+      const isPassiveObserve = rawInput && /관찰|살핀|살펴|지켜|훑|둘러/.test(rawInput);
+      const npcBehaviorInstruction = isPassiveObserve
+        ? '이 NPC를 배경에 등장시키되, 절대 플레이어에게 말을 걸거나 대사를 하지 마세요. NPC의 행동과 동작만 묘사하세요.'
+        : '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.';
+
       factsParts.push(
         [
           `[NPC 등장] ${npcDisplayName}이(가) 이 장면에 나타납니다.`,
           `이유: ${npc.reason}`,
           `자세: ${npc.posture}`,
-          `대화 시드: ${npc.dialogueSeed}`,
-          '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.',
+          ...(isPassiveObserve ? [] : [`대화 시드: ${npc.dialogueSeed}`]),
+          npcBehaviorInstruction,
           '⚠️ NPC의 personality 설명을 직접 인용하지 마세요. 행동과 대사로 성격을 보여주세요.',
           introInstruction,
           nameRevealHint,
@@ -798,14 +807,18 @@ export class PromptBuilderService {
 
       if (inputLower.includes('훔') || inputLower.includes('절도') || inputLower.includes('빼앗') || inputLower.includes('슬쩍')) {
         reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 절도를 시도합니다. NPC는 "조심하시오" 경고가 아니라, 놀람/분노/공포/목격자로서의 반응을 보여야 합니다. 예: 눈이 커지며 뒷걸음질, 물건을 움켜쥠, 경비를 부르려는 시선 등.';
-      } else if (inputLower.includes('싸움') || inputLower.includes('때') || inputLower.includes('공격') || inputLower.includes('위협')) {
-        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 폭력/위협을 시도합니다. NPC는 경고가 아니라, 공포/도주/방관/대항 중 하나로 반응하세요. CAUTIOUS NPC는 움츠러들거나 물러남. HOSTILE은 대항. FEARFUL은 도주.';
+      } else if (inputLower.includes('부수') || inputLower.includes('부쉈') || inputLower.includes('깨뜨') || inputLower.includes('내리치') || inputLower.includes('박살') || inputLower.includes('뜯') || inputLower.includes('파괴')) {
+        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 물리적 파괴를 시도합니다. 행동의 물리적 결과를 구체적으로 묘사하세요. 무엇이 부서졌는지, 안에서 무엇이 나왔는지, 주변이 어떻게 변했는지를 명확히 서술. SUCCESS: 의미 있는 새 발견(증거, 통로, 숨겨진 물건)이 드러남. PARTIAL: 일부만 드러나고 더 파야 할 것이 암시됨. FAIL: 소음으로 주목을 끌거나, 예상과 다른 결과. 같은 발견을 반복하지 말고 상황이 한 단계 진전되어야 합니다.';
+      } else if (inputLower.includes('싸움') || inputLower.includes('때') || inputLower.includes('공격')) {
+        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 폭력을 시도합니다. NPC는 경고가 아니라, 공포/도주/방관/대항 중 하나로 반응하세요. CAUTIOUS NPC는 움츠러들거나 물러남. HOSTILE은 대항. FEARFUL은 도주.';
+      } else if (inputLower.includes('위협') || inputLower.includes('협박') || inputLower.includes('겁을') || inputLower.includes('안 그러면')) {
+        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 위협합니다. NPC의 평소 speechStyle이 무너져야 합니다. SUCCESS: 시선을 피하고, 목소리가 떨리며, 짧고 끊긴 문장으로 복종. 차분한 설명조 금지. PARTIAL: 저항하려 하나 두려움에 일부 정보를 흘림. FAIL: 위협을 무시하거나 적대적으로 돌변.';
       } else if (inputLower.includes('말을 건') || inputLower.includes('설득') || inputLower.includes('대화')) {
         reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 대화를 시도합니다. NPC는 경고 대신 되묻기, 자기 사정 이야기, 조건 제시, 또는 화제 전환으로 반응하세요.';
       } else if (inputLower.includes('뇌물') || inputLower.includes('거래') || inputLower.includes('돈을')) {
         reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 뇌물/거래를 시도합니다. NPC는 경고가 아니라, 탐욕/망설임/거래 조건 제시/주변 경계로 반응하세요.';
       } else if (inputLower.includes('관찰') || inputLower.includes('살핀') || inputLower.includes('살펴')) {
-        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 관찰합니다. NPC는 플레이어의 시선을 의식하거나, 무심히 행동하거나, 뭔가를 숨기는 행동으로 반응하세요.';
+        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 관찰합니다. NPC는 절대 플레이어에게 말을 걸거나 대사를 하지 않습니다. NPC의 행동만 묘사하세요 — 시선을 피하거나, 무심히 행동하거나, 뭔가를 숨기는 동작 등. 플레이어는 관찰자이므로 NPC와 대화가 일어나지 않습니다.';
       } else if (inputLower.includes('잠입') || inputLower.includes('숨') || inputLower.includes('몰래')) {
         reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 은밀히 행동합니다. NPC는 발각 시 경악/추격, 미발각 시 무관심하게 행동하세요.';
       }
@@ -917,14 +930,11 @@ export class PromptBuilderService {
           ? npcDef.name
           : (npcDef.unknownAlias || '이번 턴 NPC');
         const speechParts = [
-          `[이번 턴 NPC 말투 — 반드시 적용]`,
+          `[이번 턴 NPC 말투]`,
           `${displayName}의 말투: ${npcDef.personality.speechStyle}`,
+          `⚠️ 이전 턴에 등장한 다른 NPC의 말투(자칭, 어미, 호칭)를 이 NPC에게 적용하지 마세요.`,
         ];
-        // 긍정 예시: speechStyle에 예시가 있으면 추가
-        if (npcDef.personality.signature?.length) {
-          speechParts.push(`특징적 행동/습관: ${npcDef.personality.signature.join(', ')}`);
-        }
-        speechParts.push(`⚠️ 이전 턴에 등장한 다른 NPC의 말투(자칭, 어미, 호칭)를 이 NPC에게 적용하지 마세요.`);
+        // signature는 [NPC 감정 상태]에서 이미 전달되므로 여기서 중복 주입하지 않음
         factsParts.push(speechParts.join('\n'));
       }
     }
