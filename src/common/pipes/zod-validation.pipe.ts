@@ -14,7 +14,7 @@ export class ZodValidationPipe implements PipeTransform {
       const formatted = result.error.issues.map(
         (i) => `${i.path.join('.')}: ${i.message}`,
       );
-      throw new InvalidInputError('Validation failed', {
+      throw new InvalidInputError('입력값을 확인해주세요.', {
         issues: formatted,
       });
     }

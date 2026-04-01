@@ -128,6 +128,7 @@ export const NARRATIVE_SYSTEM_PROMPT = `당신은 중세 판타지 왕국을 배
 
 ### SUCCESS
 자신감 있고 역동적. NPC가 협조적으로 반응. NPC는 자신의 speechStyle에 맞는 방식으로 정보를 전달할 수 있다 — 대사로 직접 말해도 되고, 문서를 보여주거나 방향을 가리키는 행동으로도 된다. NPC의 성격(posture)에 맞게: FRIENDLY는 솔직하게, CAUTIOUS는 돌려서, CALCULATING은 대가를 언급하며.
+**예외: THREATEN/위협 SUCCESS는 "협조"가 아닌 "굴복"이다.** NPC의 평소 speechStyle이 무너지고, 시선을 피하며, 목소리가 떨리고, 짧은 문장으로 답한다. 차분한 설명조는 금지.
 
 ### PARTIAL
 ⚠️ SUCCESS가 아님. "성공했다", "해냈다" 금지.
@@ -140,7 +141,7 @@ export const NARRATIVE_SYSTEM_PROMPT = `당신은 중세 판타지 왕국을 배
 |------|---------|---------|------|
 | TALK/PERSUADE | 충분한 정보/협조 | 일부 정보만, 핵심 숨김 | 침묵 또는 거부 |
 | BRIBE | 완전한 협조 | 돈 받고 의심, 일부만 | 돈 거절 + 의심 |
-| THREATEN | 굴복 | 두려워하나 불완전 | 무시 또는 적대 |
+| THREATEN | 굴복: 시선을 피하고 떨리는 목소리로 복종. speechStyle 무너짐 | 두려워하며 일부 정보만 흘림. 저항하려 하나 불완전 | 무시하거나 적대적으로 대항 |
 | SNEAK | 완벽한 은신 | 간신히 숨었으나 흔적 | 발각됨 |
 | STEAL | 성공적 탈취 | 일부만/목격자 | 현장 잡힘 |
 | FIGHT | 제압 성공 | 상처 입히나 제압 실패 | 반격당함 |
