@@ -61,7 +61,14 @@ export class RunsService {
     userId: string,
     presetId: string,
     gender: 'male' | 'female' = 'male',
-    options?: { campaignId?: string; scenarioId?: string; mode?: 'hub' | 'dag' },
+    options?: {
+      campaignId?: string;
+      scenarioId?: string;
+      mode?: 'hub' | 'dag';
+      characterName?: string;
+      bonusStats?: Record<string, number>;
+      traitId?: string;
+    },
   ) {
     const runMode = options?.mode ?? 'hub';
     // 0. 캠페인 CarryOver 조회 (캠페인 모드일 때)
@@ -94,6 +101,15 @@ export class RunsService {
     if (isFirstScenario && !preset) {
       throw new BadRequestError(`Unknown presetId: ${presetId}`);
     }
+
+    // 0-2. 특성 검증
+    const traitId = options?.traitId;
+    const traitDef = traitId ? this.content.getTrait(traitId) : undefined;
+    if (traitId && !traitDef) {
+      throw new BadRequestError(`Unknown traitId: ${traitId}`);
+    }
+    const characterName = options?.characterName;
+    const bonusStats = options?.bonusStats;
 
     // 1. User 존재 확인
     const existingUser = await this.db.query.users.findFirst({
@@ -133,6 +149,25 @@ export class RunsService {
       };
     } else {
       presetStats = { ...DEFAULT_PERMANENT_STATS };
+    }
+
+    // bonusStats 합산 (str/dex/wit/con/per/cha)
+    if (bonusStats) {
+      for (const [key, val] of Object.entries(bonusStats)) {
+        if (key in presetStats && key !== 'maxHP' && key !== 'maxStamina') {
+          (presetStats as Record<string, number>)[key] += val;
+        }
+      }
+    }
+
+    // trait effects 적용: maxHpBonus, maxHpPenalty
+    if (traitDef?.effects) {
+      if (traitDef.effects.maxHpBonus) {
+        presetStats.maxHP += traitDef.effects.maxHpBonus;
+      }
+      if (traitDef.effects.maxHpPenalty) {
+        presetStats.maxHP += traitDef.effects.maxHpPenalty; // negative value
+      }
     }
 
     let profile = await this.db.query.playerProfiles.findFirst({
@@ -246,6 +281,30 @@ export class RunsService {
       }
     }
 
+    // 특성 globalTrustBonus 적용 — 모든 NPC trust 증가
+    if (traitDef?.effects?.globalTrustBonus) {
+      const trustBonus = traitDef.effects.globalTrustBonus;
+      for (const npcState of Object.values(npcStates)) {
+        npcState.emotional.trust = (npcState.emotional.trust ?? 0) + trustBonus;
+        npcState.trustToPlayer = npcState.emotional.trust;
+      }
+      this.logger.log(`[TraitEffect] globalTrustBonus=${trustBonus} applied to ${Object.keys(npcStates).length} NPCs`);
+    }
+
+    // 특성 actionBonuses를 프리셋 actionBonuses에 합산
+    const mergedActionBonuses: Record<string, number> = { ...(preset?.actionBonuses ?? {}) };
+    if (traitDef?.effects?.actionBonuses) {
+      for (const [action, bonus] of Object.entries(traitDef.effects.actionBonuses)) {
+        mergedActionBonuses[action] = (mergedActionBonuses[action] ?? 0) + bonus;
+      }
+    }
+
+    // 특성 goldBonus 계산
+    const traitGoldBonus = traitDef?.effects?.goldBonus ?? 0;
+
+    // 특성 런타임 효과 저장용 (failToPartialChance, criticalDisabled, lowHpBonus 등)
+    const traitEffects = traitDef?.effects ? { ...traitDef.effects } : undefined;
+
     // 초기 RunState 결정 — CarryOver 또는 프리셋 기반
     let initialRunState: RunState;
 
@@ -332,7 +391,7 @@ export class RunsService {
       }
 
       initialRunState = {
-        gold: preset?.startingGold ?? 50,
+        gold: (preset?.startingGold ?? 50) + traitGoldBonus,
         hp: presetStats.maxHP,
         maxHp: presetStats.maxHP,
         stamina: presetStats.maxStamina,
@@ -351,6 +410,10 @@ export class RunsService {
         itemMemories: startItemMemories,
         questState: 'S0_ARRIVE',
         discoveredQuestFacts: [],
+        characterName,
+        traitId,
+        traitEffects,
+        actionBonuses: Object.keys(mergedActionBonuses).length > 0 ? mergedActionBonuses : undefined,
       };
     }
 
@@ -460,11 +523,21 @@ export class RunsService {
           },
           {
             key: 'protagonist',
-            value: `이름 없는 용병 — ${preset?.protagonistTheme ?? '이름 없는 용병.'} 그레이마르에는 일거리를 찾아 며칠 전 도착했다.`,
+            value: `${characterName ? characterName : '이름 없는 용병'} — ${preset?.protagonistTheme ?? '이름 없는 용병.'} 그레이마르에는 일거리를 찾아 며칠 전 도착했다.`,
             importance: 0.8,
             tags: ['PROTAGONIST', 'THEME'],
           },
       ];
+
+      // 특성 정보를 L0 theme에 추가
+      if (traitDef) {
+        themeEntries.push({
+          key: 'trait',
+          value: `특성: ${traitDef.name} — ${traitDef.description}`,
+          importance: 0.7,
+          tags: ['TRAIT', 'THEME'],
+        });
+      }
 
       // 캠페인 요약이 있으면 L0 theme에 추가
       if (carryOver?.campaignSummary) {

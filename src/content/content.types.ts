@@ -122,6 +122,7 @@ export type PresetDefinition = {
   description: string;
   playstyleHint: string;
   protagonistTheme: string;
+  prologueHook?: string;
   stats: PlayerDefaults['stats'];
   startingGold: number;
   startingItems: Array<{ itemId: string; qty: number }>;
@@ -129,6 +130,29 @@ export type PresetDefinition = {
   npcPostureOverrides?: Record<string, { posture: string; trustDelta?: number }>;
   /** 프리셋별 actionType 판정 보너스 (optional, +1 수준) */
   actionBonuses?: Record<string, number>;
+};
+
+/** 특성(Trait) 정의 — traits.json 대응 */
+export type TraitEffects = {
+  actionBonuses?: Record<string, number>;
+  maxHpBonus?: number;
+  maxHpPenalty?: number;
+  goldBonus?: number;
+  globalTrustBonus?: number;
+  failToPartialChance?: number;
+  criticalDisabled?: boolean;
+  lowHpBonus?: { threshold50: number; threshold25: number };
+  healingReduction?: number;
+  nightBonus?: number;
+  dayPenalty?: number;
+};
+
+export type TraitDefinition = {
+  traitId: string;
+  name: string;
+  icon: string;
+  description: string;
+  effects: TraitEffects;
 };
 
 // HUB 시스템 콘텐츠 타입
