@@ -13,6 +13,7 @@ import { LlmModule } from './llm/llm.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CampaignsModule } from './campaigns/campaigns.module.js';
 import { SceneImageModule } from './scene-image/scene-image.module.js';
+import { PortraitModule } from './portrait/portrait.module.js';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { SceneImageModule } from './scene-image/scene-image.module.js';
     LlmModule,
     CampaignsModule,
     SceneImageModule,
+    PortraitModule,
   ],
   controllers: [AppController],
   providers: [
