@@ -18,6 +18,16 @@ export interface NpcEmotionalState {
   attachment: number; // 0~100 (애착)
 }
 
+/** NPC LLM 요약: 재등장 시 간소 프롬프트 블록용 (규칙 기반 생성, LLM 호출 없음) */
+export interface NpcLlmSummary {
+  moodLine: string;           // "경계를 풀기 시작했지만 여전히 신중" (~30자)
+  behaviorGuide: string;      // "투박한 ~하오 체, 짧은 문장, 안경 밀어올리기" (~40자)
+  lastDialogueTopic: string;  // "장부 조작 흔적에 대해 이야기함" (~30자)
+  lastDialogueSnippet: string;// "숫자가 맞지 않는 대목이 있소..." (~40자)
+  currentConcern: string;     // "상단 비리 고발 여부 고민 중" (~20자)
+  updatedAtTurn: number;
+}
+
 /** NPC 개인 기록: 플레이어와의 상호작용 이력 */
 export interface NpcPersonalMemoryEntry {
   turnNo: number;
@@ -53,6 +63,10 @@ export interface NPCState {
   emotional: NpcEmotionalState;
   // NPC 개인 기록 (플레이어와의 상호작용 이력)
   personalMemory?: NpcPersonalMemory;
+  // LLM 요약: 재등장 시 간소 프롬프트 블록용
+  llmSummary?: NpcLlmSummary;
+  // signature 마지막 주입 턴 (3턴 간격 관리)
+  lastSignatureTurn?: number;
 }
 
 export interface Relationship {
@@ -333,4 +347,100 @@ export function addNpcKnownFact(npcState: NPCState, fact: string): NPCState {
   }
 
   return { ...npcState, personalMemory: pm };
+}
+
+// ── NPC LLM Summary 유틸리티 ──
+
+/** speechStyle 문자열에서 핵심 키워드만 추출하여 ~50자로 압축 */
+export function condenseSpeechStyle(
+  speechStyle: string,
+  signatureFirst?: string,
+): string {
+  const parts: string[] = [];
+
+  // 어미 패턴 추출 (~하오, ~ㅂ니다 등)
+  const endingMatch = speechStyle.match(/[~\-][\w가-힣]+(?:체|투|조|말)/);
+  if (endingMatch) parts.push(endingMatch[0]);
+
+  // 주요 특성 키워드 추출 (쉼표/마침표 구분자로 split, 짧은 구문만)
+  const segments = speechStyle.split(/[,，.。]/).map(s => s.trim()).filter(s => s.length > 0 && s.length <= 20);
+  for (const seg of segments.slice(0, 3)) {
+    if (!parts.some(p => seg.includes(p))) {
+      parts.push(seg);
+    }
+  }
+
+  // signature 첫 항목 병기
+  if (signatureFirst) {
+    parts.push(signatureFirst);
+  }
+
+  const result = parts.join(', ');
+  return result.slice(0, 50);
+}
+
+/** moodLine 생성: trust + fear + posture -> 한국어 1줄 */
+function buildMoodLine(trust: number, fear: number, posture: NpcPosture): string {
+  const parts: string[] = [];
+
+  if (trust > 40) parts.push('마음을 열고 있다');
+  else if (trust > 20) parts.push('경계를 풀기 시작했다');
+  else if (trust > 5) parts.push('약간 마음이 풀렸다');
+  else if (trust >= -10) parts.push('중립적이지만 조심스럽다');
+  else if (trust >= -30) parts.push('불신하며 경계한다');
+  else parts.push('적대적이며 경계한다');
+
+  if (fear > 40) parts.push('두려워하고 있다');
+  else if (fear > 20) parts.push('불안해하고 있다');
+
+  const postureHints: Partial<Record<NpcPosture, string>> = {
+    CALCULATING: '계산적으로 저울질한다',
+    FEARFUL: '몸을 움츠리고 있다',
+  };
+  const ph = postureHints[posture];
+  if (ph && !parts.some(p => p.includes('두려워') || p.includes('불안'))) {
+    parts.push(ph);
+  }
+
+  return parts.join(', ').slice(0, 40);
+}
+
+/**
+ * NPC LLM 요약 생성 (규칙 기반, LLM 호출 없음).
+ * 재등장 시 간소 프롬프트 블록에 사용된다.
+ */
+export function buildNpcLlmSummary(
+  npcState: NPCState,
+  npcDef: {
+    personality?: { speechStyle: string; signature?: string[]; core?: string };
+    agenda?: string;
+  } | undefined,
+  turnNo: number,
+  lastDialogueTopic?: string,
+  lastDialogueSnippet?: string,
+): NpcLlmSummary {
+  const em = npcState.emotional;
+  const posture = computeEffectivePosture(npcState);
+
+  const moodLine = buildMoodLine(em.trust, em.fear, posture);
+
+  const personality = npcDef?.personality;
+  const behaviorGuide = personality?.speechStyle
+    ? condenseSpeechStyle(personality.speechStyle, personality.signature?.[0])
+    : '';
+
+  const concernParts: string[] = [];
+  if (npcState.currentGoal) concernParts.push(npcState.currentGoal);
+  else if (npcDef?.agenda) concernParts.push(npcDef.agenda);
+  else if (npcState.agenda) concernParts.push(npcState.agenda);
+  const currentConcern = (concernParts[0] ?? '').slice(0, 30);
+
+  return {
+    moodLine,
+    behaviorGuide,
+    lastDialogueTopic: (lastDialogueTopic ?? '').slice(0, 40),
+    lastDialogueSnippet: (lastDialogueSnippet ?? '').slice(0, 50),
+    currentConcern,
+    updatedAtTurn: turnNo,
+  };
 }

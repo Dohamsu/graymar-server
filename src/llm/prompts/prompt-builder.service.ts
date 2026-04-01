@@ -3,8 +3,8 @@
 import { Injectable } from '@nestjs/common';
 import type { LlmContext } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
-import type { NpcEmotionalState } from '../../db/types/npc-state.js';
-import { computeEffectivePosture, getNpcDisplayName } from '../../db/types/npc-state.js';
+import type { NpcEmotionalState, NpcLlmSummary, NPCState } from '../../db/types/npc-state.js';
+import { computeEffectivePosture, getNpcDisplayName, condenseSpeechStyle } from '../../db/types/npc-state.js';
 import type { LlmMessage } from '../types/index.js';
 import { NARRATIVE_SYSTEM_PROMPT } from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
@@ -874,11 +874,30 @@ export class PromptBuilderService {
     // === NPC knownFacts: SUCCESS/PARTIAL 판정 시 NPC가 공개할 단서 ===
     if (ctx.npcRevealableFact) {
       const { npcDisplayName, detail, resolveOutcome: factOutcome } = ctx.npcRevealableFact;
+      // NPC 말투 가이드 추출 (llmSummary.behaviorGuide > speechStyle 압축)
+      let factNpcSpeechGuide = '';
+      if (targetNpcIds.size > 0 && ctx.npcStates) {
+        const factNpcId = [...targetNpcIds][0];
+        const factNpcState = ctx.npcStates[factNpcId] as NPCState | undefined;
+        const factNpcDef = this.content.getNpc(factNpcId);
+        if (factNpcState?.llmSummary?.behaviorGuide) {
+          factNpcSpeechGuide = factNpcState.llmSummary.behaviorGuide;
+        } else if (factNpcDef?.personality?.speechStyle) {
+          factNpcSpeechGuide = condenseSpeechStyle(
+            factNpcDef.personality.speechStyle,
+            factNpcDef.personality.signature?.[0],
+          );
+        }
+      }
+      const speechLine = factNpcSpeechGuide
+        ? `${npcDisplayName}의 말투: ${factNpcSpeechGuide}\n이 말투로 다음 정보를 대사에 자연스럽게 녹이세요:\n`
+        : '';
+
       if (factOutcome === 'SUCCESS') {
         factsParts.push(
           [
             `[이번 턴 NPC가 공개할 정보]`,
-            `${npcDisplayName}이(가) 플레이어에게 다음 정보를 알려줍니다 (SUCCESS 판정 결과):`,
+            speechLine + `${npcDisplayName}이(가) 플레이어에게 다음 정보를 알려줍니다 (SUCCESS 판정 결과):`,
             `"${detail}"`,
             `이 정보를 NPC의 대사나 행동을 통해 자연스럽게 서술에 반영하세요. 직접 읽어주듯 전달하지 말고, NPC의 성격과 말투에 맞게 간접적으로 드러내세요.`,
           ].join('\n'),
@@ -889,7 +908,7 @@ export class PromptBuilderService {
         factsParts.push(
           [
             `[이번 턴 정보 힌트]`,
-            `${npcDisplayName}이(가) 다음 정보를 일부만 흘립니다 (PARTIAL 판정):`,
+            speechLine + `${npcDisplayName}이(가) 다음 정보를 일부만 흘립니다 (PARTIAL 판정):`,
             `"${hintText}"`,
             `핵심은 감추고 일부만 암시하세요. NPC가 말을 아끼거나 핵심을 돌려 말합니다.`,
           ].join('\n'),
@@ -968,12 +987,17 @@ export class PromptBuilderService {
         const displayName = introducedNpcIds.has(npcId)
           ? npcDef.name
           : (npcDef.unknownAlias || '이번 턴 NPC');
+        // 재등장 + llmSummary가 있으면 간소 말투, 첫 등장이면 풀 speechStyle
+        const npcState = ctx.npcStates?.[npcId] as NPCState | undefined;
+        const isReEncounter = (npcState?.encounterCount ?? 0) > 1;
+        const speechGuide = isReEncounter && npcState?.llmSummary?.behaviorGuide
+          ? npcState.llmSummary.behaviorGuide
+          : npcDef.personality.speechStyle;
         const speechParts = [
           `[이번 턴 NPC 말투]`,
-          `${displayName}의 말투: ${npcDef.personality.speechStyle}`,
+          `${displayName}의 말투: ${speechGuide}`,
           `⚠️ 이전 턴에 등장한 다른 NPC의 말투(자칭, 어미, 호칭)를 이 NPC에게 적용하지 마세요.`,
         ];
-        // signature는 [NPC 감정 상태]에서 이미 전달되므로 여기서 중복 주입하지 않음
         factsParts.push(speechParts.join('\n'));
       }
     }
@@ -1072,66 +1096,70 @@ export class PromptBuilderService {
       if (em.attachment > 30) hints.push('당신에게 개인적 유대를 느끼고 있다');
 
       // personality 기반 행동 힌트 (핵심: posture와 personality 조합)
-      // personality.core는 첫 등장 시에만 전달 (반복 인용 방지)
+      // 첫 등장 판정: encounterCount 기반 (이전의 narrative 텍스트 매칭 대신 정확한 카운터 사용)
+      const isFirstEncounter = (npc.encounterCount ?? 0) <= 1;
+      const llmSummary = (npc as NPCState).llmSummary as NpcLlmSummary | undefined;
+
       const behaviorParts: string[] = [];
-      if (personality) {
-        const isNpcFirstInSession = !(ctx.locationSessionTurns ?? []).some(
-          (t: { narrative?: string }) => t.narrative?.includes(displayName),
-        );
-        if (isNpcFirstInSession && personality.core) {
-          behaviorParts.push(personality.core);
-        }
-        if (personality.speechStyle) behaviorParts.push(`말투: ${personality.speechStyle}`);
-        // innerConflict는 trust > 15 또는 respect > 20일 때만 노출 (경계가 풀려야 내면이 보인다)
-        if (personality.innerConflict && (em.trust > 15 || em.respect > 20)) {
-          behaviorParts.push(`내면: ${personality.innerConflict}`);
-        }
-        // signature 표현 (매 턴 반복이 아닌 가끔 보이는 습관)
-        if (personality.signature?.length) {
-          behaviorParts.push(`가끔 보이는 습관(매 턴 반복 금지, 2~3턴에 1번 정도): ${personality.signature.join(' / ')}`);
-        }
-        // npcRelations: introduced된 NPC에 대한 관계만 노출
-        if (personality.npcRelations) {
-          const introducedNpcIdSet = new Set(
-            Object.entries(npcStates)
-              .filter(([, s]) => s.introduced || s.encounterCount > 0)
-              .map(([id]) => id),
-          );
-          const relLines: string[] = [];
-          for (const [relNpcId, relDesc] of Object.entries(personality.npcRelations)) {
-            if (introducedNpcIdSet.has(relNpcId) || relNpcId === npcId) {
-              const relNpcDef = this.content.getNpc(relNpcId);
-              const relNpcState = npcStates[relNpcId];
-              const relDisplayName = relNpcDef && relNpcState
-                ? (newlyIntroducedSet.has(relNpcId) ? (relNpcDef.unknownAlias || '낯선 인물') : getNpcDisplayName(relNpcState, relNpcDef))
-                : relNpcDef?.unknownAlias ?? relNpcId;
-              // 관계 설명 내 NPC 실명을 강제 치환 (introduced 상태와 무관하게)
-              let sanitizedDesc = relDesc as string;
-              if (relNpcDef?.name) {
-                const alias = relNpcDef.unknownAlias || '누군가';
-                sanitizedDesc = sanitizedDesc.replaceAll(relNpcDef.name, alias);
-                for (const a of (relNpcDef as any).aliases ?? []) {
-                  sanitizedDesc = sanitizedDesc.replaceAll(a as string, alias);
-                }
-              }
-              // 다른 NPC 실명도 alias 치환
-              for (const [otherNpcId, otherState] of Object.entries(npcStates)) {
-                if (otherState.introduced) continue;
-                const otherDef = this.content.getNpc(otherNpcId);
-                if (!otherDef?.name) continue;
-                const otherAlias = otherDef.unknownAlias || '누군가';
-                if (sanitizedDesc.includes(otherDef.name)) {
-                  sanitizedDesc = sanitizedDesc.replaceAll(otherDef.name, otherAlias);
-                }
-                for (const a of (otherDef as any).aliases ?? []) {
-                  if (sanitizedDesc.includes(a as string)) {
-                    sanitizedDesc = sanitizedDesc.replaceAll(a as string, otherAlias);
-                  }
-                }
-              }
-              relLines.push(`${relDisplayName}: ${sanitizedDesc}`);
+
+      if (isFirstEncounter || !llmSummary) {
+        // ── 첫 등장 또는 llmSummary 미생성: 풀 세트 ──
+        if (personality) {
+          if (personality.core) {
+            behaviorParts.push(personality.core);
+          }
+          if (personality.speechStyle) behaviorParts.push(`말투: ${personality.speechStyle}`);
+          // innerConflict는 trust > 15 또는 respect > 20일 때만 노출
+          if (personality.innerConflict && (em.trust > 15 || em.respect > 20)) {
+            behaviorParts.push(`내면: ${personality.innerConflict}`);
+          }
+          // signature 표현 (첫 등장이므로 항상 포함)
+          if (personality.signature?.length) {
+            behaviorParts.push(`가끔 보이는 습관(매 턴 반복 금지, 2~3턴에 1번 정도): ${personality.signature.join(' / ')}`);
+          }
+          // npcRelations: 현재 장면에 등장한 NPC + introduced NPC만 필터
+          if (personality.npcRelations) {
+            const relLines = this.buildFilteredNpcRelations(
+              personality.npcRelations, npcId, npcStates, newlyIntroducedSet, targetNpcIds,
+            );
+            if (relLines.length > 0) {
+              behaviorParts.push(`관계: ${relLines.join(' | ')}`);
             }
           }
+        }
+      } else {
+        // ── 재등장 + llmSummary 존재: 간소 버전 ──
+        behaviorParts.push(`분위기: ${llmSummary.moodLine}`);
+        if (llmSummary.behaviorGuide) {
+          behaviorParts.push(`말투: ${llmSummary.behaviorGuide}`);
+        }
+        if (llmSummary.lastDialogueTopic) {
+          behaviorParts.push(`직전 대화: ${llmSummary.lastDialogueTopic}`);
+        }
+        if (llmSummary.lastDialogueSnippet) {
+          behaviorParts.push(`마지막 대사: "${llmSummary.lastDialogueSnippet}"`);
+        }
+        if (llmSummary.currentConcern) {
+          behaviorParts.push(`현재 관심: ${llmSummary.currentConcern}`);
+        }
+
+        // innerConflict: 재등장에서도 조건 충족 시 노출
+        if (personality?.innerConflict && (em.trust > 15 || em.respect > 20)) {
+          behaviorParts.push(`내면: ${personality.innerConflict}`);
+        }
+
+        // signature 카운터: lastSignatureTurn 기반 3턴 간격
+        const lastSigTurn = (npc as NPCState).lastSignatureTurn ?? 0;
+        const currentTurnNo = llmSummary.updatedAtTurn;
+        if (personality?.signature?.length && (currentTurnNo - lastSigTurn) >= 3) {
+          behaviorParts.push(`가끔 보이는 습관(이번 턴에 넣어도 됨): ${personality.signature.join(' / ')}`);
+        }
+
+        // npcRelations: 재등장에서도 장면 등장 NPC만 필터
+        if (personality?.npcRelations) {
+          const relLines = this.buildFilteredNpcRelations(
+            personality.npcRelations, npcId, npcStates, newlyIntroducedSet, targetNpcIds,
+          );
           if (relLines.length > 0) {
             behaviorParts.push(`관계: ${relLines.join(' | ')}`);
           }
@@ -1184,5 +1212,61 @@ export class PromptBuilderService {
       return `NPC 감정:\n${emotionalLines.join('\n')}`;
     }
     return null;
+  }
+
+  /**
+   * npcRelations를 현재 장면에 등장한 NPC + introduced NPC만 필터하여 관계 라인 생성.
+   * targetNpcIds(현재 장면 NPC)를 우선하고, introduced NPC도 포함.
+   */
+  private buildFilteredNpcRelations(
+    npcRelations: Record<string, string>,
+    ownerNpcId: string,
+    npcStates: Record<string, any>,
+    newlyIntroducedSet: Set<string>,
+    sceneNpcIds: Set<string>,
+  ): string[] {
+    // 현재 장면에 등장한 NPC + introduced된 NPC = 관계 표시 대상
+    const eligibleNpcIds = new Set<string>();
+    for (const id of sceneNpcIds) eligibleNpcIds.add(id);
+    for (const [id, s] of Object.entries(npcStates)) {
+      if (s.introduced || s.encounterCount > 0) eligibleNpcIds.add(id);
+    }
+
+    const relLines: string[] = [];
+    for (const [relNpcId, relDesc] of Object.entries(npcRelations)) {
+      if (eligibleNpcIds.has(relNpcId) || relNpcId === ownerNpcId) {
+        const relNpcDef = this.content.getNpc(relNpcId);
+        const relNpcState = npcStates[relNpcId];
+        const relDisplayName = relNpcDef && relNpcState
+          ? (newlyIntroducedSet.has(relNpcId) ? (relNpcDef.unknownAlias || '낯선 인물') : getNpcDisplayName(relNpcState, relNpcDef))
+          : relNpcDef?.unknownAlias ?? relNpcId;
+        // 관계 설명 내 NPC 실명을 강제 치환 (introduced 상태와 무관하게)
+        let sanitizedDesc = relDesc;
+        if (relNpcDef?.name) {
+          const alias = relNpcDef.unknownAlias || '누군가';
+          sanitizedDesc = sanitizedDesc.replaceAll(relNpcDef.name, alias);
+          for (const a of (relNpcDef as any).aliases ?? []) {
+            sanitizedDesc = sanitizedDesc.replaceAll(a as string, alias);
+          }
+        }
+        // 다른 NPC 실명도 alias 치환
+        for (const [otherNpcId, otherState] of Object.entries(npcStates)) {
+          if (otherState.introduced) continue;
+          const otherDef = this.content.getNpc(otherNpcId);
+          if (!otherDef?.name) continue;
+          const otherAlias = otherDef.unknownAlias || '누군가';
+          if (sanitizedDesc.includes(otherDef.name)) {
+            sanitizedDesc = sanitizedDesc.replaceAll(otherDef.name, otherAlias);
+          }
+          for (const a of (otherDef as any).aliases ?? []) {
+            if (sanitizedDesc.includes(a as string)) {
+              sanitizedDesc = sanitizedDesc.replaceAll(a as string, otherAlias);
+            }
+          }
+        }
+        relLines.push(`${relDisplayName}: ${sanitizedDesc}`);
+      }
+    }
+    return relLines;
   }
 }

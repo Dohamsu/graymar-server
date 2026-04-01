@@ -93,7 +93,7 @@ import { LegendaryRewardService } from '../engine/rewards/legendary-reward.servi
 import type { RegionEconomy } from '../db/types/region-state.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
-import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders, recordNpcEncounter, addNpcKnownFact } from '../db/types/npc-state.js';
+import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders, recordNpcEncounter, addNpcKnownFact, buildNpcLlmSummary } from '../db/types/npc-state.js';
 import type { IncidentDef, IncidentRuntime, IncidentRoutingResult, NarrativeMarkCondition, NPCState, NpcEmotionalState } from '../db/types/index.js';
 import type { IncidentSummaryUI, SignalFeedItemUI, NpcEmotionalUI } from '../db/types/server-result.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
@@ -1305,6 +1305,21 @@ export class TurnsService {
           npcStates[npcId] = addNpcKnownFact(npcStates[npcId], factNote);
         }
       }
+
+      // === NPC LLM Summary 업데이트 (재등장 시 간소 프롬프트 블록용) ===
+      npcStates[npcId].llmSummary = buildNpcLlmSummary(
+        npcStates[npcId],
+        this.content.getNpc(npcId),
+        turnNo,
+        (event.payload.sceneFrame ?? '').slice(0, 40),
+        '', // LLM 출력은 비동기이므로 다음 턴에서 snippet 반영
+      );
+
+      // === signature 카운터 업데이트: 3턴 간격이 지났으면 이번 턴을 기록 ===
+      const lastSig = npcStates[npcId].lastSignatureTurn ?? 0;
+      if ((turnNo - lastSig) >= 3) {
+        npcStates[npcId].lastSignatureTurn = turnNo;
+      }
     }
 
     // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC 상태 초기화
@@ -1716,6 +1731,15 @@ export class TurnsService {
       npcStates[injectedNpcId] = recordNpcEncounter(
         npcStates[injectedNpcId], turnNo, locationId,
         intent.actionType, resolveResult.outcome, injBriefNote,
+      );
+
+      // === 주입된 NPC LLM Summary 업데이트 ===
+      npcStates[injectedNpcId].llmSummary = buildNpcLlmSummary(
+        npcStates[injectedNpcId],
+        this.content.getNpc(injectedNpcId),
+        turnNo,
+        (event.payload.sceneFrame ?? '').slice(0, 40),
+        '',
       );
     }
 
