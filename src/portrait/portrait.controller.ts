@@ -39,7 +39,7 @@ export class PortraitController {
     const rate = this.portraitService.checkRateLimit(ip);
     if (!rate.allowed) {
       throw new HttpException(
-        `Rate limit exceeded. Maximum ${5} portrait generations per hour.`,
+        `초상화 생성 횟수를 초과했습니다. 시간당 최대 ${rate.limit ?? 100}회까지 가능합니다.`,
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
