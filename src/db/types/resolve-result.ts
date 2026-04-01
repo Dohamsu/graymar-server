@@ -32,6 +32,9 @@ export type ResolveResult = {
   commitmentDelta: number;
   triggerCombat: boolean;
   combatEncounterId?: string;
+  // Trait runtime effects
+  traitBonus?: number; // BLOOD_OATH lowHpBonus + NIGHT_CHILD time bonus 합산
+  gamblerLuckTriggered?: boolean; // GAMBLER_LUCK FAIL->PARTIAL 승격 발동 여부
   // Narrative Engine v1
   incidentPatches?: IncidentImpactPatch[];
   matchedIncidentId?: string;

@@ -15,6 +15,7 @@ import { RestNodeService } from './rest-node.service.js';
 import { ShopNodeService, type ShopNodeState } from './shop-node.service.js';
 import { ExitNodeService } from './exit-node.service.js';
 import { InternalError } from '../../common/errors/game-errors.js';
+import type { TraitEffects } from '../../content/content.types.js';
 
 export interface NodeResolveInput {
   turnNo: number;
@@ -52,6 +53,9 @@ export interface NodeResolveInput {
 
   // 노드 상태 (EVENT, SHOP)
   nodeState?: Record<string, unknown>;
+
+  // Phase 4: 특성 런타임 효과 (전투 전달용)
+  traitEffects?: TraitEffects;
 }
 
 export interface NodeResolveOutput {
@@ -117,6 +121,7 @@ export class NodeResolverService {
       rewardSeed: input.rewardSeed ?? input.battleState.rng.seed,
       encounterRewards: input.encounterRewards,
       inventory: input.inventory,
+      traitEffects: input.traitEffects,
     });
 
     // combatOutcome 추출: nodeOutcome이 NODE_ENDED이면 VICTORY (패배/도주는 별도 처리)

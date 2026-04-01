@@ -25,14 +25,16 @@ export class DamageService {
     targetDef: number,
     rng: Rng,
     forced: boolean = false,
+    criticalDisabled: boolean = false,
   ): DamageResult {
     // varianceRoll (hit시에만 호출)
     const varianceRoll = rng.next();
     const variance = 0.9 + varianceRoll * 0.2; // 0.9 ~ 1.1
 
-    // critRoll (hit시에만 호출)
+    // critRoll (hit시에만 호출) — RNG 소비는 항상 수행 (결정성 보장)
     const critRoll = rng.next() * 100;
-    const isCrit = critRoll < attacker.crit;
+    // GAMBLER_LUCK: criticalDisabled면 크리티컬 불발 (RNG 소비는 유지)
+    const isCrit = criticalDisabled ? false : critRoll < attacker.crit;
 
     // DEF 계산 (치명타 시 30% 무시)
     let effectiveDef = targetDef;
