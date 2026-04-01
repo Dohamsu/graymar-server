@@ -102,6 +102,8 @@ export interface LlmContext {
   npcRevealableFact: { npcDisplayName: string; factId: string; detail: string; resolveOutcome: 'SUCCESS' | 'PARTIAL' } | null;
   // NPC가 이미 플레이어에게 공개한 정보 리스트 (반복 방지용)
   npcAlreadyRevealedFacts: { npcDisplayName: string; facts: string[] } | null;
+  // P5: FREE 턴에서 미발견 단서가 있음을 암시하는 힌트
+  questFactHint: string | null;
   // 장소 기반 NPC 필터링용
   currentLocationId: string | null;
   currentTimePhase: string | null;
@@ -870,6 +872,8 @@ export class ContextBuilderService {
       npcRevealableFact,
       // NPC가 이미 공개한 정보 (반복 방지)
       npcAlreadyRevealedFacts,
+      // P5: FREE 턴 단서 힌트
+      questFactHint: this.buildQuestFactHint(serverResult, runState),
       // 장소 기반 NPC 필터링
       currentLocationId: (runState?.worldState as any)?.currentLocationId ?? null,
       currentTimePhase: (runState?.worldState as any)?.phaseV2 ?? (runState?.worldState as any)?.timePhase ?? null,
@@ -1169,5 +1173,29 @@ export class ContextBuilderService {
     }
 
     return blocks.length > 0 ? blocks.join('\n\n') : null;
+  }
+
+  /** P5: FREE 턴에서 미발견 단서가 있음을 암시하는 힌트 */
+  private buildQuestFactHint(
+    serverResult: Record<string, unknown> | null,
+    runState: Record<string, unknown> | null | undefined,
+  ): string | null {
+    if (!serverResult || !runState) return null;
+    // FREE 이벤트인 경우에만 (이벤트가 매칭된 턴은 이미 fact 경로가 작동)
+    const eventId = (serverResult as any)?.ui?.eventId as string | undefined;
+    if (!eventId || !eventId.startsWith('FREE_')) return null;
+
+    const locationId = (runState as any)?.worldState?.currentLocationId;
+    if (!locationId) return null;
+
+    const discovered = new Set((runState as any)?.discoveredQuestFacts ?? []);
+    const allEvents = this.content.getAllEventsV2?.() ?? [];
+    const undiscoveredFacts = allEvents
+      .filter((e: any) => e.locationId === locationId && e.discoverableFact && !discovered.has(e.discoverableFact))
+      .map((e: any) => e.discoverableFact);
+
+    if (undiscoveredFacts.length === 0) return null;
+
+    return '이 장소에는 아직 발견하지 못한 단서가 숨어 있다. 주의 깊게 살펴보거나, 이곳 사람들에게 이야기를 건네면 무언가를 알아낼 수 있을 것 같은 기운이 감돈다.';
   }
 }

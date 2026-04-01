@@ -38,6 +38,9 @@ export interface Situation {
 
 @Injectable()
 export class SituationGeneratorService {
+  // P3: generate() 호출 시 설정, findTemplatePreferFact에서 참조
+  private _discoveredFacts?: Set<string>;
+
   constructor(
     @Inject(ContentLoaderService) private readonly content: ContentLoaderService,
     private readonly worldFact: WorldFactService,
@@ -55,7 +58,9 @@ export class SituationGeneratorService {
     allEvents: EventDefV2[],
     incidentDefs: IncidentDef[],
     recentPrimaryNpcIds?: string[],
+    discoveredFacts?: Set<string>,
   ): Situation | null {
+    this._discoveredFacts = discoveredFacts;
     // Layer 1: Landmark Event (스토리 체크포인트)
     const landmark = this.tryLandmark(ws, locationId, allEvents);
     if (landmark) return landmark;
@@ -65,7 +70,7 @@ export class SituationGeneratorService {
     if (incident) return incident;
 
     // Layer 3: World-State Situation (완전 동적)
-    const worldState = this.tryWorldState(ws, locationId, intent, allEvents, recentPrimaryNpcIds);
+    const worldState = this.tryWorldState(ws, locationId, intent, allEvents, recentPrimaryNpcIds, discoveredFacts);
     if (worldState) return worldState;
 
     return null; // fallback to EventMatcher
@@ -163,6 +168,7 @@ export class SituationGeneratorService {
     intent: ParsedIntentV2,
     allEvents: EventDefV2[],
     recentPrimaryNpcIds?: string[],
+    discoveredFacts?: Set<string>,
   ): Situation | null {
     const locState = ws.locationDynamicStates?.[locationId];
     const allPresentNpcs = locState?.presentNpcs ?? [];
@@ -238,10 +244,8 @@ export class SituationGeneratorService {
         const npcB = this.content.getNpc(presentNpcs[j]);
         if (!npcA || !npcB) continue;
         if (npcA.faction && npcB.faction && npcA.faction !== npcB.faction) {
-          // ENCOUNTER 타입 이벤트를 템플릿으로 사용
-          const template = allEvents.find(
-            (e) => e.locationId === locationId && e.eventType === 'ENCOUNTER',
-          );
+          // P3: ENCOUNTER 타입 이벤트를 템플릿으로 사용 (미발견 fact 우선)
+          const template = this.findTemplatePreferFact(allEvents, locationId, ['ENCOUNTER']);
           if (!template) continue;
 
           const sceneFrame = `${npcA.name}과(와) ${npcB.name}이(가) ${locationId.replace('LOC_', '').toLowerCase()}에서 마주치고 있다. 긴장감이 감돈다.`;
@@ -290,10 +294,8 @@ export class SituationGeneratorService {
           const npcDef = this.content.getNpc(npcId);
           if (!npcDef) continue;
 
-          const template = allEvents.find(
-            (e) => e.locationId === locationId &&
-              (e.eventType === 'ENCOUNTER' || e.eventType === 'OPPORTUNITY'),
-          );
+          // P3: 미발견 fact 이벤트 우선 template
+          const template = this.findTemplatePreferFact(allEvents, locationId, ['ENCOUNTER', 'OPPORTUNITY']);
           if (!template) continue;
 
           const sceneFrame = `${npcDef.name}이(가) 근처에 있다. 그의 태도에서 무언가 달라진 기색이 감지된다.`;
@@ -325,9 +327,8 @@ export class SituationGeneratorService {
     allEvents: EventDefV2[],
   ): Situation | null {
     const condition = conditions[0]; // 첫 번째 활성 조건
-    const template = allEvents.find(
-      (e) => e.locationId === locationId && e.eventType === 'ENCOUNTER',
-    );
+    // P3: 미발견 fact 이벤트 우선 template
+    const template = this.findTemplatePreferFact(allEvents, locationId, ['ENCOUNTER']);
     if (!template) return null;
 
     const conditionDescriptions: Record<string, string> = {
@@ -367,10 +368,8 @@ export class SituationGeneratorService {
     const schedule = npcDef.schedule;
     const currentActivity = schedule?.default[ws.phaseV2]?.activity ?? '무언가를 하고 있다';
 
-    const template = allEvents.find(
-      (e) => e.locationId === locationId &&
-        (e.eventType === 'ENCOUNTER' || e.eventType === 'FALLBACK'),
-    );
+    // P3: 미발견 fact 이벤트 우선 template
+    const template = this.findTemplatePreferFact(allEvents, locationId, ['ENCOUNTER', 'FALLBACK']);
     if (!template) return null;
 
     // 배경 NPC가 있으면 장면에 생동감 추가
@@ -401,6 +400,26 @@ export class SituationGeneratorService {
       primaryNpcId: npcId,
       relatedFacts: npcFacts.slice(-3).map((f) => f.id),
     };
+  }
+
+  /** P3: 미발견 discoverableFact가 있는 이벤트를 우선 선택하는 template finder */
+  private findTemplatePreferFact(
+    allEvents: EventDefV2[],
+    locationId: string,
+    eventTypes: string[],
+  ): EventDefV2 | undefined {
+    const candidates = allEvents.filter(
+      (e) => e.locationId === locationId && eventTypes.includes(e.eventType),
+    );
+    if (candidates.length === 0) return undefined;
+    // 미발견 fact가 있는 이벤트 우선
+    if (this._discoveredFacts) {
+      const factEvent = candidates.find(
+        (e) => (e as any).discoverableFact && !this._discoveredFacts!.has((e as any).discoverableFact),
+      );
+      if (factEvent) return factEvent;
+    }
+    return candidates[0];
   }
 
   /** NPC를 tier별로 분류 */
