@@ -14,22 +14,22 @@ export const CreateRunBodySchema = z.object({
     .min(1).max(8)
     .regex(/^[가-힣a-zA-Z\s]+$/, '한글, 영문, 공백만 허용')
     .optional(),
-  /** 보너스 스탯 분배 (합계 6, 각 값 0~6, str/dex/wit/con/per/cha만) */
-  bonusStats: z.record(
-    z.enum(VALID_BONUS_STAT_KEYS),
-    z.number().int().min(0).max(6),
-  ).optional()
+  /** 보너스 스탯 분배 (합계 6, 각 값 0~6, str/dex/wit/con/per/cha만, 미지정 키는 0) */
+  bonusStats: z.object({
+    str: z.number().int().min(0).max(6).default(0),
+    dex: z.number().int().min(0).max(6).default(0),
+    wit: z.number().int().min(0).max(6).default(0),
+    con: z.number().int().min(0).max(6).default(0),
+    per: z.number().int().min(0).max(6).default(0),
+    cha: z.number().int().min(0).max(6).default(0),
+  }).optional()
     .refine(
       (val) => {
         if (!val) return true;
-        // 허용된 키만 존재하는지 확인
-        const keys = Object.keys(val);
-        if (keys.some(k => !(VALID_BONUS_STAT_KEYS as readonly string[]).includes(k))) return false;
-        // 합계 6
-        const sum = Object.values(val).reduce((a, b) => a + b, 0);
+        const sum = val.str + val.dex + val.wit + val.con + val.per + val.cha;
         return sum === 6;
       },
-      { message: 'bonusStats 합계는 정확히 6이어야 하며, str/dex/wit/con/per/cha만 허용' },
+      { message: 'bonusStats 합계는 정확히 6이어야 합니다' },
     ),
   /** 선택 특성 ID (traits.json에 존재해야 함) */
   traitId: z.string().min(1).max(50).optional(),

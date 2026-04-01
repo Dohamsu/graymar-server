@@ -37,11 +37,13 @@ export class GameExceptionFilter implements ExceptionFilter {
       return;
     }
 
-    console.error('[GameExceptionFilter] Unhandled exception:', exception);
+    const errMsg = exception instanceof Error ? exception.message : String(exception);
+    const errStack = exception instanceof Error ? exception.stack : '';
+    console.error('[GameExceptionFilter] Unhandled exception:', errMsg, errStack);
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       code: 'INTERNAL_ERROR',
-      message: 'Internal server error',
-      details: null,
+      message: errMsg || 'Internal server error',
+      details: { stack: errStack?.split('\n').slice(0, 5) },
     });
   }
 }
