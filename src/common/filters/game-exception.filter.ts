@@ -42,8 +42,8 @@ export class GameExceptionFilter implements ExceptionFilter {
     console.error('[GameExceptionFilter] Unhandled exception:', errMsg, errStack);
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       code: 'INTERNAL_ERROR',
-      message: errMsg || 'Internal server error',
-      details: { stack: errStack?.split('\n').slice(0, 5) },
+      message: 'Internal server error',
+      details: null,
     });
   }
 }
