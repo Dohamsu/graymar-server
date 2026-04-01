@@ -684,14 +684,13 @@ export class TurnsService {
       // 사건 라우팅: DIRECT_MATCH + 높은 점수(40+)만 트리거로 인정
       const routingHasStrongIncident = routingResult.routeMode === 'DIRECT_MATCH' && routingResult.matchScore >= 40;
 
-      // D: 미발견 quest fact 이벤트가 현재 장소에 존재하면 2턴 간격으로 매칭 허용
+      // P1: 미발견 quest fact 이벤트가 현재 장소에 존재하면 매 턴 매칭 허용 (첫 턴 제외 — 첫 턴은 이미 통과)
       const discoveredFacts = new Set(runState.discoveredQuestFacts ?? []);
       const allEventsForCheck = this.content.getAllEventsV2();
       const hasUndiscoveredFactEvent = allEventsForCheck.some(
         (e: any) => e.locationId === locationId && e.discoverableFact && !discoveredFacts.has(e.discoverableFact),
       );
-      const factTurnInterval = actionHistory.length > 0 && actionHistory.length % 2 === 0; // 매 2턴마다
-      const questFactTrigger = hasUndiscoveredFactEvent && factTurnInterval;
+      const questFactTrigger = hasUndiscoveredFactEvent && actionHistory.length > 0;
 
       const shouldMatchEvent = isFirstTurnAtLocation || incidentPressureHigh || routingHasStrongIncident || questFactTrigger;
       this.logger.log(`[EventTrigger] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} routing=${routingHasStrongIncident}(${routingResult.routeMode}:${routingResult.matchScore}) questFact=${questFactTrigger} → match=${shouldMatchEvent}`);
@@ -703,16 +702,18 @@ export class TurnsService {
           .map((h) => h.eventId!);
 
         // Living World v2: SituationGenerator 우선 시도
+        // P0: questFactTrigger로 게이트를 열었으면 SitGen 바이패스 → fact 이벤트 매칭 보장
         const lastEventId = recentEventIds[recentEventIds.length - 1] ?? '';
         const lastWasDynamic = lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
         const dynamicRoll = rng.range(0, 100);
-        if (this.situationGenerator && !lastWasDynamic && dynamicRoll < 50) {
+        const { SITGEN_CHANCE } = require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
+        if (this.situationGenerator && !lastWasDynamic && dynamicRoll < SITGEN_CHANCE && !questFactTrigger) {
           try {
             const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
             const recentPrimaryNpcIds = actionHistory
               .filter((h) => (h as Record<string, unknown>).primaryNpcId)
               .map((h) => (h as Record<string, unknown>).primaryNpcId as string);
-            const situation = this.situationGenerator.generate(ws, locationId, intent, allEvents, incidentDefs, recentPrimaryNpcIds);
+            const situation = this.situationGenerator.generate(ws, locationId, intent, allEvents, incidentDefs, recentPrimaryNpcIds, discoveredFacts);
             if (situation) {
               matchedEvent = situation.eventDef;
               this.logger.debug(`[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`);
@@ -1639,13 +1640,14 @@ export class TurnsService {
           }
         }
 
-        // 경로 3: PARTIAL + 이벤트 discoverableFact — 30% 확률로 발견
+        // 경로 3: PARTIAL + 이벤트 discoverableFact — P2/P4: 확률은 config에서 관리
+        const { PARTIAL_FACT_DISCOVERY_CHANCE } = require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
         if (resolveResult.outcome === 'PARTIAL' && event) {
           const eventFact = (event.payload as Record<string, unknown>)?.discoverableFact as string | undefined
             ?? (event as Record<string, unknown>).discoverableFact as string | undefined;
           if (eventFact && !existing.includes(eventFact)) {
             const roll = rng.range(0, 100);
-            if (roll < 30) {
+            if (roll < PARTIAL_FACT_DISCOVERY_CHANCE) {
               addFact(eventFact, `event_partial:${event.eventId}`);
             }
           }

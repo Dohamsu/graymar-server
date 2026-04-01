@@ -892,6 +892,17 @@ export class PromptBuilderService {
       }
     }
 
+    // P5: FREE 턴 단서 힌트 — 미발견 단서가 있는 장소에서 탐색 동기 부여
+    if (ctx.questFactHint) {
+      factsParts.push(
+        [
+          `[장소 분위기 힌트]`,
+          ctx.questFactHint,
+          `이 분위기를 서술에 자연스럽게 녹여주세요. "단서"나 "조사" 같은 메타 표현은 사용하지 마세요. 무언가 숨겨진 것이 있다는 느낌을 감각적으로 전달하세요.`,
+        ].join('\n'),
+      );
+    }
+
     // 프롤로그 힌트 (첫 장면)
     if (sr.turnNo === 0) {
       factsParts.push(

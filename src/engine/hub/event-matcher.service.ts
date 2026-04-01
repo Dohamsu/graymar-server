@@ -18,8 +18,9 @@ export interface SessionNpcContext {
   interactedNpcIds: string[];
 }
 
-const DANGER_BLOCK_CHANCE = 40;
-const CRACKDOWN_BLOCK_CHANCE = 25;
+import { QUEST_BALANCE } from './quest-balance.config.js';
+const DANGER_BLOCK_CHANCE = QUEST_BALANCE.DANGER_BLOCK_CHANCE;
+const CRACKDOWN_BLOCK_CHANCE = QUEST_BALANCE.CRACKDOWN_BLOCK_CHANCE;
 
 @Injectable()
 export class EventMatcherService {
@@ -116,7 +117,7 @@ export class EventMatcherService {
       let penalty = 0;
 
       // A: 미발견 discoverableFact 이벤트에 weight 부스트 (+35)
-      const questFactBoost = (e as any).discoverableFact && !_discoveredFacts.has((e as any).discoverableFact) ? 35 : 0;
+      const questFactBoost = (e as any).discoverableFact && !_discoveredFacts.has((e as any).discoverableFact) ? QUEST_BALANCE.UNDISCOVERED_FACT_WEIGHT_BOOST : 0;
 
       // FALLBACK 연속 페널티
       if (e.eventType === 'FALLBACK' && consecutiveFallbacks > 0) {
@@ -232,7 +233,7 @@ export class EventMatcherService {
       let incidentBoost = 0;
 
       // A: 미발견 discoverableFact 이벤트에 weight 부스트 (+35)
-      const questFactBoost = (e as any).discoverableFact && !_discoveredFacts2.has((e as any).discoverableFact) ? 35 : 0;
+      const questFactBoost = (e as any).discoverableFact && !_discoveredFacts2.has((e as any).discoverableFact) ? QUEST_BALANCE.UNDISCOVERED_FACT_WEIGHT_BOOST : 0;
 
       // FALLBACK 연속 페널티
       if (e.eventType === 'FALLBACK' && consecutiveFallbacks > 0) {
