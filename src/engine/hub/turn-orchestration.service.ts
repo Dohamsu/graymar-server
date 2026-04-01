@@ -38,10 +38,10 @@ const PRESSURE_MAX = 100;
 
 // NPC agenda 관련 키워드 → LOCATION 매칭
 export const NPC_LOCATION_AFFINITY: Record<string, string[]> = {
-  NPC_YOON_HAMIN: ['LOC_HARBOR', 'LOC_SLUMS'],
-  NPC_SEO_DOYUN: ['LOC_MARKET'],
-  NPC_KANG_CHAERIN: ['LOC_GUARD'],
-  NPC_BAEK_SEUNGHO: ['LOC_HARBOR'],
+  NPC_HARLUN: ['LOC_HARBOR', 'LOC_SLUMS'],
+  NPC_EDRIC_VEIL: ['LOC_MARKET'],
+  NPC_MAIREL: ['LOC_GUARD'],
+  NPC_TOBREN: ['LOC_HARBOR'],
   NPC_MOON_SEA: ['LOC_MARKET', 'LOC_GUARD'],
   NPC_INFO_BROKER: ['LOC_SLUMS', 'LOC_HARBOR'],
   NPC_GUARD_CAPTAIN: ['LOC_GUARD'],
@@ -66,6 +66,7 @@ export class TurnOrchestrationService {
     turnNo: number,
     resolveOutcome: string,
     eventTags: string[],
+    actionType?: string,
   ): OrchestrationResult {
     const npcStates = runState.npcStates ?? {};
     const relationships = runState.relationships ?? {};
@@ -84,6 +85,7 @@ export class TurnOrchestrationService {
       resolveOutcome,
       eventTags,
       recentNpcIds,
+      actionType,
     );
 
     // Step 6: Emotional Peak Check
@@ -181,7 +183,11 @@ export class TurnOrchestrationService {
     resolveOutcome: string,
     eventTags: string[],
     recentNpcIds: string[] = [],
+    actionType?: string,
   ): NpcInjection | null {
+    // OBSERVE/SEARCH 등 비대면 행동에서는 NPC 주입 억제 (관찰 중 NPC가 뜬금없이 말 거는 문제 방지)
+    const PASSIVE_ACTIONS = new Set(['OBSERVE', 'SEARCH', 'REST']);
+    if (actionType && PASSIVE_ACTIONS.has(actionType)) return null;
     // 이벤트 태그에 NPC 관련 태그가 이미 있으면 중복 주입 방지
     if (eventTags.some((t) => t.startsWith('NPC_'))) return null;
 

@@ -2,9 +2,9 @@
 
 /** NPC portrait URL mapping (only NPCs with dedicated portraits) */
 const NPC_PORTRAITS: Record<string, string> = {
-  NPC_YOON_HAMIN: '/npc-portraits/harulun_boss.png',
-  NPC_SEO_DOYUN: '/npc-portraits/edric_veil.png',
-  NPC_KANG_CHAERIN: '/npc-portraits/mairel_dan.png',
+  NPC_HARLUN: '/npc-portraits/harulun_boss.png',
+  NPC_EDRIC_VEIL: '/npc-portraits/edric_veil.png',
+  NPC_MAIREL: '/npc-portraits/mairel_dan.png',
   NPC_LORD_VANCE: '/npc-portraits/lord_vance.png',
   NPC_RAT_KING: '/npc-portraits/rat_king.png',
 };
@@ -684,8 +684,17 @@ export class TurnsService {
       // 사건 라우팅: DIRECT_MATCH + 높은 점수(40+)만 트리거로 인정
       const routingHasStrongIncident = routingResult.routeMode === 'DIRECT_MATCH' && routingResult.matchScore >= 40;
 
-      const shouldMatchEvent = isFirstTurnAtLocation || incidentPressureHigh || routingHasStrongIncident;
-      this.logger.log(`[EventTrigger] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} routing=${routingHasStrongIncident}(${routingResult.routeMode}:${routingResult.matchScore}) → match=${shouldMatchEvent}`);
+      // D: 미발견 quest fact 이벤트가 현재 장소에 존재하면 2턴 간격으로 매칭 허용
+      const discoveredFacts = new Set(runState.discoveredQuestFacts ?? []);
+      const allEventsForCheck = this.content.getAllEventsV2();
+      const hasUndiscoveredFactEvent = allEventsForCheck.some(
+        (e: any) => e.locationId === locationId && e.discoverableFact && !discoveredFacts.has(e.discoverableFact),
+      );
+      const factTurnInterval = actionHistory.length > 0 && actionHistory.length % 2 === 0; // 매 2턴마다
+      const questFactTrigger = hasUndiscoveredFactEvent && factTurnInterval;
+
+      const shouldMatchEvent = isFirstTurnAtLocation || incidentPressureHigh || routingHasStrongIncident || questFactTrigger;
+      this.logger.log(`[EventTrigger] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} routing=${routingHasStrongIncident}(${routingResult.routeMode}:${routingResult.matchScore}) questFact=${questFactTrigger} → match=${shouldMatchEvent}`);
 
       if (shouldMatchEvent) {
         const allEvents = this.content.getAllEventsV2();
