@@ -3,7 +3,7 @@
 import { Injectable } from '@nestjs/common';
 import type { LlmContext } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
-import type { NpcEmotionalState, NpcLlmSummary, NPCState } from '../../db/types/npc-state.js';
+import type { NpcEmotionalState, NpcLlmSummary, NpcTopicEntry, NPCState } from '../../db/types/npc-state.js';
 import { computeEffectivePosture, getNpcDisplayName, condenseSpeechStyle } from '../../db/types/npc-state.js';
 import type { LlmMessage } from '../types/index.js';
 import { NARRATIVE_SYSTEM_PROMPT } from './system-prompts.js';
@@ -251,6 +251,7 @@ export class PromptBuilderService {
           '7. ⚠️ 이미 대화한 NPC가 다시 등장할 때는 이전 대화 내용을 알고 있어야 합니다. "그대, 무슨 일로 여기 돌아다니오?" 같은 반응은 이미 그 NPC에게서 허가/정보를 받은 상황에서는 부자연스럽습니다.',
           '8. ⚠️ NPC 퇴장 존중: 직전 턴 서술에서 NPC가 "떠났다", "사라졌다", "자리를 피했다", "골목으로 빠졌다" 등 퇴장을 묘사했다면, 이번 턴에서 그 NPC가 아무 이유 없이 다시 같은 장소에 나타나면 안 됩니다. 재등장시키려면 "다시 나타났다", "돌아왔다" 등 명확한 이유가 필요합니다.',
           '9. ⚠️ 대화 연속 시 퇴장 금지: 플레이어가 NPC와 대화 중(TALK, PERSUADE, BRIBE, THREATEN, HELP)이면 그 NPC가 떠나려 하거나 자리를 뜨는 묘사를 하지 마세요. "멀어지려는", "등을 돌리는", "가려는" 등의 이탈 암시도 피하세요. NPC의 마지막 대사나 표정/몸짓 반응으로 마무리하되, 물리적으로 그 자리에 남아있어야 합니다.',
+          '10. ⚠️ 대화 주제 반복 금지: [NPC 감정 상태] 블록에 "이미 다룬 주제"와 "반복 금지 키워드"가 있으면, 해당 키워드와 주제를 이번 턴에서 다시 사용하지 마세요. 같은 정보를 다른 단어로 바꿔 전달하는 것도 반복입니다. 완전히 새로운 화제, 구체적 증거, 감정 반응으로 대화를 전진시키세요.',
           '',
           sessionLines.join('\n---\n'),
         ].join('\n'),
@@ -893,6 +894,21 @@ export class PromptBuilderService {
         ? `${npcDisplayName}의 말투: ${factNpcSpeechGuide}\n이 말투로 다음 정보를 대사에 자연스럽게 녹이세요:\n`
         : '';
 
+      // 이전 대화 주제 추출 (반복 방지 강화)
+      let previousTopicWarning = '';
+      if (targetNpcIds.size > 0 && ctx.npcStates) {
+        const factNpcIdForTopic = [...targetNpcIds][0];
+        const factNpcStateForTopic = ctx.npcStates[factNpcIdForTopic] as NPCState | undefined;
+        const topics = factNpcStateForTopic?.llmSummary?.recentTopics;
+        if (topics && topics.length > 0) {
+          const prevTopics = topics.map(t => t.topic).join(', ');
+          const prevKeywords = [...new Set(topics.flatMap(t => t.keywords))].slice(0, 8);
+          previousTopicWarning = prevKeywords.length > 0
+            ? `\n이전에 다룬 주제: ${prevTopics}\n반복 금지 키워드: ${prevKeywords.join(', ')}\n위 주제/키워드와 다른 새로운 각도로 아래 정보를 전달하세요.`
+            : `\n이전에 다룬 주제: ${prevTopics}\n위 주제와 다른 새로운 각도로 아래 정보를 전달하세요.`;
+        }
+      }
+
       if (factOutcome === 'SUCCESS') {
         factsParts.push(
           [
@@ -900,7 +916,8 @@ export class PromptBuilderService {
             speechLine + `${npcDisplayName}이(가) 플레이어에게 다음 정보를 알려줍니다 (SUCCESS 판정 결과):`,
             `"${detail}"`,
             `이 정보를 NPC의 대사나 행동을 통해 자연스럽게 서술에 반영하세요. 직접 읽어주듯 전달하지 말고, NPC의 성격과 말투에 맞게 간접적으로 드러내세요.`,
-          ].join('\n'),
+            previousTopicWarning,
+          ].filter(Boolean).join('\n'),
         );
       } else {
         // PARTIAL: 힌트만 흘림
@@ -911,7 +928,8 @@ export class PromptBuilderService {
             speechLine + `${npcDisplayName}이(가) 다음 정보를 일부만 흘립니다 (PARTIAL 판정):`,
             `"${hintText}"`,
             `핵심은 감추고 일부만 암시하세요. NPC가 말을 아끼거나 핵심을 돌려 말합니다.`,
-          ].join('\n'),
+            previousTopicWarning,
+          ].filter(Boolean).join('\n'),
         );
       }
     }
@@ -1141,6 +1159,18 @@ export class PromptBuilderService {
         }
         if (llmSummary.currentConcern) {
           behaviorParts.push(`현재 관심: ${llmSummary.currentConcern}`);
+        }
+
+        // 대화 주제 반복 방지: recentTopics 요약 주입
+        const recentTopics = llmSummary.recentTopics;
+        if (recentTopics && recentTopics.length > 0) {
+          const topicSummary = recentTopics.map(t => t.topic).join(' / ');
+          behaviorParts.push(`이미 다룬 주제: ${topicSummary}`);
+          const allKeywords = recentTopics.flatMap(t => t.keywords);
+          const uniqueKw = [...new Set(allKeywords)].slice(0, 8);
+          if (uniqueKw.length > 0) {
+            behaviorParts.push(`반복 금지 키워드: ${uniqueKw.join(', ')}`);
+          }
         }
 
         // innerConflict: 재등장에서도 조건 충족 시 노출

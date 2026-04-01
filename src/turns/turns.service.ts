@@ -93,7 +93,7 @@ import { LegendaryRewardService } from '../engine/rewards/legendary-reward.servi
 import type { RegionEconomy } from '../db/types/region-state.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
-import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders, recordNpcEncounter, addNpcKnownFact, buildNpcLlmSummary } from '../db/types/npc-state.js';
+import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders, recordNpcEncounter, addNpcKnownFact, buildNpcLlmSummary, buildTopicEntry, addRecentTopic } from '../db/types/npc-state.js';
 import type { IncidentDef, IncidentRuntime, IncidentRoutingResult, NarrativeMarkCondition, NPCState, NpcEmotionalState } from '../db/types/index.js';
 import type { IncidentSummaryUI, SignalFeedItemUI, NpcEmotionalUI } from '../db/types/server-result.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
@@ -1315,6 +1315,19 @@ export class TurnsService {
         '', // LLM 출력은 비동기이므로 다음 턴에서 snippet 반영
       );
 
+      // === 대화 주제 추적: recentTopics에 이번 턴 주제 기록 ===
+      {
+        const topicEntry = buildTopicEntry(
+          turnNo,
+          null, // factId는 quest 처리 후 결정되므로 여기서는 null
+          null,
+          event.payload.sceneFrame ?? null,
+          intent.actionType,
+          rawInput,
+        );
+        npcStates[npcId] = addRecentTopic(npcStates[npcId], topicEntry);
+      }
+
       // === signature 카운터 업데이트: 3턴 간격이 지났으면 이번 턴을 기록 ===
       const lastSig = npcStates[npcId].lastSignatureTurn ?? 0;
       if ((turnNo - lastSig) >= 3) {
@@ -1611,6 +1624,7 @@ export class TurnsService {
     updatedRunState.pbp = computePBP(newHistory);
 
     // === Quest Progression: 3경로 FACT 발견 + 단계 전환 ===
+    const discoveredFactIdsThisTurn: string[] = []; // 대화 주제 추적용
     if (this.questProgression) {
       try {
         const existing = updatedRunState.discoveredQuestFacts ?? [];
@@ -1622,6 +1636,7 @@ export class TurnsService {
               updatedRunState.arcState.discoveredQuestFacts = updatedRunState.discoveredQuestFacts;
             }
             existing.push(factId); // 같은 턴 중복 방지
+            discoveredFactIdsThisTurn.push(factId);
             this.logger.log(`[Quest] Fact discovered: ${factId} (source: ${source})`);
           }
         };
@@ -1684,6 +1699,20 @@ export class TurnsService {
       }
     }
 
+    // === 대화 주제에 factId 역보충: quest 발견 후 해당 NPC의 recentTopics에 factId 기록 ===
+    if (discoveredFactIdsThisTurn.length > 0 && eventPrimaryNpc && npcStates[eventPrimaryNpc]?.llmSummary?.recentTopics) {
+      const topics = npcStates[eventPrimaryNpc].llmSummary!.recentTopics!;
+      const thisTurnTopic = topics.find(t => t.turnNo === turnNo);
+      if (thisTurnTopic && !thisTurnTopic.factId) {
+        thisTurnTopic.factId = discoveredFactIdsThisTurn[0];
+        // factDetail을 topic에 반영 (더 정확한 주제 정보)
+        const questFact = this.questProgression?.getFactDetail(discoveredFactIdsThisTurn[0]);
+        if (questFact) {
+          thisTurnTopic.topic = questFact.slice(0, 40);
+        }
+      }
+    }
+
     // Step 5-7: Turn Orchestration (NPC 주입, 감정 피크, 대화 자세)
     const orchestrationResult = this.orchestration.orchestrate(
       updatedRunState,
@@ -1741,6 +1770,19 @@ export class TurnsService {
         (event.payload.sceneFrame ?? '').slice(0, 40),
         '',
       );
+
+      // === 주입된 NPC 대화 주제 추적 ===
+      {
+        const topicEntry = buildTopicEntry(
+          turnNo,
+          null,
+          null,
+          event.payload.sceneFrame ?? null,
+          intent.actionType,
+          rawInput,
+        );
+        npcStates[injectedNpcId] = addRecentTopic(npcStates[injectedNpcId], topicEntry);
+      }
     }
 
     // 비도전 행위 여부 (MOVE_LOCATION, REST, SHOP, TALK → 주사위 UI 숨김)
