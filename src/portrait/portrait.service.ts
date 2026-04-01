@@ -6,8 +6,8 @@ import * as crypto from 'node:crypto';
 const IMAGE_DIR = path.resolve(process.cwd(), 'public', 'portraits', 'generated');
 const IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
-/** Rate-limit: 세션(IP)당 최대 생성 횟수 */
-const MAX_PER_IP = 5;
+/** Rate-limit: 세션(IP)당 최대 생성 횟수 (임시 해제: 100) */
+const MAX_PER_IP = 100;
 /** Rate-limit window (ms) — 1시간 */
 const RATE_WINDOW_MS = 60 * 60 * 1000;
 
@@ -46,28 +46,28 @@ export class PortraitService {
 
   validateRequest(presetId: string, appearanceDescription: string): string | null {
     if (!VALID_PRESETS.has(presetId)) {
-      return `Invalid presetId: ${presetId}. Valid: ${[...VALID_PRESETS].join(', ')}`;
+      return `알 수 없는 출신입니다: ${presetId}`;
     }
     if (!appearanceDescription || appearanceDescription.trim().length === 0) {
-      return 'appearanceDescription must not be empty';
+      return '외모 설명을 입력해주세요.';
     }
     return null;
   }
 
   // ── Rate Limit ──────────────────────────────────────────────
 
-  checkRateLimit(ip: string): { allowed: boolean; remaining: number } {
+  checkRateLimit(ip: string): { allowed: boolean; remaining: number; limit: number } {
     const now = Date.now();
     const entry = this.rateMap.get(ip);
 
     if (!entry || now - entry.windowStart > RATE_WINDOW_MS) {
       // 윈도우 리셋
       this.rateMap.set(ip, { count: 0, windowStart: now });
-      return { allowed: true, remaining: MAX_PER_IP };
+      return { allowed: true, remaining: MAX_PER_IP, limit: MAX_PER_IP };
     }
 
     const remaining = MAX_PER_IP - entry.count;
-    return { allowed: remaining > 0, remaining: Math.max(0, remaining) };
+    return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: MAX_PER_IP };
   }
 
   private incrementRate(ip: string): void {
