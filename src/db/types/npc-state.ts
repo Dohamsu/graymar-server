@@ -18,6 +18,14 @@ export interface NpcEmotionalState {
   attachment: number; // 0~100 (애착)
 }
 
+/** 대화 주제 이력 항목 (최근 5턴) */
+export interface NpcTopicEntry {
+  turnNo: number;
+  topic: string;       // "장부 조작 흔적 관련 대화" (~40자)
+  factId?: string;     // 공개된 quest fact ID (있으면)
+  keywords: string[];  // ["빈 시간대", "밀수 조직", "순찰 보고서"] (최대 5개)
+}
+
 /** NPC LLM 요약: 재등장 시 간소 프롬프트 블록용 (규칙 기반 생성, LLM 호출 없음) */
 export interface NpcLlmSummary {
   moodLine: string;           // "경계를 풀기 시작했지만 여전히 신중" (~30자)
@@ -26,6 +34,8 @@ export interface NpcLlmSummary {
   lastDialogueSnippet: string;// "숫자가 맞지 않는 대목이 있소..." (~40자)
   currentConcern: string;     // "상단 비리 고발 여부 고민 중" (~20자)
   updatedAtTurn: number;
+  // 대화 주제 추적: 반복 방지용 (최근 5턴)
+  recentTopics?: NpcTopicEntry[];
 }
 
 /** NPC 개인 기록: 플레이어와의 상호작용 이력 */
@@ -442,5 +452,84 @@ export function buildNpcLlmSummary(
     lastDialogueSnippet: (lastDialogueSnippet ?? '').slice(0, 50),
     currentConcern,
     updatedAtTurn: turnNo,
+    // recentTopics는 buildNpcLlmSummary에서 생성하지 않음 — addRecentTopic으로 별도 관리
+  };
+}
+
+// ── 대화 주제 추적 유틸리티 ──
+
+const MAX_RECENT_TOPICS = 5;
+
+/** 불용어 필터 (조사, 어미, 일반 동사 등) */
+const TOPIC_STOPWORDS = new Set([
+  '있다', '없다', '하다', '되다', '이다', '것이', '그대', '이오', '하오',
+  '합니다', '입니다', '그것', '이것', '저것', '무엇', '어떤', '아무', '모든',
+  '대한', '위한', '통해', '대해', '그리고', '하지만', '그러나', '때문에',
+  '라고', '에서', '으로', '까지', '부터', '에게', '한테', '처럼', '같은',
+]);
+
+/**
+ * 대화 주제 항목 생성 (규칙 기반, LLM 호출 없음).
+ * sceneFrame, factDetail, actionType, rawInput에서 주제와 키워드를 추출한다.
+ */
+export function buildTopicEntry(
+  turnNo: number,
+  factId: string | null,
+  factDetail: string | null,
+  sceneFrame: string | null,
+  actionType: string,
+  rawInput: string,
+): NpcTopicEntry {
+  // topic: fact > sceneFrame > actionType+rawInput 순으로 결정
+  const topic = factDetail
+    ? factDetail.slice(0, 40)
+    : sceneFrame
+      ? sceneFrame.slice(0, 40)
+      : `${actionType}: ${rawInput.slice(0, 20)}`;
+
+  // keywords: 소스 텍스트에서 핵심 명사 추출
+  const sourceText = factDetail ?? sceneFrame ?? rawInput;
+  const words = sourceText
+    .replace(/[.,!?~…'""\u201c\u201d\u2018\u2019()[\]{}<>:;\/\\|@#$%^&*+=]/g, '')
+    .split(/\s+/)
+    .filter(w => w.length >= 2 && w.length <= 8)
+    .filter(w => !TOPIC_STOPWORDS.has(w))
+    .slice(0, 7);
+
+  // 중복 제거 후 최대 5개
+  const uniqueKeywords = [...new Set(words)].slice(0, 5);
+
+  return {
+    turnNo,
+    topic,
+    ...(factId ? { factId } : {}),
+    keywords: uniqueKeywords,
+  };
+}
+
+/**
+ * NPC llmSummary에 대화 주제 추가 (최대 5개 유지, FIFO).
+ * llmSummary가 없으면 아무것도 하지 않는다.
+ */
+export function addRecentTopic(
+  npcState: NPCState,
+  topicEntry: NpcTopicEntry,
+): NPCState {
+  const summary = npcState.llmSummary;
+  if (!summary) return npcState;
+
+  const existing = summary.recentTopics ?? [];
+  // 같은 턴 중복 방지
+  if (existing.some(t => t.turnNo === topicEntry.turnNo)) return npcState;
+
+  const updated = [...existing, topicEntry];
+  // 최대 5개 유지 (오래된 것부터 제거)
+  const trimmed = updated.length > MAX_RECENT_TOPICS
+    ? updated.slice(-MAX_RECENT_TOPICS)
+    : updated;
+
+  return {
+    ...npcState,
+    llmSummary: { ...summary, recentTopics: trimmed },
   };
 }

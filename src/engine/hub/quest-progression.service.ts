@@ -133,4 +133,21 @@ export class QuestProgressionService {
     }
     return null;
   }
+
+  /**
+   * factId에 해당하는 NPC knownFact의 detail 텍스트를 반환.
+   * 대화 주제 추적에서 정확한 주제명을 기록하기 위해 사용.
+   */
+  getFactDetail(factId: string): string | null {
+    const allNpcs = this.content.getAllNpcs();
+    for (const npc of allNpcs) {
+      if (!npc.knownFacts) continue;
+      for (const entry of npc.knownFacts) {
+        if (entry.factId === factId && entry.detail) {
+          return entry.detail;
+        }
+      }
+    }
+    return null;
+  }
 }
