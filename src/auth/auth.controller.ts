@@ -48,7 +48,7 @@ export class AuthController {
       return schema.parse(data);
     } catch (err) {
       if (err instanceof ZodError) {
-        throw new BadRequestError('Validation failed', {
+        throw new BadRequestError('입력값을 확인해주세요.', {
           issues: err.issues.map((i) => ({
             path: i.path,
             message: i.message,

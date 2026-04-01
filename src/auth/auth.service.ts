@@ -25,7 +25,7 @@ export class AuthService {
       where: eq(users.email, body.email),
     });
     if (existing) {
-      throw new BadRequestError('Email already registered');
+      throw new BadRequestError('이미 사용 중인 이메일입니다. 다른 이메일을 입력해주세요.');
     }
 
     const passwordHash = await bcrypt.hash(body.password, BCRYPT_ROUNDS);
@@ -49,12 +49,12 @@ export class AuthService {
       where: eq(users.email, body.email),
     });
     if (!user) {
-      throw new UnauthorizedError('Invalid email or password');
+      throw new UnauthorizedError('이메일 또는 비밀번호가 올바르지 않습니다. 다시 확인해주세요.');
     }
 
     const valid = await bcrypt.compare(body.password, user.passwordHash);
     if (!valid) {
-      throw new UnauthorizedError('Invalid email or password');
+      throw new UnauthorizedError('이메일 또는 비밀번호가 올바르지 않습니다. 다시 확인해주세요.');
     }
 
     const token = this.jwtService.sign({ sub: user.id, email: user.email });

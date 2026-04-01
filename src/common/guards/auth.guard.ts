@@ -35,7 +35,7 @@ export class AuthGuard implements CanActivate {
     }
 
     throw new UnauthorizedError(
-      'Authorization header with Bearer token is required',
+      '로그인이 필요합니다. 다시 로그인해주세요.',
     );
   }
 
@@ -45,7 +45,7 @@ export class AuthGuard implements CanActivate {
       (req as unknown as Record<string, unknown>)[USER_ID_KEY] = payload.sub;
       return true;
     } catch {
-      throw new UnauthorizedError('Invalid or expired token');
+      throw new UnauthorizedError('로그인이 만료되었습니다. 다시 로그인해주세요.');
     }
   }
 }
