@@ -876,9 +876,9 @@ export class TurnsService {
     // Phase 4c: 세트 specialEffect 수집
     const activeSpecialEffects = this.equipmentService.getActiveSpecialEffects(runState.equipped ?? {});
 
-    // 프리셋별 판정 보너스 조회
+    // 판정 보너스 조회 — runState에 합산된 actionBonuses 우선, 없으면 프리셋 fallback
     const presetDef = run.presetId ? this.content.getPreset(run.presetId) : undefined;
-    const presetActionBonuses = presetDef?.actionBonuses;
+    const presetActionBonuses = runState.actionBonuses ?? presetDef?.actionBonuses;
 
     // NPC faction 조회 (평판 변동용)
     const primaryNpcIdForResolve = (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;

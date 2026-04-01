@@ -678,8 +678,10 @@ export class ContextBuilderService {
         const bgParts: string[] = [];
         bgParts.push(`직업: ${presetDef.name} (${presetDef.subtitle})`);
         bgParts.push(`배경: ${presetDef.protagonistTheme}`);
-        if (presetDef.actionBonuses) {
-          const bonusDesc = Object.entries(presetDef.actionBonuses)
+        // runState.actionBonuses 우선 (프리셋+특성 합산), 없으면 프리셋 fallback
+        const effectiveBonuses = runState?.actionBonuses ?? presetDef.actionBonuses;
+        if (effectiveBonuses) {
+          const bonusDesc = Object.entries(effectiveBonuses)
             .map(([action, bonus]) => `${action} +${bonus}`)
             .join(', ');
           bgParts.push(`특기: ${bonusDesc}`);

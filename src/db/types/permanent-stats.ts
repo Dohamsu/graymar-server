@@ -106,6 +106,12 @@ export interface RunState {
   // Quest Progression: 퀘스트 단계 + 발견된 팩트 ID 추적
   questState?: string;  // "S0_ARRIVE" | "S1_GET_ANGLE" | ... | "S5_RESOLVE"
   discoveredQuestFacts?: string[];  // ["FACT_LEDGER_EXISTS", "FACT_WAGE_FRAUD_PATTERN", ...]
+  // Character customization
+  characterName?: string;         // 플레이어 지정 캐릭터 이름 (1~8자)
+  traitId?: string;               // 선택된 특성 ID (traits.json 참조)
+  traitEffects?: import('../../content/content.types.js').TraitEffects;  // 런타임 참조용 특성 효과
+  /** 프리셋 + 특성 합산 actionBonuses (런타임 참조용) */
+  actionBonuses?: Record<string, number>;
 }
 
 /** 장소별 개인 기록 — 방문 횟수, 체류턴, 주요 사건, 발견한 비밀, 평판 메모 */

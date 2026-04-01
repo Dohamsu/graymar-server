@@ -17,6 +17,7 @@ import type {
   ShopDefinition,
   ScenarioMetaContent,
   EquipmentDropEntry,
+  TraitDefinition,
 } from './content.types.js';
 import type { EventDefV2, HubSafety, TimePhase, AffixKind, RegionAffixDef, ScenarioMeta } from '../db/types/index.js';
 
@@ -57,6 +58,8 @@ export class ContentLoaderService implements OnModuleInit {
   private narrativeMarkConditions: unknown[] = [];
   // Quest data
   private questData: unknown = null;
+  // Traits
+  private traits = new Map<string, TraitDefinition>();
 
   async onModuleInit() {
     await this.loadAll();
@@ -68,7 +71,7 @@ export class ContentLoaderService implements OnModuleInit {
       locationsRaw, eventsV2Raw, sceneShellsRaw, suggestedChoicesRaw, arcEventsRaw,
       npcsRaw, setsRaw, shopsRaw, affixesRaw, equipDropsRaw,
       incidentsRaw, endingsRaw, narrativeMarksRaw,
-      scenarioMetaRaw, questRaw,
+      scenarioMetaRaw, questRaw, traitsRaw,
     ] = await Promise.all([
       readFile(join(this.contentDir, 'enemies.json'), 'utf-8'),
       readFile(join(this.contentDir, 'encounters.json'), 'utf-8'),
@@ -94,6 +97,8 @@ export class ContentLoaderService implements OnModuleInit {
       readFile(join(this.contentDir, 'scenario.json'), 'utf-8').catch(() => 'null'),
       // Quest data
       readFile(join(this.contentDir, 'quest.json'), 'utf-8').catch(() => 'null'),
+      // Traits
+      readFile(join(this.contentDir, 'traits.json'), 'utf-8').catch(() => '[]'),
     ]);
 
     const enemiesList = JSON.parse(enemiesRaw) as EnemyDefinition[];
@@ -168,6 +173,11 @@ export class ContentLoaderService implements OnModuleInit {
 
     // Quest data 로드
     this.questData = JSON.parse(questRaw);
+
+    // Traits 로드
+    const traitsList = JSON.parse(traitsRaw) as TraitDefinition[];
+    this.traits.clear();
+    for (const t of traitsList) this.traits.set(t.traitId, t);
   }
 
   getPlayerDefaults(): PlayerDefaults {
@@ -447,6 +457,16 @@ export class ContentLoaderService implements OnModuleInit {
   /** 현재 로드된 시나리오의 메타 정보 반환 */
   getScenarioMeta(): ScenarioMeta | null {
     return this.scenarioMeta;
+  }
+
+  // --- Trait 메서드 ---
+
+  getTrait(id: string): TraitDefinition | undefined {
+    return this.traits.get(id);
+  }
+
+  getAllTraits(): TraitDefinition[] {
+    return [...this.traits.values()];
   }
 
   /** 현재 로드된 시나리오 ID */
