@@ -27,6 +27,7 @@ import { EnemyAiService } from './enemy-ai.service.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { EquipmentService } from '../rewards/equipment.service.js';
 import type { EquippedGear } from '../../db/types/equipment.js';
+import type { TraitEffects } from '../../content/content.types.js';
 
 export interface CombatTurnInput {
   turnNo: number;
@@ -39,6 +40,7 @@ export interface CombatTurnInput {
   enemyNames?: Record<string, string>;
   inventory?: Array<{ itemId: string; qty: number }>;
   equipped?: EquippedGear; // Phase 4: 장비 modifier 통합
+  traitEffects?: TraitEffects; // Phase 4: 특성 런타임 효과 (criticalDisabled, healingReduction)
 }
 
 export interface CombatTurnOutput {
@@ -77,12 +79,15 @@ export class CombatService {
 
   // Phase 4c: 현재 턴의 활성 세트 specialEffect (턴 단위 캐시)
   private _activeSpecialEffects: string[] | null = null;
+  private _traitEffects: TraitEffects | undefined = undefined;
 
   resolveCombatTurn(input: CombatTurnInput): CombatTurnOutput {
     // Phase 4c: 세트 specialEffect 캐시 (턴 시작 시 계산)
     this._activeSpecialEffects = input.equipped
       ? this.equipmentService.getActiveSpecialEffects(input.equipped)
       : [];
+    // Phase 4: 특성 효과 캐시 (criticalDisabled, healingReduction)
+    this._traitEffects = input.traitEffects;
 
     const rng = this.rngService.create(
       input.battleState.rng.seed,
@@ -684,6 +689,7 @@ export class CombatService {
           eSnap.def,
           rng,
           forced,
+          this._traitEffects?.criticalDisabled ?? false,
         );
 
         // Phase 4c: ENGAGED_BONUS_DMG_15 세트 효과 — ENGAGED 거리 적 공격 시 15% 추가 피해
@@ -819,7 +825,12 @@ export class CombatService {
         // 효과 적용
         switch (itemDef.combat.effect) {
           case 'HEAL_HP': {
-            const healValue = itemDef.combat.value ?? 0;
+            let healValue = itemDef.combat.value ?? 0;
+            // BLOOD_OATH: healingReduction 적용 (예: 0.5 → 회복량 50%)
+            const healingReduction = this._traitEffects?.healingReduction;
+            if (healingReduction != null && healingReduction > 0 && healingReduction < 1) {
+              healValue = Math.floor(healValue * healingReduction);
+            }
             const hpBefore = next.player.hp;
             next.player.hp = Math.min(
               playerSnap.maxHP,
@@ -829,9 +840,11 @@ export class CombatService {
             events.push({
               id: `item_heal_${rng.cursor}`,
               kind: 'SYSTEM',
-              text: `${itemDef.name}을(를) 사용했다. HP ${healed} 회복.`,
+              text: healingReduction
+                ? `${itemDef.name}을(를) 사용했다. HP ${healed} 회복. (피의 맹세: 회복 감소)`
+                : `${itemDef.name}을(를) 사용했다. HP ${healed} 회복.`,
               tags: ['USE_ITEM', 'HEAL'],
-              data: { itemId: resolvedItemId, healed },
+              data: { itemId: resolvedItemId, healed, healingReduction: healingReduction ?? undefined },
             });
             break;
           }

@@ -885,9 +885,9 @@ export class TurnsService {
     const primaryNpcFaction = primaryNpcIdForResolve ? this.content.getNpc(primaryNpcIdForResolve)?.faction ?? null : null;
 
     // ResolveService 판정
-    const resolveResult = this.resolveService.resolve(event, intent, ws, playerStats, rng, activeSpecialEffects, presetActionBonuses, primaryNpcFaction);
+    const resolveResult = this.resolveService.resolve(event, intent, ws, playerStats, rng, activeSpecialEffects, presetActionBonuses, primaryNpcFaction, runState);
     this.logger.log(
-      `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${event.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}`,
+      `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${event.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}${resolveResult.traitBonus ? ` traitBonus=${resolveResult.traitBonus > 0 ? '+' : ''}${resolveResult.traitBonus}` : ''}${resolveResult.gamblerLuckTriggered ? ' GAMBLER_LUCK!' : ''}`,
     );
 
     // Living World v2: 판정 결과 → WorldFact 생성 + LocationState 변경 + NPC 목격
@@ -2176,6 +2176,7 @@ export class TurnsService {
       inventoryCount: runState.inventory.length,
       inventoryMax: 20,
       nodeState: (currentNode.nodeState ?? {}) as Record<string, unknown>,
+      traitEffects: runState.traitEffects,
     });
 
     // RunState 반영 (gold, hp, stamina 변동)
@@ -2409,6 +2410,7 @@ export class TurnsService {
       inventory: runState.inventory, inventoryCount: runState.inventory.length,
       inventoryMax: InventoryService.DEFAULT_MAX_SLOTS,
       nodeState: currentNode.nodeState ?? undefined,
+      traitEffects: runState.traitEffects,
     });
 
     // runState 업데이트

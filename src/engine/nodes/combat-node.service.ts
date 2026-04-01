@@ -13,6 +13,7 @@ import {
   RewardsService,
   type RewardResult,
 } from '../rewards/rewards.service.js';
+import type { TraitEffects } from '../../content/content.types.js';
 
 export interface CombatNodeInput {
   turnNo: number;
@@ -30,6 +31,7 @@ export interface CombatNodeInput {
     clueChance?: { itemId: string; probability: number };
   };
   inventory?: Array<{ itemId: string; qty: number }>;
+  traitEffects?: TraitEffects; // Phase 4: criticalDisabled, healingReduction
 }
 
 export interface CombatNodeOutput {
@@ -59,6 +61,7 @@ export class CombatNodeService {
         enemyStats: input.enemyStats,
         enemyNames: input.enemyNames,
         inventory: input.inventory,
+        traitEffects: input.traitEffects,
       },
     );
 

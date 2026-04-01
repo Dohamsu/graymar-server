@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import type {
   EventDefV2,
   ParsedIntentV2,
@@ -6,7 +7,9 @@ import type {
   ResolveOutcome,
   WorldState,
   PermanentStats,
+  RunState,
 } from '../../db/types/index.js';
+import type { TraitEffects } from '../../content/content.types.js';
 import type { Rng } from '../rng/rng.service.js';
 
 const HEAT_DELTA_CLAMP = 8;
@@ -40,6 +43,7 @@ const ACTION_STAT_MAP: Record<string, keyof PermanentStats> = {
 
 @Injectable()
 export class ResolveService {
+  private readonly logger = new Logger(ResolveService.name);
   /**
    * BRIBE/TRADE 골드 비용 계산
    * - specifiedGold가 있으면 플레이어가 명시한 수치 사용
@@ -74,6 +78,7 @@ export class ResolveService {
     activeSpecialEffects: string[] = [],
     presetActionBonuses?: Record<string, number>,
     npcFaction?: string | null,
+    runState?: RunState,
   ): ResolveResult {
     // 비도전 행위 → 주사위 없이 자동 SUCCESS
     if (NON_CHALLENGE_ACTIONS.has(intent.actionType)) {
@@ -107,11 +112,61 @@ export class ResolveService {
       baseMod += presetActionBonuses[intent.actionType];
     }
 
+    // Phase 4 특성 런타임 효과: BLOOD_OATH lowHpBonus + NIGHT_CHILD time bonus
+    const traitEffects: TraitEffects | undefined = runState?.traitEffects;
+    let traitBonus = 0;
+
+    // BLOOD_OATH: HP 비율이 낮을수록 판정 보너스
+    if (traitEffects?.lowHpBonus && runState) {
+      const hpRatio = runState.maxHp > 0 ? runState.hp / runState.maxHp : 1;
+      const { threshold50, threshold25 } = traitEffects.lowHpBonus;
+      if (hpRatio <= 0.25) {
+        traitBonus += threshold50 + threshold25; // +3
+      } else if (hpRatio <= 0.5) {
+        traitBonus += threshold50; // +2
+      }
+      if (traitBonus > 0) {
+        this.logger.debug(
+          `[Trait:BLOOD_OATH] HP ${runState.hp}/${runState.maxHp} (${(hpRatio * 100).toFixed(0)}%) -> lowHpBonus +${traitBonus}`,
+        );
+      }
+    }
+
+    // NIGHT_CHILD: 시간대에 따른 판정 보너스/패널티
+    if (traitEffects && (traitEffects.nightBonus != null || traitEffects.dayPenalty != null)) {
+      const timePhase = ws.phaseV2 ?? ws.timePhase;
+      let timeBonus = 0;
+      if (timePhase === 'NIGHT' || timePhase === 'DUSK') {
+        timeBonus = traitEffects.nightBonus ?? 0;
+      } else if (timePhase === 'DAY' || timePhase === 'DAWN') {
+        timeBonus = traitEffects.dayPenalty ?? 0; // negative value
+      }
+      if (timeBonus !== 0) {
+        traitBonus += timeBonus;
+        this.logger.debug(
+          `[Trait:NIGHT_CHILD] timePhase=${timePhase} -> timeBonus ${timeBonus > 0 ? '+' : ''}${timeBonus}`,
+        );
+      }
+    }
+
     // 최종 점수
-    const score = diceRoll + statBonus + baseMod;
+    const score = diceRoll + statBonus + baseMod + traitBonus;
 
     // 결과 판정: SUCCESS >= 5, PARTIAL 3~4, FAIL < 3
-    const outcome = this.computeOutcome(score);
+    let outcome = this.computeOutcome(score);
+
+    // GAMBLER_LUCK: FAIL 판정 시 확률적 PARTIAL 승격
+    let gamblerLuckTriggered = false;
+    if (outcome === 'FAIL' && traitEffects?.failToPartialChance) {
+      const luckRoll = rng.range(0, 99);
+      if (luckRoll < traitEffects.failToPartialChance) {
+        outcome = 'PARTIAL';
+        gamblerLuckTriggered = true;
+        this.logger.debug(
+          `[Trait:GAMBLER_LUCK] FAIL->PARTIAL (roll=${luckRoll} < ${traitEffects.failToPartialChance}%)`,
+        );
+      }
+    }
 
     // heatDelta 계산 (±8 clamp)
     let heatDelta = 0;
@@ -198,6 +253,8 @@ export class ResolveService {
       statValue: statKey ? (stats[statKey] as number) : 0,
       statBonus,
       baseMod,
+      traitBonus: traitBonus !== 0 ? traitBonus : undefined,
+      gamblerLuckTriggered: gamblerLuckTriggered || undefined,
       eventId: event.eventId,
       heatDelta,
       tensionDelta: outcome === 'FAIL' ? 1 : 0,
