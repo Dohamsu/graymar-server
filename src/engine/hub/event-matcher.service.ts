@@ -107,10 +107,16 @@ export class EventMatcherService {
       candidates = hardcapped;
     }
 
+    // A: 미발견 quest fact 부스트 준비
+    const _discoveredFacts = new Set(arcState?.discoveredQuestFacts ?? []);
+
     const weights = candidates.map((e) => {
       const base = e.priority * 10 + e.weight;
       const agendaBoost = this.computeAgendaBoost(e, agenda);
       let penalty = 0;
+
+      // A: 미발견 discoverableFact 이벤트에 weight 부스트 (+35)
+      const questFactBoost = (e as any).discoverableFact && !_discoveredFacts.has((e as any).discoverableFact) ? 35 : 0;
 
       // FALLBACK 연속 페널티
       if (e.eventType === 'FALLBACK' && consecutiveFallbacks > 0) {
@@ -142,7 +148,7 @@ export class EventMatcherService {
         ? Math.min(npcBonus, repeatPenalty * 0.5)
         : npcBonus;
 
-      return Math.max(1, base + agendaBoost + effectiveNpcBonus + tagBonus - penalty);
+      return Math.max(1, base + agendaBoost + questFactBoost + effectiveNpcBonus + tagBonus - penalty);
     });
 
     return this.weightedSelect(candidates, weights, rng);
@@ -216,11 +222,17 @@ export class EventMatcherService {
       candidates = hardcapped;
     }
 
+    // A: 미발견 quest fact 부스트 준비
+    const _discoveredFacts2 = new Set(arcState?.discoveredQuestFacts ?? []);
+
     const weights = candidates.map((e) => {
       const base = e.priority * 10 + e.weight;
       const agendaBoost = this.computeAgendaBoost(e, agenda);
       let penalty = 0;
       let incidentBoost = 0;
+
+      // A: 미발견 discoverableFact 이벤트에 weight 부스트 (+35)
+      const questFactBoost = (e as any).discoverableFact && !_discoveredFacts2.has((e as any).discoverableFact) ? 35 : 0;
 
       // FALLBACK 연속 페널티
       if (e.eventType === 'FALLBACK' && consecutiveFallbacks > 0) {
@@ -265,7 +277,7 @@ export class EventMatcherService {
         ? Math.min(npcBonus, repeatPenalty * 0.5)
         : npcBonus;
 
-      return Math.max(1, base + agendaBoost + incidentBoost + effectiveNpcBonus + tagBonus - penalty);
+      return Math.max(1, base + agendaBoost + questFactBoost + incidentBoost + effectiveNpcBonus + tagBonus - penalty);
     });
 
     return this.weightedSelect(candidates, weights, rng);
