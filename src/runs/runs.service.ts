@@ -68,6 +68,7 @@ export class RunsService {
       characterName?: string;
       bonusStats?: Record<string, number>;
       traitId?: string;
+      portraitUrl?: string;
     },
   ) {
     const runMode = options?.mode ?? 'hub';
@@ -411,6 +412,7 @@ export class RunsService {
         questState: 'S0_ARRIVE',
         discoveredQuestFacts: [],
         characterName,
+        portraitUrl: options?.portraitUrl ?? undefined,
         traitId,
         traitEffects,
         actionBonuses: Object.keys(mergedActionBonuses).length > 0 ? mergedActionBonuses : undefined,
