@@ -791,10 +791,20 @@ export class PromptBuilderService {
         if (dialogueMatches && dialogueMatches.length > 0) {
           // 마지막 1~2개 대사 추출
           const recentDialogues = dialogueMatches.slice(-2);
+          // 시작 어구 추출: 각 대사의 첫 5~15자
+          const openingPhrases = recentDialogues
+            .map((d) => d.replace(/^["\u201c]|["\u201d]$/g, '').trim())
+            .filter((d) => d.length > 3)
+            .map((d) => d.slice(0, Math.min(15, d.indexOf(',') > 3 ? d.indexOf(',') : 15)))
+            .filter(Boolean);
+          const openingWarning = openingPhrases.length > 0
+            ? `\n⚠️ 시작 어구 반복 금지: 이전 대사가 "${openingPhrases[0]}"로 시작했으므로, 이번 대사는 완전히 다른 어구로 시작하세요. 같은 호칭이나 인사말("듣고 계시오", "그대" 등)을 연속 사용하면 안 됩니다.`
+            : '';
           factsParts.push(
             `[직전 NPC 대사]\n${recentDialogues.join('\n')}\n` +
             '⚠️ 이 대사를 반복하지 마세요. 이전 대사에 이어지는 새로운 반응이나 화제로 시작하세요. ' +
-            '같은 질문("무슨 용무요?", "조심하시오" 등)을 다시 하면 안 됩니다.',
+            '같은 질문("무슨 용무요?", "조심하시오" 등)을 다시 하면 안 됩니다.' +
+            openingWarning,
           );
         }
       }
