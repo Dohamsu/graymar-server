@@ -769,10 +769,12 @@ export class ContextBuilderService {
                 ? getNpcDisplayName(npcState, npcDef)
                 : (npcDef.unknownAlias || npcDef.name);
 
+              // fact detail에서 미소개 NPC 실명을 별칭으로 치환
+              const sanitizedDetail = this.sanitizeNpcNames(unrevealed.detail, runState);
               npcRevealableFact = {
                 npcDisplayName: displayName,
                 factId: unrevealed.factId,
-                detail: unrevealed.detail,
+                detail: sanitizedDetail,
                 resolveOutcome: outcome as 'SUCCESS' | 'PARTIAL',
                 trust: npcState?.emotional?.trust ?? 0,
                 posture: npcState?.posture ?? 'CAUTIOUS',
@@ -799,7 +801,7 @@ export class ContextBuilderService {
           const displayName = (npcDef && npcState) ? getNpcDisplayName(npcState, npcDef) : revNpcId;
           npcAlreadyRevealedFacts = {
             npcDisplayName: displayName,
-            facts: entries.map(e => e.text).slice(0, 5),
+            facts: entries.map(e => this.sanitizeNpcNames(e.text, runState)).slice(0, 5),
           };
         }
       }
