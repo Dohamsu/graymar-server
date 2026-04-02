@@ -937,19 +937,25 @@ export class PromptBuilderService {
       }
 
       // 서버 2단계 판정 기반 정보 전달 방식 (revealMode)
-      const { revealMode } = ctx.npcRevealableFact;
+      // 비대화 행동에서는 강제로 observe 모드 (NPC 대사 대신 관찰로 정보 획득)
+      const actionCtxForFact = sr.ui?.actionContext as { parsedType?: string } | undefined;
+      const factActionType = actionCtxForFact?.parsedType ?? '';
+      const FACT_NON_DIALOGUE = new Set(['OBSERVE', 'INVESTIGATE', 'SEARCH', 'SNEAK', 'STEAL']);
+      const isFactNonDialogue = FACT_NON_DIALOGUE.has(factActionType) || (rawInput && /관찰|살핀|살펴|지켜|훑|둘러|조사|잠입|숨어|몰래|훔/.test(rawInput));
+      const effectiveRevealMode = isFactNonDialogue ? 'observe' : ctx.npcRevealableFact.revealMode;
+      const { revealMode: _originalRevealMode } = ctx.npcRevealableFact;
 
       if (factOutcome === 'SUCCESS' || factOutcome === 'PARTIAL') {
         let deliveryGuide: string;
 
-        if (revealMode === 'direct') {
+        if (effectiveRevealMode === 'direct') {
           // trust > 20: NPC가 직접 대화로 전달
           deliveryGuide = [
             `${npcDisplayName}이(가) 플레이어에게 직접 다음 정보를 알려줍니다:`,
             `"${detail}"`,
             `NPC의 말투로 자연스럽게 대화에 녹이세요.`,
           ].join('\n');
-        } else if (revealMode === 'observe') {
+        } else if (effectiveRevealMode === 'observe') {
           // trust -20~0: 플레이어가 관찰/추리로 알아냄 — NPC는 말하지 않음
           deliveryGuide = [
             `플레이어가 관찰/추리를 통해 다음 정보를 알아냅니다:`,
@@ -976,7 +982,7 @@ export class PromptBuilderService {
         factsParts.push(
           [
             `[이번 턴 NPC가 공개할 정보]`,
-            `전달 방식: ${revealMode === 'direct' ? '직접 대화' : revealMode === 'observe' ? '관찰/추리' : '간접 흘림'}`,
+            `전달 방식: ${effectiveRevealMode === 'direct' ? '직접 대화' : effectiveRevealMode === 'observe' ? '관찰/추리' : '간접 흘림'}`,
             speechLine + deliveryGuide,
             previousTopicWarning,
           ].filter(Boolean).join('\n'),
