@@ -11,6 +11,7 @@ import { and, eq, lt, or, isNull, desc } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { turns, recentSummaries, runSessions, nodeMemories, runMemories } from '../db/schema/index.js';
 import { ContextBuilderService } from './context-builder.service.js';
+import { ContentLoaderService } from '../content/content-loader.service.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
@@ -43,6 +44,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly configService: LlmConfigService,
     private readonly aiTurnLog: AiTurnLogService,
     private readonly sceneShell: SceneShellService,
+    private readonly content: ContentLoaderService,
   ) {}
 
   onModuleInit(): void {
@@ -325,6 +327,43 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         if (narrative.includes('이보게')) {
           narrative = narrative.replaceAll('이보게', '듣고 계시오');
           violations.push('AUTO_FIX: 이보게→듣고 계시오');
+        }
+
+        // P4. 미소개 NPC 실명 sanitize (서술 + 선택지 label)
+        const rs = runSession?.runState as Record<string, unknown> | undefined;
+        if (rs) {
+          const npcStates = rs.npcStates as Record<string, { introduced?: boolean }> | undefined;
+          if (npcStates) {
+            for (const [npcId, state] of Object.entries(npcStates)) {
+              if (state.introduced) continue;
+              const npcDef = this.content.getNpc(npcId);
+              if (!npcDef?.name) continue;
+              const alias = npcDef.unknownAlias || '누군가';
+              // 서술 sanitize
+              if (narrative.includes(npcDef.name)) {
+                narrative = narrative.replaceAll(npcDef.name, alias);
+                violations.push(`AUTO_FIX: NPC_NAME(${npcDef.name}→${alias})`);
+              }
+              for (const a of (npcDef.aliases ?? []) as string[]) {
+                if (narrative.includes(a)) {
+                  narrative = narrative.replaceAll(a, alias);
+                }
+              }
+              // 선택지 label sanitize
+              if (llmChoices) {
+                for (const choice of llmChoices) {
+                  if (choice.label.includes(npcDef.name)) {
+                    choice.label = choice.label.replaceAll(npcDef.name, alias);
+                  }
+                  for (const a of (npcDef.aliases ?? []) as string[]) {
+                    if (choice.label.includes(a)) {
+                      choice.label = choice.label.replaceAll(a, alias);
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
 
         if (violations.length > 0) {
