@@ -366,6 +366,43 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
+        // P5. 서술(큰따옴표 바깥)에서 경어체 어미를 해라체로 자동 치환
+        {
+          // 큰따옴표 안(NPC 대사)과 바깥(서술)을 분리
+          const parts = narrative.split(/(["\u201c][^\u201d"]*["\u201d])/g);
+          let fixCount = 0;
+          const honorificToPlain: [RegExp, string][] = [
+            [/하였소\b/g, '하였다'],
+            [/였소\b/g, '였다'],
+            [/었소\b/g, '었다'],
+            [/했소\b/g, '했다'],
+            [/됐소\b/g, '됐다'],
+            [/겠소\b/g, '겠다'],
+            [/이오\b/g, '이다'],
+            [/이었소\b/g, '이었다'],
+            [/건넸소\b/g, '건넸다'],
+            [/보였소\b/g, '보였다'],
+            [/들렸소\b/g, '들렸다'],
+          ];
+          for (let i = 0; i < parts.length; i++) {
+            // 홀수 인덱스 = 큰따옴표 안(대사) → 건너뜀
+            if (i % 2 === 1) continue;
+            const before = parts[i];
+            let segment = parts[i];
+            for (const [pattern, replacement] of honorificToPlain) {
+              segment = segment.replace(pattern, replacement);
+            }
+            if (segment !== before) {
+              parts[i] = segment;
+              fixCount++;
+            }
+          }
+          if (fixCount > 0) {
+            narrative = parts.join('');
+            violations.push(`AUTO_FIX: NARR_HONORIFIC(${fixCount}건 치환)`);
+          }
+        }
+
         if (violations.length > 0) {
           this.logger.warn(`[NarrativeFilter] turn=${pending.turnNo} violations: ${violations.join(' | ')}`);
         }
