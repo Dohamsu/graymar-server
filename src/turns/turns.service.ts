@@ -1650,22 +1650,59 @@ export class TurnsService {
           }
         }
 
-        // 경로 2: NPC knownFacts — SUCCESS/PARTIAL + 정보성 행동
+        // 경로 2: NPC knownFacts — SUCCESS/PARTIAL + 정보성 행동 + 2단계 NPC 반응 판정
         // effectiveNpcId: 텍스트 매칭 → IntentParser → 대화 잠금 → 이벤트 NPC 순으로 결정됨
         const INFO_ACTIONS = new Set(['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE', 'SEARCH', 'HELP', 'BRIBE', 'THREATEN', 'STEAL']);
         if (
           (resolveResult.outcome === 'SUCCESS' || resolveResult.outcome === 'PARTIAL') &&
           INFO_ACTIONS.has(intent.actionType)
         ) {
-          // eventPrimaryNpc에 대화 잠금/텍스트 매칭 보정이 이미 적용되어 있음 (FREE 턴에서도 작동)
           const npcId = eventPrimaryNpc
             ?? ((event?.payload as Record<string, unknown>)?.primaryNpcId as string | undefined)
             ?? null;
           if (npcId) {
-            const revealedFactId = this.questProgression.getRevealableQuestFact(npcId, updatedRunState);
-            if (revealedFactId) {
-              addFact(revealedFactId, `npc:${npcId}`);
-              this.logger.log(`[Quest] Fact discovered: ${revealedFactId} (source: npc:${npcId})`);
+            // 2단계: NPC trust 기반 반응 판정
+            const npcState = npcStates[npcId];
+            const npcTrust = npcState?.emotional?.trust ?? 0;
+            // BRIBE/THREATEN은 특수: trust 무관하게 작동 (금전/공포 기반)
+            const bypassTrust = intent.actionType === 'BRIBE' || intent.actionType === 'THREATEN';
+
+            // trust 단계별 반응:
+            //   trust > 20: 직접 전달 (SUCCESS/PARTIAL 모두)
+            //   trust 0~20: 간접 전달 (SUCCESS만, PARTIAL은 힌트만)
+            //   trust -20~0: 관찰 힌트 (SUCCESS만 — fact 발견되지만 전달 방식만 다름)
+            //   trust < -20: 거부 (fact 미발견 — 다른 NPC나 이벤트로 우회 필요)
+            let npcWillReveal = false;
+            let npcRevealMode: 'direct' | 'indirect' | 'observe' | 'refuse' = 'refuse';
+
+            if (bypassTrust) {
+              // BRIBE/THREATEN: trust 무관, 판정 결과만으로 결정
+              npcWillReveal = true;
+              npcRevealMode = resolveResult.outcome === 'SUCCESS' ? 'indirect' : 'observe';
+            } else if (npcTrust > 20) {
+              npcWillReveal = true;
+              npcRevealMode = 'direct';
+            } else if (npcTrust >= 0) {
+              npcWillReveal = resolveResult.outcome === 'SUCCESS';
+              npcRevealMode = 'indirect';
+            } else if (npcTrust >= -20) {
+              npcWillReveal = resolveResult.outcome === 'SUCCESS';
+              npcRevealMode = 'observe';
+            } else {
+              // trust < -20: 거부
+              npcWillReveal = false;
+              npcRevealMode = 'refuse';
+            }
+
+            this.logger.log(`[Quest:NpcReaction] npc=${npcId} trust=${npcTrust} action=${intent.actionType} outcome=${resolveResult.outcome} → willReveal=${npcWillReveal} mode=${npcRevealMode}`);
+
+            if (npcWillReveal) {
+              const revealedFactId = this.questProgression.getRevealableQuestFact(npcId, updatedRunState);
+              if (revealedFactId) {
+                addFact(revealedFactId, `npc:${npcId}:${npcRevealMode}`);
+                // revealMode를 serverResult에 전달하여 context-builder에서 프롬프트 분기에 활용
+                (updatedRunState as unknown as Record<string, unknown>)._npcRevealMode = npcRevealMode;
+              }
             }
           }
         }

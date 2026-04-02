@@ -919,22 +919,21 @@ export class PromptBuilderService {
         }
       }
 
-      // trust/posture 기반 정보 전달 방식 분기
-      const { trust, posture } = ctx.npcRevealableFact;
-      const isFriendly = posture === 'FRIENDLY' || trust > 20;
-      const isHostile = posture === 'HOSTILE' || trust < -10;
+      // 서버 2단계 판정 기반 정보 전달 방식 (revealMode)
+      const { revealMode } = ctx.npcRevealableFact;
 
-      if (factOutcome === 'SUCCESS') {
+      if (factOutcome === 'SUCCESS' || factOutcome === 'PARTIAL') {
         let deliveryGuide: string;
-        if (isFriendly) {
-          // 호의적: NPC가 직접 대화로 전달
+
+        if (revealMode === 'direct') {
+          // trust > 20: NPC가 직접 대화로 전달
           deliveryGuide = [
             `${npcDisplayName}이(가) 플레이어에게 직접 다음 정보를 알려줍니다:`,
             `"${detail}"`,
             `NPC의 말투로 자연스럽게 대화에 녹이세요.`,
           ].join('\n');
-        } else if (isHostile) {
-          // 적대적: 플레이어가 관찰/추리로 알아냄 — NPC는 말하지 않음
+        } else if (revealMode === 'observe') {
+          // trust -20~0: 플레이어가 관찰/추리로 알아냄 — NPC는 말하지 않음
           deliveryGuide = [
             `플레이어가 관찰/추리를 통해 다음 정보를 알아냅니다:`,
             `"${detail}"`,
@@ -945,7 +944,7 @@ export class PromptBuilderService {
             `- NPC는 경계하며 정보를 숨기려 하지만 플레이어가 눈치챈 것으로 서술`,
           ].join('\n');
         } else {
-          // 중립/경계: NPC가 간접적으로 흘림 — 말을 아끼며 힌트만
+          // indirect (trust 0~20): NPC가 간접적으로 흘림
           deliveryGuide = [
             `${npcDisplayName}이(가) 경계하며 다음 정보를 간접적으로 흘립니다:`,
             `"${detail}"`,
@@ -960,26 +959,13 @@ export class PromptBuilderService {
         factsParts.push(
           [
             `[이번 턴 NPC가 공개할 정보]`,
+            `전달 방식: ${revealMode === 'direct' ? '직접 대화' : revealMode === 'observe' ? '관찰/추리' : '간접 흘림'}`,
             speechLine + deliveryGuide,
             previousTopicWarning,
           ].filter(Boolean).join('\n'),
         );
-      } else {
-        // PARTIAL: 힌트만 흘림 (trust 무관하게 항상 간접적)
-        const hintText = detail.length > 20 ? detail.slice(0, 20) + '...' : detail;
-        factsParts.push(
-          [
-            `[이번 턴 정보 힌트]`,
-            speechLine + `${npcDisplayName}이(가) 다음 정보를 일부만 흘립니다 (PARTIAL 판정):`,
-            `"${hintText}"`,
-            `핵심은 감추고 일부만 암시하세요. NPC가 말을 아끼거나 핵심을 돌려 말합니다.`,
-            isHostile
-              ? `⚠️ 적대적 NPC이므로 말 대신 행동/표정에서 힌트가 드러나게 하세요.`
-              : '',
-            previousTopicWarning,
-          ].filter(Boolean).join('\n'),
-        );
       }
+      // revealMode === 'refuse'인 경우: 서버에서 fact를 발견하지 않으므로 이 블록 자체가 실행 안 됨
     }
 
     // P5: FREE 턴 단서 힌트 — 미발견 단서가 있는 장소에서 탐색 동기 부여
