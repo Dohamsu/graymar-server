@@ -174,6 +174,7 @@ export const NARRATIVE_SYSTEM_PROMPT = `당신은 중세 판타지 왕국을 배
 - 정확히 3개. 최소 2종 이상 AFFORDANCE.
 - **구체성 필수**: 이번 서술에서 새로 등장한 고유명사(인물, 사물, 장소 특징) 포함.
   나쁜 예: "상인에게 소문을 묻는다" → 좋은 예: "기름 얼룩이 묻은 쪽지를 불빛에 비춰본다"
+- ⚠️ **선택지의 NPC는 이번 서술에 등장한 NPC만.** 서술에 없는 새 인물("입이 가벼운 술꾼" 등)을 선택지에서 만들지 마라. 대화 중인 NPC가 있으면 그 NPC와 이어지는 선택지를 우선 제시.
 - 직전 2턴과 다른 AFFORDANCE 최소 1개 포함. hint는 10~30자.
 - 이전 턴과 동일/유사한 선택지 금지.
 - AFFORDANCE: INVESTIGATE, PERSUADE, SNEAK, BRIBE, THREATEN, HELP, STEAL, FIGHT, OBSERVE, TRADE, TALK, SEARCH
