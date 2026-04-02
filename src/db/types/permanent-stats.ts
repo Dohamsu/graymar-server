@@ -108,6 +108,7 @@ export interface RunState {
   discoveredQuestFacts?: string[];  // ["FACT_LEDGER_EXISTS", "FACT_WAGE_FRAUD_PATTERN", ...]
   // Character customization
   characterName?: string;         // 플레이어 지정 캐릭터 이름 (1~8자)
+  portraitUrl?: string;           // AI 생성 초상화 URL
   traitId?: string;               // 선택된 특성 ID (traits.json 참조)
   traitEffects?: import('../../content/content.types.js').TraitEffects;  // 런타임 참조용 특성 효과
   /** 프리셋 + 특성 합산 actionBonuses (런타임 참조용) */

@@ -33,6 +33,8 @@ export const CreateRunBodySchema = z.object({
     ),
   /** 선택 특성 ID (traits.json에 존재해야 함) */
   traitId: z.string().min(1).max(50).optional(),
+  /** AI 생성 초상화 URL */
+  portraitUrl: z.string().max(500).optional(),
 });
 
 export type CreateRunBody = z.infer<typeof CreateRunBodySchema>;
