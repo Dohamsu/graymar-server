@@ -909,18 +909,53 @@ export class PromptBuilderService {
         }
       }
 
+      // trust/posture 기반 정보 전달 방식 분기
+      const { trust, posture } = ctx.npcRevealableFact;
+      const isFriendly = posture === 'FRIENDLY' || trust > 20;
+      const isHostile = posture === 'HOSTILE' || trust < -10;
+
       if (factOutcome === 'SUCCESS') {
+        let deliveryGuide: string;
+        if (isFriendly) {
+          // 호의적: NPC가 직접 대화로 전달
+          deliveryGuide = [
+            `${npcDisplayName}이(가) 플레이어에게 직접 다음 정보를 알려줍니다:`,
+            `"${detail}"`,
+            `NPC의 말투로 자연스럽게 대화에 녹이세요.`,
+          ].join('\n');
+        } else if (isHostile) {
+          // 적대적: 플레이어가 관찰/추리로 알아냄 — NPC는 말하지 않음
+          deliveryGuide = [
+            `플레이어가 관찰/추리를 통해 다음 정보를 알아냅니다:`,
+            `"${detail}"`,
+            `⚠️ NPC가 직접 이 정보를 말하면 안 됩니다. 대신:`,
+            `- 플레이어 시점에서 NPC의 행동/표정/문서 등을 관찰하여 추론하는 서술`,
+            `- 예: "그의 보고서에서 특정 시간대가 비어있는 것이 눈에 띈다"`,
+            `- 예: "접혀진 두루마리 사이로 '내부 조사'라는 글자가 살짝 보인다"`,
+            `- NPC는 경계하며 정보를 숨기려 하지만 플레이어가 눈치챈 것으로 서술`,
+          ].join('\n');
+        } else {
+          // 중립/경계: NPC가 간접적으로 흘림 — 말을 아끼며 힌트만
+          deliveryGuide = [
+            `${npcDisplayName}이(가) 경계하며 다음 정보를 간접적으로 흘립니다:`,
+            `"${detail}"`,
+            `⚠️ NPC가 대놓고 설명하면 안 됩니다. 대신:`,
+            `- 말을 아끼며 돌려 말하거나, 핵심만 짧게 언급 후 입을 다묾`,
+            `- 플레이어의 질문에 마지못해 답하는 형태`,
+            `- 예: "...더 말하기는 어렵소. 그대가 직접 확인하시오."`,
+            `- NPC의 표정/행동에서 추가 정보가 드러나는 간접 서술 병행`,
+          ].join('\n');
+        }
+
         factsParts.push(
           [
             `[이번 턴 NPC가 공개할 정보]`,
-            speechLine + `${npcDisplayName}이(가) 플레이어에게 다음 정보를 알려줍니다 (SUCCESS 판정 결과):`,
-            `"${detail}"`,
-            `이 정보를 NPC의 대사나 행동을 통해 자연스럽게 서술에 반영하세요. 직접 읽어주듯 전달하지 말고, NPC의 성격과 말투에 맞게 간접적으로 드러내세요.`,
+            speechLine + deliveryGuide,
             previousTopicWarning,
           ].filter(Boolean).join('\n'),
         );
       } else {
-        // PARTIAL: 힌트만 흘림
+        // PARTIAL: 힌트만 흘림 (trust 무관하게 항상 간접적)
         const hintText = detail.length > 20 ? detail.slice(0, 20) + '...' : detail;
         factsParts.push(
           [
@@ -928,6 +963,9 @@ export class PromptBuilderService {
             speechLine + `${npcDisplayName}이(가) 다음 정보를 일부만 흘립니다 (PARTIAL 판정):`,
             `"${hintText}"`,
             `핵심은 감추고 일부만 암시하세요. NPC가 말을 아끼거나 핵심을 돌려 말합니다.`,
+            isHostile
+              ? `⚠️ 적대적 NPC이므로 말 대신 행동/표정에서 힌트가 드러나게 하세요.`
+              : '',
             previousTopicWarning,
           ].filter(Boolean).join('\n'),
         );

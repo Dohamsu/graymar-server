@@ -99,7 +99,7 @@ export interface LlmContext {
   // Phase 3: ItemMemory — 관련 아이템 기록 (장착 중 + 신규 획득 + LEGENDARY/UNIQUE)
   relevantItemMemoryText: string | null;
   // NPC knownFacts: SUCCESS/PARTIAL 판정 시 NPC가 공개할 정보
-  npcRevealableFact: { npcDisplayName: string; factId: string; detail: string; resolveOutcome: 'SUCCESS' | 'PARTIAL' } | null;
+  npcRevealableFact: { npcDisplayName: string; factId: string; detail: string; resolveOutcome: 'SUCCESS' | 'PARTIAL'; trust: number; posture: string } | null;
   // NPC가 이미 플레이어에게 공개한 정보 리스트 (반복 방지용)
   npcAlreadyRevealedFacts: { npcDisplayName: string; facts: string[] } | null;
   // P5: FREE 턴에서 미발견 단서가 있음을 암시하는 힌트
@@ -766,6 +766,8 @@ export class ContextBuilderService {
                 factId: unrevealed.factId,
                 detail: unrevealed.detail,
                 resolveOutcome: outcome as 'SUCCESS' | 'PARTIAL',
+                trust: npcState?.emotional?.trust ?? 0,
+                posture: npcState?.posture ?? 'CAUTIOUS',
               };
             }
           }
