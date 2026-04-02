@@ -414,16 +414,24 @@ export class ContextBuilderService {
             .join(', ');
           const npcDef = this.content.getNpc(lastDelta.npcId);
           const npcState = npcStates[lastDelta.npcId];
-          const dName = npcState ? getNpcDisplayName(npcState, npcDef) : lastDelta.npcId;
+          const dName = npcState ? getNpcDisplayName(npcState, npcDef) : (npcDef?.unknownAlias ?? '관련 인물');
           npcDeltaHint = `⚡ 이번 턴 변화: ${dName}의 감정이 변했다 (${deltaDesc}). 이 변화를 NPC의 표정, 목소리, 행동에 반영하세요.`;
         }
       }
       npcEmotionalContext = null; // deprecated — prompt-builder에서 빌드
 
-      // Narrative Mark 요약
+      // Narrative Mark 요약 (npcId 대신 displayName 사용)
       const marks = (ws?.narrativeMarks ?? []) as NarrativeMark[];
       if (marks.length > 0) {
-        const markLines = marks.map((m) => `- [${m.type}] ${m.context} (${m.npcId ?? '전체'})`);
+        const markLines = marks.map((m) => {
+          if (!m.npcId) return `- [${m.type}] ${m.context} (전체)`;
+          const markNpcDef = this.content.getNpc(m.npcId);
+          const markNpcState = npcStates?.[m.npcId];
+          const markNpcName = (markNpcDef && markNpcState)
+            ? getNpcDisplayName(markNpcState, markNpcDef)
+            : (markNpcDef?.unknownAlias ?? '관련 인물');
+          return `- [${m.type}] ${m.context} (${markNpcName})`;
+        });
         narrativeMarkContext = `서사 표식 ${marks.length}개:\n${markLines.join('\n')}`;
       }
 
@@ -588,7 +596,7 @@ export class ContextBuilderService {
         if (prevTargetNpcId === currentTargetNpcId) {
           const npcDef = this.content.getNpc(currentTargetNpcId);
           const npcState = npcStatesAll?.[currentTargetNpcId];
-          const displayName = (npcDef && npcState) ? getNpcDisplayName(npcState, npcDef) : currentTargetNpcId;
+          const displayName = (npcDef && npcState) ? getNpcDisplayName(npcState, npcDef) : (npcDef?.unknownAlias ?? '상대 인물');
           sceneParts.push(`⚠️ 대화 연속 중: ${displayName}와(과) 대화가 이어지고 있습니다. 이 NPC가 떠나거나 장면이 종료되지 않아야 합니다. 대화가 자연스럽게 계속될 수 있는 열린 상태로 서술을 마무리하세요.`);
         }
       }
@@ -845,7 +853,7 @@ export class ContextBuilderService {
       milestonesText: sanitize(milestonesText),
       llmFactsText: sanitize(llmFactsText),
       // 장면 연속성
-      currentSceneContext,
+      currentSceneContext: sanitize(currentSceneContext),
       // PR2/3/4: 신규 컨텍스트
       midSummary,
       intentMemory,
@@ -855,22 +863,22 @@ export class ContextBuilderService {
       // Fixplan v1: 직전 장소 이탈 요약
       previousVisitContext,
       // Phase 4: 장소별 재방문 기억
-      locationRevisitContext: structured
+      locationRevisitContext: sanitize(structured
         ? this.memoryRenderer.renderLocationRevisitContext(
             (runState?.worldState as Record<string, unknown> | undefined)?.currentLocationId as string | undefined ?? '',
             structured.visitLog,
             structured.npcJournal,
             structured.npcKnowledge ?? {},
           )
-        : null,
+        : null),
       // LocationMemory: 장소별 개인 기록
-      locationMemoryText: this.buildLocationMemoryText(runState),
+      locationMemoryText: sanitize(this.buildLocationMemoryText(runState)),
       // 프리셋 배경 강화
       protagonistBackground,
       // NPC 개인 기록
-      relevantNpcMemoryText,
+      relevantNpcMemoryText: sanitize(relevantNpcMemoryText),
       // Phase 2: IncidentMemory — 관련 사건 선별 주입
-      relevantIncidentMemoryText: this.buildRelevantIncidentMemoryText(runState, serverResult),
+      relevantIncidentMemoryText: sanitize(this.buildRelevantIncidentMemoryText(runState, serverResult)),
       // Phase 3: ItemMemory — 관련 아이템 기록 선별 주입
       relevantItemMemoryText: this.buildRelevantItemMemoryText(runState, serverResult),
       // NPC knownFacts: SUCCESS/PARTIAL 판정 시 공개할 단서
@@ -1029,9 +1037,13 @@ export class ContextBuilderService {
       }
 
       if (mem.relatedNpcIds.length > 0) {
+        const allNpcStatesForInc = runState?.npcStates as Record<string, NPCState> | undefined;
         const npcNames = mem.relatedNpcIds.map((nid) => {
           const npcDef = this.content.getNpc(nid);
-          return npcDef?.name ?? nid;
+          if (!npcDef) return '알 수 없는 인물';
+          const npcState = allNpcStatesForInc?.[nid];
+          if (npcState) return getNpcDisplayName(npcState, npcDef);
+          return npcDef.unknownAlias || '알 수 없는 인물';
         });
         lines.push(`관련 NPC: ${npcNames.join(', ')}`);
       }
@@ -1150,7 +1162,7 @@ export class ContextBuilderService {
       if (pm && pm.encounters.length > 0) {
         // 상세 기록 있음
         const lines: string[] = [];
-        lines.push(`[NPC: ${displayName} (${npcId})]`);
+        lines.push(`[NPC: ${displayName}]`);
         lines.push(`관계: ${pm.relationSummary || generateRelationSummary(posture, npc.emotional.trust)} (trust: ${npc.emotional.trust})`);
 
         // 과거 만남 (최근 5개만 렌더링하여 토큰 절약)
@@ -1173,7 +1185,7 @@ export class ContextBuilderService {
       } else {
         // personalMemory 없음 — 기본 정보만
         const relSummary = generateRelationSummary(posture, npc.emotional.trust);
-        blocks.push(`[NPC: ${displayName} (${npcId})]\n관계: ${relSummary} (trust: ${npc.emotional.trust})`);
+        blocks.push(`[NPC: ${displayName}]\n관계: ${relSummary} (trust: ${npc.emotional.trust})`);
       }
     }
 

@@ -741,10 +741,7 @@ export class PromptBuilderService {
               ? npcDef.name
               : (npcDef.unknownAlias || '낯선 인물');
           } else {
-            displayName = npcId
-              .replace(/^NPC_/i, '')
-              .replace(/_/g, ' ')
-              .replace(/\b\w/g, c => c.toUpperCase());
+            displayName = '낯선 인물';
           }
 
           // personality: 첫 등장 시에만 traits 포함, 이후에는 posture+말투만
@@ -820,7 +817,7 @@ export class PromptBuilderService {
         const npcDef = this.content.getNpc(npcId);
         const displayName = npcDef
           ? (introducedNpcIdsForCounter.has(npcId) ? npcDef.name : (npcDef.unknownAlias || '낯선 인물'))
-          : npcId;
+          : '낯선 인물';
         const count = sessionTurnsForCounter.filter(t => t.narrative?.includes(displayName)).length;
         if (count >= 2) {
           npcAppearanceCounts[displayName] = count;
