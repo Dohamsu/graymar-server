@@ -680,18 +680,38 @@ export class PromptBuilderService {
           ? '\n이 인물은 직전 턴에도 등장했습니다. 대화를 이어가세요.'
           : '';
 
-      // OBSERVE/SEARCH 등 관찰 행동 시 NPC 대사 금지
-      const isPassiveObserve = rawInput && /관찰|살핀|살펴|지켜|훑|둘러/.test(rawInput);
-      const npcBehaviorInstruction = isPassiveObserve
-        ? '이 NPC를 배경에 등장시키되, 절대 플레이어에게 말을 걸거나 대사를 하지 마세요. NPC의 행동과 동작만 묘사하세요.'
-        : '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.';
+      // 행동 유형에 따라 NPC 등장 모드 결정
+      const actionCtxForNpc = sr.ui?.actionContext as { parsedType?: string } | undefined;
+      const actionType = actionCtxForNpc?.parsedType ?? '';
+      const NON_DIALOGUE_ACTIONS = new Set(['OBSERVE', 'INVESTIGATE', 'SEARCH', 'SNEAK', 'STEAL']);
+      const COMBAT_ACTIONS = new Set(['FIGHT']);
+      const isNonDialogueAction = NON_DIALOGUE_ACTIONS.has(actionType) || (rawInput && /관찰|살핀|살펴|지켜|훑|둘러|조사|잠입|숨어|몰래/.test(rawInput));
+      const isCombatAction = COMBAT_ACTIONS.has(actionType) || (rawInput && /싸움|공격|던져|때려|기습/.test(rawInput));
+
+      let npcBehaviorInstruction: string;
+      if (isNonDialogueAction) {
+        npcBehaviorInstruction = [
+          '⚠️ 이번 턴은 비대화 행동(관찰/조사/잠입/탐색)입니다.',
+          'NPC 대사를 쓰지 마세요. NPC는 배경에 존재하지만 플레이어에게 말을 걸지 않습니다.',
+          '서술은 플레이어의 행동 과정과 환경 묘사에 집중하세요.',
+          'NPC는 행동/동작/표정으로만 묘사 (예: "그가 곁에서 주변을 경계한다", "그의 시선이 어둠을 훑는다").',
+        ].join('\n');
+      } else if (isCombatAction) {
+        npcBehaviorInstruction = [
+          '⚠️ 이번 턴은 전투/공격 행동입니다.',
+          'NPC 대사는 짧은 감탄이나 경고 1문장 이내. 대화 금지.',
+          '서술은 전투 동작, 타격감, 긴장감에 집중하세요.',
+        ].join('\n');
+      } else {
+        npcBehaviorInstruction = '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.';
+      }
 
       factsParts.push(
         [
           `[NPC 등장] ${npcDisplayName}이(가) 이 장면에 나타납니다.`,
           `이유: ${npc.reason}`,
           `자세: ${npc.posture}`,
-          ...(isPassiveObserve ? [] : [`대화 시드: ${npc.dialogueSeed}`]),
+          ...((isNonDialogueAction || isCombatAction) ? [] : [`대화 시드: ${npc.dialogueSeed}`]),
           npcBehaviorInstruction,
           '⚠️ NPC의 personality 설명을 직접 인용하지 마세요. 행동과 대사로 성격을 보여주세요.',
           introInstruction,
