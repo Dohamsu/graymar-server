@@ -1002,6 +1002,17 @@ export class PromptBuilderService {
       );
     }
 
+    // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
+    if (ctx.questDirectionHint) {
+      factsParts.push(
+        [
+          `[단서 방향]`,
+          ctx.questDirectionHint,
+          `이 방향을 서술 마지막에 자연스럽게 암시하세요. NPC가 직접 말하지 않고, 플레이어의 직감이나 관찰을 통해 간접적으로 드러내세요. "~해야 한다", "~하라" 같은 명령형이 아닌 분위기와 감각으로 전달하세요.`,
+        ].join('\n'),
+      );
+    }
+
     // 프롤로그 힌트 (첫 장면)
     if (sr.turnNo === 0) {
       factsParts.push(
