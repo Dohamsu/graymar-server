@@ -1743,8 +1743,10 @@ export class TurnsService {
           const lastFactId = discoveredFactIdsThisTurn[discoveredFactIdsThisTurn.length - 1];
           const nextHint = this.questProgression.getFactNextHint(lastFactId);
           if (nextHint) {
-            updatedRunState.pendingQuestHint = { hint: nextHint, setAtTurn: turnNo };
-            this.logger.log(`[Quest] pendingQuestHint set for fact=${lastFactId} at turn=${turnNo}`);
+            const HINT_MODES = ['OVERHEARD', 'DOCUMENT', 'SCENE_CLUE', 'NPC_BEHAVIOR', 'RUMOR_ECHO'] as const;
+            const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length)];
+            updatedRunState.pendingQuestHint = { hint: nextHint, setAtTurn: turnNo, mode: hintMode };
+            this.logger.log(`[Quest] pendingQuestHint set for fact=${lastFactId} mode=${hintMode} at turn=${turnNo}`);
           }
         }
       } catch (err) {

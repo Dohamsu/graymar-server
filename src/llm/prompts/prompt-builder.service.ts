@@ -1002,15 +1002,18 @@ export class PromptBuilderService {
       );
     }
 
-    // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
+    // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달 (mode별 다채로운 전달)
     if (ctx.questDirectionHint) {
-      factsParts.push(
-        [
-          `[단서 방향]`,
-          ctx.questDirectionHint,
-          `이 방향을 서술 마지막에 자연스럽게 암시하세요. NPC가 직접 말하지 않고, 플레이어의 직감이나 관찰을 통해 간접적으로 드러내세요. "~해야 한다", "~하라" 같은 명령형이 아닌 분위기와 감각으로 전달하세요.`,
-        ].join('\n'),
-      );
+      const { hint, mode } = ctx.questDirectionHint;
+      const HINT_DIRECTIVES: Record<string, string> = {
+        OVERHEARD: `서술 중 지나가는 사람들의 대화 일부가 플레이어 귀에 스쳐 들어오는 장면을 넣으세요. 익명 인물 2명이 수군거리는 짧은 대화 1~2문장으로 다음 내용을 암시: "${hint}"`,
+        DOCUMENT: `서술 중 바닥에 떨어진 낡은 쪽지/찢긴 영수증/반쯤 지워진 메모를 플레이어가 발견하는 장면을 넣으세요. 글자 일부만 읽히는 형태로 다음 내용을 암시: "${hint}"`,
+        SCENE_CLUE: `서술 중 환경에서 이상한 점(발자국, 긁힌 자국, 열린 문, 흔적)을 플레이어가 포착하는 장면을 넣으세요. 시각적 관찰로 다음 방향을 암시: "${hint}"`,
+        NPC_BEHAVIOR: `서술 중 근처 인물이 수상한 행동을 하는 모습(서류를 급히 숨기기, 특정 골목으로 사라지기, 의미심장하게 고개 돌리기)을 플레이어가 목격하는 장면을 넣으세요. 대사 없이 행동만으로 다음 방향을 암시: "${hint}"`,
+        RUMOR_ECHO: `서술 중 플레이어가 이전에 들었던 소문이나 정보가 지금 눈앞 상황과 연결되는 순간을 넣으세요. "아까 그 말이..."하는 느낌으로 다음 내용을 자연스럽게 연결: "${hint}"`,
+      };
+      const directive = HINT_DIRECTIVES[mode] ?? HINT_DIRECTIVES.OVERHEARD;
+      factsParts.push(`[단서 방향]\n${directive}`);
     }
 
     // 프롤로그 힌트 (첫 장면)
