@@ -202,9 +202,9 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
         '여기서 떠나', '여기서 나', '여기선 빠져',
         '위험하니', '위험하다',
         // Narrative Engine v1: Operation Session 복귀 의도
-        '끝내', '끝내자', '끝낸다', '그만', '그만하',
+        '끝내자', '끝낸다', '그만하',
         '돌아가자', '돌아갈', '복귀', '철수', '물러나',
-        '작전 종료', '여기까지', '충분', '그쯤', '마무리',
+        '작전 종료', '여기까지', '충분하니', '충분해', '그쯤', '마무리',
       ],
       actionType: 'MOVE_LOCATION',
     },
@@ -490,6 +490,16 @@ export class IntentParserV2Service {
       return 0; // 히트 수 같으면 원래 순서 유지
     });
 
+    // 안전망: MOVE_LOCATION이 1위이고 키워드 hit=1이며 장소명 복합감지 아닌 경우 → 제거
+    // "동작그만"처럼 서브스트링 오탐 방지
+    if (
+      firstSeenOrder[0] === 'MOVE_LOCATION' &&
+      (hitCounts.get('MOVE_LOCATION') ?? 0) === 1 &&
+      !this.detectLocationBasedMove(input)
+    ) {
+      firstSeenOrder.splice(0, 1);
+    }
+
     return firstSeenOrder;
   }
 
@@ -527,7 +537,7 @@ export class IntentParserV2Service {
    * "항만 쪽으로 간다", "시장에 가 보자", "경비대로 향한다" 등
    * 장소명이 입력에 있고, 그 뒤에 이동 접미사가 붙으면 MOVE_LOCATION 판정
    */
-  private detectLocationBasedMove(input: string): boolean {
+  detectLocationBasedMove(input: string): boolean {
     for (const locName of LOCATION_NAMES) {
       const idx = input.indexOf(locName);
       if (idx === -1) continue;

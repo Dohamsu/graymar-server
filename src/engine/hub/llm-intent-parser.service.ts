@@ -255,11 +255,22 @@ export class LlmIntentParserService implements OnModuleInit {
     let actionType: IntentActionType;
     let mergeSource: 'KW_OVERRIDE' | 'LLM' | 'AGREE';
 
-    // Fixplan3-P4: MOVE_LOCATION 오버라이드 — 장소명 유무 관계없이 KW 우선
-    // 목표 장소 불명확 시 turns.service.ts에서 HUB 복귀 fallback 처리
+    // MOVE_LOCATION 병합: 장소명+이동접미사 복합감지 시에만 KW 우선
+    // 단순 키워드 1-hit("그만", "끝내" 등)은 오탐 가능성 높으므로 LLM 신뢰
     if (keywordResult.actionType === 'MOVE_LOCATION') {
-      actionType = keywordResult.actionType;
-      mergeSource = 'KW_OVERRIDE';
+      if (llmResult.actionType === 'MOVE_LOCATION') {
+        // 양쪽 일치
+        actionType = 'MOVE_LOCATION';
+        mergeSource = 'AGREE';
+      } else if (this.keywordParser.detectLocationBasedMove(inputText.toLowerCase().trim())) {
+        // 장소명+이동접미사 복합감지 → KW 신뢰
+        actionType = keywordResult.actionType;
+        mergeSource = 'KW_OVERRIDE';
+      } else {
+        // 단순 키워드 매칭만 (오탐 가능성 높음) → LLM 신뢰
+        actionType = llmResult.actionType;
+        mergeSource = 'LLM';
+      }
     } else if (!kwAndLlmDisagree) {
       // 일치 → 그대로
       actionType = llmResult.actionType;
