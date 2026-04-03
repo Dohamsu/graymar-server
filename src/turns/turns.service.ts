@@ -1990,6 +1990,16 @@ export class TurnsService {
       }
     }
 
+    // === Speaking NPC: 대사 주체 정보 (클라이언트 DialogueBubble용) ===
+    const primaryNpcIdForSpeaking = (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
+    if (primaryNpcIdForSpeaking && npcNames[primaryNpcIdForSpeaking]) {
+      (result.ui as any).speakingNpc = {
+        npcId: primaryNpcIdForSpeaking,
+        displayName: npcNames[primaryNpcIdForSpeaking],
+        imageUrl: NPC_PORTRAITS[primaryNpcIdForSpeaking] ?? undefined,
+      };
+    }
+
     // === Narrative Engine v1: UI data 추가 ===
     const finalWs = updatedRunState.worldState!;
     // Signal Feed
