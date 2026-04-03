@@ -2014,7 +2014,8 @@ export class TurnsService {
     }
 
     // === Speaking NPC: 대사 주체 정보 (클라이언트 DialogueBubble용) ===
-    const primaryNpcIdForSpeaking = (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
+    // eventPrimaryNpc는 대화잠금/타겟매칭으로 보정된 실제 NPC ID (PROCEDURAL 이벤트 포함)
+    const primaryNpcIdForSpeaking = eventPrimaryNpc ?? (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
     if (primaryNpcIdForSpeaking && npcNames[primaryNpcIdForSpeaking]) {
       (result.ui as any).speakingNpc = {
         npcId: primaryNpcIdForSpeaking,
