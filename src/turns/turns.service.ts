@@ -1261,7 +1261,9 @@ export class TurnsService {
     // 현재 location의 관련 NPC에게 감정 영향 적용
     if (eventPrimaryNpc) {
       const npcId = eventPrimaryNpc;
-      if (!npcStates[npcId]) {
+      const wasNewlyCreated = !npcStates[npcId];
+      const prevEncounterCount = npcStates[npcId]?.encounterCount ?? 0;
+      if (wasNewlyCreated) {
         const npcDef = this.content.getNpc(npcId);
         npcStates[npcId] = initNPCState({
           npcId,
@@ -1269,13 +1271,17 @@ export class TurnsService {
           initialTrust: npcDef?.initialTrust ?? relations[npcId] ?? 0,
           agenda: npcDef?.agenda,
         });
-        newlyEncounteredNpcIds.push(npcId);
       }
 
       // encounterCount 증가 — 이번 방문 내 첫 만남인 경우에만 (방문 단위 1회)
       const alreadyMetThisVisit = actionHistory.some((h) => h.primaryNpcId === npcId);
       if (!alreadyMetThisVisit) {
         npcStates[npcId].encounterCount = (npcStates[npcId].encounterCount ?? 0) + 1;
+      }
+
+      // 첫 실제 만남 감지: 새로 생성되었거나, encounterCount가 0→1로 변한 경우
+      if (wasNewlyCreated || (prevEncounterCount === 0 && (npcStates[npcId].encounterCount ?? 0) > 0)) {
+        newlyEncounteredNpcIds.push(npcId);
       }
 
       // 성격 기반 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
@@ -1992,8 +1998,11 @@ export class TurnsService {
     }
     if (newlyEncounteredNpcIds.length > 0) {
       (result.ui as any).newlyEncounteredNpcIds = newlyEncounteredNpcIds;
-      // Add portrait for the first newly encountered NPC that has one
-      const portraitNpcId = newlyEncounteredNpcIds.find(id => NPC_PORTRAITS[id]);
+    }
+    // Portrait card: 첫 만남(encountered) 또는 첫 소개(introduced)인 NPC에게 초상화 표시
+    const portraitCandidates = [...new Set([...newlyEncounteredNpcIds, ...newlyIntroducedNpcIds])];
+    if (portraitCandidates.length > 0) {
+      const portraitNpcId = portraitCandidates.find(id => NPC_PORTRAITS[id]);
       if (portraitNpcId) {
         (result.ui as any).npcPortrait = {
           npcId: portraitNpcId,
