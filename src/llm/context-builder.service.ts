@@ -104,6 +104,8 @@ export interface LlmContext {
   npcAlreadyRevealedFacts: { npcDisplayName: string; facts: string[] } | null;
   // P5: FREE 턴에서 미발견 단서가 있음을 암시하는 힌트
   questFactHint: string | null;
+  // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
+  questDirectionHint: string | null;
   // 장소 기반 NPC 필터링용
   currentLocationId: string | null;
   currentTimePhase: string | null;
@@ -889,6 +891,8 @@ export class ContextBuilderService {
       npcAlreadyRevealedFacts,
       // P5: FREE 턴 단서 힌트
       questFactHint: this.buildQuestFactHint(serverResult, runState),
+      // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
+      questDirectionHint: this.buildQuestDirectionHint(serverResult, runState),
       // 장소 기반 NPC 필터링
       currentLocationId: (runState?.worldState as any)?.currentLocationId ?? null,
       currentTimePhase: (runState?.worldState as any)?.phaseV2 ?? (runState?.worldState as any)?.timePhase ?? null,
@@ -1216,5 +1220,28 @@ export class ContextBuilderService {
     if (undiscoveredFacts.length === 0) return null;
 
     return '이 장소에는 아직 발견하지 못한 단서가 숨어 있다. 주의 깊게 살펴보거나, 이곳 사람들에게 이야기를 건네면 무언가를 알아낼 수 있을 것 같은 기운이 감돈다.';
+  }
+
+  /**
+   * Quest nextHint: fact 발견 다음 턴에 방향 힌트를 LLM 프롬프트에 전달.
+   * pendingQuestHint.setAtTurn < 현재 turnNo 일 때만 포함 (발견 턴이 아닌 다음 턴).
+   */
+  private buildQuestDirectionHint(
+    serverResult: Record<string, unknown> | null,
+    runState: Record<string, unknown> | null | undefined,
+  ): string | null {
+    if (!serverResult || !runState) return null;
+
+    const pending = (runState as any)?.pendingQuestHint as { hint: string; setAtTurn: number } | null | undefined;
+    if (!pending?.hint) return null;
+
+    const currentTurnNo = (serverResult as any)?.turnNo as number | undefined;
+    if (currentTurnNo == null) return null;
+
+    // 발견 턴(setAtTurn)이 아닌 다음 턴에서만 전달
+    if (pending.setAtTurn >= currentTurnNo) return null;
+
+    // sanitizeNpcNames 적용 (미소개 NPC 실명 제거)
+    return this.sanitizeNpcNames(pending.hint, runState);
   }
 }

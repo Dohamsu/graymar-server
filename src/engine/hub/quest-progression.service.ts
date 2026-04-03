@@ -135,6 +135,17 @@ export class QuestProgressionService {
   }
 
   /**
+   * factId에 해당하는 quest.json의 nextHint를 반환.
+   * fact 발견 직후, 다음 턴 LLM 프롬프트에 방향 힌트로 사용.
+   */
+  getFactNextHint(factId: string): string | null {
+    const quest = this.content.getQuestData() as QuestData & { facts?: Record<string, { nextHint?: string }> } | null;
+    if (!quest?.facts) return null;
+    const fact = quest.facts[factId];
+    return fact?.nextHint ?? null;
+  }
+
+  /**
    * factId에 해당하는 NPC knownFact의 detail 텍스트를 반환.
    * 대화 주제 추적에서 정확한 주제명을 기록하기 위해 사용.
    */

@@ -1623,6 +1623,11 @@ export class TurnsService {
     // PBP 집계 (최근 행동 이력 기반)
     updatedRunState.pbp = computePBP(newHistory);
 
+    // === pendingQuestHint 만료 정리: setAtTurn < turnNo-1 이면 이미 소비됨 → 삭제 ===
+    if (updatedRunState.pendingQuestHint && updatedRunState.pendingQuestHint.setAtTurn < turnNo - 1) {
+      updatedRunState.pendingQuestHint = null;
+    }
+
     // === Quest Progression: 3경로 FACT 발견 + 단계 전환 ===
     const discoveredFactIdsThisTurn: string[] = []; // 대화 주제 추적용
     if (this.questProgression) {
@@ -1730,6 +1735,17 @@ export class TurnsService {
             updatedRunState.arcState.questState = transition.newState;
           }
           this.logger.log(`[Quest] ${currentQuestState} -> ${transition.newState}`);
+        }
+
+        // pendingQuestHint: 이번 턴에 발견된 fact의 nextHint를 저장 → 다음 턴 LLM 프롬프트에서 사용
+        if (discoveredFactIdsThisTurn.length > 0) {
+          // 마지막 발견 fact의 nextHint 사용 (여러 fact 동시 발견 시 가장 최근 것)
+          const lastFactId = discoveredFactIdsThisTurn[discoveredFactIdsThisTurn.length - 1];
+          const nextHint = this.questProgression.getFactNextHint(lastFactId);
+          if (nextHint) {
+            updatedRunState.pendingQuestHint = { hint: nextHint, setAtTurn: turnNo };
+            this.logger.log(`[Quest] pendingQuestHint set for fact=${lastFactId} at turn=${turnNo}`);
+          }
         }
       } catch (err) {
         this.logger.warn(`[QuestProgression] error (non-fatal): ${err}`);

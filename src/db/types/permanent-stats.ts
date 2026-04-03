@@ -106,6 +106,8 @@ export interface RunState {
   // Quest Progression: 퀘스트 단계 + 발견된 팩트 ID 추적
   questState?: string;  // "S0_ARRIVE" | "S1_GET_ANGLE" | ... | "S5_RESOLVE"
   discoveredQuestFacts?: string[];  // ["FACT_LEDGER_EXISTS", "FACT_WAGE_FRAUD_PATTERN", ...]
+  /** 다음 턴 LLM 프롬프트에 전달할 퀘스트 방향 힌트 (fact 발견 턴에 저장, 다음 턴에 전달 후 초기화) */
+  pendingQuestHint?: { hint: string; setAtTurn: number } | null;
   // Character customization
   characterName?: string;         // 플레이어 지정 캐릭터 이름 (1~8자)
   portraitUrl?: string;           // AI 생성 초상화 URL
