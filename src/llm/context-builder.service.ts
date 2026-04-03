@@ -105,7 +105,7 @@ export interface LlmContext {
   // P5: FREE 턴에서 미발견 단서가 있음을 암시하는 힌트
   questFactHint: string | null;
   // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
-  questDirectionHint: string | null;
+  questDirectionHint: { hint: string; mode: string } | null;
   // 장소 기반 NPC 필터링용
   currentLocationId: string | null;
   currentTimePhase: string | null;
@@ -1229,10 +1229,10 @@ export class ContextBuilderService {
   private buildQuestDirectionHint(
     serverResult: Record<string, unknown> | null,
     runState: Record<string, unknown> | null | undefined,
-  ): string | null {
+  ): { hint: string; mode: string } | null {
     if (!serverResult || !runState) return null;
 
-    const pending = (runState as any)?.pendingQuestHint as { hint: string; setAtTurn: number } | null | undefined;
+    const pending = (runState as any)?.pendingQuestHint as { hint: string; setAtTurn: number; mode?: string } | null | undefined;
     if (!pending?.hint) return null;
 
     const currentTurnNo = (serverResult as any)?.turnNo as number | undefined;
@@ -1242,6 +1242,7 @@ export class ContextBuilderService {
     if (pending.setAtTurn >= currentTurnNo) return null;
 
     // sanitizeNpcNames 적용 (미소개 NPC 실명 제거)
-    return this.sanitizeNpcNames(pending.hint, runState);
+    const sanitizedHint = this.sanitizeNpcNames(pending.hint, runState);
+    return { hint: sanitizedHint, mode: pending.mode ?? 'OVERHEARD' };
   }
 }
