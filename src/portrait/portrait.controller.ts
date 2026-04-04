@@ -20,10 +20,7 @@ export class PortraitController {
 
   /** POST /v1/portrait/generate */
   @Post('generate')
-  async generate(
-    @Body() body: GeneratePortraitBody,
-    @Ip() ip: string,
-  ) {
+  async generate(@Body() body: GeneratePortraitBody, @Ip() ip: string) {
     const { presetId, gender, appearanceDescription } = body;
 
     // 1. Validation

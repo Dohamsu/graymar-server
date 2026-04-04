@@ -34,7 +34,8 @@ export class QuestProgressionService {
     discoveredFactIds: Set<string>,
   ): { newState: string | null; transitionDesc: string | null } {
     const quest = this.content.getQuestData() as QuestData | null;
-    if (!quest?.stateTransitions) return { newState: null, transitionDesc: null };
+    if (!quest?.stateTransitions)
+      return { newState: null, transitionDesc: null };
 
     for (const [key, transition] of Object.entries(quest.stateTransitions)) {
       // key format: "S0_ARRIVE→S1_GET_ANGLE" (유니코드 화살표)
@@ -64,8 +65,7 @@ export class QuestProgressionService {
         alternatives.some((f) => discoveredFactIds.has(f));
 
       // 최소 하나의 조건 계열이 실질적으로 충족되어야 전환
-      const hasSubstantiveCondition =
-        required.length > 0 || anyOf.length > 0;
+      const hasSubstantiveCondition = required.length > 0 || anyOf.length > 0;
       if (hasSubstantiveCondition || altMet) {
         this.logger.log(
           `Quest transition: ${from} -> ${to} (facts: ${[...discoveredFactIds].join(', ')})`,
@@ -117,10 +117,7 @@ export class QuestProgressionService {
    * 다음 공개 대상 quest FACT ID를 반환.
    * 이미 discoveredQuestFacts에 있으면 스킵.
    */
-  getRevealableQuestFact(
-    npcId: string,
-    runState: RunState,
-  ): string | null {
+  getRevealableQuestFact(npcId: string, runState: RunState): string | null {
     const npcDef = this.content.getNpc(npcId);
     if (!npcDef?.knownFacts || npcDef.knownFacts.length === 0) return null;
 
@@ -139,7 +136,9 @@ export class QuestProgressionService {
    * fact 발견 직후, 다음 턴 LLM 프롬프트에 방향 힌트로 사용.
    */
   getFactNextHint(factId: string): string | null {
-    const quest = this.content.getQuestData() as QuestData & { facts?: Record<string, { nextHint?: string }> } | null;
+    const quest = this.content.getQuestData() as
+      | (QuestData & { facts?: Record<string, { nextHint?: string }> })
+      | null;
     if (!quest?.facts) return null;
     const fact = quest.facts[factId];
     return fact?.nextHint ?? null;

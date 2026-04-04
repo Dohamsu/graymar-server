@@ -19,7 +19,14 @@ import type {
   EquipmentDropEntry,
   TraitDefinition,
 } from './content.types.js';
-import type { EventDefV2, HubSafety, TimePhase, AffixKind, RegionAffixDef, ScenarioMeta } from '../db/types/index.js';
+import type {
+  EventDefV2,
+  HubSafety,
+  TimePhase,
+  AffixKind,
+  RegionAffixDef,
+  ScenarioMeta,
+} from '../db/types/index.js';
 
 const CONTENT_BASE = join(process.cwd(), '..', 'content');
 
@@ -37,7 +44,8 @@ export class ContentLoaderService implements OnModuleInit {
   // HUB 시스템 콘텐츠
   private locations = new Map<string, LocationDefinition>();
   private eventsV2: EventDefV2[] = [];
-  private sceneShells: Record<string, Record<string, Record<string, string>>> = {};
+  private sceneShells: Record<string, Record<string, Record<string, string>>> =
+    {};
   private suggestedChoices: Record<string, SuggestedChoice[]> = {};
   private npcs = new Map<string, NpcDefinition>();
   private arcEvents: Record<string, ArcEventDefinition[]> = {};
@@ -67,36 +75,76 @@ export class ContentLoaderService implements OnModuleInit {
 
   private async loadAll() {
     const [
-      enemiesRaw, encountersRaw, itemsRaw, defaultsRaw, presetsRaw,
-      locationsRaw, eventsV2Raw, sceneShellsRaw, suggestedChoicesRaw, arcEventsRaw,
-      npcsRaw, setsRaw, shopsRaw, affixesRaw, equipDropsRaw,
-      incidentsRaw, endingsRaw, narrativeMarksRaw,
-      scenarioMetaRaw, questRaw, traitsRaw,
+      enemiesRaw,
+      encountersRaw,
+      itemsRaw,
+      defaultsRaw,
+      presetsRaw,
+      locationsRaw,
+      eventsV2Raw,
+      sceneShellsRaw,
+      suggestedChoicesRaw,
+      arcEventsRaw,
+      npcsRaw,
+      setsRaw,
+      shopsRaw,
+      affixesRaw,
+      equipDropsRaw,
+      incidentsRaw,
+      endingsRaw,
+      narrativeMarksRaw,
+      scenarioMetaRaw,
+      questRaw,
+      traitsRaw,
     ] = await Promise.all([
       readFile(join(this.contentDir, 'enemies.json'), 'utf-8'),
       readFile(join(this.contentDir, 'encounters.json'), 'utf-8'),
       readFile(join(this.contentDir, 'items.json'), 'utf-8'),
       readFile(join(this.contentDir, 'player_defaults.json'), 'utf-8'),
       readFile(join(this.contentDir, 'presets.json'), 'utf-8'),
-      readFile(join(this.contentDir, 'locations.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(this.contentDir, 'events_v2.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(this.contentDir, 'scene_shells.json'), 'utf-8').catch(() => '{}'),
-      readFile(join(this.contentDir, 'suggested_choices.json'), 'utf-8').catch(() => '{}'),
-      readFile(join(this.contentDir, 'arc_events.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(this.contentDir, 'locations.json'), 'utf-8').catch(
+        () => '[]',
+      ),
+      readFile(join(this.contentDir, 'events_v2.json'), 'utf-8').catch(
+        () => '[]',
+      ),
+      readFile(join(this.contentDir, 'scene_shells.json'), 'utf-8').catch(
+        () => '{}',
+      ),
+      readFile(join(this.contentDir, 'suggested_choices.json'), 'utf-8').catch(
+        () => '{}',
+      ),
+      readFile(join(this.contentDir, 'arc_events.json'), 'utf-8').catch(
+        () => '{}',
+      ),
       readFile(join(this.contentDir, 'npcs.json'), 'utf-8').catch(() => '[]'),
       readFile(join(this.contentDir, 'sets.json'), 'utf-8').catch(() => '[]'),
       readFile(join(this.contentDir, 'shops.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(this.contentDir, 'region_affixes.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(this.contentDir, 'region_affixes.json'), 'utf-8').catch(
+        () => '[]',
+      ),
       // Phase 4a: Equipment Drops
-      readFile(join(this.contentDir, 'equipment_drops.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(this.contentDir, 'equipment_drops.json'), 'utf-8').catch(
+        () => '[]',
+      ),
       // Narrative Engine v1
-      readFile(join(this.contentDir, 'incidents.json'), 'utf-8').catch(() => '{"incidents":[]}'),
-      readFile(join(this.contentDir, 'endings.json'), 'utf-8').catch(() => '{}'),
-      readFile(join(this.contentDir, 'narrative_marks.json'), 'utf-8').catch(() => '{"marks":[]}'),
+      readFile(join(this.contentDir, 'incidents.json'), 'utf-8').catch(
+        () => '{"incidents":[]}',
+      ),
+      readFile(join(this.contentDir, 'endings.json'), 'utf-8').catch(
+        () => '{}',
+      ),
+      readFile(join(this.contentDir, 'narrative_marks.json'), 'utf-8').catch(
+        () => '{"marks":[]}',
+      ),
       // Scenario meta
-      readFile(join(this.contentDir, 'scenario.json'), 'utf-8').catch(() => 'null'),
+      readFile(join(this.contentDir, 'scenario.json'), 'utf-8').catch(
+        () => 'null',
+      ),
       // Quest data
-      readFile(join(this.contentDir, 'quest.json'), 'utf-8').catch(() => 'null'),
+      readFile(join(this.contentDir, 'quest.json'), 'utf-8').catch(
+        () => 'null',
+      ),
       // Traits
       readFile(join(this.contentDir, 'traits.json'), 'utf-8').catch(() => '[]'),
     ]);
@@ -284,7 +332,9 @@ export class ContentLoaderService implements OnModuleInit {
   private validateNpcReferences(): void {
     const orphanNpcs = new Set<string>();
     for (const event of this.eventsV2) {
-      const npcId = (event.payload as Record<string, unknown>)?.primaryNpcId as string | null;
+      const npcId = (event.payload as Record<string, unknown>)?.primaryNpcId as
+        | string
+        | null;
       if (npcId && !this.npcs.has(npcId)) {
         orphanNpcs.add(npcId);
       }
@@ -334,8 +384,7 @@ export class ContentLoaderService implements OnModuleInit {
     safety: HubSafety,
   ): string {
     return (
-      this.sceneShells[locationId]?.[timePhase]?.[safety] ??
-      '주변을 둘러본다.'
+      this.sceneShells[locationId]?.[timePhase]?.[safety] ?? '주변을 둘러본다.'
     );
   }
 
@@ -386,9 +435,16 @@ export class ContentLoaderService implements OnModuleInit {
   // --- Phase 4.1: Region Affix 메서드 ---
 
   /** 위치 + 종류 + 프로필로 후보 affix 필터링 */
-  getAffixesByLocation(locationId: string, kind: AffixKind, profileId: string): RegionAffixDef[] {
+  getAffixesByLocation(
+    locationId: string,
+    kind: AffixKind,
+    profileId: string,
+  ): RegionAffixDef[] {
     return this.affixes.filter(
-      (a) => a.locationId === locationId && a.kind === kind && a.allowedProfiles.includes(profileId),
+      (a) =>
+        a.locationId === locationId &&
+        a.kind === kind &&
+        a.allowedProfiles.includes(profileId),
     );
   }
 
@@ -410,12 +466,16 @@ export class ContentLoaderService implements OnModuleInit {
   }
 
   /** 인카운터 ID로 보스 장비 드랍 테이블 조회 */
-  getEncounterEquipmentDropTable(encounterId: string): EquipmentDropEntry | undefined {
+  getEncounterEquipmentDropTable(
+    encounterId: string,
+  ): EquipmentDropEntry | undefined {
     return this.equipDropsByEncounter.get(encounterId);
   }
 
   /** 장소 ID로 LOCATION 기본 장비 드랍 테이블 조회 */
-  getLocationEquipmentDrops(locationId: string): EquipmentDropEntry | undefined {
+  getLocationEquipmentDrops(
+    locationId: string,
+  ): EquipmentDropEntry | undefined {
     return this.equipDropsByLocation.get(locationId);
   }
 
@@ -425,9 +485,16 @@ export class ContentLoaderService implements OnModuleInit {
     return this.incidentsData;
   }
 
-  getIncident(incidentId: string): { incidentId: string; kind: string; title: string } | undefined {
-    return (this.incidentsData as Array<{ incidentId: string; kind: string; title: string }>)
-      .find((i) => i.incidentId === incidentId);
+  getIncident(
+    incidentId: string,
+  ): { incidentId: string; kind: string; title: string } | undefined {
+    return (
+      this.incidentsData as Array<{
+        incidentId: string;
+        kind: string;
+        title: string;
+      }>
+    ).find((i) => i.incidentId === incidentId);
   }
 
   getEndingsData(): Record<string, unknown> {

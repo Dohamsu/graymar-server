@@ -23,8 +23,7 @@ export const runMemories = pgTable('run_memories', {
     .unique(),
   theme: jsonb('theme').$type<ThemeMemory[]>().notNull(),
   storySummary: text('story_summary'),
-  structuredMemory:
-    jsonb('structured_memory').$type<StructuredMemory>(),
+  structuredMemory: jsonb('structured_memory').$type<StructuredMemory>(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 

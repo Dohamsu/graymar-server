@@ -48,19 +48,19 @@ export interface RenderedBlock {
   priority: BlockPriority;
   content: string;
   tokens: number;
-  minTokens: number;  // 이 이하로 못 줄임 (0이면 완전 삭제 가능)
+  minTokens: number; // 이 이하로 못 줄임 (0이면 완전 삭제 가능)
 }
 
 /** 블록별 기본 minTokens */
 const DEFAULT_MIN_TOKENS: Record<string, number> = {
-  THEME: Infinity,       // 절대 삭제 불가
+  THEME: Infinity, // 절대 삭제 불가
   SCENE_CONTEXT: 80,
   RECENT_STORY: 200,
   CURRENT_FACTS: 100,
   NARRATIVE_THREAD: 50,
   ACTIVE_CLUES: 50,
   NPC_KNOWLEDGE: 30,
-  PREVIOUS_VISIT: 50,     // fixplan5 I-08: 장소 전환 시 직전 맥락 최소 보존
+  PREVIOUS_VISIT: 50, // fixplan5 I-08: 장소 전환 시 직전 맥락 최소 보존
   LOCATION_REVISIT: 0,
   NPC_ROSTER: 50,
   STORY_SUMMARY: 100,
@@ -128,7 +128,10 @@ export class TokenBudgetService {
    * 총 예산 내로 블록들을 우선순위 오름차순(낮은 것부터) 트리밍.
    * THEME(100)은 절대 삭제 금지. 각 블록의 minTokens 보호.
    */
-  trimToTotalBudget(blocks: RenderedBlock[], totalBudget: number = TOKEN_BUDGET.TOTAL): RenderedBlock[] {
+  trimToTotalBudget(
+    blocks: RenderedBlock[],
+    totalBudget: number = TOKEN_BUDGET.TOTAL,
+  ): RenderedBlock[] {
     let totalTokens = blocks.reduce((sum, b) => sum + b.tokens, 0);
     if (totalTokens <= totalBudget) return blocks;
 
@@ -137,7 +140,7 @@ export class TokenBudgetService {
       .map((_, i) => i)
       .sort((a, b) => blocks[a].priority - blocks[b].priority);
 
-    const result = blocks.map(b => ({ ...b }));
+    const result = blocks.map((b) => ({ ...b }));
 
     for (const idx of sortedIndices) {
       if (totalTokens <= totalBudget) break;
@@ -161,22 +164,25 @@ export class TokenBudgetService {
         } else {
           const trimmed = this.trimToFit(block.content, block.minTokens);
           const newTokens = this.estimateTokens(trimmed);
-          totalTokens -= (block.tokens - newTokens);
+          totalTokens -= block.tokens - newTokens;
           block.content = trimmed;
           block.tokens = newTokens;
         }
       } else {
         // 부분 트리밍
         const targetTokens = block.tokens - excess;
-        const trimmed = this.trimToFit(block.content, Math.max(targetTokens, block.minTokens));
+        const trimmed = this.trimToFit(
+          block.content,
+          Math.max(targetTokens, block.minTokens),
+        );
         const newTokens = this.estimateTokens(trimmed);
-        totalTokens -= (block.tokens - newTokens);
+        totalTokens -= block.tokens - newTokens;
         block.content = trimmed;
         block.tokens = newTokens;
       }
     }
 
-    return result.filter(b => b.content.length > 0);
+    return result.filter((b) => b.content.length > 0);
   }
 
   /**
@@ -206,7 +212,10 @@ export class TokenBudgetService {
     });
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, maxCount).map(s => s.index).sort((a, b) => a - b);
+    return scored
+      .slice(0, maxCount)
+      .map((s) => s.index)
+      .sort((a, b) => a - b);
   }
 
   /** 블록 키로 기본 minTokens 조회 */
@@ -221,7 +230,8 @@ export class TokenBudgetService {
   enforceTotal(parts: string[], priorityOrder?: number[]): string[] {
     let totalTokens = parts.reduce((sum, p) => sum + this.estimateTokens(p), 0);
 
-    if (totalTokens <= TOKEN_BUDGET.TOTAL) return parts.filter((p) => p.length > 0);
+    if (totalTokens <= TOKEN_BUDGET.TOTAL)
+      return parts.filter((p) => p.length > 0);
 
     // 우선도 순서가 없으면 뒤에서부터 제거
     const indices = priorityOrder
@@ -244,7 +254,10 @@ export class TokenBudgetService {
         // 부분 트리밍
         const targetTokens = blockTokens - excess;
         result[idx] = this.trimToFit(result[idx], targetTokens);
-        totalTokens = result.reduce((sum, p) => sum + this.estimateTokens(p), 0);
+        totalTokens = result.reduce(
+          (sum, p) => sum + this.estimateTokens(p),
+          0,
+        );
       }
     }
 

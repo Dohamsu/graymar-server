@@ -1,7 +1,12 @@
 // 정본: architecture/10_region_economy.md §2 — Equipment System
 
 import { Injectable } from '@nestjs/common';
-import type { EquipmentSlot, EquippedGear, StatKey, ItemInstance } from '../../db/types/equipment.js';
+import type {
+  EquipmentSlot,
+  EquippedGear,
+  StatKey,
+  ItemInstance,
+} from '../../db/types/equipment.js';
 import { EQUIPMENT_SLOTS, emptyEquipped } from '../../db/types/equipment.js';
 import type { StatModifier } from '../stats/stats.service.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
@@ -33,7 +38,7 @@ export class EquipmentService {
       return { equipped, unequippedInstance: null };
     }
 
-    const slot = itemDef.slot as EquipmentSlot;
+    const slot = itemDef.slot;
     const unequippedInstance = equipped[slot] ?? null;
 
     return {

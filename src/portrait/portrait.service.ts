@@ -3,7 +3,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 
-const IMAGE_DIR = path.resolve(process.cwd(), 'public', 'portraits', 'generated');
+const IMAGE_DIR = path.resolve(
+  process.cwd(),
+  'public',
+  'portraits',
+  'generated',
+);
 const IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
 /** Rate-limit: 세션(IP)당 최대 생성 횟수 (임시 해제: 100) */
@@ -44,7 +49,10 @@ export class PortraitService {
 
   // ── Validation ──────────────────────────────────────────────
 
-  validateRequest(presetId: string, appearanceDescription: string): string | null {
+  validateRequest(
+    presetId: string,
+    appearanceDescription: string,
+  ): string | null {
     if (!VALID_PRESETS.has(presetId)) {
       return `알 수 없는 출신입니다: ${presetId}`;
     }
@@ -56,7 +64,11 @@ export class PortraitService {
 
   // ── Rate Limit ──────────────────────────────────────────────
 
-  checkRateLimit(ip: string): { allowed: boolean; remaining: number; limit: number } {
+  checkRateLimit(ip: string): {
+    allowed: boolean;
+    remaining: number;
+    limit: number;
+  } {
     const now = Date.now();
     const entry = this.rateMap.get(ip);
 
@@ -67,7 +79,11 @@ export class PortraitService {
     }
 
     const remaining = MAX_PER_IP - entry.count;
-    return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: MAX_PER_IP };
+    return {
+      allowed: remaining > 0,
+      remaining: Math.max(0, remaining),
+      limit: MAX_PER_IP,
+    };
   }
 
   private incrementRate(ip: string): void {
@@ -115,7 +131,11 @@ export class PortraitService {
 
   // ── Prompt ──────────────────────────────────────────────────
 
-  private buildPrompt(presetId: string, gender: string, appearance: string): string {
+  private buildPrompt(
+    presetId: string,
+    gender: string,
+    appearance: string,
+  ): string {
     const presetHint = PRESET_HINTS[presetId] ?? '';
     return `Fantasy RPG character portrait, ${gender}, ${appearance}, ${presetHint}, medieval dark fantasy style, oil painting, bust shot, dark background, moody lighting, no text, no watermark`;
   }

@@ -11,14 +11,15 @@ import { WorldFactService } from './world-fact.service.js';
 
 @Injectable()
 export class PlayerGoalService {
-  constructor(
-    private readonly worldFact: WorldFactService,
-  ) {}
+  constructor(private readonly worldFact: WorldFactService) {}
 
   /** 명시적 목표 추가 (NPC 의뢰, 발견한 단서 등) */
   addExplicitGoal(
     ws: WorldState,
-    goal: Omit<PlayerGoal, 'id' | 'type' | 'progress' | 'completed' | 'createdTurn' | 'createdDay'>,
+    goal: Omit<
+      PlayerGoal,
+      'id' | 'type' | 'progress' | 'completed' | 'createdTurn' | 'createdDay'
+    >,
     turnNo: number,
     day: number,
   ): PlayerGoal | null {
@@ -52,7 +53,12 @@ export class PlayerGoalService {
    */
   detectImplicitGoals(
     ws: WorldState,
-    patterns: { pattern: string; count: number; relatedNpcs?: string[]; relatedLocations?: string[] }[],
+    patterns: {
+      pattern: string;
+      count: number;
+      relatedNpcs?: string[];
+      relatedLocations?: string[];
+    }[],
     turnNo: number,
     day: number,
   ): PlayerGoal[] {
@@ -68,9 +74,12 @@ export class PlayerGoalService {
       );
       if (existing) continue;
 
-      if (ws.playerGoals.filter((g) => !g.completed).length >= MAX_ACTIVE_GOALS) break;
+      if (ws.playerGoals.filter((g) => !g.completed).length >= MAX_ACTIVE_GOALS)
+        break;
 
-      const goalDesc = IMPLICIT_GOAL_DESCRIPTIONS[p.pattern] ?? `${p.pattern} 관련 활동을 계속하고 있다`;
+      const goalDesc =
+        IMPLICIT_GOAL_DESCRIPTIONS[p.pattern] ??
+        `${p.pattern} 관련 활동을 계속하고 있다`;
 
       const newGoal: PlayerGoal = {
         id: `goal_implicit_${p.pattern}_${turnNo}`,
@@ -94,9 +103,15 @@ export class PlayerGoalService {
   }
 
   /** WorldFact 기반 milestone 달성 체크 */
-  checkMilestones(ws: WorldState): { goalId: string; milestoneIdx: number; completed: boolean }[] {
+  checkMilestones(
+    ws: WorldState,
+  ): { goalId: string; milestoneIdx: number; completed: boolean }[] {
     if (!ws.playerGoals) return [];
-    const results: { goalId: string; milestoneIdx: number; completed: boolean }[] = [];
+    const results: {
+      goalId: string;
+      milestoneIdx: number;
+      completed: boolean;
+    }[] = [];
 
     for (const goal of ws.playerGoals) {
       if (goal.completed) continue;
@@ -108,7 +123,8 @@ export class PlayerGoalService {
 
         // factRequired가 fact id거나 tag인지 체크
         const hasFactById = this.worldFact.hasFact(ws, ms.factRequired);
-        const hasFactByTag = this.worldFact.findByTags(ws, [ms.factRequired]).length > 0;
+        const hasFactByTag =
+          this.worldFact.findByTags(ws, [ms.factRequired]).length > 0;
 
         if (hasFactById || hasFactByTag) {
           ms.completed = true;
@@ -119,13 +135,19 @@ export class PlayerGoalService {
 
       if (anyAdvanced) {
         // progress 갱신
-        const completedCount = goal.milestones.filter((m) => m.completed).length;
-        goal.progress = goal.milestones.length > 0
-          ? Math.round((completedCount / goal.milestones.length) * 100)
-          : goal.progress;
+        const completedCount = goal.milestones.filter(
+          (m) => m.completed,
+        ).length;
+        goal.progress =
+          goal.milestones.length > 0
+            ? Math.round((completedCount / goal.milestones.length) * 100)
+            : goal.progress;
 
         // 모든 milestone 완료 → 목표 완료
-        if (goal.milestones.length > 0 && goal.milestones.every((m) => m.completed)) {
+        if (
+          goal.milestones.length > 0 &&
+          goal.milestones.every((m) => m.completed)
+        ) {
           goal.completed = true;
           results.push({ goalId: goal.id, milestoneIdx: -1, completed: true });
         }

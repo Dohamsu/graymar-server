@@ -1,6 +1,11 @@
 // 정본: architecture/Narrative_Engine_v1_Integrated_Spec.md §5
 
-export const STEP_STATUS = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'SKIPPED'] as const;
+export const STEP_STATUS = [
+  'PENDING',
+  'IN_PROGRESS',
+  'COMPLETED',
+  'SKIPPED',
+] as const;
 export type StepStatus = (typeof STEP_STATUS)[number];
 
 export type OperationStep = {

@@ -1,5 +1,8 @@
 import { ProceduralEventService } from './procedural-event.service.js';
-import type { ProceduralHistoryEntry, SeedConstraints } from '../../db/types/procedural-event.js';
+import type {
+  ProceduralHistoryEntry,
+  SeedConstraints,
+} from '../../db/types/procedural-event.js';
 
 describe('ProceduralEventService', () => {
   let service: ProceduralEventService;
@@ -41,8 +44,22 @@ describe('ProceduralEventService', () => {
     // 같은 trigger를 최근 3턴 연속 → 해당 trigger 사용 불가
     // 다른 trigger가 있으므로 결과는 null이 아님
     const history: ProceduralHistoryEntry[] = [
-      { turnNo: 8, triggerId: 'TRG_NOISE', subjectId: 'SUB_MERCHANT', actionId: 'ACT_HIDE', outcomeId: 'OUT_CLUE', subjectActionKey: 'SUB_MERCHANT:ACT_HIDE' },
-      { turnNo: 9, triggerId: 'TRG_NOISE', subjectId: 'SUB_GUARD', actionId: 'ACT_ARGUE', outcomeId: 'OUT_INFO', subjectActionKey: 'SUB_GUARD:ACT_ARGUE' },
+      {
+        turnNo: 8,
+        triggerId: 'TRG_NOISE',
+        subjectId: 'SUB_MERCHANT',
+        actionId: 'ACT_HIDE',
+        outcomeId: 'OUT_CLUE',
+        subjectActionKey: 'SUB_MERCHANT:ACT_HIDE',
+      },
+      {
+        turnNo: 9,
+        triggerId: 'TRG_NOISE',
+        subjectId: 'SUB_GUARD',
+        actionId: 'ACT_ARGUE',
+        outcomeId: 'OUT_INFO',
+        subjectActionKey: 'SUB_GUARD:ACT_ARGUE',
+      },
     ];
     const result = service.generate(baseConstraints, history, 10, fakeRng);
     expect(result).not.toBeNull();
@@ -55,9 +72,33 @@ describe('ProceduralEventService', () => {
 
   it('Anti-Repetition: 같은 NPC 3회 연속 차단', () => {
     const history: ProceduralHistoryEntry[] = [
-      { turnNo: 7, triggerId: 'TRG_A', subjectId: 'SUB_X', actionId: 'ACT_A', outcomeId: 'OUT_A', npcId: 'NPC_TEST', subjectActionKey: 'SUB_X:ACT_A' },
-      { turnNo: 8, triggerId: 'TRG_B', subjectId: 'SUB_X', actionId: 'ACT_B', outcomeId: 'OUT_B', npcId: 'NPC_TEST', subjectActionKey: 'SUB_X:ACT_B' },
-      { turnNo: 9, triggerId: 'TRG_C', subjectId: 'SUB_X', actionId: 'ACT_C', outcomeId: 'OUT_C', npcId: 'NPC_TEST', subjectActionKey: 'SUB_X:ACT_C' },
+      {
+        turnNo: 7,
+        triggerId: 'TRG_A',
+        subjectId: 'SUB_X',
+        actionId: 'ACT_A',
+        outcomeId: 'OUT_A',
+        npcId: 'NPC_TEST',
+        subjectActionKey: 'SUB_X:ACT_A',
+      },
+      {
+        turnNo: 8,
+        triggerId: 'TRG_B',
+        subjectId: 'SUB_X',
+        actionId: 'ACT_B',
+        outcomeId: 'OUT_B',
+        npcId: 'NPC_TEST',
+        subjectActionKey: 'SUB_X:ACT_B',
+      },
+      {
+        turnNo: 9,
+        triggerId: 'TRG_C',
+        subjectId: 'SUB_X',
+        actionId: 'ACT_C',
+        outcomeId: 'OUT_C',
+        npcId: 'NPC_TEST',
+        subjectActionKey: 'SUB_X:ACT_C',
+      },
     ];
     const result = service.generate(baseConstraints, history, 10, fakeRng);
     // 생성은 되지만 NPC는 달라야 함
@@ -84,7 +125,14 @@ describe('ProceduralEventService', () => {
   });
 
   it('createHistoryEntry: 올바른 엔트리 생성', () => {
-    const entry = service.createHistoryEntry(5, 'TRG_1', 'SUB_1', 'ACT_1', 'OUT_1', 'NPC_1');
+    const entry = service.createHistoryEntry(
+      5,
+      'TRG_1',
+      'SUB_1',
+      'ACT_1',
+      'OUT_1',
+      'NPC_1',
+    );
     expect(entry.turnNo).toBe(5);
     expect(entry.subjectActionKey).toBe('SUB_1:ACT_1');
     expect(entry.npcId).toBe('NPC_1');

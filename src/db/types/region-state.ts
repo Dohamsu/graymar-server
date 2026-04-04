@@ -102,7 +102,12 @@ export function initGraymarRegion(): RegionState {
     quests: { active: {}, completed: [] },
     arcs: { currentRoute: null, commitment: 0, resolvedRoutes: [] },
     locations: {
-      unlockedLocationIds: ['LOC_MARKET', 'LOC_GUARD', 'LOC_HARBOR', 'LOC_SLUMS'],
+      unlockedLocationIds: [
+        'LOC_MARKET',
+        'LOC_GUARD',
+        'LOC_HARBOR',
+        'LOC_SLUMS',
+      ],
     },
     economy: {
       priceIndex: 1.0,

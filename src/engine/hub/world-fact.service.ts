@@ -1,8 +1,15 @@
 // Living World v2: 세계 사실 관리
 
 import { Injectable } from '@nestjs/common';
-import type { WorldState, WorldFact, FactCategory } from '../../db/types/index.js';
-import { MAX_WORLD_FACTS, DEFAULT_FACT_TTL } from '../../db/types/world-fact.js';
+import type {
+  WorldState,
+  WorldFact,
+  FactCategory,
+} from '../../db/types/index.js';
+import {
+  MAX_WORLD_FACTS,
+  DEFAULT_FACT_TTL,
+} from '../../db/types/world-fact.js';
 
 @Injectable()
 export class WorldFactService {
@@ -14,7 +21,9 @@ export class WorldFactService {
     if (!ws.worldFacts) ws.worldFacts = [];
 
     const fullFact: WorldFact = {
-      id: fact.id ?? `fact_${fact.category.toLowerCase()}_t${fact.turnCreated}_${Date.now() % 10000}`,
+      id:
+        fact.id ??
+        `fact_${fact.category.toLowerCase()}_t${fact.turnCreated}_${Date.now() % 10000}`,
       category: fact.category,
       text: fact.text,
       locationId: fact.locationId,
@@ -24,7 +33,9 @@ export class WorldFactService {
       tags: fact.tags,
       impact: fact.impact,
       permanent: fact.permanent,
-      expiresAtTurn: fact.permanent ? undefined : fact.turnCreated + DEFAULT_FACT_TTL,
+      expiresAtTurn: fact.permanent
+        ? undefined
+        : fact.turnCreated + DEFAULT_FACT_TTL,
     };
 
     ws.worldFacts.push(fullFact);
@@ -77,7 +88,8 @@ export class WorldFactService {
     const before = ws.worldFacts.length;
     ws.worldFacts = ws.worldFacts.filter((f) => {
       if (f.permanent) return true;
-      if (f.expiresAtTurn != null && currentTurn >= f.expiresAtTurn) return false;
+      if (f.expiresAtTurn != null && currentTurn >= f.expiresAtTurn)
+        return false;
       return true;
     });
     return before - ws.worldFacts.length;
@@ -108,7 +120,11 @@ export class WorldFactService {
       involvedNpcs: params.npcId ? [params.npcId] : [],
       turnCreated: params.turnNo,
       dayCreated: params.day,
-      tags: [params.actionType.toLowerCase(), params.outcome.toLowerCase(), ...params.tags],
+      tags: [
+        params.actionType.toLowerCase(),
+        params.outcome.toLowerCase(),
+        ...params.tags,
+      ],
       permanent: params.permanent ?? false,
     };
   }

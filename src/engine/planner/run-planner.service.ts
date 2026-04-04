@@ -126,7 +126,10 @@ export class RunPlannerService {
     // RANDOM 엣지가 있으면 가중치 기반 선택
     const randomEdges = node.edges.filter((e) => e.condition.type === 'RANDOM');
     if (randomEdges.length > 0) {
-      return this.pickRandomEdge(randomEdges, context.randomSeed ?? Math.random());
+      return this.pickRandomEdge(
+        randomEdges,
+        context.randomSeed ?? Math.random(),
+      );
     }
 
     const sortedEdges = [...node.edges].sort((a, b) => a.priority - b.priority);
@@ -140,11 +143,11 @@ export class RunPlannerService {
     throw new InternalError(`No matching edge for node ${currentGraphNodeId}`);
   }
 
-  private pickRandomEdge(
-    edges: EdgeDefinition[],
-    seed: number,
-  ): string {
-    const totalWeight = edges.reduce((sum, e) => sum + (e.condition.weight ?? 1), 0);
+  private pickRandomEdge(edges: EdgeDefinition[], seed: number): string {
+    const totalWeight = edges.reduce(
+      (sum, e) => sum + (e.condition.weight ?? 1),
+      0,
+    );
     let roll = seed * totalWeight;
     for (const edge of edges) {
       roll -= edge.condition.weight ?? 1;

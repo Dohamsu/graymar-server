@@ -35,7 +35,12 @@ export type NarrativeMarkCondition = {
   description: string;
   conditions: {
     incidentOutcome?: { incidentId: string; outcome: string };
-    npcEmotional?: { npcId: string; axis: string; op: 'gt' | 'lt' | 'gte' | 'lte'; value: number };
+    npcEmotional?: {
+      npcId: string;
+      axis: string;
+      op: 'gt' | 'lt' | 'gte' | 'lte';
+      value: number;
+    };
     resolveOutcome?: { outcome: string; minCount?: number };
     flag?: string;
     minMarks?: number; // 기존 마크 N개 이상 필요

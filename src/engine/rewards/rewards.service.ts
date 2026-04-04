@@ -196,9 +196,10 @@ export class RewardsService {
   private rollLocationDrop(rng: Rng, items: ItemStack[]): void {
     // 가중치: MINOR_HEALING 60, STAMINA_TONIC 40 → 60% vs 40%
     const roll = rng.next();
-    const entry = roll < LOCATION_DROP_TABLE[0].chance
-      ? LOCATION_DROP_TABLE[0]
-      : LOCATION_DROP_TABLE[1];
+    const entry =
+      roll < LOCATION_DROP_TABLE[0].chance
+        ? LOCATION_DROP_TABLE[0]
+        : LOCATION_DROP_TABLE[1];
     const existing = items.find((i) => i.itemId === entry.itemId);
     if (existing) {
       existing.qty += 1;
@@ -222,11 +223,16 @@ export class RewardsService {
 
     // 보스전: 인카운터 드랍 테이블 우선
     if (isBoss && encounterId) {
-      const encounterDrops = this.contentLoader.getEncounterEquipmentDropTable(encounterId);
+      const encounterDrops =
+        this.contentLoader.getEncounterEquipmentDropTable(encounterId);
       if (encounterDrops) {
         for (const drop of encounterDrops.drops) {
           if (rng.next() < drop.chance) {
-            const instance = this.affixService.createItemInstance(drop.baseItemId, locationId, rng);
+            const instance = this.affixService.createItemInstance(
+              drop.baseItemId,
+              locationId,
+              rng,
+            );
             droppedInstances.push(instance);
           }
         }
@@ -239,7 +245,11 @@ export class RewardsService {
       if (!enemyDrops) continue;
       for (const drop of enemyDrops.drops) {
         if (rng.next() < drop.chance) {
-          const instance = this.affixService.createItemInstance(drop.baseItemId, locationId, rng);
+          const instance = this.affixService.createItemInstance(
+            drop.baseItemId,
+            locationId,
+            rng,
+          );
           droppedInstances.push(instance);
         }
       }
@@ -252,17 +262,19 @@ export class RewardsService {
    * LOCATION 판정 장비 드랍 롤 — 장소별 드랍 테이블에서 확률 롤.
    * SEARCH, STEAL, FIGHT 등 GOLD_ACTIONS + SUCCESS/PARTIAL 시 호출.
    */
-  rollLocationEquipmentDrop(
-    locationId: string,
-    rng: Rng,
-  ): EquipmentDropResult {
+  rollLocationEquipmentDrop(locationId: string, rng: Rng): EquipmentDropResult {
     const droppedInstances: ItemInstance[] = [];
-    const locationDrops = this.contentLoader.getLocationEquipmentDrops(locationId);
+    const locationDrops =
+      this.contentLoader.getLocationEquipmentDrops(locationId);
     if (!locationDrops) return { droppedInstances };
 
     for (const drop of locationDrops.drops) {
       if (rng.next() < drop.chance) {
-        const instance = this.affixService.createItemInstance(drop.baseItemId, locationId, rng);
+        const instance = this.affixService.createItemInstance(
+          drop.baseItemId,
+          locationId,
+          rng,
+        );
         droppedInstances.push(instance);
         break; // LOCATION 드랍은 최대 1개
       }

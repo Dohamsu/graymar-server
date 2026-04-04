@@ -46,7 +46,9 @@ export class AgendaService {
     const newImplicit = { ...agenda.implicit };
 
     // resolveResult의 agendaBucketDelta 적용
-    for (const [key, delta] of Object.entries(resolveResult.agendaBucketDelta)) {
+    for (const [key, delta] of Object.entries(
+      resolveResult.agendaBucketDelta,
+    )) {
       if (key in newImplicit) {
         newImplicit[key as keyof ImplicitBuckets] += delta;
       }

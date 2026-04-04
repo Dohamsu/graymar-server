@@ -4,7 +4,13 @@ import type { PermanentStats } from './permanent-stats.js';
 
 // --- 장비 슬롯 ---
 
-export const EQUIPMENT_SLOTS = ['WEAPON', 'ARMOR', 'TACTICAL', 'POLITICAL', 'RELIC'] as const;
+export const EQUIPMENT_SLOTS = [
+  'WEAPON',
+  'ARMOR',
+  'TACTICAL',
+  'POLITICAL',
+  'RELIC',
+] as const;
 export type EquipmentSlot = (typeof EQUIPMENT_SLOTS)[number];
 
 // --- 희귀도 ---
@@ -64,7 +70,11 @@ export function emptyEquipped(): EquippedGear {
   return {};
 }
 
-export function countSetPieces(equipped: EquippedGear, setId: string, itemSetMap: Record<string, string | undefined>): number {
+export function countSetPieces(
+  equipped: EquippedGear,
+  setId: string,
+  itemSetMap: Record<string, string | undefined>,
+): number {
   let count = 0;
   for (const instance of Object.values(equipped)) {
     if (instance && itemSetMap[instance.baseItemId] === setId) count++;

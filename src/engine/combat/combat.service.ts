@@ -221,13 +221,16 @@ export class CombatService {
         // 전투 회피: d20 + SPEED + EVA >= 10 + 생존 적 수
         const roll = rng.d20();
         const enemyCount = next.enemies.filter((e) => e.hp > 0).length;
-        fleeSuccess = roll + playerSnap.speed + playerSnap.eva >= 10 + enemyCount;
+        fleeSuccess =
+          roll + playerSnap.speed + playerSnap.eva >= 10 + enemyCount;
       } else {
         fleeSuccess = this.checkFlee(
           next,
           playerSnap,
           rng,
-          (next as Record<string, unknown>).fleeBonusValue as number | undefined,
+          (next as Record<string, unknown>).fleeBonusValue as
+            | number
+            | undefined,
         );
       }
 
@@ -469,7 +472,13 @@ export class CombatService {
       ui,
       choices: battleEnded
         ? ([] as ChoiceItem[])
-        : this.buildCombatChoices(next, playerSnap, inventoryItems, input.envTags, input.enemyStats),
+        : this.buildCombatChoices(
+            next,
+            playerSnap,
+            inventoryItems,
+            input.envTags,
+            input.enemyStats,
+          ),
       flags,
     };
 
@@ -568,13 +577,19 @@ export class CombatService {
             id: `combo_double_attack_${e.id}`,
             label: `${name}에게 연속 공격`,
             hint: '2회 연속 공격 (기력 2)',
-            action: { type: 'CHOICE', payload: { choiceId: `combo_double_attack_${e.id}` } },
+            action: {
+              type: 'CHOICE',
+              payload: { choiceId: `combo_double_attack_${e.id}` },
+            },
           });
           choices.push({
             id: `combo_attack_defend_${e.id}`,
             label: `${name} 공격 후 방어`,
             hint: '공격 + 방어 태세 (기력 2)',
-            action: { type: 'CHOICE', payload: { choiceId: `combo_attack_defend_${e.id}` } },
+            action: {
+              type: 'CHOICE',
+              payload: { choiceId: `combo_attack_defend_${e.id}` },
+            },
           });
         }
       }
@@ -828,7 +843,11 @@ export class CombatService {
             let healValue = itemDef.combat.value ?? 0;
             // BLOOD_OATH: healingReduction 적용 (예: 0.5 → 회복량 50%)
             const healingReduction = this._traitEffects?.healingReduction;
-            if (healingReduction != null && healingReduction > 0 && healingReduction < 1) {
+            if (
+              healingReduction != null &&
+              healingReduction > 0 &&
+              healingReduction < 1
+            ) {
               healValue = Math.floor(healValue * healingReduction);
             }
             const hpBefore = next.player.hp;
@@ -844,7 +863,11 @@ export class CombatService {
                 ? `${itemDef.name}을(를) 사용했다. HP ${healed} 회복. (피의 맹세: 회복 감소)`
                 : `${itemDef.name}을(를) 사용했다. HP ${healed} 회복.`,
               tags: ['USE_ITEM', 'HEAL'],
-              data: { itemId: resolvedItemId, healed, healingReduction: healingReduction ?? undefined },
+              data: {
+                itemId: resolvedItemId,
+                healed,
+                healingReduction: healingReduction ?? undefined,
+              },
             });
             break;
           }
@@ -961,7 +984,9 @@ export class CombatService {
               text: success
                 ? `환경을 활용! ${eName(enemy.id)}에게 ${envDmg} 피해!`
                 : `환경 활용 실패… ${eName(enemy.id)}에게 ${envDmg} 피해`,
-              tags: success ? ['ENV_ACTION', 'SUCCESS'] : ['ENV_ACTION', 'PARTIAL'],
+              tags: success
+                ? ['ENV_ACTION', 'SUCCESS']
+                : ['ENV_ACTION', 'PARTIAL'],
               data: { damage: envDmg, targetId: enemy.id },
             });
           }

@@ -87,7 +87,8 @@ export class IntentMemoryService {
     }
 
     // 패턴 매칭 (점수 기반)
-    const scores: { pattern: typeof PATTERN_DEFS[number]; score: number }[] = [];
+    const scores: { pattern: (typeof PATTERN_DEFS)[number]; score: number }[] =
+      [];
 
     for (const def of PATTERN_DEFS) {
       let matchCount = 0;
@@ -114,8 +115,6 @@ export class IntentMemoryService {
    * 패턴을 LLM 컨텍스트 텍스트로 변환.
    */
   renderForContext(patterns: IntentPattern[]): string {
-    return patterns
-      .map((p) => `- ${p.label}: ${p.description}`)
-      .join('\n');
+    return patterns.map((p) => `- ${p.label}: ${p.description}`).join('\n');
   }
 }

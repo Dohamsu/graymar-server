@@ -29,7 +29,11 @@ const ESCALATION_MAP: Partial<Record<IntentActionType, IntentActionType>> = {
 };
 
 const VALID_TONES = new Set<IntentTone>([
-  'CAUTIOUS', 'AGGRESSIVE', 'DIPLOMATIC', 'DECEPTIVE', 'NEUTRAL',
+  'CAUTIOUS',
+  'AGGRESSIVE',
+  'DIPLOMATIC',
+  'DECEPTIVE',
+  'NEUTRAL',
 ]);
 
 // 타임아웃 (ms) — reasoning 모델 콜드스타트 고려 5초
@@ -72,13 +76,23 @@ export class LlmIntentParserService implements OnModuleInit {
     // CHOICE → 키워드 파서 직접 위임 (affordance 매핑으로 충분)
     if (source === 'CHOICE') {
       return this.keywordParser.parseWithInsistence(
-        inputText, source, choicePayload, insistenceCount, repeatedType, npcsAtLocation,
+        inputText,
+        source,
+        choicePayload,
+        insistenceCount,
+        repeatedType,
+        npcsAtLocation,
       );
     }
 
     // 키워드 파서를 먼저 실행 (fallback 확보)
     const keywordResult = this.keywordParser.parseWithInsistence(
-      inputText, source, choicePayload, insistenceCount, repeatedType, npcsAtLocation,
+      inputText,
+      source,
+      choicePayload,
+      insistenceCount,
+      repeatedType,
+      npcsAtLocation,
     );
 
     // LLM 비활성화 시 키워드 결과 반환
@@ -89,16 +103,31 @@ export class LlmIntentParserService implements OnModuleInit {
     // LLM 호출 (전용 경량 모델)
     const startMs = Date.now();
     try {
-      const llmResult = await this.callLlm(inputText, locationId, npcsAtLocation);
+      const llmResult = await this.callLlm(
+        inputText,
+        locationId,
+        npcsAtLocation,
+      );
       const latencyMs = Date.now() - startMs;
 
       if (llmResult) {
         const merged = this.mergeResults(
-          llmResult, keywordResult, inputText, insistenceCount, repeatedType, npcsAtLocation,
+          llmResult,
+          keywordResult,
+          inputText,
+          insistenceCount,
+          repeatedType,
+          npcsAtLocation,
         );
-        const llmSecondary = llmResult.secondaryActionType ? `+${llmResult.secondaryActionType}` : '';
-        const kwSecondary = keywordResult.secondaryActionType ? `+${keywordResult.secondaryActionType}` : '';
-        const finalSecondary = merged.secondaryActionType ? `+${merged.secondaryActionType}` : '';
+        const llmSecondary = llmResult.secondaryActionType
+          ? `+${llmResult.secondaryActionType}`
+          : '';
+        const kwSecondary = keywordResult.secondaryActionType
+          ? `+${keywordResult.secondaryActionType}`
+          : '';
+        const finalSecondary = merged.secondaryActionType
+          ? `+${merged.secondaryActionType}`
+          : '';
         this.logger.log(
           `LLM: ${llmResult.actionType}${llmSecondary} | KW: ${keywordResult.actionType}${kwSecondary} | final: ${merged.actionType}${finalSecondary} | ${latencyMs}ms (${this.intentModel})`,
         );
@@ -134,7 +163,14 @@ export class LlmIntentParserService implements OnModuleInit {
     inputText: string,
     locationId?: string,
     npcsAtLocation?: NpcForIntent[],
-  ): Promise<{ actionType: IntentActionType; secondaryActionType: IntentActionType | null; tone: IntentTone; target: string | null; riskLevel: 1 | 2 | 3; targetNpc: string | null } | null> {
+  ): Promise<{
+    actionType: IntentActionType;
+    secondaryActionType: IntentActionType | null;
+    tone: IntentTone;
+    target: string | null;
+    riskLevel: 1 | 2 | 3;
+    targetNpc: string | null;
+  } | null> {
     const provider = this.providerRegistry.getByName(this.intentProvider);
     if (!provider) return null;
 
@@ -143,14 +179,23 @@ export class LlmIntentParserService implements OnModuleInit {
       provider.generate({
         messages: [
           { role: 'system', content: INTENT_SYSTEM_PROMPT },
-          { role: 'user', content: buildIntentUserMessage(inputText, locationId, npcsAtLocation) },
+          {
+            role: 'user',
+            content: buildIntentUserMessage(
+              inputText,
+              locationId,
+              npcsAtLocation,
+            ),
+          },
         ],
         maxTokens: 256,
         temperature: 0,
         model: this.intentModel,
         reasoningEffort: 'low',
       }),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), INTENT_LLM_TIMEOUT_MS)),
+      new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), INTENT_LLM_TIMEOUT_MS),
+      ),
     ]);
 
     if (!result) {
@@ -162,9 +207,14 @@ export class LlmIntentParserService implements OnModuleInit {
   }
 
   /** JSON 응답 파싱 3단계: 직접 → 코드블록 → {…} 추출 */
-  private parseJsonResponse(
-    text: string,
-  ): { actionType: IntentActionType; secondaryActionType: IntentActionType | null; tone: IntentTone; target: string | null; riskLevel: 1 | 2 | 3; targetNpc: string | null } | null {
+  private parseJsonResponse(text: string): {
+    actionType: IntentActionType;
+    secondaryActionType: IntentActionType | null;
+    tone: IntentTone;
+    target: string | null;
+    riskLevel: 1 | 2 | 3;
+    targetNpc: string | null;
+  } | null {
     const candidates = [
       text.trim(),
       this.extractFromCodeBlock(text),
@@ -176,20 +226,31 @@ export class LlmIntentParserService implements OnModuleInit {
       try {
         const parsed = JSON.parse(candidate);
         if (this.validateParsed(parsed)) {
-          const actionType = this.normalizeActionType(parsed.actionType as IntentActionType);
-          const secondaryRaw = parsed.secondaryActionType as string | null | undefined;
+          const actionType = this.normalizeActionType(
+            parsed.actionType as IntentActionType,
+          );
+          const secondaryRaw = parsed.secondaryActionType;
           const secondaryActionType: IntentActionType | null =
-            secondaryRaw && (INTENT_ACTION_TYPE as readonly string[]).includes(secondaryRaw)
+            secondaryRaw &&
+            (INTENT_ACTION_TYPE as readonly string[]).includes(secondaryRaw)
               ? this.normalizeActionType(secondaryRaw as IntentActionType)
               : null;
-          const tone: IntentTone = VALID_TONES.has(parsed.tone as IntentTone) ? (parsed.tone as IntentTone) : 'NEUTRAL';
-          const riskLevel: 1 | 2 | 3 = ([1, 2, 3] as const).includes(parsed.riskLevel as 1 | 2 | 3)
-            ? (parsed.riskLevel as 1 | 2 | 3) : 1;
+          const tone: IntentTone = VALID_TONES.has(parsed.tone as IntentTone)
+            ? (parsed.tone as IntentTone)
+            : 'NEUTRAL';
+          const riskLevel: 1 | 2 | 3 = ([1, 2, 3] as const).includes(
+            parsed.riskLevel as 1 | 2 | 3,
+          )
+            ? (parsed.riskLevel as 1 | 2 | 3)
+            : 1;
           const targetNpc: string | null =
-            typeof parsed.targetNpc === 'string' && parsed.targetNpc ? parsed.targetNpc : null;
+            typeof parsed.targetNpc === 'string' && parsed.targetNpc
+              ? parsed.targetNpc
+              : null;
           return {
             actionType,
-            secondaryActionType: secondaryActionType !== actionType ? secondaryActionType : null,
+            secondaryActionType:
+              secondaryActionType !== actionType ? secondaryActionType : null,
             tone,
             target: (parsed.target as string) ?? null,
             riskLevel,
@@ -208,9 +269,12 @@ export class LlmIntentParserService implements OnModuleInit {
   /** 비이벤트 타입 리다이렉트 (SHOP→TRADE, SEARCH→INVESTIGATE) */
   private normalizeActionType(type: IntentActionType): IntentActionType {
     switch (type) {
-      case 'SHOP': return 'TRADE';
-      case 'SEARCH': return 'INVESTIGATE';
-      default: return type;
+      case 'SHOP':
+        return 'TRADE';
+      case 'SEARCH':
+        return 'INVESTIGATE';
+      default:
+        return type;
     }
   }
 
@@ -226,7 +290,14 @@ export class LlmIntentParserService implements OnModuleInit {
     return text.slice(start, end + 1);
   }
 
-  private validateParsed(obj: unknown): obj is { actionType: string; secondaryActionType?: string | null; tone?: string; target?: string | null; riskLevel?: number; targetNpc?: string | null } {
+  private validateParsed(obj: unknown): obj is {
+    actionType: string;
+    secondaryActionType?: string | null;
+    tone?: string;
+    target?: string | null;
+    riskLevel?: number;
+    targetNpc?: string | null;
+  } {
     if (typeof obj !== 'object' || obj === null) return false;
     const o = obj as Record<string, unknown>;
     if (typeof o.actionType !== 'string') return false;
@@ -243,7 +314,14 @@ export class LlmIntentParserService implements OnModuleInit {
    *    - KW 결과는 secondary로 보존하여 정보 손실 방지
    */
   private mergeResults(
-    llmResult: { actionType: IntentActionType; secondaryActionType: IntentActionType | null; tone: IntentTone; target: string | null; riskLevel: 1 | 2 | 3; targetNpc: string | null },
+    llmResult: {
+      actionType: IntentActionType;
+      secondaryActionType: IntentActionType | null;
+      tone: IntentTone;
+      target: string | null;
+      riskLevel: 1 | 2 | 3;
+      targetNpc: string | null;
+    },
     keywordResult: ParsedIntentV2,
     inputText: string,
     insistenceCount: number,
@@ -262,7 +340,11 @@ export class LlmIntentParserService implements OnModuleInit {
         // 양쪽 일치
         actionType = 'MOVE_LOCATION';
         mergeSource = 'AGREE';
-      } else if (this.keywordParser.detectLocationBasedMove(inputText.toLowerCase().trim())) {
+      } else if (
+        this.keywordParser.detectLocationBasedMove(
+          inputText.toLowerCase().trim(),
+        )
+      ) {
         // 장소명+이동접미사 복합감지 → KW 신뢰
         actionType = keywordResult.actionType;
         mergeSource = 'KW_OVERRIDE';
@@ -283,9 +365,15 @@ export class LlmIntentParserService implements OnModuleInit {
 
     // secondary 결정: LLM의 secondary 우선, 없으면 불일치 시 KW 결과를 secondary로 보존
     let secondaryActionType: IntentActionType | undefined;
-    if (llmResult.secondaryActionType && llmResult.secondaryActionType !== actionType) {
+    if (
+      llmResult.secondaryActionType &&
+      llmResult.secondaryActionType !== actionType
+    ) {
       secondaryActionType = llmResult.secondaryActionType;
-    } else if (mergeSource === 'LLM' && keywordResult.actionType !== actionType) {
+    } else if (
+      mergeSource === 'LLM' &&
+      keywordResult.actionType !== actionType
+    ) {
       secondaryActionType = keywordResult.actionType;
     } else {
       secondaryActionType = keywordResult.secondaryActionType || undefined;
@@ -299,7 +387,11 @@ export class LlmIntentParserService implements OnModuleInit {
 
     // 에스컬레이션: 같은 actionType 연속 3회 → 강한 타입으로 승격
     let escalated = false;
-    if (insistenceCount >= 2 && actionType === repeatedType && ESCALATION_MAP[actionType]) {
+    if (
+      insistenceCount >= 2 &&
+      actionType === repeatedType &&
+      ESCALATION_MAP[actionType]
+    ) {
       actionType = ESCALATION_MAP[actionType]!;
       escalated = true;
     }
@@ -334,9 +426,11 @@ export class LlmIntentParserService implements OnModuleInit {
       target: llmResult.target,
       riskLevel: llmResult.riskLevel,
       intentTags: keywordResult.intentTags,
-      confidence: mergeSource === 'AGREE' ? 2 : 1 as 0 | 1 | 2,
+      confidence: mergeSource === 'AGREE' ? 2 : (1 as 0 | 1 | 2),
       source: mergeSource === 'KW_OVERRIDE' ? 'RULE' : 'LLM',
-      suppressedActionType: escalated ? undefined : keywordResult.suppressedActionType,
+      suppressedActionType: escalated
+        ? undefined
+        : keywordResult.suppressedActionType,
       escalated,
       targetNpcId: targetNpcId || undefined,
     };

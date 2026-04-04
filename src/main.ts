@@ -30,7 +30,12 @@ async function bootstrap() {
   app.useStaticAssets(publicDir, { prefix: '/scene-images/' });
 
   // 정적 파일 서빙 — portraits
-  const portraitsDir = path.resolve(process.cwd(), 'public', 'portraits', 'generated');
+  const portraitsDir = path.resolve(
+    process.cwd(),
+    'public',
+    'portraits',
+    'generated',
+  );
   app.useStaticAssets(portraitsDir, { prefix: '/portraits/generated/' });
 
   await app.listen(process.env.PORT ?? 3000);

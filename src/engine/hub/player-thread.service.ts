@@ -7,9 +7,9 @@ import type {
   IncidentRoutingResult,
 } from '../../db/types/index.js';
 
-const THREAD_EMERGE_THRESHOLD = 2;  // 2회 이상 반복 → EMERGING
-const THREAD_ACTIVE_THRESHOLD = 4;  // 4회 이상 → ACTIVE
-const THREAD_ABANDON_TURNS = 22;    // 마지막 행동 후 22턴 경과 → ABANDONED (4개 LOCATION 순환 고려)
+const THREAD_EMERGE_THRESHOLD = 2; // 2회 이상 반복 → EMERGING
+const THREAD_ACTIVE_THRESHOLD = 4; // 4회 이상 → ACTIVE
+const THREAD_ABANDON_TURNS = 22; // 마지막 행동 후 22턴 경과 → ABANDONED (4개 LOCATION 순환 고려)
 const MAX_THREADS = 10;
 
 const LOCATION_DISPLAY_NAMES: Record<string, string> = {
@@ -119,10 +119,12 @@ export class PlayerThreadService {
   }
 
   private buildSummary(thread: PlayerThread): string {
-    const rate = thread.actionCount > 0
-      ? Math.round((thread.successCount / thread.actionCount) * 100)
-      : 0;
-    const locName = LOCATION_DISPLAY_NAMES[thread.locationId] ?? thread.locationId;
+    const rate =
+      thread.actionCount > 0
+        ? Math.round((thread.successCount / thread.actionCount) * 100)
+        : 0;
+    const locName =
+      LOCATION_DISPLAY_NAMES[thread.locationId] ?? thread.locationId;
     return `${locName}에서 ${thread.approachVector} 접근 ${thread.actionCount}회 (성공률 ${rate}%)`;
   }
 
@@ -131,7 +133,12 @@ export class PlayerThreadService {
 
     // ABANDONED → EMERGING → ACTIVE 순으로 제거 대상
     const sorted = [...threads].sort((a, b) => {
-      const statusOrder: Record<string, number> = { ABANDONED: 0, COMPLETED: 1, EMERGING: 2, ACTIVE: 3 };
+      const statusOrder: Record<string, number> = {
+        ABANDONED: 0,
+        COMPLETED: 1,
+        EMERGING: 2,
+        ACTIVE: 3,
+      };
       const sa = statusOrder[a.status] ?? 2;
       const sb = statusOrder[b.status] ?? 2;
       if (sa !== sb) return sa - sb;

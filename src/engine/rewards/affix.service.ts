@@ -53,7 +53,11 @@ export class AffixService {
 
     // prefix 롤
     if (prob.prefix > 0 && rng.next() < prob.prefix) {
-      const candidates = this.contentLoader.getAffixesByLocation(locationId, 'PREFIX', profileId);
+      const candidates = this.contentLoader.getAffixesByLocation(
+        locationId,
+        'PREFIX',
+        profileId,
+      );
       const picked = this.weightedPick(candidates, rng);
       if (picked) {
         prefixAffixId = picked.affixId;
@@ -63,7 +67,11 @@ export class AffixService {
 
     // suffix 롤
     if (prob.suffix > 0 && rng.next() < prob.suffix) {
-      const candidates = this.contentLoader.getAffixesByLocation(locationId, 'SUFFIX', profileId);
+      const candidates = this.contentLoader.getAffixesByLocation(
+        locationId,
+        'SUFFIX',
+        profileId,
+      );
       const picked = this.weightedPick(candidates, rng);
       if (picked) {
         suffixAffixId = picked.affixId;
@@ -139,7 +147,10 @@ export class AffixService {
   }
 
   /** 가중치 기반 랜덤 선택 */
-  private weightedPick(candidates: RegionAffixDef[], rng: Rng): RegionAffixDef | null {
+  private weightedPick(
+    candidates: RegionAffixDef[],
+    rng: Rng,
+  ): RegionAffixDef | null {
     if (candidates.length === 0) return null;
 
     const totalWeight = candidates.reduce((sum, c) => sum + c.weight, 0);

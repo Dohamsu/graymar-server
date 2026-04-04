@@ -1,7 +1,10 @@
 // 정본: specs/combat_resolve_engine_v1.md §2 — 스탯 파이프라인 (Priority 기반)
 
 import { Injectable } from '@nestjs/common';
-import { type PermanentStats, deriveCombatStats } from '../../db/types/index.js';
+import {
+  type PermanentStats,
+  deriveCombatStats,
+} from '../../db/types/index.js';
 import type { Angle } from '../../db/types/index.js';
 
 /** 스탯 스냅샷: 매 턴 계산되는 최종 전투 스탯 */

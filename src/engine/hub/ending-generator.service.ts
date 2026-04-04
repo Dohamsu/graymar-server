@@ -3,7 +3,10 @@
 
 import { Injectable } from '@nestjs/common';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
-import type { IncidentRuntime, IncidentOutcome } from '../../db/types/incident.js';
+import type {
+  IncidentRuntime,
+  IncidentOutcome,
+} from '../../db/types/incident.js';
 import type { NarrativeMark } from '../../db/types/narrative-mark.js';
 import type { NPCState } from '../../db/types/npc-state.js';
 import type { NpcEmotionalState } from '../../db/types/npc-state.js';
@@ -17,11 +20,15 @@ import type {
 } from '../../db/types/ending.js';
 
 /** 한국어 조사 자동 판별 — 받침 유무에 따라 은/는, 이/가 등 선택 */
-function korParticle(word: string, withBatchim: string, withoutBatchim: string): string {
+function korParticle(
+  word: string,
+  withBatchim: string,
+  withoutBatchim: string,
+): string {
   if (!word) return withBatchim;
   const last = word.charCodeAt(word.length - 1);
-  if (last < 0xAC00 || last > 0xD7A3) return withBatchim;
-  return (last - 0xAC00) % 28 !== 0 ? withBatchim : withoutBatchim;
+  if (last < 0xac00 || last > 0xd7a3) return withBatchim;
+  return (last - 0xac00) % 28 !== 0 ? withBatchim : withoutBatchim;
 }
 
 @Injectable()
@@ -72,7 +79,13 @@ export class EndingGeneratorService {
     worldState: Record<string, unknown>,
     arcState: Record<string, unknown> | null,
     actionHistory?: Array<{ actionType: string; [k: string]: unknown }>,
-    playerThreads?: Array<{ approachVector: string; goalCategory: string; actionCount: number; successCount: number; status: string }>,
+    playerThreads?: Array<{
+      approachVector: string;
+      goalCategory: string;
+      actionCount: number;
+      successCount: number;
+      status: string;
+    }>,
   ): EndingInput {
     const incidentOutcomes = activeIncidents
       .filter((inc) => inc.resolved)
@@ -83,7 +96,7 @@ export class EndingGeneratorService {
       }));
 
     const npcEpilogues = Object.entries(npcStates).map(([npcId, npc]) => {
-      const em = (npc.emotional ?? {}) as NpcEmotionalState;
+      const em = npc.emotional ?? {};
       const npcDef = this.content.getNpc(npcId);
       return {
         npcId,
@@ -101,17 +114,51 @@ export class EndingGeneratorService {
     const dominantVectors = this.computeDominantVectors(actionHistory);
 
     // User-Driven System v3: consequence footprint
-    const consequenceFootprint = this.computeConsequenceFootprint(activeIncidents);
+    const consequenceFootprint =
+      this.computeConsequenceFootprint(activeIncidents);
 
     // Living World v2: WorldFacts + PlayerGoals 추출
-    const worldFacts = ((worldState.worldFacts as Array<{ text: string; category: string; permanent: boolean }>) ?? [])
+    const worldFacts = (
+      (worldState.worldFacts as Array<{
+        text: string;
+        category: string;
+        permanent: boolean;
+      }>) ?? []
+    )
       .filter((f) => f.permanent)
       .map((f) => f.text);
-    const playerGoals = ((worldState.playerGoals as Array<{ description: string; progress: number; completed: boolean }>) ?? [])
-      .map((g) => ({ description: g.description, progress: g.progress, completed: g.completed }));
-    const locationChanges = Object.entries((worldState.locationDynamicStates ?? {}) as Record<string, { locationId: string; security: number; unrest: number; activeConditions: Array<{ id: string }> }>)
-      .filter(([, s]) => s.activeConditions?.length > 0 || s.security < 30 || s.unrest > 60)
-      .map(([locId, s]) => ({ locationId: locId, security: s.security, unrest: s.unrest, conditions: s.activeConditions?.map((c) => c.id) ?? [] }));
+    const playerGoals = (
+      (worldState.playerGoals as Array<{
+        description: string;
+        progress: number;
+        completed: boolean;
+      }>) ?? []
+    ).map((g) => ({
+      description: g.description,
+      progress: g.progress,
+      completed: g.completed,
+    }));
+    const locationChanges = Object.entries(
+      (worldState.locationDynamicStates ?? {}) as Record<
+        string,
+        {
+          locationId: string;
+          security: number;
+          unrest: number;
+          activeConditions: Array<{ id: string }>;
+        }
+      >,
+    )
+      .filter(
+        ([, s]) =>
+          s.activeConditions?.length > 0 || s.security < 30 || s.unrest > 60,
+      )
+      .map(([locId, s]) => ({
+        locationId: locId,
+        security: s.security,
+        unrest: s.unrest,
+        conditions: s.activeConditions?.map((c) => c.id) ?? [],
+      }));
 
     return {
       incidentOutcomes,
@@ -163,7 +210,9 @@ export class EndingGeneratorService {
       stability = 'UNSTABLE';
     }
 
-    const closingLines = endingsData?.closingLines as Record<string, string> | undefined;
+    const closingLines = endingsData?.closingLines as
+      | Record<string, string>
+      | undefined;
     const cityStatus: CityStatus = {
       stability,
       summary: closingLines?.[stability] ?? '도시는 계속되었다.',
@@ -171,7 +220,8 @@ export class EndingGeneratorService {
 
     // 2. NPC Epilogues 생성
     const epilogueTemplates = endingsData?.npcEpilogueTemplates as
-      Record<string, Record<string, string>> | undefined;
+      | Record<string, Record<string, string>>
+      | undefined;
 
     const npcEpilogues: NpcEpilogue[] = input.npcEpilogues.map((npc) => {
       const templates = epilogueTemplates?.[npc.npcId];
@@ -198,22 +248,24 @@ export class EndingGeneratorService {
     });
 
     // 3. Ending Type
-    const endingType = endingReason === 'PLAYER_CHOICE'
-      ? 'PLAYER_CHOICE' as const
-      : endingReason === 'DEADLINE'
-        ? 'DEADLINE' as const
-        : endingReason === 'DEFEAT'
-          ? 'DEFEAT' as const
-          : 'NATURAL' as const;
+    const endingType =
+      endingReason === 'PLAYER_CHOICE'
+        ? ('PLAYER_CHOICE' as const)
+        : endingReason === 'DEADLINE'
+          ? ('DEADLINE' as const)
+          : endingReason === 'DEFEAT'
+            ? ('DEFEAT' as const)
+            : ('NATURAL' as const);
 
     // User-Driven System v3: playstyle summary
     const playstyleSummary = this.buildPlaystyleSummary(input.dominantVectors);
     const threadSummary = this.buildThreadSummary(input.playerThreads);
 
     // closingLine 변형 (dominant vector 기반)
-    const finalClosingLine = endingReason === 'DEFEAT'
-      ? '시야가 어두워진다. 이름 없는 용병의 이야기는 여기서 끝났다.'
-      : this.adjustClosingLine(cityStatus.summary, input.dominantVectors);
+    const finalClosingLine =
+      endingReason === 'DEFEAT'
+        ? '시야가 어두워진다. 이름 없는 용병의 이야기는 여기서 끝났다.'
+        : this.adjustClosingLine(cityStatus.summary, input.dominantVectors);
 
     return {
       endingType,
@@ -243,11 +295,17 @@ export class EndingGeneratorService {
 
     // actionType → approachVector 간이 매핑 (IntentV3Builder와 동일)
     const vectorMap: Record<string, string> = {
-      TALK: 'SOCIAL', PERSUADE: 'SOCIAL', HELP: 'SOCIAL',
-      SNEAK: 'STEALTH', STEAL: 'STEALTH',
+      TALK: 'SOCIAL',
+      PERSUADE: 'SOCIAL',
+      HELP: 'SOCIAL',
+      SNEAK: 'STEALTH',
+      STEAL: 'STEALTH',
       THREATEN: 'PRESSURE',
-      BRIBE: 'ECONOMIC', TRADE: 'ECONOMIC',
-      INVESTIGATE: 'OBSERVATIONAL', OBSERVE: 'OBSERVATIONAL', SEARCH: 'OBSERVATIONAL',
+      BRIBE: 'ECONOMIC',
+      TRADE: 'ECONOMIC',
+      INVESTIGATE: 'OBSERVATIONAL',
+      OBSERVE: 'OBSERVATIONAL',
+      SEARCH: 'OBSERVATIONAL',
       FIGHT: 'VIOLENT',
     };
 
@@ -263,9 +321,11 @@ export class EndingGeneratorService {
       .map(([v]) => v);
   }
 
-  private computeConsequenceFootprint(
-    incidents: IncidentRuntime[],
-  ): { totalSuspicion: number; totalPlayerProgress: number; totalRivalProgress: number } {
+  private computeConsequenceFootprint(incidents: IncidentRuntime[]): {
+    totalSuspicion: number;
+    totalPlayerProgress: number;
+    totalRivalProgress: number;
+  } {
     let totalSuspicion = 0;
     let totalPlayerProgress = 0;
     let totalRivalProgress = 0;
@@ -279,7 +339,9 @@ export class EndingGeneratorService {
     return { totalSuspicion, totalPlayerProgress, totalRivalProgress };
   }
 
-  private buildPlaystyleSummary(dominantVectors?: string[]): string | undefined {
+  private buildPlaystyleSummary(
+    dominantVectors?: string[],
+  ): string | undefined {
     if (!dominantVectors || dominantVectors.length === 0) return undefined;
 
     const labels: Record<string, string> = {
@@ -302,16 +364,27 @@ export class EndingGeneratorService {
   }
 
   private buildThreadSummary(
-    threads?: Array<{ approachVector: string; goalCategory: string; actionCount: number; successCount: number; status: string }>,
+    threads?: Array<{
+      approachVector: string;
+      goalCategory: string;
+      actionCount: number;
+      successCount: number;
+      status: string;
+    }>,
   ): string | undefined {
     if (!threads || threads.length === 0) return undefined;
 
-    const active = threads.filter((t) => t.status === 'ACTIVE' || t.status === 'COMPLETED');
+    const active = threads.filter(
+      (t) => t.status === 'ACTIVE' || t.status === 'COMPLETED',
+    );
     if (active.length === 0) return undefined;
 
     const sorted = [...active].sort((a, b) => b.actionCount - a.actionCount);
     const top = sorted[0];
-    const rate = top.actionCount > 0 ? Math.round((top.successCount / top.actionCount) * 100) : 0;
+    const rate =
+      top.actionCount > 0
+        ? Math.round((top.successCount / top.actionCount) * 100)
+        : 0;
 
     return `주요 행동 패턴: ${top.approachVector} × ${top.goalCategory} (${top.actionCount}회, 성공률 ${rate}%)`;
   }

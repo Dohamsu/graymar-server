@@ -24,7 +24,8 @@ export interface AgendaTickResult {
 @Injectable()
 export class NpcAgendaService {
   constructor(
-    @Inject(ContentLoaderService) private readonly content: ContentLoaderService,
+    @Inject(ContentLoaderService)
+    private readonly content: ContentLoaderService,
     private readonly worldFact: WorldFactService,
     private readonly locationState: LocationStateService,
     @Optional() private readonly signalFeed?: SignalFeedService,
@@ -63,7 +64,12 @@ export class NpcAgendaService {
       }
 
       // Stage 진행!
-      const result = this.executeStageEffect(ws, npcDef.npcId, nextStage, currentTurn);
+      const result = this.executeStageEffect(
+        ws,
+        npcDef.npcId,
+        nextStage,
+        currentTurn,
+      );
       results.push(result);
 
       // npcGoals 업데이트
@@ -79,7 +85,10 @@ export class NpcAgendaService {
   }
 
   /** 특정 NPC의 agenda 상태 조회 */
-  getAgendaState(ws: WorldState, npcId: string): { currentGoal: string; progress: number } | null {
+  getAgendaState(
+    ws: WorldState,
+    npcId: string,
+  ): { currentGoal: string; progress: number } | null {
     const goal = ws.npcGoals?.[npcId];
     if (!goal) return null;
     return { currentGoal: goal.currentGoal, progress: goal.progress };
@@ -119,7 +128,11 @@ export class NpcAgendaService {
     // Signal 발생
     if (stage.onTrigger.signalText && this.signalFeed) {
       const channel = (stage.onTrigger.signalChannel ?? 'NPC_BEHAVIOR') as
-        'RUMOR' | 'SECURITY' | 'NPC_BEHAVIOR' | 'ECONOMY' | 'VISUAL';
+        | 'RUMOR'
+        | 'SECURITY'
+        | 'NPC_BEHAVIOR'
+        | 'ECONOMY'
+        | 'VISUAL';
       ws.signalFeed = [
         ...ws.signalFeed,
         {
@@ -150,9 +163,11 @@ export class NpcAgendaService {
     // "INC_XXX.resolved" 형식 또는 NPC goal 완료 체크
     if (blockedBy.includes('.resolved')) {
       const incidentId = blockedBy.split('.')[0];
-      return ws.activeIncidents?.some(
-        (i) => i.incidentId === incidentId && i.resolved,
-      ) ?? false;
+      return (
+        ws.activeIncidents?.some(
+          (i) => i.incidentId === incidentId && i.resolved,
+        ) ?? false
+      );
     }
     return true;
   }
@@ -170,26 +185,40 @@ export class NpcAgendaService {
         return this.cmp(ws.hubHeat, heatMatch[1], parseInt(heatMatch[2], 10));
       }
 
-      const incidentMatch = condition.match(/^incident\.(\w+)\.stage\s*(>=|>|<=|<|==)\s*(\d+)$/);
+      const incidentMatch = condition.match(
+        /^incident\.(\w+)\.stage\s*(>=|>|<=|<|==)\s*(\d+)$/,
+      );
       if (incidentMatch) {
-        const incident = ws.activeIncidents?.find((i) => i.incidentId === incidentMatch[1]);
+        const incident = ws.activeIncidents?.find(
+          (i) => i.incidentId === incidentMatch[1],
+        );
         if (!incident) return false;
-        return this.cmp(incident.stage, incidentMatch[2], parseInt(incidentMatch[3], 10));
+        return this.cmp(
+          incident.stage,
+          incidentMatch[2],
+          parseInt(incidentMatch[3], 10),
+        );
       }
 
       // "security.LOC_XXX < N" 형식
-      const secMatch = condition.match(/^security\.(\w+)\s*(>=|>|<=|<|==)\s*(\d+)$/);
+      const secMatch = condition.match(
+        /^security\.(\w+)\s*(>=|>|<=|<|==)\s*(\d+)$/,
+      );
       if (secMatch) {
         const locState = ws.locationDynamicStates?.[secMatch[1]];
         if (!locState) return false;
-        return this.cmp(locState.security, secMatch[2], parseInt(secMatch[3], 10));
+        return this.cmp(
+          locState.security,
+          secMatch[2],
+          parseInt(secMatch[3], 10),
+        );
       }
 
       // AND 조건: "day >= 5 AND security.LOC_HARBOR < 50"
       if (condition.includes(' AND ')) {
-        return condition.split(' AND ').every((part) =>
-          this.evaluateCondition(part.trim(), ws),
-        );
+        return condition
+          .split(' AND ')
+          .every((part) => this.evaluateCondition(part.trim(), ws));
       }
 
       return false;
@@ -200,12 +229,18 @@ export class NpcAgendaService {
 
   private cmp(actual: number, op: string, expected: number): boolean {
     switch (op) {
-      case '>=': return actual >= expected;
-      case '>': return actual > expected;
-      case '<=': return actual <= expected;
-      case '<': return actual < expected;
-      case '==': return actual === expected;
-      default: return false;
+      case '>=':
+        return actual >= expected;
+      case '>':
+        return actual > expected;
+      case '<=':
+        return actual <= expected;
+      case '<':
+        return actual < expected;
+      case '==':
+        return actual === expected;
+      default:
+        return false;
     }
   }
 }

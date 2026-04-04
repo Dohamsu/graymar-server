@@ -13,10 +13,7 @@ const SERVER_VERSION = (() => {
   }
 })();
 import { runSessions } from '../db/schema/index.js';
-import {
-  NotFoundError,
-  ForbiddenError,
-} from '../common/errors/game-errors.js';
+import { NotFoundError, ForbiddenError } from '../common/errors/game-errors.js';
 import type {
   CreateBugReportBody,
   UpdateBugReportBody,
@@ -29,11 +26,7 @@ export class BugReportService {
 
   constructor(@Inject(DB) private readonly db: DrizzleDB) {}
 
-  async create(
-    runId: string,
-    userId: string,
-    body: CreateBugReportBody,
-  ) {
+  async create(runId: string, userId: string, body: CreateBugReportBody) {
     // Verify the run exists and belongs to the user
     const run = await this.db.query.runSessions.findFirst({
       where: and(eq(runSessions.id, runId), eq(runSessions.userId, userId)),

@@ -50,16 +50,18 @@ export class OpenAIProvider implements LlmProvider {
     const client = this.getClient();
 
     const input = request.messages.map((m) => ({
-      role: m.role as 'system' | 'user' | 'assistant',
+      role: m.role,
       content: m.content,
     }));
 
     // reasoning 모델은 max_output_tokens에 추론 토큰이 포함되므로 effort에 따라 배율 조정
     const effort = request.reasoningEffort ?? 'medium';
     const budgetMultiplier = effort === 'low' ? 3 : effort === 'medium' ? 5 : 8;
-    const reasoningBudget = Math.max(request.maxTokens * budgetMultiplier, 4096);
+    const reasoningBudget = Math.max(
+      request.maxTokens * budgetMultiplier,
+      4096,
+    );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response: any = await client.responses.create({
       model,
       input,
@@ -73,8 +75,9 @@ export class OpenAIProvider implements LlmProvider {
     const usage = response.usage ?? {};
 
     if (!text) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      console.warn(`[OpenAIProvider/Responses] Empty output_text. Status: ${response.status}, model: ${response.model}`);
+      console.warn(
+        `[OpenAIProvider/Responses] Empty output_text. Status: ${response.status}, model: ${response.model}`,
+      );
     }
 
     return {
@@ -116,8 +119,8 @@ export class OpenAIProvider implements LlmProvider {
     const choice = completion.choices[0];
     const text = choice?.message?.content ?? '';
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
-    const cachedTokens = (completion.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0;
+    const cachedTokens =
+      (completion.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0;
 
     return {
       text,

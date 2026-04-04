@@ -27,18 +27,18 @@ const NON_CHALLENGE_ACTIONS = new Set([
 
 // actionType → 기본 6스탯 매핑 (Living World v2)
 const ACTION_STAT_MAP: Record<string, keyof PermanentStats> = {
-  FIGHT: 'str',       // 힘: 전투/강탈
-  THREATEN: 'str',    // 힘: 협박/위협
-  SNEAK: 'dex',       // 민첩: 잠입/은밀
-  STEAL: 'dex',       // 민첩: 절도
-  OBSERVE: 'per',     // 통찰: 관찰/감시
+  FIGHT: 'str', // 힘: 전투/강탈
+  THREATEN: 'str', // 힘: 협박/위협
+  SNEAK: 'dex', // 민첩: 잠입/은밀
+  STEAL: 'dex', // 민첩: 절도
+  OBSERVE: 'per', // 통찰: 관찰/감시
   INVESTIGATE: 'wit', // 재치: 조사/분석
-  SEARCH: 'wit',      // 재치: 수색/탐색
-  PERSUADE: 'cha',    // 카리스마: 설득
-  BRIBE: 'cha',       // 카리스마: 뇌물
-  TRADE: 'cha',       // 카리스마: 거래
-  TALK: 'cha',        // 카리스마: 대화/설득
-  HELP: 'con',        // 체질: 도움/보호
+  SEARCH: 'wit', // 재치: 수색/탐색
+  PERSUADE: 'cha', // 카리스마: 설득
+  BRIBE: 'cha', // 카리스마: 뇌물
+  TRADE: 'cha', // 카리스마: 거래
+  TALK: 'cha', // 카리스마: 대화/설득
+  HELP: 'con', // 체질: 도움/보호
 };
 
 @Injectable()
@@ -133,7 +133,10 @@ export class ResolveService {
     }
 
     // NIGHT_CHILD: 시간대에 따른 판정 보너스/패널티
-    if (traitEffects && (traitEffects.nightBonus != null || traitEffects.dayPenalty != null)) {
+    if (
+      traitEffects &&
+      (traitEffects.nightBonus != null || traitEffects.dayPenalty != null)
+    ) {
       const timePhase = ws.phaseV2 ?? ws.timePhase;
       let timeBonus = 0;
       if (timePhase === 'NIGHT' || timePhase === 'DUSK') {
@@ -170,11 +173,15 @@ export class ResolveService {
 
     // heatDelta 계산 (±8 clamp)
     let heatDelta = 0;
-    if (outcome === 'SUCCESS') heatDelta = event.matchPolicy === 'BLOCK' ? 3 : 1;
+    if (outcome === 'SUCCESS')
+      heatDelta = event.matchPolicy === 'BLOCK' ? 3 : 1;
     if (outcome === 'FAIL') heatDelta = event.matchPolicy === 'BLOCK' ? 5 : 2;
     if (intent.actionType === 'FIGHT' || intent.actionType === 'THREATEN')
       heatDelta += 2;
-    heatDelta = Math.max(-HEAT_DELTA_CLAMP, Math.min(HEAT_DELTA_CLAMP, heatDelta));
+    heatDelta = Math.max(
+      -HEAT_DELTA_CLAMP,
+      Math.min(HEAT_DELTA_CLAMP, heatDelta),
+    );
 
     // 전투 트리거 체크
     const triggerCombat =
@@ -211,10 +218,13 @@ export class ResolveService {
     const tags = event.payload.tags;
     const delta = outcome === 'SUCCESS' ? 2 : outcome === 'PARTIAL' ? 1 : 0;
     if (delta > 0) {
-      if (tags.includes('destabilize')) agendaBucketDelta.destabilizeGuard = delta;
+      if (tags.includes('destabilize'))
+        agendaBucketDelta.destabilizeGuard = delta;
       if (tags.includes('merchant')) agendaBucketDelta.allyMerchant = delta;
-      if (tags.includes('underworld')) agendaBucketDelta.empowerUnderworld = delta;
-      if (tags.includes('corruption')) agendaBucketDelta.exposeCorruption = delta;
+      if (tags.includes('underworld'))
+        agendaBucketDelta.empowerUnderworld = delta;
+      if (tags.includes('corruption'))
+        agendaBucketDelta.exposeCorruption = delta;
       if (tags.includes('chaos')) agendaBucketDelta.profitFromChaos = delta;
     }
 
@@ -229,19 +239,40 @@ export class ResolveService {
 
     // reputationChanges — 이벤트 태그 기반 세력 평판 변동 (PARTIAL도 소량 반영)
     const reputationChanges: Record<string, number> = {};
-    if (tags.some((t) => ['GUARD_ALLIANCE', 'GUARD_PATROL', 'CHECKPOINT', 'ARMED_GUARD'].includes(t))) {
-      reputationChanges['CITY_GUARD'] = outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 1;
+    if (
+      tags.some((t) =>
+        [
+          'GUARD_ALLIANCE',
+          'GUARD_PATROL',
+          'CHECKPOINT',
+          'ARMED_GUARD',
+        ].includes(t),
+      )
+    ) {
+      reputationChanges['CITY_GUARD'] =
+        outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 1;
     }
-    if (tags.some((t) => ['MERCHANT_GUILD', 'LEDGER', 'MERCHANT_CONSORTIUM'].includes(t))) {
-      reputationChanges['MERCHANT_CONSORTIUM'] = outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 1;
+    if (
+      tags.some((t) =>
+        ['MERCHANT_GUILD', 'LEDGER', 'MERCHANT_CONSORTIUM'].includes(t),
+      )
+    ) {
+      reputationChanges['MERCHANT_CONSORTIUM'] =
+        outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 1;
     }
-    if (tags.some((t) => ['LABOR_GUILD', 'WORKER_RIGHTS', 'DOCK_THUGS'].includes(t))) {
-      reputationChanges['LABOR_GUILD'] = outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 1;
+    if (
+      tags.some((t) =>
+        ['LABOR_GUILD', 'WORKER_RIGHTS', 'DOCK_THUGS'].includes(t),
+      )
+    ) {
+      reputationChanges['LABOR_GUILD'] =
+        outcome === 'SUCCESS' ? 3 : outcome === 'FAIL' ? -2 : 1;
     }
 
     // NPC faction 기반 자동 평판 — 태그 없는 이벤트에서도 NPC 소속 세력에 소량 반영
     if (Object.keys(reputationChanges).length === 0 && npcFaction) {
-      const factionDelta = outcome === 'SUCCESS' ? 2 : outcome === 'FAIL' ? -1 : 1;
+      const factionDelta =
+        outcome === 'SUCCESS' ? 2 : outcome === 'FAIL' ? -1 : 1;
       reputationChanges[npcFaction] = factionDelta;
     }
 
@@ -259,10 +290,17 @@ export class ResolveService {
       heatDelta,
       tensionDelta: outcome === 'FAIL' ? 1 : 0,
       influenceDelta: outcome === 'SUCCESS' ? 1 : 0,
-      goldDelta: this.computeGoldCost(intent.actionType, outcome, intent.specifiedGold),
+      goldDelta: this.computeGoldCost(
+        intent.actionType,
+        outcome,
+        intent.specifiedGold,
+      ),
       relationChanges,
       reputationChanges,
-      flagsSet: outcome === 'SUCCESS' ? event.payload.tags.filter((t) => t.startsWith('flag_')) : [],
+      flagsSet:
+        outcome === 'SUCCESS'
+          ? event.payload.tags.filter((t) => t.startsWith('flag_'))
+          : [],
       deferredEffects,
       agendaBucketDelta,
       commitmentDelta,
@@ -274,7 +312,10 @@ export class ResolveService {
   }
 
   /** 비도전 행위 자동 SUCCESS: 주사위 소비 없음, 최소 열기, 전투 트리거 없음 */
-  private buildAutoSuccess(event: EventDefV2, intent: ParsedIntentV2): ResolveResult {
+  private buildAutoSuccess(
+    event: EventDefV2,
+    intent: ParsedIntentV2,
+  ): ResolveResult {
     const tags = event.payload.tags;
 
     // 관계/평판은 SUCCESS 기준 적용
@@ -283,13 +324,30 @@ export class ResolveService {
     if (npcId) relationChanges[npcId] = 5;
 
     const reputationChanges: Record<string, number> = {};
-    if (tags.some((t) => ['GUARD_ALLIANCE', 'GUARD_PATROL', 'CHECKPOINT', 'ARMED_GUARD'].includes(t))) {
+    if (
+      tags.some((t) =>
+        [
+          'GUARD_ALLIANCE',
+          'GUARD_PATROL',
+          'CHECKPOINT',
+          'ARMED_GUARD',
+        ].includes(t),
+      )
+    ) {
       reputationChanges['CITY_GUARD'] = 3;
     }
-    if (tags.some((t) => ['MERCHANT_GUILD', 'LEDGER', 'MERCHANT_CONSORTIUM'].includes(t))) {
+    if (
+      tags.some((t) =>
+        ['MERCHANT_GUILD', 'LEDGER', 'MERCHANT_CONSORTIUM'].includes(t),
+      )
+    ) {
       reputationChanges['MERCHANT_CONSORTIUM'] = 3;
     }
-    if (tags.some((t) => ['LABOR_GUILD', 'WORKER_RIGHTS', 'DOCK_THUGS'].includes(t))) {
+    if (
+      tags.some((t) =>
+        ['LABOR_GUILD', 'WORKER_RIGHTS', 'DOCK_THUGS'].includes(t),
+      )
+    ) {
       reputationChanges['LABOR_GUILD'] = 3;
     }
 

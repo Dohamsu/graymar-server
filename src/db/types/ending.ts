@@ -37,7 +37,7 @@ export type EndingInput = {
   arcRoute: string | null;
   arcCommitment: number;
   // User-Driven System v3 확장
-  dominantVectors?: string[];               // 가장 많이 사용한 ApproachVector (상위 3개)
+  dominantVectors?: string[]; // 가장 많이 사용한 ApproachVector (상위 3개)
   playerThreads?: Array<{
     approachVector: string;
     goalCategory: string;
@@ -46,14 +46,23 @@ export type EndingInput = {
     status: string;
   }>;
   consequenceFootprint?: {
-    totalSuspicion: number;                 // 누적 suspicion
-    totalPlayerProgress: number;            // 누적 playerProgress
-    totalRivalProgress: number;             // 누적 rivalProgress
+    totalSuspicion: number; // 누적 suspicion
+    totalPlayerProgress: number; // 누적 playerProgress
+    totalRivalProgress: number; // 누적 rivalProgress
   };
   // Living World v2
-  worldFacts?: string[];                    // 영구 사실 텍스트 목록
-  playerGoals?: Array<{ description: string; progress: number; completed: boolean }>;
-  locationChanges?: Array<{ locationId: string; security: number; unrest: number; conditions: string[] }>;
+  worldFacts?: string[]; // 영구 사실 텍스트 목록
+  playerGoals?: Array<{
+    description: string;
+    progress: number;
+    completed: boolean;
+  }>;
+  locationChanges?: Array<{
+    locationId: string;
+    security: number;
+    unrest: number;
+    conditions: string[];
+  }>;
 };
 
 // --- Ending Result ---
@@ -84,7 +93,7 @@ export type EndingResult = {
     totalTurns: number;
   };
   // User-Driven System v3 확장
-  playstyleSummary?: string;          // "은밀하고 외교적인 용병" 등
-  dominantVectors?: string[];         // 상위 ApproachVector
-  threadSummary?: string;             // 주요 행동 패턴 요약
+  playstyleSummary?: string; // "은밀하고 외교적인 용병" 등
+  dominantVectors?: string[]; // 상위 ApproachVector
+  threadSummary?: string; // 주요 행동 패턴 요약
 };

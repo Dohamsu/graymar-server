@@ -3,14 +3,8 @@ import { eq, and } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { campaigns } from '../db/schema/campaigns.js';
 import { runSessions } from '../db/schema/run-sessions.js';
-import type {
-  CarryOverState,
-  ScenarioResult,
-} from '../db/types/carry-over.js';
-import {
-  NotFoundError,
-  ForbiddenError,
-} from '../common/errors/game-errors.js';
+import type { CarryOverState, ScenarioResult } from '../db/types/carry-over.js';
+import { NotFoundError, ForbiddenError } from '../common/errors/game-errors.js';
 import type { RunState } from '../db/types/index.js';
 
 @Injectable()
@@ -56,18 +50,13 @@ export class CampaignsService {
     const [campaign] = await this.db
       .select()
       .from(campaigns)
-      .where(
-        and(eq(campaigns.userId, userId), eq(campaigns.status, 'ACTIVE')),
-      );
+      .where(and(eq(campaigns.userId, userId), eq(campaigns.status, 'ACTIVE')));
     return campaign ?? null;
   }
 
   /** 유저의 모든 캠페인 목록 */
   async listCampaigns(userId: string) {
-    return this.db
-      .select()
-      .from(campaigns)
-      .where(eq(campaigns.userId, userId));
+    return this.db.select().from(campaigns).where(eq(campaigns.userId, userId));
   }
 
   /** Run 종료 시 ScenarioResult를 CarryOverState에 머지 */
@@ -90,7 +79,7 @@ export class CampaignsService {
       throw new NotFoundError(`Run not found: ${runId}`);
     }
 
-    const runState = run.runState as RunState | null;
+    const runState = run.runState;
 
     // 3. ScenarioResult 생성
     const scenarioResult = this.buildScenarioResult(run, runState);
@@ -200,12 +189,10 @@ export class CampaignsService {
       playstyleSummary: playerThread?.summary ?? '',
       dominantVectors: playerThread?.dominantVectors ?? [],
       statistics: {
-        incidentsContained: incidents.filter(
-          (i) => i.outcome === 'CONTAINED',
-        ).length,
-        incidentsEscalated: incidents.filter(
-          (i) => i.outcome === 'ESCALATED',
-        ).length,
+        incidentsContained: incidents.filter((i) => i.outcome === 'CONTAINED')
+          .length,
+        incidentsEscalated: incidents.filter((i) => i.outcome === 'ESCALATED')
+          .length,
         incidentsExpired: incidents.filter((i) => i.outcome === 'EXPIRED')
           .length,
         combatVictories: (extra?.combatVictories as number) ?? 0,
@@ -223,8 +210,7 @@ export class CampaignsService {
   ): CarryOverState {
     // RunState has gold, hp, maxHp, inventory directly
     const extra = runState as Record<string, unknown> | null;
-    const stats =
-      (extra?.stats as Record<string, number>) ?? prev.finalStats;
+    const stats = (extra?.stats as Record<string, number>) ?? prev.finalStats;
 
     return {
       completedScenarios: [...prev.completedScenarios, result],

@@ -6,8 +6,15 @@
 
 import { Injectable } from '@nestjs/common';
 import type { RunState } from '../../db/types/permanent-stats.js';
-import type { NPCState, NpcPosture, Relationship } from '../../db/types/npc-state.js';
-import { computeEffectivePosture, getNpcDisplayName } from '../../db/types/npc-state.js';
+import type {
+  NPCState,
+  NpcPosture,
+  Relationship,
+} from '../../db/types/npc-state.js';
+import {
+  computeEffectivePosture,
+  getNpcDisplayName,
+} from '../../db/types/npc-state.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 
 // --- 타입 정의 ---
@@ -72,7 +79,9 @@ export class TurnOrchestrationService {
     const relationships = runState.relationships ?? {};
 
     // Step 5: NPC Injection Check (연속 등장 방지: actionHistory에서 직전 2턴 NPC 확인)
-    const actionHistory = (runState.actionHistory ?? []) as Array<Record<string, unknown>>;
+    const actionHistory = (runState.actionHistory ?? []) as Array<
+      Record<string, unknown>
+    >;
     const recentNpcIds = actionHistory
       .slice(-2)
       .filter((h) => h.primaryNpcId)
@@ -229,7 +238,7 @@ export class TurnOrchestrationService {
     // 가장 높은 점수의 NPC 선택
     pool.sort((a, b) => b.score - a.score);
     const chosen = pool[0];
-    const state = npcStates[chosen.npcId]!;
+    const state = npcStates[chosen.npcId];
     const npcData = this.contentLoader.getNpc(chosen.npcId);
     const npcName = getNpcDisplayName(state, npcData);
     const posture = computeEffectivePosture(state);

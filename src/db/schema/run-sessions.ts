@@ -31,7 +31,9 @@ export const runSessions = pgTable(
     runState: jsonb('run_state').$type<RunState>(),
     currentGraphNodeId: text('current_graph_node_id'),
     presetId: text('preset_id'),
-    gender: text('gender', { enum: ['male', 'female'] as const }).default('male'),
+    gender: text('gender', { enum: ['male', 'female'] as const }).default(
+      'male',
+    ),
     routeTag: text('route_tag'),
     currentLocationId: text('current_location_id'), // null = HUB
     campaignId: uuid('campaign_id').references(() => campaigns.id),

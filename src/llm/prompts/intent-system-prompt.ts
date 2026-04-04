@@ -181,7 +181,9 @@ export function buildIntentUserMessage(
     LOC_TAVERN: '선술집(잠긴 닻)',
     LOC_DOCKS_WAREHOUSE: '항만 창고구역',
   };
-  const locName = locationId ? (locationNames[locationId] ?? locationId) : '알 수 없음';
+  const locName = locationId
+    ? (locationNames[locationId] ?? locationId)
+    : '알 수 없음';
 
   let msg = `현재 장소: ${locName}\n플레이어 입력: ${inputText}`;
 

@@ -21,18 +21,18 @@ export interface NpcEmotionalState {
 /** 대화 주제 이력 항목 (최근 5턴) */
 export interface NpcTopicEntry {
   turnNo: number;
-  topic: string;       // "장부 조작 흔적 관련 대화" (~40자)
-  factId?: string;     // 공개된 quest fact ID (있으면)
-  keywords: string[];  // ["빈 시간대", "밀수 조직", "순찰 보고서"] (최대 5개)
+  topic: string; // "장부 조작 흔적 관련 대화" (~40자)
+  factId?: string; // 공개된 quest fact ID (있으면)
+  keywords: string[]; // ["빈 시간대", "밀수 조직", "순찰 보고서"] (최대 5개)
 }
 
 /** NPC LLM 요약: 재등장 시 간소 프롬프트 블록용 (규칙 기반 생성, LLM 호출 없음) */
 export interface NpcLlmSummary {
-  moodLine: string;           // "경계를 풀기 시작했지만 여전히 신중" (~30자)
-  behaviorGuide: string;      // "투박한 ~하오 체, 짧은 문장, 안경 밀어올리기" (~40자)
-  lastDialogueTopic: string;  // "장부 조작 흔적에 대해 이야기함" (~30자)
-  lastDialogueSnippet: string;// "숫자가 맞지 않는 대목이 있소..." (~40자)
-  currentConcern: string;     // "상단 비리 고발 여부 고민 중" (~20자)
+  moodLine: string; // "경계를 풀기 시작했지만 여전히 신중" (~30자)
+  behaviorGuide: string; // "투박한 ~하오 체, 짧은 문장, 안경 밀어올리기" (~40자)
+  lastDialogueTopic: string; // "장부 조작 흔적에 대해 이야기함" (~30자)
+  lastDialogueSnippet: string; // "숫자가 맞지 않는 대목이 있소..." (~40자)
+  currentConcern: string; // "상단 비리 고발 여부 고민 중" (~20자)
   updatedAtTurn: number;
   // 대화 주제 추적: 반복 방지용 (최근 5턴)
   recentTopics?: NpcTopicEntry[];
@@ -42,17 +42,17 @@ export interface NpcLlmSummary {
 export interface NpcPersonalMemoryEntry {
   turnNo: number;
   locationId: string;
-  playerAction: string;      // "거래 시도", "설득", "싸움" 등 행동 요약
-  outcome: string;            // "SUCCESS" | "PARTIAL" | "FAIL"
-  briefNote: string;          // 1줄 요약 (50자 이내)
+  playerAction: string; // "거래 시도", "설득", "싸움" 등 행동 요약
+  outcome: string; // "SUCCESS" | "PARTIAL" | "FAIL"
+  briefNote: string; // 1줄 요약 (50자 이내)
 }
 
 export interface NpcPersonalMemory {
-  encounters: NpcPersonalMemoryEntry[];  // 최대 10개
+  encounters: NpcPersonalMemoryEntry[]; // 최대 10개
   lastSeenTurn: number;
   lastSeenLocation: string;
-  knownFacts: string[];         // 플레이어가 이 NPC를 통해 알게 된 사실 (최대 5개)
-  relationSummary: string;      // posture + trust 기반 자동 생성 (1줄)
+  knownFacts: string[]; // 플레이어가 이 NPC를 통해 알게 된 사실 (최대 5개)
+  relationSummary: string; // posture + trust 기반 자동 생성 (1줄)
 }
 
 export interface NPCState {
@@ -134,9 +134,7 @@ export function initNPCState(npcData: {
  * 히스테리시스 적용: 현재 posture에서 벗어나려면 더 높은 임계값 필요.
  * 이렇게 하면 단일 턴에 CAUTIOUS→HOSTILE 같은 급변이 방지된다.
  */
-export function computeEffectivePosture(
-  state: NPCState,
-): NpcPosture {
+export function computeEffectivePosture(state: NPCState): NpcPosture {
   const emo = state.emotional;
   const currentPosture = state.posture;
 
@@ -150,22 +148,29 @@ export function computeEffectivePosture(
 
     // FRIENDLY: 현재 FRIENDLY이면 trust > 15, 아니면 trust > 30 필요
     const friendlyThreshold = isCurrentPosture('FRIENDLY') ? 15 : 30;
-    if (emo.trust > friendlyThreshold && emo.respect > (isCurrentPosture('FRIENDLY') ? 10 : 20)) return 'FRIENDLY';
+    if (
+      emo.trust > friendlyThreshold &&
+      emo.respect > (isCurrentPosture('FRIENDLY') ? 10 : 20)
+    )
+      return 'FRIENDLY';
 
     // HOSTILE: 현재 HOSTILE이면 유지 조건 완화
     const hostileThreshold = isCurrentPosture('HOSTILE') ? 45 : 60;
     const hostileTrustThreshold = isCurrentPosture('HOSTILE') ? -20 : -30;
-    if (emo.suspicion > hostileThreshold || emo.trust < hostileTrustThreshold) return 'HOSTILE';
+    if (emo.suspicion > hostileThreshold || emo.trust < hostileTrustThreshold)
+      return 'HOSTILE';
 
     // FRIENDLY (낮은 임계값) — CALCULATING보다 먼저 평가하여
     // 중간 수준의 trust가 중간 수준의 suspicion에 밀리지 않도록 함 (e.g. BRIBE 후)
     if (emo.trust > (isCurrentPosture('FRIENDLY') ? 12 : 20)) return 'FRIENDLY';
 
     // CALCULATING: 현재 CALCULATING이면 유지 조건 완화
-    if (emo.suspicion > (isCurrentPosture('CALCULATING') ? 20 : 30)) return 'CALCULATING';
+    if (emo.suspicion > (isCurrentPosture('CALCULATING') ? 20 : 30))
+      return 'CALCULATING';
 
     // CAUTIOUS
-    if (emo.trust < (isCurrentPosture('CAUTIOUS') ? -10 : -20)) return 'CAUTIOUS';
+    if (emo.trust < (isCurrentPosture('CAUTIOUS') ? -10 : -20))
+      return 'CAUTIOUS';
   }
   // v1 호환 fallback
   if (state.trustToPlayer > 30) return 'FRIENDLY';
@@ -184,14 +189,18 @@ export function summarizeRelationship(
   const parts: string[] = [];
 
   if (rel.trust > 30) parts.push(`${npcName}은(는) 당신을 신뢰하고 있다`);
-  else if (rel.trust > 10) parts.push(`${npcName}은(는) 당신을 신뢰하기 시작했다`);
-  else if (rel.trust < -30) parts.push(`${npcName}은(는) 당신을 적대시하고 있다`);
+  else if (rel.trust > 10)
+    parts.push(`${npcName}은(는) 당신을 신뢰하기 시작했다`);
+  else if (rel.trust < -30)
+    parts.push(`${npcName}은(는) 당신을 적대시하고 있다`);
   else if (rel.trust < -10) parts.push(`${npcName}은(는) 당신을 경계하고 있다`);
 
   if (rel.fear > 60) parts.push(`${npcName}은(는) 당신을 두려워하고 있다`);
-  else if (rel.fear > 30) parts.push(`${npcName}은(는) 당신에게 위협을 느끼고 있다`);
+  else if (rel.fear > 30)
+    parts.push(`${npcName}은(는) 당신에게 위협을 느끼고 있다`);
 
-  if (rel.dependence > 50) parts.push(`${npcName}은(는) 당신에게 의존하고 있다`);
+  if (rel.dependence > 50)
+    parts.push(`${npcName}은(는) 당신에게 의존하고 있다`);
 
   if (parts.length === 0) {
     return `${npcName}과(와)의 관계는 평범하다`;
@@ -218,7 +227,9 @@ export function getNpcDisplayName(
 export function resolveNpcPlaceholders(
   text: string,
   npcStates: Record<string, NPCState>,
-  getNpcDef: (npcId: string) => { name: string; unknownAlias?: string } | undefined,
+  getNpcDef: (
+    npcId: string,
+  ) => { name: string; unknownAlias?: string } | undefined,
 ): string {
   return text.replace(/\{npc:([A-Z_]+)\}/g, (_match, npcId: string) => {
     const state = npcStates[npcId];
@@ -259,10 +270,21 @@ export function shouldIntroduce(
 // ── NPC 개인 기록 유틸리티 ──
 
 const ACTION_TYPE_KOREAN: Record<string, string> = {
-  INVESTIGATE: '조사', PERSUADE: '설득', SNEAK: '잠입', BRIBE: '뇌물',
-  THREATEN: '위협', HELP: '도움', STEAL: '절도', FIGHT: '전투',
-  OBSERVE: '관찰', TRADE: '거래', TALK: '대화', SEARCH: '수색',
-  MOVE_LOCATION: '이동', REST: '휴식', SHOP: '상점',
+  INVESTIGATE: '조사',
+  PERSUADE: '설득',
+  SNEAK: '잠입',
+  BRIBE: '뇌물',
+  THREATEN: '위협',
+  HELP: '도움',
+  STEAL: '절도',
+  FIGHT: '전투',
+  OBSERVE: '관찰',
+  TRADE: '거래',
+  TALK: '대화',
+  SEARCH: '수색',
+  MOVE_LOCATION: '이동',
+  REST: '휴식',
+  SHOP: '상점',
 };
 
 const MAX_PERSONAL_ENCOUNTERS = 10;
@@ -271,7 +293,10 @@ const MAX_KNOWN_FACTS = 5;
 /**
  * posture + trust 기반으로 관계 요약 문자열 자동 생성 (LLM 호출 없음).
  */
-export function generateRelationSummary(posture: NpcPosture, trust: number): string {
+export function generateRelationSummary(
+  posture: NpcPosture,
+  trust: number,
+): string {
   const postureKr: Record<NpcPosture, string> = {
     FRIENDLY: '우호적',
     CAUTIOUS: '경계',
@@ -329,7 +354,10 @@ export function recordNpcEncounter(
 
   // posture + trust 기반 관계 요약 자동 갱신
   const posture = computeEffectivePosture(npcState);
-  pm.relationSummary = generateRelationSummary(posture, npcState.emotional.trust);
+  pm.relationSummary = generateRelationSummary(
+    posture,
+    npcState.emotional.trust,
+  );
 
   return { ...npcState, personalMemory: pm };
 }
@@ -373,9 +401,12 @@ export function condenseSpeechStyle(
   if (endingMatch) parts.push(endingMatch[0]);
 
   // 주요 특성 키워드 추출 (쉼표/마침표 구분자로 split, 짧은 구문만)
-  const segments = speechStyle.split(/[,，.。]/).map(s => s.trim()).filter(s => s.length > 0 && s.length <= 20);
+  const segments = speechStyle
+    .split(/[,，.。]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s.length <= 20);
   for (const seg of segments.slice(0, 3)) {
-    if (!parts.some(p => seg.includes(p))) {
+    if (!parts.some((p) => seg.includes(p))) {
       parts.push(seg);
     }
   }
@@ -390,7 +421,11 @@ export function condenseSpeechStyle(
 }
 
 /** moodLine 생성: trust + fear + posture -> 한국어 1줄 */
-function buildMoodLine(trust: number, fear: number, posture: NpcPosture): string {
+function buildMoodLine(
+  trust: number,
+  fear: number,
+  posture: NpcPosture,
+): string {
   const parts: string[] = [];
 
   if (trust > 40) parts.push('마음을 열고 있다');
@@ -408,7 +443,7 @@ function buildMoodLine(trust: number, fear: number, posture: NpcPosture): string
     FEARFUL: '몸을 움츠리고 있다',
   };
   const ph = postureHints[posture];
-  if (ph && !parts.some(p => p.includes('두려워') || p.includes('불안'))) {
+  if (ph && !parts.some((p) => p.includes('두려워') || p.includes('불안'))) {
     parts.push(ph);
   }
 
@@ -421,10 +456,16 @@ function buildMoodLine(trust: number, fear: number, posture: NpcPosture): string
  */
 export function buildNpcLlmSummary(
   npcState: NPCState,
-  npcDef: {
-    personality?: { speechStyle: string; signature?: string[]; core?: string };
-    agenda?: string;
-  } | undefined,
+  npcDef:
+    | {
+        personality?: {
+          speechStyle: string;
+          signature?: string[];
+          core?: string;
+        };
+        agenda?: string;
+      }
+    | undefined,
   turnNo: number,
   lastDialogueTopic?: string,
   lastDialogueSnippet?: string,
@@ -462,10 +503,41 @@ const MAX_RECENT_TOPICS = 5;
 
 /** 불용어 필터 (조사, 어미, 일반 동사 등) */
 const TOPIC_STOPWORDS = new Set([
-  '있다', '없다', '하다', '되다', '이다', '것이', '그대', '이오', '하오',
-  '합니다', '입니다', '그것', '이것', '저것', '무엇', '어떤', '아무', '모든',
-  '대한', '위한', '통해', '대해', '그리고', '하지만', '그러나', '때문에',
-  '라고', '에서', '으로', '까지', '부터', '에게', '한테', '처럼', '같은',
+  '있다',
+  '없다',
+  '하다',
+  '되다',
+  '이다',
+  '것이',
+  '그대',
+  '이오',
+  '하오',
+  '합니다',
+  '입니다',
+  '그것',
+  '이것',
+  '저것',
+  '무엇',
+  '어떤',
+  '아무',
+  '모든',
+  '대한',
+  '위한',
+  '통해',
+  '대해',
+  '그리고',
+  '하지만',
+  '그러나',
+  '때문에',
+  '라고',
+  '에서',
+  '으로',
+  '까지',
+  '부터',
+  '에게',
+  '한테',
+  '처럼',
+  '같은',
 ]);
 
 /**
@@ -490,10 +562,13 @@ export function buildTopicEntry(
   // keywords: 소스 텍스트에서 핵심 명사 추출
   const sourceText = factDetail ?? sceneFrame ?? rawInput;
   const words = sourceText
-    .replace(/[.,!?~…'""\u201c\u201d\u2018\u2019()[\]{}<>:;\/\\|@#$%^&*+=]/g, '')
+    .replace(
+      /[.,!?~…'""\u201c\u201d\u2018\u2019()[\]{}<>:;\/\\|@#$%^&*+=]/g,
+      '',
+    )
     .split(/\s+/)
-    .filter(w => w.length >= 2 && w.length <= 8)
-    .filter(w => !TOPIC_STOPWORDS.has(w))
+    .filter((w) => w.length >= 2 && w.length <= 8)
+    .filter((w) => !TOPIC_STOPWORDS.has(w))
     .slice(0, 7);
 
   // 중복 제거 후 최대 5개
@@ -520,13 +595,14 @@ export function addRecentTopic(
 
   const existing = summary.recentTopics ?? [];
   // 같은 턴 중복 방지
-  if (existing.some(t => t.turnNo === topicEntry.turnNo)) return npcState;
+  if (existing.some((t) => t.turnNo === topicEntry.turnNo)) return npcState;
 
   const updated = [...existing, topicEntry];
   // 최대 5개 유지 (오래된 것부터 제거)
-  const trimmed = updated.length > MAX_RECENT_TOPICS
-    ? updated.slice(-MAX_RECENT_TOPICS)
-    : updated;
+  const trimmed =
+    updated.length > MAX_RECENT_TOPICS
+      ? updated.slice(-MAX_RECENT_TOPICS)
+      : updated;
 
   return {
     ...npcState,

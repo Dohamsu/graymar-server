@@ -1,4 +1,7 @@
-import { IntentMemoryService, type ActionHistoryEntry } from './intent-memory.service.js';
+import {
+  IntentMemoryService,
+  type ActionHistoryEntry,
+} from './intent-memory.service.js';
 
 describe('IntentMemoryService', () => {
   let service: IntentMemoryService;
@@ -22,8 +25,11 @@ describe('IntentMemoryService', () => {
 
   it('THREATEN×3 + INVESTIGATE×2 → "공격적 심문"', () => {
     const history = makeHistory([
-      'THREATEN', 'THREATEN', 'THREATEN',
-      'INVESTIGATE', 'INVESTIGATE',
+      'THREATEN',
+      'THREATEN',
+      'THREATEN',
+      'INVESTIGATE',
+      'INVESTIGATE',
     ]);
     const result = service.analyze(history);
     expect(result).not.toBeNull();
@@ -32,8 +38,12 @@ describe('IntentMemoryService', () => {
 
   it('SNEAK×3 + OBSERVE×3 → "은밀 탐색"', () => {
     const history = makeHistory([
-      'SNEAK', 'SNEAK', 'SNEAK',
-      'OBSERVE', 'OBSERVE', 'OBSERVE',
+      'SNEAK',
+      'SNEAK',
+      'SNEAK',
+      'OBSERVE',
+      'OBSERVE',
+      'OBSERVE',
     ]);
     const result = service.analyze(history);
     expect(result).not.toBeNull();
@@ -42,9 +52,14 @@ describe('IntentMemoryService', () => {
 
   it('혼합 → 가장 우세한 패턴 반환 (최대 2개)', () => {
     const history = makeHistory([
-      'THREATEN', 'THREATEN', 'INVESTIGATE', 'INVESTIGATE',
-      'SNEAK', 'OBSERVE',
-      'FIGHT', 'FIGHT',
+      'THREATEN',
+      'THREATEN',
+      'INVESTIGATE',
+      'INVESTIGATE',
+      'SNEAK',
+      'OBSERVE',
+      'FIGHT',
+      'FIGHT',
     ]);
     const result = service.analyze(history);
     expect(result).not.toBeNull();
@@ -53,8 +68,12 @@ describe('IntentMemoryService', () => {
 
   it('INVESTIGATE×3 + OBSERVE×2 + SEARCH×1 → "증거 수집"', () => {
     const history = makeHistory([
-      'INVESTIGATE', 'INVESTIGATE', 'INVESTIGATE',
-      'OBSERVE', 'OBSERVE', 'SEARCH',
+      'INVESTIGATE',
+      'INVESTIGATE',
+      'INVESTIGATE',
+      'OBSERVE',
+      'OBSERVE',
+      'SEARCH',
     ]);
     const result = service.analyze(history);
     expect(result).not.toBeNull();
@@ -62,9 +81,7 @@ describe('IntentMemoryService', () => {
   });
 
   it('TRADE×2 + BRIBE×2 → "상업적"', () => {
-    const history = makeHistory([
-      'TRADE', 'TRADE', 'BRIBE', 'BRIBE',
-    ]);
+    const history = makeHistory(['TRADE', 'TRADE', 'BRIBE', 'BRIBE']);
     const result = service.analyze(history);
     expect(result).not.toBeNull();
     expect(result!.some((p) => p.id === 'commercial')).toBe(true);
@@ -73,7 +90,14 @@ describe('IntentMemoryService', () => {
   it('최근 10턴만 분석', () => {
     // 오래된 THREATEN 이력 (10개) + 최근 SNEAK/OBSERVE (6개)
     const old = makeHistory(Array(10).fill('THREATEN'));
-    const recent = makeHistory(['SNEAK', 'SNEAK', 'SNEAK', 'OBSERVE', 'OBSERVE', 'OBSERVE']);
+    const recent = makeHistory([
+      'SNEAK',
+      'SNEAK',
+      'SNEAK',
+      'OBSERVE',
+      'OBSERVE',
+      'OBSERVE',
+    ]);
     const history = [...old, ...recent];
     const result = service.analyze(history);
     // 최근 10턴에 SNEAK/OBSERVE가 6개 → 은밀 탐색 감지

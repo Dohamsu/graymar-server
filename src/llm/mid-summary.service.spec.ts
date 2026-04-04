@@ -46,7 +46,8 @@ describe('MidSummaryService', () => {
       makeTurn({
         turnNo: i,
         rawInput: '매우 긴 행동 설명으로 이것저것 많이 합니다 정말 길게',
-        narrative: '이것은 매우 긴 내러티브로서 많은 내용을 담고 있습니다. NPC와의 대화와 단서 발견 등.',
+        narrative:
+          '이것은 매우 긴 내러티브로서 많은 내용을 담고 있습니다. NPC와의 대화와 단서 발견 등.',
       }),
     );
     const summary = await service.generate(turns);

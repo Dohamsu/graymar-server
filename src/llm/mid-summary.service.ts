@@ -34,15 +34,20 @@ export class MidSummaryService {
     if (earlyTurns.length === 0) return '';
 
     // Pass 1: 서버 뼈대
-    const skeleton = this.buildServerSkeleton(earlyTurns, runState, llmExtracted, npcKnowledge, intentMemory, activeIncidentNames);
+    const skeleton = this.buildServerSkeleton(
+      earlyTurns,
+      runState,
+      llmExtracted,
+      npcKnowledge,
+      intentMemory,
+      activeIncidentNames,
+    );
 
     // Pass 2: 경량 LLM 압축
     const llmCompressed = await this.compressWithLightLlm(earlyTurns);
 
     // 합산
-    const combined = llmCompressed
-      ? `${skeleton}\n${llmCompressed}`
-      : skeleton;
+    const combined = llmCompressed ? `${skeleton}\n${llmCompressed}` : skeleton;
 
     // 400자 상한
     if (combined.length > 400) {
@@ -72,9 +77,10 @@ export class MidSummaryService {
       else if (turn.resolveOutcome === 'FAIL') outcomes.fail++;
 
       if (turn.rawInput) {
-        const truncated = turn.rawInput.length > 30
-          ? turn.rawInput.slice(0, 30) + '…'
-          : turn.rawInput;
+        const truncated =
+          turn.rawInput.length > 30
+            ? turn.rawInput.slice(0, 30) + '…'
+            : turn.rawInput;
         actions.push(truncated);
       }
     }
@@ -96,10 +102,12 @@ export class MidSummaryService {
     // llmExtracted에서 PLOT_HINT/NPC_DIALOGUE 반영
     if (llmExtracted && llmExtracted.length > 0) {
       const hints = llmExtracted
-        .filter(f => f.category === 'PLOT_HINT' || f.category === 'NPC_DIALOGUE')
+        .filter(
+          (f) => f.category === 'PLOT_HINT' || f.category === 'NPC_DIALOGUE',
+        )
         .sort((a, b) => b.importance - a.importance)
         .slice(0, 2)
-        .map(f => f.text.slice(0, 30));
+        .map((f) => f.text.slice(0, 30));
       if (hints.length > 0) {
         parts.push(`단서: ${hints.join(', ')}`);
       }
@@ -136,14 +144,18 @@ export class MidSummaryService {
   }
 
   /** Pass 2: 경량 LLM으로 내러티브 핵심 압축 (250자). 실패 시 빈 문자열. */
-  private async compressWithLightLlm(earlyTurns: RecentTurnEntry[]): Promise<string> {
+  private async compressWithLightLlm(
+    earlyTurns: RecentTurnEntry[],
+  ): Promise<string> {
     // 내러티브가 있는 턴만
-    const narrativeTurns = earlyTurns.filter(t => t.narrative && t.narrative.length > 0);
+    const narrativeTurns = earlyTurns.filter(
+      (t) => t.narrative && t.narrative.length > 0,
+    );
     if (narrativeTurns.length === 0) return '';
 
     // 압축 대상 텍스트 (최대 1500자)
     const rawText = narrativeTurns
-      .map(t => t.narrative.slice(0, 300))
+      .map((t) => t.narrative.slice(0, 300))
       .join('\n')
       .slice(0, 1500);
 
@@ -152,7 +164,8 @@ export class MidSummaryService {
         messages: [
           {
             role: 'system',
-            content: '아래 RPG 서술 텍스트를 250자 이내 한국어 요약으로 압축하세요. 핵심 사건, NPC 대사 내용, 발견한 정보만 포함. 분위기 묘사 제외.',
+            content:
+              '아래 RPG 서술 텍스트를 250자 이내 한국어 요약으로 압축하세요. 핵심 사건, NPC 대사 내용, 발견한 정보만 포함. 분위기 묘사 제외.',
           },
           { role: 'user', content: rawText },
         ],
@@ -164,7 +177,9 @@ export class MidSummaryService {
         return result.slice(0, 250);
       }
     } catch (err) {
-      this.logger.debug(`MidSummary light LLM failed (fallback to skeleton only): ${err}`);
+      this.logger.debug(
+        `MidSummary light LLM failed (fallback to skeleton only): ${err}`,
+      );
     }
 
     return '';

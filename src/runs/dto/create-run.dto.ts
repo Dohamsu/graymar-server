@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-const VALID_BONUS_STAT_KEYS = ['str', 'dex', 'wit', 'con', 'per', 'cha'] as const;
+const VALID_BONUS_STAT_KEYS = [
+  'str',
+  'dex',
+  'wit',
+  'con',
+  'per',
+  'cha',
+] as const;
 
 export const CreateRunBodySchema = z.object({
   presetId: z.string().min(1).max(50).optional(),
@@ -10,19 +17,23 @@ export const CreateRunBodySchema = z.object({
   /** 'hub' (default) = HUB/LOCATION 순환 모드, 'dag' = DAG 미션 모드 */
   mode: z.enum(['hub', 'dag']).optional().default('hub'),
   /** 캐릭터 이름 (1~8자, 한글/영문/공백만 허용) */
-  characterName: z.string()
-    .min(1).max(8)
+  characterName: z
+    .string()
+    .min(1)
+    .max(8)
     .regex(/^[가-힣a-zA-Z\s]+$/, '한글, 영문, 공백만 허용')
     .optional(),
   /** 보너스 스탯 분배 (합계 6, 각 값 0~6, str/dex/wit/con/per/cha만, 미지정 키는 0) */
-  bonusStats: z.object({
-    str: z.number().int().min(0).max(6).default(0),
-    dex: z.number().int().min(0).max(6).default(0),
-    wit: z.number().int().min(0).max(6).default(0),
-    con: z.number().int().min(0).max(6).default(0),
-    per: z.number().int().min(0).max(6).default(0),
-    cha: z.number().int().min(0).max(6).default(0),
-  }).optional()
+  bonusStats: z
+    .object({
+      str: z.number().int().min(0).max(6).default(0),
+      dex: z.number().int().min(0).max(6).default(0),
+      wit: z.number().int().min(0).max(6).default(0),
+      con: z.number().int().min(0).max(6).default(0),
+      per: z.number().int().min(0).max(6).default(0),
+      cha: z.number().int().min(0).max(6).default(0),
+    })
+    .optional()
     .refine(
       (val) => {
         if (!val) return true;

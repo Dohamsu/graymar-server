@@ -43,13 +43,17 @@ export class ClaudeProvider implements LlmProvider {
 
     // system 메시지 분리 → top-level system 파라미터
     const systemMessages = request.messages.filter((m) => m.role === 'system');
-    const nonSystemMessages = request.messages.filter((m) => m.role !== 'system');
+    const nonSystemMessages = request.messages.filter(
+      (m) => m.role !== 'system',
+    );
 
     // system 블록 구성 (cache_control 지원)
     const systemBlocks = systemMessages.map((m) => ({
       type: 'text' as const,
       text: m.content,
-      ...(m.cacheControl ? { cache_control: { type: 'ephemeral' as const } } : {}),
+      ...(m.cacheControl
+        ? { cache_control: { type: 'ephemeral' as const } }
+        : {}),
     }));
 
     // user/assistant 메시지 변환
@@ -75,8 +79,9 @@ export class ClaudeProvider implements LlmProvider {
     const usage = response.usage ?? {};
 
     if (!text) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      console.warn(`[ClaudeProvider] Empty text. stop_reason: ${response.stop_reason}, model: ${response.model}`);
+      console.warn(
+        `[ClaudeProvider] Empty text. stop_reason: ${response.stop_reason}, model: ${response.model}`,
+      );
     }
 
     return {

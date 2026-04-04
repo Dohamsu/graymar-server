@@ -105,32 +105,41 @@ export type WorldStateUI = {
   timePhase: string;
   currentLocationId: string | null;
   locationDynamicStates?: Record<string, unknown>;
-  playerGoals?: Array<{ id: string; type: string; description: string; progress: number; completed: boolean; milestones: Array<{ description: string; completed: boolean }>; relatedNpcs: string[]; relatedLocations: string[] }>;
+  playerGoals?: Array<{
+    id: string;
+    type: string;
+    description: string;
+    progress: number;
+    completed: boolean;
+    milestones: Array<{ description: string; completed: boolean }>;
+    relatedNpcs: string[];
+    relatedLocations: string[];
+  }>;
   reputation?: Record<string, number>;
 };
 
 export type ActionContext = {
-  parsedType: string;    // 엔진이 해석한 행동 유형 (FIGHT, THREATEN 등)
+  parsedType: string; // 엔진이 해석한 행동 유형 (FIGHT, THREATEN 등)
   originalInput: string; // 플레이어 원문 입력
-  tone?: string;         // 행동 톤 (AGGRESSIVE, CAUTIOUS 등)
-  escalated?: boolean;   // 고집 에스컬레이션으로 승격된 경우 true
+  tone?: string; // 행동 톤 (AGGRESSIVE, CAUTIOUS 등)
+  escalated?: boolean; // 고집 에스컬레이션으로 승격된 경우 true
   insistenceCount?: number; // 동일 행동 반복 횟수
   // User-Driven System v3 확장
-  goalCategory?: string;      // IntentGoalCategory (GET_INFO, GAIN_ACCESS 등)
-  approachVector?: string;    // ApproachVector (SOCIAL, STEALTH 등)
-  goalText?: string;          // 목표 텍스트
-  targetNpcId?: string;       // IntentParser가 파싱한 대상 NPC ID
+  goalCategory?: string; // IntentGoalCategory (GET_INFO, GAIN_ACCESS 등)
+  approachVector?: string; // ApproachVector (SOCIAL, STEALTH 등)
+  goalText?: string; // 목표 텍스트
+  targetNpcId?: string; // IntentParser가 파싱한 대상 NPC ID
 };
 
 // --- Resolve Breakdown (판정 주사위 분해) ---
 
 export type ResolveBreakdown = {
-  diceRoll: number;       // 1-6
+  diceRoll: number; // 1-6
   statKey: string | null; // 'atk'|'def'|'acc'|'eva'|'speed' 또는 null
-  statValue: number;      // 원본 스탯 값
-  statBonus: number;      // floor(stat/3)
-  baseMod: number;        // 보정치
-  totalScore: number;     // 최종 점수
+  statValue: number; // 원본 스탯 값
+  statBonus: number; // floor(stat/3)
+  baseMod: number; // 보정치
+  totalScore: number; // 최종 점수
 };
 
 // --- Narrative Engine v1 UI types ---

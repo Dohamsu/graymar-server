@@ -34,7 +34,10 @@ import {
   playerProfiles,
   runMemories,
 } from '../db/schema/index.js';
-import { DEFAULT_PERMANENT_STATS, deriveCombatStats } from '../db/types/index.js';
+import {
+  DEFAULT_PERMANENT_STATS,
+  deriveCombatStats,
+} from '../db/types/index.js';
 import type {
   BattleStateV1,
   ServerResultV1,
@@ -76,7 +79,10 @@ import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js';
 import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
-import { TurnOrchestrationService, NPC_LOCATION_AFFINITY } from '../engine/hub/turn-orchestration.service.js';
+import {
+  TurnOrchestrationService,
+  NPC_LOCATION_AFFINITY,
+} from '../engine/hub/turn-orchestration.service.js';
 // User-Driven System v3
 import { IntentV3BuilderService } from '../engine/hub/intent-v3-builder.service.js';
 import { IncidentRouterService } from '../engine/hub/incident-router.service.js';
@@ -93,7 +99,10 @@ import { IncidentManagementService } from '../engine/hub/incident-management.ser
 import { NpcEmotionalService } from '../engine/hub/npc-emotional.service.js';
 import { NarrativeMarkService } from '../engine/hub/narrative-mark.service.js';
 import { EndingGeneratorService } from '../engine/hub/ending-generator.service.js';
-import { MemoryCollectorService, TAG_TO_NPC } from '../engine/hub/memory-collector.service.js';
+import {
+  MemoryCollectorService,
+  TAG_TO_NPC,
+} from '../engine/hub/memory-collector.service.js';
 import { MemoryIntegrationService } from '../engine/hub/memory-integration.service.js';
 // Event Director + Procedural Event (설계문서 19, 20)
 import { EventDirectorService } from '../engine/hub/event-director.service.js';
@@ -107,17 +116,43 @@ import { LegendaryRewardService } from '../engine/rewards/legendary-reward.servi
 import type { RegionEconomy } from '../db/types/region-state.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
-import { initNPCState, getNpcDisplayName, shouldIntroduce, computeEffectivePosture as computePosture, resolveNpcPlaceholders, recordNpcEncounter, addNpcKnownFact, buildNpcLlmSummary, buildTopicEntry, addRecentTopic } from '../db/types/npc-state.js';
-import type { IncidentDef, IncidentRuntime, IncidentRoutingResult, NarrativeMarkCondition, NPCState, NpcEmotionalState } from '../db/types/index.js';
-import type { IncidentSummaryUI, SignalFeedItemUI, NpcEmotionalUI } from '../db/types/server-result.js';
+import {
+  initNPCState,
+  getNpcDisplayName,
+  shouldIntroduce,
+  computeEffectivePosture as computePosture,
+  resolveNpcPlaceholders,
+  recordNpcEncounter,
+  addNpcKnownFact,
+  buildNpcLlmSummary,
+  buildTopicEntry,
+  addRecentTopic,
+} from '../db/types/npc-state.js';
+import type {
+  IncidentDef,
+  IncidentRuntime,
+  IncidentRoutingResult,
+  NarrativeMarkCondition,
+  NPCState,
+  NpcEmotionalState,
+} from '../db/types/index.js';
+import type {
+  IncidentSummaryUI,
+  SignalFeedItemUI,
+  NpcEmotionalUI,
+} from '../db/types/server-result.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
 
 /** 한국어 조사 자동 판별 — 받침 유무에 따라 을/를, 이/가 등 선택 */
-function korParticle(word: string, withBatchim: string, withoutBatchim: string): string {
+function korParticle(
+  word: string,
+  withBatchim: string,
+  withoutBatchim: string,
+): string {
   if (!word) return withBatchim;
   const last = word.charCodeAt(word.length - 1);
-  if (last < 0xAC00 || last > 0xD7A3) return withBatchim;
-  return (last - 0xAC00) % 28 !== 0 ? withBatchim : withoutBatchim;
+  if (last < 0xac00 || last > 0xd7a3) return withBatchim;
+  return (last - 0xac00) % 28 !== 0 ? withBatchim : withoutBatchim;
 }
 
 @Injectable()
@@ -175,7 +210,8 @@ export class TurnsService {
     // Phase 4d: Legendary Quest Rewards
     private readonly legendaryRewardService: LegendaryRewardService,
     @Optional() private readonly situationGenerator?: SituationGeneratorService,
-    @Optional() private readonly consequenceProcessor?: ConsequenceProcessorService,
+    @Optional()
+    private readonly consequenceProcessor?: ConsequenceProcessorService,
     @Optional() private readonly playerGoalService?: PlayerGoalService,
     @Optional() private readonly questProgression?: QuestProgressionService,
   ) {}
@@ -189,11 +225,15 @@ export class TurnsService {
       });
       if (run?.campaignId) {
         await this.campaignsService.saveScenarioResult(run.campaignId, runId);
-        this.logger.log(`Campaign scenario result saved: campaign=${run.campaignId}, run=${runId}`);
+        this.logger.log(
+          `Campaign scenario result saved: campaign=${run.campaignId}, run=${runId}`,
+        );
       }
     } catch (err) {
       // 캠페인 결과 저장 실패는 게임 종료에 영향 없음
-      this.logger.warn(`Failed to save campaign scenario result for run ${runId}: ${(err as Error).message}`);
+      this.logger.warn(
+        `Failed to save campaign scenario result for run ${runId}: ${(err as Error).message}`,
+      );
     }
   }
 
@@ -210,7 +250,10 @@ export class TurnsService {
         accepted: true,
         turnNo: existingTurn.turnNo,
         serverResult: existingTurn.serverResult,
-        llm: { status: existingTurn.llmStatus, narrative: existingTurn.llmOutput },
+        llm: {
+          status: existingTurn.llmStatus,
+          narrative: existingTurn.llmOutput,
+        },
       };
     }
 
@@ -220,7 +263,8 @@ export class TurnsService {
     });
     if (!run) throw new NotFoundError('Run not found');
     if (run.userId !== userId) throw new ForbiddenError('Not your run');
-    if (run.status !== 'RUN_ACTIVE') throw new InvalidInputError('Run is not active');
+    if (run.status !== 'RUN_ACTIVE')
+      throw new InvalidInputError('Run is not active');
 
     // 3. expectedNextTurnNo 검증
     const expectedTurnNo = run.currentTurnNo + 1;
@@ -247,7 +291,9 @@ export class TurnsService {
     const profile = await this.db.query.playerProfiles.findFirst({
       where: eq(playerProfiles.userId, userId),
     });
-    const playerStats = deriveCombatStats(profile?.permanentStats ?? DEFAULT_PERMANENT_STATS);
+    const playerStats = deriveCombatStats(
+      profile?.permanentStats ?? DEFAULT_PERMANENT_STATS,
+    );
 
     const runState = run.runState ?? {
       gold: 0,
@@ -259,16 +305,50 @@ export class TurnsService {
     };
 
     // 노드 타입에 따라 분기
-    const nodeType = currentNode.nodeType as NodeType;
+    const nodeType = currentNode.nodeType;
 
     if (nodeType === 'HUB') {
-      return this.handleHubTurn(run, currentNode, expectedTurnNo, body, runState, playerStats);
+      return this.handleHubTurn(
+        run,
+        currentNode,
+        expectedTurnNo,
+        body,
+        runState,
+        playerStats,
+      );
     } else if (nodeType === 'LOCATION') {
-      return this.handleLocationTurn(run, currentNode, expectedTurnNo, body, runState, playerStats);
+      return this.handleLocationTurn(
+        run,
+        currentNode,
+        expectedTurnNo,
+        body,
+        runState,
+        playerStats,
+      );
     } else if (nodeType === 'COMBAT') {
-      return this.handleCombatTurn(run, currentNode, expectedTurnNo, body, runState, playerStats);
-    } else if (run.currentGraphNodeId && (nodeType === 'EVENT' || nodeType === 'REST' || nodeType === 'SHOP' || nodeType === 'EXIT')) {
-      return this.handleDagNodeTurn(run, currentNode, expectedTurnNo, body, runState, playerStats);
+      return this.handleCombatTurn(
+        run,
+        currentNode,
+        expectedTurnNo,
+        body,
+        runState,
+        playerStats,
+      );
+    } else if (
+      run.currentGraphNodeId &&
+      (nodeType === 'EVENT' ||
+        nodeType === 'REST' ||
+        nodeType === 'SHOP' ||
+        nodeType === 'EXIT')
+    ) {
+      return this.handleDagNodeTurn(
+        run,
+        currentNode,
+        expectedTurnNo,
+        body,
+        runState,
+        playerStats,
+      );
     }
 
     throw new InvalidInputError(`Unsupported node type: ${nodeType}`);
@@ -334,13 +414,30 @@ export class TurnsService {
         .where(eq(nodeInstances.id, currentNode.id));
 
       // HUB 선택 턴 커밋
-      const hubResult = this.buildSystemResult(turnNo, currentNode, `${locName}(으)로 향한다.`);
-      await this.commitTurnRecord(run, currentNode, turnNo, body, choiceId, hubResult, updatedRunState, body.options?.skipLlm);
+      const hubResult = this.buildSystemResult(
+        turnNo,
+        currentNode,
+        `${locName}(으)로 향한다.`,
+      );
+      await this.commitTurnRecord(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        choiceId,
+        hubResult,
+        updatedRunState,
+        body.options?.skipLlm,
+      );
 
       // LOCATION 전환
       const transition = await this.nodeTransition.transitionToLocation(
-        run.id, currentNode.nodeIndex, turnNo + 1, locationId,
-        updatedRunState.worldState!, updatedRunState,
+        run.id,
+        currentNode.nodeIndex,
+        turnNo + 1,
+        locationId,
+        updatedRunState.worldState,
+        updatedRunState,
       );
 
       // 전환 턴 생성
@@ -353,20 +450,29 @@ export class TurnsService {
         inputType: 'SYSTEM',
         rawInput: '',
         idempotencyKey: `${run.id}_enter_${transition.nextNodeIndex}`,
-        parsedBy: null, confidence: null, parsedIntent: null,
-        policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
+        parsedBy: null,
+        confidence: null,
+        parsedIntent: null,
+        policyResult: 'ALLOW',
+        transformedIntent: null,
+        actionPlan: null,
         serverResult: transition.enterResult,
         llmStatus: 'PENDING',
       });
 
-      await this.db.update(runSessions).set({
-        currentTurnNo: turnNo + 1,
-        runState: updatedRunState,
-        updatedAt: new Date(),
-      }).where(eq(runSessions.id, run.id));
+      await this.db
+        .update(runSessions)
+        .set({
+          currentTurnNo: turnNo + 1,
+          runState: updatedRunState,
+          updatedAt: new Date(),
+        })
+        .where(eq(runSessions.id, run.id));
 
       return {
-        accepted: true, turnNo, serverResult: hubResult,
+        accepted: true,
+        turnNo,
+        serverResult: hubResult,
         llm: { status: 'PENDING' as LlmStatus, narrative: null },
         meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
         transition: {
@@ -383,31 +489,90 @@ export class TurnsService {
     if (choiceId === 'contact_ally') {
       const relations = runState.npcRelations ?? {};
       // 최고 관계 NPC 자동 선택
-      const bestNpc = Object.entries(relations).sort(([,a], [,b]) => b - a)[0];
+      const bestNpc = Object.entries(relations).sort(
+        ([, a], [, b]) => b - a,
+      )[0];
       if (bestNpc) {
-        const { ws: newWs, reduction } = this.heatService.resolveByAlly(ws, bestNpc[0], relations);
-        updatedRunState.worldState = this.worldStateService.updateHubSafety(newWs);
+        const { ws: newWs, reduction } = this.heatService.resolveByAlly(
+          ws,
+          bestNpc[0],
+          relations,
+        );
+        updatedRunState.worldState =
+          this.worldStateService.updateHubSafety(newWs);
       }
-      const hubChoices = this.sceneShellService.buildHubChoices(updatedRunState.worldState!, arcState);
-      const result = this.buildHubActionResult(turnNo, currentNode, '협력자에게 연락하여 열기를 식혔다.', hubChoices, updatedRunState.worldState!);
+      const hubChoices = this.sceneShellService.buildHubChoices(
+        updatedRunState.worldState!,
+        arcState,
+      );
+      const result = this.buildHubActionResult(
+        turnNo,
+        currentNode,
+        '협력자에게 연락하여 열기를 식혔다.',
+        hubChoices,
+        updatedRunState.worldState!,
+      );
 
-      await this.commitTurnRecord(run, currentNode, turnNo, body, choiceId, result, updatedRunState, body.options?.skipLlm);
-      return { accepted: true, turnNo, serverResult: result, llm: { status: 'PENDING' as LlmStatus, narrative: null }, meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' } };
+      await this.commitTurnRecord(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        choiceId,
+        result,
+        updatedRunState,
+        body.options?.skipLlm,
+      );
+      return {
+        accepted: true,
+        turnNo,
+        serverResult: result,
+        llm: { status: 'PENDING' as LlmStatus, narrative: null },
+        meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
+      };
     }
 
     // Heat 해결: PAY_COST
     if (choiceId === 'pay_cost') {
       const usageCount = 0; // TODO: track usage
-      const { cost, ws: newWs } = this.heatService.resolveByCost(ws, usageCount);
+      const { cost, ws: newWs } = this.heatService.resolveByCost(
+        ws,
+        usageCount,
+      );
       if (runState.gold >= cost) {
         updatedRunState.gold -= cost;
-        updatedRunState.worldState = this.worldStateService.updateHubSafety(newWs);
+        updatedRunState.worldState =
+          this.worldStateService.updateHubSafety(newWs);
       }
-      const hubChoices = this.sceneShellService.buildHubChoices(updatedRunState.worldState!, arcState);
-      const result = this.buildHubActionResult(turnNo, currentNode, `금화 ${cost}으로 열기를 해소했다.`, hubChoices, updatedRunState.worldState!);
+      const hubChoices = this.sceneShellService.buildHubChoices(
+        updatedRunState.worldState!,
+        arcState,
+      );
+      const result = this.buildHubActionResult(
+        turnNo,
+        currentNode,
+        `금화 ${cost}으로 열기를 해소했다.`,
+        hubChoices,
+        updatedRunState.worldState!,
+      );
 
-      await this.commitTurnRecord(run, currentNode, turnNo, body, choiceId, result, updatedRunState, body.options?.skipLlm);
-      return { accepted: true, turnNo, serverResult: result, llm: { status: 'PENDING' as LlmStatus, narrative: null }, meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' } };
+      await this.commitTurnRecord(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        choiceId,
+        result,
+        updatedRunState,
+        body.options?.skipLlm,
+      );
+      return {
+        accepted: true,
+        turnNo,
+        serverResult: result,
+        llm: { status: 'PENDING' as LlmStatus, narrative: null },
+        meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
+      };
     }
 
     // 프롤로그 의뢰 수락
@@ -425,7 +590,8 @@ export class TurnsService {
             '- 선술집을 나서며 밤의 그레이마르 거리를 바라보는 것으로 마무리하세요. 어디로 갈지는 언급하지 마세요.',
             '- 당신의 내면("결심한다", "다짐한다")을 쓰지 마세요. 행동만 묘사하세요.',
           ].join('\n'),
-          display: '당신은 고개를 끄덕이며 의뢰를 수락했다. 서기관 로넨이 안도의 한숨을 내쉬었다. "고맙소… 은혜를 잊지 않겠소." 당신은 선술집을 나서 밤의 그레이마르 거리를 바라보았다.',
+          display:
+            '당신은 고개를 끄덕이며 의뢰를 수락했다. 서기관 로넨이 안도의 한숨을 내쉬었다. "고맙소… 은혜를 잊지 않겠소." 당신은 선술집을 나서 밤의 그레이마르 거리를 바라보았다.',
         },
         ui: {
           availableActions: ['CHOICE'],
@@ -445,8 +611,22 @@ export class TurnsService {
         choices: hubChoices,
       };
 
-      await this.commitTurnRecord(run, currentNode, turnNo, body, choiceId, result, updatedRunState);
-      return { accepted: true, turnNo, serverResult: result, llm: { status: 'PENDING' as LlmStatus, narrative: null }, meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' } };
+      await this.commitTurnRecord(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        choiceId,
+        result,
+        updatedRunState,
+      );
+      return {
+        accepted: true,
+        turnNo,
+        serverResult: result,
+        llm: { status: 'PENDING' as LlmStatus, narrative: null },
+        meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
+      };
     }
 
     throw new InvalidInputError(`Unknown HUB choice: ${choiceId}`);
@@ -464,9 +644,14 @@ export class TurnsService {
     // HP≤0 방어: 전투 패배 등으로 HP가 0 이하인 상태에서 행동 방지
     if (runState.hp <= 0) {
       // 패배 엔딩 생성
-      const result = this.buildSystemResult(turnNo, currentNode, '더 이상 버틸 수 없다...');
+      const result = this.buildSystemResult(
+        turnNo,
+        currentNode,
+        '더 이상 버틸 수 없다...',
+      );
       try {
-        const ws = runState.worldState ?? this.worldStateService.initWorldState();
+        const ws =
+          runState.worldState ?? this.worldStateService.initWorldState();
         const endingThreads = (ws.playerThreads ?? []).map((t) => ({
           approachVector: t.approachVector,
           goalCategory: t.goalCategory,
@@ -476,14 +661,18 @@ export class TurnsService {
         }));
         const endingInput = this.endingGenerator.gatherEndingInputs(
           ws.activeIncidents ?? [],
-          (runState.npcStates ?? {}) as Record<string, NPCState>,
+          runState.npcStates ?? {},
           ws.narrativeMarks ?? [],
           ws as unknown as Record<string, unknown>,
           runState.arcState ?? null,
           runState.actionHistory ?? [],
           endingThreads,
         );
-        const endingResult = this.endingGenerator.generateEnding(endingInput, 'DEFEAT', turnNo);
+        const endingResult = this.endingGenerator.generateEnding(
+          endingInput,
+          'DEFEAT',
+          turnNo,
+        );
         result.events.push({
           id: `ending_${turnNo}`,
           kind: 'SYSTEM',
@@ -495,14 +684,23 @@ export class TurnsService {
         this.logger.warn(`HP≤0 DEFEAT ending generation failed: ${e}`);
       }
 
-      await this.db.update(runSessions)
+      await this.db
+        .update(runSessions)
         .set({ status: 'RUN_ENDED', updatedAt: new Date() })
         .where(eq(runSessions.id, run.id));
 
       // Campaign: 시나리오 결과 저장
       await this.saveCampaignResultIfNeeded(run.id);
 
-      await this.commitTurnRecord(run, currentNode, turnNo, body, '', result, runState);
+      await this.commitTurnRecord(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        '',
+        result,
+        runState,
+      );
 
       return {
         turnNo,
@@ -515,64 +713,117 @@ export class TurnsService {
     const arcState = runState.arcState ?? this.arcService.initArcState();
     let agenda = runState.agenda ?? this.agendaService.initAgenda();
     const cooldowns = runState.eventCooldowns ?? {};
-    const locationId = ws.currentLocationId ?? (currentNode.nodeMeta as any)?.locationId ?? 'LOC_MARKET';
+    const locationId =
+      ws.currentLocationId ?? currentNode.nodeMeta?.locationId ?? 'LOC_MARKET';
     const updatedRunState: RunState = { ...runState };
 
     // go_hub 선택 시 → HUB 복귀
     if (body.input.type === 'CHOICE' && body.input.choiceId === 'go_hub') {
       // Structured Memory v2: 방문 종료 통합 (기존 saveLocationVisitSummary 역할 포함)
-      const locMemUpdate = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
+      const locMemUpdate = await this.memoryIntegration.finalizeVisit(
+        run.id,
+        currentNode.id,
+        runState,
+        turnNo,
+      );
       if (locMemUpdate) updatedRunState.locationMemories = locMemUpdate;
 
       ws = this.worldStateService.returnToHub(ws);
       updatedRunState.worldState = ws;
       updatedRunState.actionHistory = []; // HUB 복귀 시 고집 이력 초기화
 
-      await this.db.update(nodeInstances)
+      await this.db
+        .update(nodeInstances)
         .set({ status: 'NODE_ENDED', updatedAt: new Date() })
         .where(eq(nodeInstances.id, currentNode.id));
 
-      const result = this.buildSystemResult(turnNo, currentNode, '잠긴 닻 선술집으로 발걸음을 돌린다.');
-      await this.commitTurnRecord(run, currentNode, turnNo, body, body.input.choiceId!, result, updatedRunState, body.options?.skipLlm);
+      const result = this.buildSystemResult(
+        turnNo,
+        currentNode,
+        '잠긴 닻 선술집으로 발걸음을 돌린다.',
+      );
+      await this.commitTurnRecord(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        body.input.choiceId,
+        result,
+        updatedRunState,
+        body.options?.skipLlm,
+      );
 
       const transition = await this.nodeTransition.transitionToHub(
-        run.id, currentNode.nodeIndex, turnNo + 1, ws, arcState,
+        run.id,
+        currentNode.nodeIndex,
+        turnNo + 1,
+        ws,
+        arcState,
       );
       transition.enterResult.turnNo = turnNo + 1;
       await this.db.insert(turns).values({
-        runId: run.id, turnNo: turnNo + 1, nodeInstanceId: transition.enterResult.node.id,
-        nodeType: 'HUB', inputType: 'SYSTEM', rawInput: '',
+        runId: run.id,
+        turnNo: turnNo + 1,
+        nodeInstanceId: transition.enterResult.node.id,
+        nodeType: 'HUB',
+        inputType: 'SYSTEM',
+        rawInput: '',
         idempotencyKey: `${run.id}_hub_${turnNo + 1}`,
-        parsedBy: null, confidence: null, parsedIntent: null,
-        policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
-        serverResult: transition.enterResult, llmStatus: 'PENDING',
+        parsedBy: null,
+        confidence: null,
+        parsedIntent: null,
+        policyResult: 'ALLOW',
+        transformedIntent: null,
+        actionPlan: null,
+        serverResult: transition.enterResult,
+        llmStatus: 'PENDING',
       });
-      await this.db.update(runSessions).set({ currentTurnNo: turnNo + 1, runState: updatedRunState, updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+      await this.db
+        .update(runSessions)
+        .set({
+          currentTurnNo: turnNo + 1,
+          runState: updatedRunState,
+          updatedAt: new Date(),
+        })
+        .where(eq(runSessions.id, run.id));
 
       return {
-        accepted: true, turnNo, serverResult: result,
+        accepted: true,
+        turnNo,
+        serverResult: result,
         llm: { status: 'PENDING' as LlmStatus, narrative: null },
         meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
-        transition: { nextNodeIndex: transition.nextNodeIndex, nextNodeType: 'HUB', enterResult: transition.enterResult, battleState: null, enterTurnNo: turnNo + 1 },
+        transition: {
+          nextNodeIndex: transition.nextNodeIndex,
+          nextNodeType: 'HUB',
+          enterResult: transition.enterResult,
+          battleState: null,
+          enterTurnNo: turnNo + 1,
+        },
       };
     }
 
     // ACTION/CHOICE → IntentParserV2 파싱
     let rawInput = body.input.text ?? body.input.choiceId ?? '';
-    const source = body.input.type === 'CHOICE' ? 'CHOICE' as const : 'RULE' as const;
+    const source =
+      body.input.type === 'CHOICE' ? ('CHOICE' as const) : ('RULE' as const);
     let choicePayload: Record<string, unknown> | undefined;
 
     if (body.input.type === 'CHOICE' && body.input.choiceId) {
       const prevTurn = await this.db.query.turns.findFirst({
-        where: and(eq(turns.runId, run.id), eq(turns.turnNo, run.currentTurnNo)),
+        where: and(
+          eq(turns.runId, run.id),
+          eq(turns.turnNo, run.currentTurnNo),
+        ),
         columns: { serverResult: true, llmChoices: true },
       });
       // 서버 생성 선택지에서 먼저 탐색
-      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)?.choices;
+      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)
+        ?.choices;
       let matched = prevChoices?.find((c) => c.id === body.input.choiceId);
       // 못 찾으면 LLM 생성 선택지에서 탐색
       if (!matched && prevTurn?.llmChoices) {
-        const llmChoices = prevTurn.llmChoices as import('../db/types/index.js').ChoiceItem[];
+        const llmChoices = prevTurn.llmChoices;
         matched = llmChoices.find((c) => c.id === body.input.choiceId);
       }
       if (matched) {
@@ -583,7 +834,8 @@ export class TurnsService {
 
     // 고집(insistence) 카운트 계산: 같은 actionType 연속 반복 횟수
     const actionHistory = runState.actionHistory ?? [];
-    const { count: insistenceCount, repeatedType } = this.calculateInsistenceCount(actionHistory);
+    const { count: insistenceCount, repeatedType } =
+      this.calculateInsistenceCount(actionHistory);
     // NPC 목록을 NpcForIntent로 변환하여 IntentParser에 전달 (targetNpc 파싱용)
     const npcsForIntent = this.content.getAllNpcs().map((n) => ({
       npcId: n.npcId,
@@ -591,69 +843,160 @@ export class TurnsService {
       unknownAlias: n.unknownAlias,
       title: n.title,
     }));
-    const intent = await this.llmIntentParser.parseWithInsistence(rawInput, source, choicePayload, insistenceCount, repeatedType, locationId, npcsForIntent);
-    const _sec = intent.secondaryActionType ? `+${intent.secondaryActionType}` : '';
+    const intent = await this.llmIntentParser.parseWithInsistence(
+      rawInput,
+      source,
+      choicePayload,
+      insistenceCount,
+      repeatedType,
+      locationId,
+      npcsForIntent,
+    );
+    const _sec = intent.secondaryActionType
+      ? `+${intent.secondaryActionType}`
+      : '';
     this.logger.log(
       `[Intent] "${rawInput.slice(0, 30)}" → ${intent.actionType}${_sec} (source=${intent.source}, tone=${intent.tone}, conf=${intent.confidence})`,
     );
 
     // V3 Intent 확장 (유저 주도형 시스템)
-    const intentV3 = this.intentV3Builder.build(intent, rawInput, locationId, choicePayload);
+    const intentV3 = this.intentV3Builder.build(
+      intent,
+      rawInput,
+      locationId,
+      choicePayload,
+    );
     this.logger.debug(
       `[IntentV3] goal=${intentV3.goalCategory}, vector=${intentV3.approachVector}, goalText="${intentV3.goalText}"`,
     );
 
     // Phase 4a: EQUIP/UNEQUIP — 장비 착용/해제 (주사위 판정 없음, 즉시 처리)
-    if ((intent.actionType === 'EQUIP' || intent.actionType === 'UNEQUIP') && (body.input.type === 'ACTION' || body.input.type === 'CHOICE')) {
-      return this.handleEquipAction(run, currentNode, turnNo, body, rawInput, updatedRunState, intent);
+    if (
+      (intent.actionType === 'EQUIP' || intent.actionType === 'UNEQUIP') &&
+      (body.input.type === 'ACTION' || body.input.type === 'CHOICE')
+    ) {
+      return this.handleEquipAction(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        rawInput,
+        updatedRunState,
+        intent,
+      );
     }
 
     // MOVE_LOCATION: 자유 텍스트로 다른 LOCATION 이동 요청 시 실제 전환
-    if (intent.actionType === 'MOVE_LOCATION' && (body.input.type === 'ACTION' || body.input.type === 'CHOICE')) {
+    if (
+      intent.actionType === 'MOVE_LOCATION' &&
+      (body.input.type === 'ACTION' || body.input.type === 'CHOICE')
+    ) {
       const targetLocationId = this.extractTargetLocation(rawInput, locationId);
       if (targetLocationId && targetLocationId !== locationId) {
         return this.performLocationTransition(
-          run, currentNode, turnNo, body, rawInput, runState, ws, arcState, locationId, targetLocationId,
+          run,
+          currentNode,
+          turnNo,
+          body,
+          rawInput,
+          runState,
+          ws,
+          arcState,
+          locationId,
+          targetLocationId,
         );
       }
       // Fixplan3-P4: 목표 장소 불명확 시 HUB 복귀 (go_hub와 동일 처리)
-      const locMemFallback = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
+      const locMemFallback = await this.memoryIntegration.finalizeVisit(
+        run.id,
+        currentNode.id,
+        runState,
+        turnNo,
+      );
       const hubWs = this.worldStateService.returnToHub(ws);
-      const hubRunState: RunState = { ...runState, worldState: hubWs, actionHistory: [], ...(locMemFallback ? { locationMemories: locMemFallback } : {}) };
+      const hubRunState: RunState = {
+        ...runState,
+        worldState: hubWs,
+        actionHistory: [],
+        ...(locMemFallback ? { locationMemories: locMemFallback } : {}),
+      };
 
-      await this.db.update(nodeInstances)
+      await this.db
+        .update(nodeInstances)
         .set({ status: 'NODE_ENDED', updatedAt: new Date() })
         .where(eq(nodeInstances.id, currentNode.id));
 
-      const moveResult = this.buildSystemResult(turnNo, currentNode, '잠긴 닻 선술집으로 돌아가기로 한다.');
-      await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, moveResult, hubRunState, body.options?.skipLlm);
+      const moveResult = this.buildSystemResult(
+        turnNo,
+        currentNode,
+        '잠긴 닻 선술집으로 돌아가기로 한다.',
+      );
+      await this.commitTurnRecord(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        rawInput,
+        moveResult,
+        hubRunState,
+        body.options?.skipLlm,
+      );
 
       const transition = await this.nodeTransition.transitionToHub(
-        run.id, currentNode.nodeIndex, turnNo + 1, hubWs, arcState,
+        run.id,
+        currentNode.nodeIndex,
+        turnNo + 1,
+        hubWs,
+        arcState,
       );
       transition.enterResult.turnNo = turnNo + 1;
       await this.db.insert(turns).values({
-        runId: run.id, turnNo: turnNo + 1, nodeInstanceId: transition.enterResult.node.id,
-        nodeType: 'HUB', inputType: 'SYSTEM', rawInput: '',
+        runId: run.id,
+        turnNo: turnNo + 1,
+        nodeInstanceId: transition.enterResult.node.id,
+        nodeType: 'HUB',
+        inputType: 'SYSTEM',
+        rawInput: '',
         idempotencyKey: `${run.id}_hub_${turnNo + 1}`,
-        parsedBy: null, confidence: null, parsedIntent: null,
-        policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
-        serverResult: transition.enterResult, llmStatus: 'PENDING',
+        parsedBy: null,
+        confidence: null,
+        parsedIntent: null,
+        policyResult: 'ALLOW',
+        transformedIntent: null,
+        actionPlan: null,
+        serverResult: transition.enterResult,
+        llmStatus: 'PENDING',
       });
-      await this.db.update(runSessions).set({ currentTurnNo: turnNo + 1, runState: hubRunState, updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+      await this.db
+        .update(runSessions)
+        .set({
+          currentTurnNo: turnNo + 1,
+          runState: hubRunState,
+          updatedAt: new Date(),
+        })
+        .where(eq(runSessions.id, run.id));
 
       return {
-        accepted: true, turnNo, serverResult: moveResult,
+        accepted: true,
+        turnNo,
+        serverResult: moveResult,
         llm: { status: 'PENDING' as LlmStatus, narrative: null },
         meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
-        transition: { nextNodeIndex: transition.nextNodeIndex, nextNodeType: 'HUB', enterResult: transition.enterResult, battleState: null, enterTurnNo: turnNo + 1 },
+        transition: {
+          nextNodeIndex: transition.nextNodeIndex,
+          nextNodeType: 'HUB',
+          enterResult: transition.enterResult,
+          battleState: null,
+          enterTurnNo: turnNo + 1,
+        },
       };
     }
 
     // 이벤트 연속성: 의도 기반 씬 연속성 판단 (3단계)
     const sourceEventId = choicePayload?.sourceEventId as string | undefined;
     const rng = this.rngService.create(run.seed, turnNo);
-    let matchedEvent: import('../db/types/event-def.js').EventDefV2 | null = null;
+    let matchedEvent: import('../db/types/event-def.js').EventDefV2 | null =
+      null;
 
     // Step 1: CHOICE의 sourceEventId → 명시적 씬 유지 (플레이어의 선택)
     //   제한: 같은 이벤트가 CHOICE로 연속되면 전환 (기본 2턴, 대화 계열 4턴까지 허용)
@@ -676,13 +1019,25 @@ export class TurnsService {
     // Step 2: CHOICE sourceEventId 이벤트 연속 — 선택지로 명시적 연속만 허용
     // 대화 잠금(ACTION 연속)은 삭제 — 이벤트 없는 자유 턴을 위해
     // NPC 연속성은 sessionNpcContext + 프롬프트가 담당 (이벤트 강제 아님)
-    const SOCIAL_ACTIONS = new Set(['TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP']);
+    const SOCIAL_ACTIONS = new Set([
+      'TALK',
+      'PERSUADE',
+      'BRIBE',
+      'THREATEN',
+      'HELP',
+    ]);
     const isSocialAction = SOCIAL_ACTIONS.has(intent.actionType);
 
     // Step 3: 이벤트 매칭 — 트리거 조건이 있을 때만 (플레이어 주도)
     // IncidentRouter: intentV3 기반으로 관련 incident 라우팅
-    const incidentDefsForRouting = this.content.getIncidentsData() as IncidentDef[];
-    const routingResult = this.incidentRouter.route(ws, locationId, intentV3, incidentDefsForRouting);
+    const incidentDefsForRouting =
+      this.content.getIncidentsData() as IncidentDef[];
+    const routingResult = this.incidentRouter.route(
+      ws,
+      locationId,
+      intentV3,
+      incidentDefsForRouting,
+    );
     if (routingResult.routeMode !== 'FALLBACK_SCENE') {
       this.logger.debug(
         `[IncidentRouter] mode=${routingResult.routeMode}, incident=${routingResult.incident?.incidentId}, score=${routingResult.matchScore}, vector=${routingResult.matchedVector}`,
@@ -696,18 +1051,30 @@ export class TurnsService {
         (inc: any) => inc.pressure >= 50 && inc.locationId === locationId,
       ); // 사건 압력 임계 (50 이상이어야 이벤트 강제)
       // 사건 라우팅: DIRECT_MATCH + 높은 점수(40+)만 트리거로 인정
-      const routingHasStrongIncident = routingResult.routeMode === 'DIRECT_MATCH' && routingResult.matchScore >= 40;
+      const routingHasStrongIncident =
+        routingResult.routeMode === 'DIRECT_MATCH' &&
+        routingResult.matchScore >= 40;
 
       // P1: 미발견 quest fact 이벤트가 현재 장소에 존재하면 매 턴 매칭 허용 (첫 턴 제외 — 첫 턴은 이미 통과)
       const discoveredFacts = new Set(runState.discoveredQuestFacts ?? []);
       const allEventsForCheck = this.content.getAllEventsV2();
       const hasUndiscoveredFactEvent = allEventsForCheck.some(
-        (e: any) => e.locationId === locationId && e.discoverableFact && !discoveredFacts.has(e.discoverableFact),
+        (e: any) =>
+          e.locationId === locationId &&
+          e.discoverableFact &&
+          !discoveredFacts.has(e.discoverableFact),
       );
-      const questFactTrigger = hasUndiscoveredFactEvent && actionHistory.length > 0;
+      const questFactTrigger =
+        hasUndiscoveredFactEvent && actionHistory.length > 0;
 
-      const shouldMatchEvent = isFirstTurnAtLocation || incidentPressureHigh || routingHasStrongIncident || questFactTrigger;
-      this.logger.log(`[EventTrigger] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} routing=${routingHasStrongIncident}(${routingResult.routeMode}:${routingResult.matchScore}) questFact=${questFactTrigger} → match=${shouldMatchEvent}`);
+      const shouldMatchEvent =
+        isFirstTurnAtLocation ||
+        incidentPressureHigh ||
+        routingHasStrongIncident ||
+        questFactTrigger;
+      this.logger.log(
+        `[EventTrigger] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} routing=${routingHasStrongIncident}(${routingResult.routeMode}:${routingResult.matchScore}) questFact=${questFactTrigger} → match=${shouldMatchEvent}`,
+      );
 
       if (shouldMatchEvent) {
         const allEvents = this.content.getAllEventsV2();
@@ -718,26 +1085,54 @@ export class TurnsService {
         // Living World v2: SituationGenerator 우선 시도
         // P0: questFactTrigger로 게이트를 열었으면 SitGen 바이패스 → fact 이벤트 매칭 보장
         const lastEventId = recentEventIds[recentEventIds.length - 1] ?? '';
-        const lastWasDynamic = lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
+        const lastWasDynamic =
+          lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
         const dynamicRoll = rng.range(0, 100);
-        const { SITGEN_CHANCE } = require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
-        if (this.situationGenerator && !lastWasDynamic && dynamicRoll < SITGEN_CHANCE && !questFactTrigger) {
+        const { SITGEN_CHANCE } =
+          require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
+        if (
+          this.situationGenerator &&
+          !lastWasDynamic &&
+          dynamicRoll < SITGEN_CHANCE &&
+          !questFactTrigger
+        ) {
           try {
-            const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
+            const incidentDefs =
+              this.content.getIncidentsData() as IncidentDef[];
             const recentPrimaryNpcIds = actionHistory
               .filter((h) => (h as Record<string, unknown>).primaryNpcId)
-              .map((h) => (h as Record<string, unknown>).primaryNpcId as string);
-            const situation = this.situationGenerator.generate(ws, locationId, intent, allEvents, incidentDefs, recentPrimaryNpcIds, discoveredFacts);
+              .map(
+                (h) => (h as Record<string, unknown>).primaryNpcId as string,
+              );
+            const situation = this.situationGenerator.generate(
+              ws,
+              locationId,
+              intent,
+              allEvents,
+              incidentDefs,
+              recentPrimaryNpcIds,
+              discoveredFacts,
+            );
             if (situation) {
               matchedEvent = situation.eventDef;
-              this.logger.debug(`[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`);
-              if (situation.trigger === 'CONSEQUENCE' && situation.relatedFacts.length > 0) {
+              this.logger.debug(
+                `[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`,
+              );
+              if (
+                situation.trigger === 'CONSEQUENCE' &&
+                situation.relatedFacts.length > 0
+              ) {
                 const usedFacts = (ws as any)._consequenceUsedFacts ?? [];
-                (ws as any)._consequenceUsedFacts = [...usedFacts, ...situation.relatedFacts];
+                (ws as any)._consequenceUsedFacts = [
+                  ...usedFacts,
+                  ...situation.relatedFacts,
+                ];
               }
             }
           } catch (err) {
-            this.logger.warn(`[SituationGenerator] error, falling back to EventMatcher: ${err}`);
+            this.logger.warn(
+              `[SituationGenerator] error, falling back to EventMatcher: ${err}`,
+            );
           }
         }
 
@@ -745,45 +1140,75 @@ export class TurnsService {
           // NPC 연속성 컨텍스트
           const NON_SOCIAL_BREAK = new Set(['SNEAK', 'STEAL', 'FIGHT']);
           const shouldBreakNpc = NON_SOCIAL_BREAK.has(intent.actionType);
-          const lastEntry = actionHistory[actionHistory.length - 1] as Record<string, unknown> | undefined;
+          const lastEntry = actionHistory[actionHistory.length - 1] as
+            | Record<string, unknown>
+            | undefined;
           const sessionNpcContext = {
-            lastPrimaryNpcId: shouldBreakNpc ? null : ((lastEntry?.primaryNpcId as string) ?? null),
+            lastPrimaryNpcId: shouldBreakNpc
+              ? null
+              : ((lastEntry?.primaryNpcId as string) ?? null),
             sessionTurnCount: actionHistory.length,
-            interactedNpcIds: [...new Set(
-              (actionHistory as Array<Record<string, unknown>>)
-                .filter(a => a.primaryNpcId)
-                .map(a => a.primaryNpcId as string),
-            )],
+            interactedNpcIds: [
+              ...new Set(
+                (actionHistory as Array<Record<string, unknown>>)
+                  .filter((a) => a.primaryNpcId)
+                  .map((a) => a.primaryNpcId as string),
+              ),
+            ],
           };
 
           const directorResult = this.eventDirector.select(
-            allEvents, locationId, intent, ws, arcState, agenda, cooldowns, turnNo, rng, recentEventIds, routingResult, sessionNpcContext, intentV3,
+            allEvents,
+            locationId,
+            intent,
+            ws,
+            arcState,
+            agenda,
+            cooldowns,
+            turnNo,
+            rng,
+            recentEventIds,
+            routingResult,
+            sessionNpcContext,
+            intentV3,
           );
           matchedEvent = directorResult.selectedEvent;
 
           if (directorResult.filterLog.length > 0) {
-            this.logger.debug(`[EventDirector] ${directorResult.filterLog.join(', ')}`);
+            this.logger.debug(
+              `[EventDirector] ${directorResult.filterLog.join(', ')}`,
+            );
           }
         }
 
         // ProceduralEvent fallback — 트리거 있는데 이벤트 못 잡은 경우만
         if (!matchedEvent || matchedEvent.eventType === 'FALLBACK') {
-          const proceduralHistory = (ws.proceduralHistory ?? []) as ProceduralHistoryEntry[];
+          const proceduralHistory = ws.proceduralHistory ?? [];
           const proceduralResult = this.proceduralEvent.generate(
-            { locationId, timePhase: ws.phaseV2 ?? ws.timePhase, stage: ws.mainArc?.stage != null ? String(ws.mainArc.stage) : undefined },
+            {
+              locationId,
+              timePhase: ws.phaseV2 ?? ws.timePhase,
+              stage:
+                ws.mainArc?.stage != null
+                  ? String(ws.mainArc.stage)
+                  : undefined,
+            },
             proceduralHistory,
             turnNo,
             rng,
           );
           if (proceduralResult) {
             matchedEvent = proceduralResult;
-            this.logger.debug(`[ProceduralEvent] 생성: ${proceduralResult.eventId}`);
+            this.logger.debug(
+              `[ProceduralEvent] 생성: ${proceduralResult.eventId}`,
+            );
           }
         }
       } else {
-        this.logger.log(`[EventSkip] No trigger — player-driven turn (action=${intent.actionType}, historyLen=${actionHistory.length}, pressureHigh=${incidentPressureHigh}, routing=${routingHasStrongIncident})`);
+        this.logger.log(
+          `[EventSkip] No trigger — player-driven turn (action=${intent.actionType}, historyLen=${actionHistory.length}, pressureHigh=${incidentPressureHigh}, routing=${routingHasStrongIncident})`,
+        );
       }
-
     }
 
     // 이벤트 없는 턴: 플레이어 행동 중심으로 자유 서술 (이벤트가 강제되지 않음)
@@ -804,7 +1229,9 @@ export class TurnsService {
           suggested_choices: [],
         },
       } as any;
-      this.logger.debug(`[FreeAction] No event matched — player-driven turn (action=${intent.actionType})`);
+      this.logger.debug(
+        `[FreeAction] No event matched — player-driven turn (action=${intent.actionType})`,
+      );
     }
 
     // matchedEvent는 이 시점에서 항상 non-null (FREE 이벤트 셸이 보장)
@@ -814,7 +1241,10 @@ export class TurnsService {
     const prevHeat = ws.hubHeat;
     const prevSafety = ws.hubSafety;
     const prevIncidents = [...(ws.activeIncidents ?? [])];
-    const priorWsSnapshot = { ...ws, activeIncidents: [...(ws.activeIncidents ?? [])] };
+    const priorWsSnapshot = {
+      ...ws,
+      activeIncidents: [...(ws.activeIncidents ?? [])],
+    };
 
     // === 플레이어 대상 NPC 오버라이드 ===
     // 플레이어가 ACTION 텍스트에서 특정 NPC를 지목한 경우, 이벤트의 primaryNpcId를 교체
@@ -826,11 +1256,19 @@ export class TurnsService {
 
       // Pass 1: 실명 또는 별칭 전체 매칭
       for (const npcDef of allNpcDefs) {
-        if (npcDef.name && playerInputLower.includes(npcDef.name.toLowerCase())) {
-          overrideNpcId = npcDef.npcId; break;
+        if (
+          npcDef.name &&
+          playerInputLower.includes(npcDef.name.toLowerCase())
+        ) {
+          overrideNpcId = npcDef.npcId;
+          break;
         }
-        if (npcDef.unknownAlias && playerInputLower.includes(npcDef.unknownAlias.toLowerCase())) {
-          overrideNpcId = npcDef.npcId; break;
+        if (
+          npcDef.unknownAlias &&
+          playerInputLower.includes(npcDef.unknownAlias.toLowerCase())
+        ) {
+          overrideNpcId = npcDef.npcId;
+          break;
         }
       }
 
@@ -841,11 +1279,18 @@ export class TurnsService {
           const targetWord = egeMatch[1].trim().toLowerCase();
           for (const npcDef of allNpcDefs) {
             if (npcDef.name && targetWord.includes(npcDef.name.toLowerCase())) {
-              overrideNpcId = npcDef.npcId; break;
+              overrideNpcId = npcDef.npcId;
+              break;
             }
             const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
-            if (aliasKeywords.some((kw: string) => kw.length >= 2 && targetWord.includes(kw.toLowerCase()))) {
-              overrideNpcId = npcDef.npcId; break;
+            if (
+              aliasKeywords.some(
+                (kw: string) =>
+                  kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
+              )
+            ) {
+              overrideNpcId = npcDef.npcId;
+              break;
             }
           }
         }
@@ -858,11 +1303,18 @@ export class TurnsService {
           const targetWord = eulMatch[1].trim().toLowerCase();
           for (const npcDef of allNpcDefs) {
             if (npcDef.name && targetWord.includes(npcDef.name.toLowerCase())) {
-              overrideNpcId = npcDef.npcId; break;
+              overrideNpcId = npcDef.npcId;
+              break;
             }
             const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
-            if (aliasKeywords.some((kw: string) => kw.length >= 2 && targetWord.includes(kw.toLowerCase()))) {
-              overrideNpcId = npcDef.npcId; break;
+            if (
+              aliasKeywords.some(
+                (kw: string) =>
+                  kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
+              )
+            ) {
+              overrideNpcId = npcDef.npcId;
+              break;
             }
           }
         }
@@ -872,34 +1324,62 @@ export class TurnsService {
       if (!overrideNpcId) {
         for (const npcDef of allNpcDefs) {
           const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
-          if (aliasKeywords.some((kw: string) => kw.length >= 3 && playerInputLower.includes(kw.toLowerCase()))) {
-            overrideNpcId = npcDef.npcId; break;
+          if (
+            aliasKeywords.some(
+              (kw: string) =>
+                kw.length >= 3 && playerInputLower.includes(kw.toLowerCase()),
+            )
+          ) {
+            overrideNpcId = npcDef.npcId;
+            break;
           }
         }
       }
 
       if (overrideNpcId) {
-        const prevNpc = (event.payload as Record<string, unknown>)?.primaryNpcId;
+        const prevNpc = (event.payload as Record<string, unknown>)
+          ?.primaryNpcId;
         if (prevNpc !== overrideNpcId) {
-          (event.payload as Record<string, unknown>).primaryNpcId = overrideNpcId;
-          this.logger.log(`[NpcOverride] Player targeted ${overrideNpcId} (was: ${prevNpc ?? 'none'})`);
+          (event.payload as Record<string, unknown>).primaryNpcId =
+            overrideNpcId;
+          this.logger.log(
+            `[NpcOverride] Player targeted ${overrideNpcId} (was: ${prevNpc ?? 'none'})`,
+          );
         }
       }
     }
 
     // Phase 4c: 세트 specialEffect 수집
-    const activeSpecialEffects = this.equipmentService.getActiveSpecialEffects(runState.equipped ?? {});
+    const activeSpecialEffects = this.equipmentService.getActiveSpecialEffects(
+      runState.equipped ?? {},
+    );
 
     // 판정 보너스 조회 — runState에 합산된 actionBonuses 우선, 없으면 프리셋 fallback
-    const presetDef = run.presetId ? this.content.getPreset(run.presetId) : undefined;
-    const presetActionBonuses = runState.actionBonuses ?? presetDef?.actionBonuses;
+    const presetDef = run.presetId
+      ? this.content.getPreset(run.presetId)
+      : undefined;
+    const presetActionBonuses =
+      runState.actionBonuses ?? presetDef?.actionBonuses;
 
     // NPC faction 조회 (평판 변동용)
-    const primaryNpcIdForResolve = (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
-    const primaryNpcFaction = primaryNpcIdForResolve ? this.content.getNpc(primaryNpcIdForResolve)?.faction ?? null : null;
+    const primaryNpcIdForResolve = (event.payload as Record<string, unknown>)
+      ?.primaryNpcId as string | undefined;
+    const primaryNpcFaction = primaryNpcIdForResolve
+      ? (this.content.getNpc(primaryNpcIdForResolve)?.faction ?? null)
+      : null;
 
     // ResolveService 판정
-    const resolveResult = this.resolveService.resolve(event, intent, ws, playerStats, rng, activeSpecialEffects, presetActionBonuses, primaryNpcFaction, runState);
+    const resolveResult = this.resolveService.resolve(
+      event,
+      intent,
+      ws,
+      playerStats,
+      rng,
+      activeSpecialEffects,
+      presetActionBonuses,
+      primaryNpcFaction,
+      runState,
+    );
     this.logger.log(
       `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${event.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}${resolveResult.traitBonus ? ` traitBonus=${resolveResult.traitBonus > 0 ? '+' : ''}${resolveResult.traitBonus}` : ''}${resolveResult.gamblerLuckTriggered ? ' GAMBLER_LUCK!' : ''}`,
     );
@@ -917,7 +1397,9 @@ export class TurnsService {
           primaryNpcId: event.payload.primaryNpcId,
         });
         if (consequenceOutput.factsCreated.length > 0) {
-          this.logger.debug(`[ConsequenceProcessor] facts=${consequenceOutput.factsCreated.length} locEffects=${consequenceOutput.locationEffects.length} witnesses=${consequenceOutput.npcWitnesses.length}`);
+          this.logger.debug(
+            `[ConsequenceProcessor] facts=${consequenceOutput.factsCreated.length} locEffects=${consequenceOutput.locationEffects.length} witnesses=${consequenceOutput.npcWitnesses.length}`,
+          );
         }
       } catch (err) {
         this.logger.warn(`[ConsequenceProcessor] error (non-fatal): ${err}`);
@@ -929,7 +1411,9 @@ export class TurnsService {
       try {
         const milestoneResults = this.playerGoalService.checkMilestones(ws);
         if (milestoneResults.length > 0) {
-          this.logger.debug(`[PlayerGoal] milestones: ${milestoneResults.length} advanced`);
+          this.logger.debug(
+            `[PlayerGoal] milestones: ${milestoneResults.length} advanced`,
+          );
         }
 
         if (turnNo % 5 === 0 && actionHistory.length >= 3) {
@@ -946,7 +1430,12 @@ export class TurnsService {
               relatedLocations: [locationId],
             }));
           if (patterns.length > 0) {
-            this.playerGoalService.detectImplicitGoals(ws, patterns, turnNo, ws.day);
+            this.playerGoalService.detectImplicitGoals(
+              ws,
+              patterns,
+              turnNo,
+              ws.day,
+            );
           }
         }
       } catch (err) {
@@ -969,16 +1458,34 @@ export class TurnsService {
         (id) => this.content.getNpc(id),
       );
       const preResult = this.buildLocationResult(
-        turnNo, currentNode,
+        turnNo,
+        currentNode,
         `${combatSceneFrame} — 전투가 시작된다!`,
-        resolveResult.outcome, [], ws,
+        resolveResult.outcome,
+        [],
+        ws,
       );
-      await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, preResult, updatedRunState, body.options?.skipLlm);
+      await this.commitTurnRecord(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        rawInput,
+        preResult,
+        updatedRunState,
+        body.options?.skipLlm,
+      );
 
       const transition = await this.nodeTransition.insertCombatSubNode(
-        run.id, currentNode.id, currentNode.nodeIndex, turnNo + 1,
-        resolveResult.combatEncounterId, currentNode.environmentTags ?? [],
-        run.seed, updatedRunState.hp, updatedRunState.stamina,
+        run.id,
+        currentNode.id,
+        currentNode.nodeIndex,
+        turnNo + 1,
+        resolveResult.combatEncounterId,
+        currentNode.environmentTags ?? [],
+        run.seed,
+        updatedRunState.hp,
+        updatedRunState.stamina,
       );
       transition.enterResult.turnNo = turnNo + 1;
 
@@ -989,33 +1496,70 @@ export class TurnsService {
         display: transition.enterResult.summary.display,
       };
       await this.db.insert(turns).values({
-        runId: run.id, turnNo: turnNo + 1, nodeInstanceId: transition.enterResult.node.id,
-        nodeType: 'COMBAT', inputType: 'SYSTEM', rawInput: '',
+        runId: run.id,
+        turnNo: turnNo + 1,
+        nodeInstanceId: transition.enterResult.node.id,
+        nodeType: 'COMBAT',
+        inputType: 'SYSTEM',
+        rawInput: '',
         idempotencyKey: `${run.id}_combat_${turnNo + 1}`,
-        parsedBy: null, confidence: null, parsedIntent: null,
-        policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
-        serverResult: transition.enterResult, llmStatus: 'PENDING',
+        parsedBy: null,
+        confidence: null,
+        parsedIntent: null,
+        policyResult: 'ALLOW',
+        transformedIntent: null,
+        actionPlan: null,
+        serverResult: transition.enterResult,
+        llmStatus: 'PENDING',
       });
-      await this.db.update(runSessions).set({ currentTurnNo: turnNo + 1, runState: updatedRunState, updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+      await this.db
+        .update(runSessions)
+        .set({
+          currentTurnNo: turnNo + 1,
+          runState: updatedRunState,
+          updatedAt: new Date(),
+        })
+        .where(eq(runSessions.id, run.id));
 
       return {
-        accepted: true, turnNo, serverResult: preResult,
+        accepted: true,
+        turnNo,
+        serverResult: preResult,
         llm: { status: 'PENDING' as LlmStatus, narrative: null },
         meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
-        transition: { nextNodeIndex: transition.nextNodeIndex, nextNodeType: 'COMBAT', enterResult: transition.enterResult, battleState: transition.battleState ?? null, enterTurnNo: turnNo + 1 },
+        transition: {
+          nextNodeIndex: transition.nextNodeIndex,
+          nextNodeType: 'COMBAT',
+          enterResult: transition.enterResult,
+          battleState: transition.battleState ?? null,
+          enterTurnNo: turnNo + 1,
+        },
       };
     }
 
     // 비전투 → WorldState 업데이트
     ws = this.heatService.applyHeatDelta(ws, resolveResult.heatDelta);
-    ws = { ...ws, tension: Math.max(0, Math.min(10, ws.tension + resolveResult.tensionDelta)) };
+    ws = {
+      ...ws,
+      tension: Math.max(
+        0,
+        Math.min(10, ws.tension + resolveResult.tensionDelta),
+      ),
+    };
     // relation 변경
     const relations = { ...(runState.npcRelations ?? {}) };
-    for (const [npcId, delta] of Object.entries(resolveResult.relationChanges)) {
-      relations[npcId] = Math.max(0, Math.min(100, (relations[npcId] ?? 50) + delta));
+    for (const [npcId, delta] of Object.entries(
+      resolveResult.relationChanges,
+    )) {
+      relations[npcId] = Math.max(
+        0,
+        Math.min(100, (relations[npcId] ?? 50) + delta),
+      );
     }
     // reputation 변동 반영
-    for (const [factionId, delta] of Object.entries(resolveResult.reputationChanges)) {
+    for (const [factionId, delta] of Object.entries(
+      resolveResult.reputationChanges,
+    )) {
       if (delta !== 0) {
         ws = {
           ...ws,
@@ -1034,23 +1578,38 @@ export class TurnsService {
     for (const de of resolveResult.deferredEffects) {
       ws = {
         ...ws,
-        deferredEffects: [...ws.deferredEffects, { ...de, sourceTurnNo: turnNo }],
+        deferredEffects: [
+          ...ws.deferredEffects,
+          { ...de, sourceTurnNo: turnNo },
+        ],
       };
     }
 
     // === Narrative Engine v1: preStepTick (시간 사이클 + Incident tick + signal) ===
     const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
     ws = this.worldStateService.migrateWorldState(ws);
-    const { ws: wsAfterTick, resolvedPatches } = this.worldTick.preStepTick(ws, incidentDefs, rng, 1);
+    const { ws: wsAfterTick, resolvedPatches } = this.worldTick.preStepTick(
+      ws,
+      incidentDefs,
+      rng,
+      1,
+    );
     ws = wsAfterTick;
 
     // === Narrative Engine v1: Incident impact 적용 ===
     const relevantIncident = this.incidentMgmt.findRelevantIncident(
-      ws, locationId, intent.actionType, incidentDefs, intent.secondaryActionType,
+      ws,
+      locationId,
+      intent.actionType,
+      incidentDefs,
+      intent.secondaryActionType,
     );
     if (relevantIncident) {
       const updatedIncident = this.incidentMgmt.applyImpact(
-        relevantIncident.incident, relevantIncident.def, resolveResult.outcome, ws.globalClock,
+        relevantIncident.incident,
+        relevantIncident.def,
+        resolveResult.outcome,
+        ws.globalClock,
       );
       ws = {
         ...ws,
@@ -1064,7 +1623,10 @@ export class TurnsService {
     ws = this.incidentBridge.apply(ws, resolveResult.outcome, routingResult);
 
     // === Phase 2: IncidentMemory 축적 (사건별 개인 기록) ===
-    if (routingResult.routeMode !== 'FALLBACK_SCENE' && routingResult.incident) {
+    if (
+      routingResult.routeMode !== 'FALLBACK_SCENE' &&
+      routingResult.incident
+    ) {
       const incId = routingResult.incident.incidentId;
       const incidentMemories = { ...(updatedRunState.incidentMemories ?? {}) };
       const existing = incidentMemories[incId] ?? {
@@ -1077,16 +1639,25 @@ export class TurnsService {
 
       // control/pressure 변동 계산
       const prevInc = prevIncidents.find((i) => i.incidentId === incId);
-      const currInc = (ws.activeIncidents ?? []).find((i) => i.incidentId === incId);
+      const currInc = (ws.activeIncidents ?? []).find(
+        (i) => i.incidentId === incId,
+      );
       const controlDelta = (currInc?.control ?? 0) - (prevInc?.control ?? 0);
       const pressureDelta = (currInc?.pressure ?? 0) - (prevInc?.pressure ?? 0);
 
       // 행동 요약
       const actionLabel = `${this.actionTypeToKorean(intent.actionType)} (${resolveResult.outcome})`;
       const impactParts: string[] = [];
-      if (controlDelta !== 0) impactParts.push(`control${controlDelta > 0 ? '+' : ''}${controlDelta}`);
-      if (pressureDelta !== 0) impactParts.push(`pressure${pressureDelta > 0 ? '+' : ''}${pressureDelta}`);
-      const impactStr = impactParts.length > 0 ? impactParts.join(', ') : 'no change';
+      if (controlDelta !== 0)
+        impactParts.push(
+          `control${controlDelta > 0 ? '+' : ''}${controlDelta}`,
+        );
+      if (pressureDelta !== 0)
+        impactParts.push(
+          `pressure${pressureDelta > 0 ? '+' : ''}${pressureDelta}`,
+        );
+      const impactStr =
+        impactParts.length > 0 ? impactParts.join(', ') : 'no change';
 
       // playerInvolvements 추가 (최대 8개, 오래된 것 trim)
       const involvements = [
@@ -1096,7 +1667,9 @@ export class TurnsService {
 
       // knownClues: 이벤트 sceneFrame 앞 40자를 단서로 추가 (중복 제거, 최대 5개)
       const sceneFrame = event?.payload?.sceneFrame;
-      const clueFromEvent = sceneFrame ? sceneFrame.slice(0, 40) : (event?.eventId ?? null);
+      const clueFromEvent = sceneFrame
+        ? sceneFrame.slice(0, 40)
+        : (event?.eventId ?? null);
       const clues = [...existing.knownClues];
       if (clueFromEvent && !clues.includes(clueFromEvent)) {
         clues.push(clueFromEvent);
@@ -1138,17 +1711,27 @@ export class TurnsService {
     ws = this.worldTick.postStepTick(ws, resolvedPatches);
 
     // diff용 장비 추가 수집기 (클라이언트 즉시 반영)
-    const allEquipmentAdded: import('../db/types/equipment.js').ItemInstance[] = [];
+    const allEquipmentAdded: import('../db/types/equipment.js').ItemInstance[] =
+      [];
 
     // === Phase 4d: Legendary Quest Rewards (Incident CONTAINED + commitment 조건) ===
     const prevContainedSet = new Set(
-      prevIncidents.filter((i) => i.resolved && i.outcome === 'CONTAINED').map((i) => i.incidentId),
+      prevIncidents
+        .filter((i) => i.resolved && i.outcome === 'CONTAINED')
+        .map((i) => i.incidentId),
     );
     const newlyContainedIds = (ws.activeIncidents ?? [])
-      .filter((i) => i.resolved && i.outcome === 'CONTAINED' && !prevContainedSet.has(i.incidentId))
+      .filter(
+        (i) =>
+          i.resolved &&
+          i.outcome === 'CONTAINED' &&
+          !prevContainedSet.has(i.incidentId),
+      )
       .map((i) => i.incidentId);
     const legendaryResult = this.legendaryRewardService.check(
-      updatedRunState, ws.activeIncidents ?? [], newlyContainedIds,
+      updatedRunState,
+      ws.activeIncidents ?? [],
+      newlyContainedIds,
     );
     if (legendaryResult.awarded.length > 0) {
       if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
@@ -1156,7 +1739,13 @@ export class TurnsService {
         updatedRunState.equipmentBag.push(inst);
         allEquipmentAdded.push(inst);
         // Phase 3: ItemMemory — 전설 보상 기록
-        this.recordItemMemory(updatedRunState, inst, turnNo, '전설 보상', locationId);
+        this.recordItemMemory(
+          updatedRunState,
+          inst,
+          turnNo,
+          '전설 보상',
+          locationId,
+        );
       }
       updatedRunState.legendaryRewards = [
         ...(updatedRunState.legendaryRewards ?? []),
@@ -1165,13 +1754,25 @@ export class TurnsService {
     }
 
     // === Narrative Engine v1: NPC Emotional 업데이트 ===
-    const npcStates = { ...(runState.npcStates ?? {}) } as Record<string, NPCState>;
+    const npcStates = { ...(runState.npcStates ?? {}) } as Record<
+      string,
+      NPCState
+    >;
     const newlyIntroducedNpcIds: string[] = [];
     const newlyEncounteredNpcIds: string[] = [];
 
     // 대화 잠금 NPC 보정: 대화 행동 + targetNpc 미지정/불일치 + 이전 턴에 대화 NPC 존재 → 이전 NPC 유지
     // IntentParser의 targetNpc보다 입력 텍스트의 NPC 이름/별칭 키워드 매칭이 우선
-    const SOCIAL_ACTIONS_FOR_LOCK = new Set(['TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP', 'INVESTIGATE', 'OBSERVE', 'TRADE']);
+    const SOCIAL_ACTIONS_FOR_LOCK = new Set([
+      'TALK',
+      'PERSUADE',
+      'BRIBE',
+      'THREATEN',
+      'HELP',
+      'INVESTIGATE',
+      'OBSERVE',
+      'TRADE',
+    ]);
 
     // 입력 텍스트에서 NPC 키워드 직접 매칭 (IntentParser LLM보다 정확)
     // 우선순위: (1) 실명 전체 매칭 (2) 별칭 전체 매칭 (3) 별칭 키워드 부분 매칭
@@ -1187,7 +1788,10 @@ export class TurnsService {
           textMatchedNpcId = npc.npcId;
           break;
         }
-        if (npc.unknownAlias && inputLower.includes(npc.unknownAlias.toLowerCase())) {
+        if (
+          npc.unknownAlias &&
+          inputLower.includes(npc.unknownAlias.toLowerCase())
+        ) {
           textMatchedNpcId = npc.npcId;
           break;
         }
@@ -1198,12 +1802,16 @@ export class TurnsService {
         const targetMatch = rawInput.match(/(.+?)에게/);
         if (targetMatch) {
           const targetWord = targetMatch[1].trim().toLowerCase();
-          this.logger.debug(`[TextNpcMatch] Pass2 에게 패턴: targetWord="${targetWord}"`);
+          this.logger.debug(
+            `[TextNpcMatch] Pass2 에게 패턴: targetWord="${targetWord}"`,
+          );
           for (const npc of allNpcs) {
-            const nameMatch = npc.name && targetWord.includes(npc.name.toLowerCase());
+            const nameMatch =
+              npc.name && targetWord.includes(npc.name.toLowerCase());
             const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
             const kwMatch = aliasKeywords.some(
-              (kw: string) => kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
+              (kw: string) =>
+                kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
             );
             if (nameMatch || kwMatch) {
               textMatchedNpcId = npc.npcId;
@@ -1218,7 +1826,8 @@ export class TurnsService {
         for (const npc of allNpcs) {
           const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
           const kwMatch = aliasKeywords.some(
-            (kw: string) => kw.length >= 3 && inputLower.includes(kw.toLowerCase()),
+            (kw: string) =>
+              kw.length >= 3 && inputLower.includes(kw.toLowerCase()),
           );
           if (kwMatch) {
             textMatchedNpcId = npc.npcId;
@@ -1229,10 +1838,14 @@ export class TurnsService {
     }
 
     // textMatchedNpcId가 있으면 intentV3.targetNpcId보다 우선 (플레이어가 직접 이름을 언급)
-    const resolvedTargetNpcId = textMatchedNpcId ?? intentV3.targetNpcId ?? null;
+    const resolvedTargetNpcId =
+      textMatchedNpcId ?? intentV3.targetNpcId ?? null;
 
     let conversationLockedNpcId: string | null = null;
-    if (SOCIAL_ACTIONS_FOR_LOCK.has(intent.actionType) && !resolvedTargetNpcId) {
+    if (
+      SOCIAL_ACTIONS_FOR_LOCK.has(intent.actionType) &&
+      !resolvedTargetNpcId
+    ) {
       // 이전 턴의 primaryNpcId를 찾아서 대화 잠금 적용
       for (let i = actionHistory.length - 1; i >= 0; i--) {
         const prev = actionHistory[i] as Record<string, unknown>;
@@ -1240,7 +1853,9 @@ export class TurnsService {
         const prevAction = prev.actionType as string | undefined;
         if (prevNpc && SOCIAL_ACTIONS_FOR_LOCK.has(prevAction ?? '')) {
           conversationLockedNpcId = prevNpc;
-          this.logger.debug(`[대화잠금] 이전 대화 NPC ${conversationLockedNpcId} 유지 (action=${intent.actionType}, prevAction=${prevAction})`);
+          this.logger.debug(
+            `[대화잠금] 이전 대화 NPC ${conversationLockedNpcId} 유지 (action=${intent.actionType}, prevAction=${prevAction})`,
+          );
           break;
         }
         // 비대화 행동이면 잠금 해제
@@ -1256,7 +1871,8 @@ export class TurnsService {
     } else if (conversationLockedNpcId) {
       // 대화 잠금 NPC → 이벤트 배정 NPC보다 우선 (연속 대화 중 다른 NPC 끼어들기 방지)
       eventPrimaryNpc = conversationLockedNpcId;
-      (event.payload as Record<string, unknown>).primaryNpcId = conversationLockedNpcId;
+      (event.payload as Record<string, unknown>).primaryNpcId =
+        conversationLockedNpcId;
     }
     // 현재 location의 관련 NPC에게 감정 영향 적용
     if (eventPrimaryNpc) {
@@ -1274,13 +1890,19 @@ export class TurnsService {
       }
 
       // encounterCount 증가 — 이번 방문 내 첫 만남인 경우에만 (방문 단위 1회)
-      const alreadyMetThisVisit = actionHistory.some((h) => h.primaryNpcId === npcId);
+      const alreadyMetThisVisit = actionHistory.some(
+        (h) => h.primaryNpcId === npcId,
+      );
       if (!alreadyMetThisVisit) {
-        npcStates[npcId].encounterCount = (npcStates[npcId].encounterCount ?? 0) + 1;
+        npcStates[npcId].encounterCount =
+          (npcStates[npcId].encounterCount ?? 0) + 1;
       }
 
       // 첫 실제 만남 감지: 새로 생성되었거나, encounterCount가 0→1로 변한 경우
-      if (wasNewlyCreated || (prevEncounterCount === 0 && (npcStates[npcId].encounterCount ?? 0) > 0)) {
+      if (
+        wasNewlyCreated ||
+        (prevEncounterCount === 0 && (npcStates[npcId].encounterCount ?? 0) > 0)
+      ) {
         newlyEncounteredNpcIds.push(npcId);
       }
 
@@ -1295,29 +1917,55 @@ export class TurnsService {
       // 감정 변화 delta 계산을 위해 before 저장
       const emoBefore = npc.emotional ? { ...npc.emotional } : undefined;
       npc.emotional = this.npcEmotional.applyActionImpact(
-        npc.emotional, intent.actionType, resolveResult.outcome, true,
+        npc.emotional,
+        intent.actionType,
+        resolveResult.outcome,
+        true,
       );
       npcStates[npcId] = this.npcEmotional.syncLegacyFields(npc);
       // delta 계산 및 runState에 저장 (LLM 컨텍스트 전달용)
       if (emoBefore && npc.emotional) {
         const delta: Record<string, number> = {};
-        for (const axis of ['trust', 'fear', 'respect', 'suspicion', 'attachment'] as const) {
-          const d = Math.round(((npc.emotional as any)[axis] ?? 0) - ((emoBefore as any)[axis] ?? 0));
+        for (const axis of [
+          'trust',
+          'fear',
+          'respect',
+          'suspicion',
+          'attachment',
+        ] as const) {
+          const d = Math.round(
+            ((npc.emotional as any)[axis] ?? 0) -
+              ((emoBefore as any)[axis] ?? 0),
+          );
           if (d !== 0) delta[axis] = d;
         }
         if (Object.keys(delta).length > 0) {
-          (runState as any).lastNpcDelta = { npcId, delta, actionType: intent.actionType, outcome: resolveResult.outcome };
+          (runState as any).lastNpcDelta = {
+            npcId,
+            delta,
+            actionType: intent.actionType,
+            outcome: resolveResult.outcome,
+          };
         }
       }
 
       // === NPC 개인 기록 축적 ===
       const briefNote = (event.payload.sceneFrame ?? rawInput).slice(0, 50);
       npcStates[npcId] = recordNpcEncounter(
-        npcStates[npcId], turnNo, locationId,
-        intent.actionType, resolveResult.outcome, briefNote,
+        npcStates[npcId],
+        turnNo,
+        locationId,
+        intent.actionType,
+        resolveResult.outcome,
+        briefNote,
       );
       // knownFacts: 이벤트 결과에서 중요 발견사항 추출 (SUCCESS 판정 + 정보성 행동)
-      if (resolveResult.outcome === 'SUCCESS' && ['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE'].includes(intent.actionType)) {
+      if (
+        resolveResult.outcome === 'SUCCESS' &&
+        ['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE'].includes(
+          intent.actionType,
+        )
+      ) {
         const factNote = event.payload.sceneFrame
           ? event.payload.sceneFrame.slice(0, 60)
           : undefined;
@@ -1350,7 +1998,7 @@ export class TurnsService {
 
       // === signature 카운터 업데이트: 3턴 간격이 지났으면 이번 턴을 기록 ===
       const lastSig = npcStates[npcId].lastSignatureTurn ?? 0;
-      if ((turnNo - lastSig) >= 3) {
+      if (turnNo - lastSig >= 3) {
         npcStates[npcId].lastSignatureTurn = turnNo;
       }
     }
@@ -1401,26 +2049,38 @@ export class TurnsService {
     const resolveOutcomeCounts: Record<string, number> = {};
     for (const h of actionHistory) {
       if (h.resolveOutcome) {
-        resolveOutcomeCounts[h.resolveOutcome] = (resolveOutcomeCounts[h.resolveOutcome] ?? 0) + 1;
+        resolveOutcomeCounts[h.resolveOutcome] =
+          (resolveOutcomeCounts[h.resolveOutcome] ?? 0) + 1;
       }
     }
     // 현재 턴의 결과도 추가
-    resolveOutcomeCounts[resolveResult.outcome] = (resolveOutcomeCounts[resolveResult.outcome] ?? 0) + 1;
+    resolveOutcomeCounts[resolveResult.outcome] =
+      (resolveOutcomeCounts[resolveResult.outcome] ?? 0) + 1;
 
     const newMarks = this.narrativeMarkService.checkAndApply(
       ws.narrativeMarks ?? [],
       markConditions as NarrativeMarkCondition[],
-      { ws, npcEmotionals, npcNames, resolveOutcomes: resolveOutcomeCounts, clock: ws.globalClock },
+      {
+        ws,
+        npcEmotionals,
+        npcNames,
+        resolveOutcomes: resolveOutcomeCounts,
+        clock: ws.globalClock,
+      },
     );
     if (newMarks.length > 0) {
-      ws = { ...ws, narrativeMarks: [...(ws.narrativeMarks ?? []), ...newMarks] };
+      ws = {
+        ...ws,
+        narrativeMarks: [...(ws.narrativeMarks ?? []), ...newMarks],
+      };
     }
 
     ws = this.worldStateService.advanceTime(ws);
     ws = this.worldStateService.updateHubSafety(ws);
 
     // Deferred 체크
-    const { ws: wsAfterDeferred, triggered } = this.worldStateService.processDeferredEffects(ws, turnNo);
+    const { ws: wsAfterDeferred, triggered } =
+      this.worldStateService.processDeferredEffects(ws, turnNo);
     ws = wsAfterDeferred;
 
     // Agenda 업데이트
@@ -1429,7 +2089,10 @@ export class TurnsService {
     // Arc commitment 업데이트
     let newArcState = arcState;
     if (resolveResult.commitmentDelta > 0 && newArcState.currentRoute) {
-      newArcState = this.arcService.progressCommitment(newArcState, resolveResult.commitmentDelta);
+      newArcState = this.arcService.progressCommitment(
+        newArcState,
+        resolveResult.commitmentDelta,
+      );
     }
     // Arc route tag로 route 설정
     if (event.arcRouteTag && !newArcState.currentRoute) {
@@ -1443,18 +2106,23 @@ export class TurnsService {
     const newCooldowns = { ...cooldowns, [event.eventId]: turnNo };
 
     // 행동 이력 업데이트 (고집 시스템 + FALLBACK 페널티 + 선택지 중복 방지)
-    const eventPrimaryNpcId = (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
-    const newHistory = [...actionHistory, {
-      turnNo,
-      actionType: intent.actionType,
-      secondaryActionType: intent.secondaryActionType,
-      suppressedActionType: intent.suppressedActionType,
-      inputText: rawInput,
-      eventId: event.eventId,
-      choiceId: body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
-      primaryNpcId: eventPrimaryNpcId ?? undefined,
-      resolveOutcome: resolveResult.outcome,
-    }].slice(-10); // 최대 10개 유지
+    const eventPrimaryNpcId = (event.payload as Record<string, unknown>)
+      ?.primaryNpcId as string | undefined;
+    const newHistory = [
+      ...actionHistory,
+      {
+        turnNo,
+        actionType: intent.actionType,
+        secondaryActionType: intent.secondaryActionType,
+        suppressedActionType: intent.suppressedActionType,
+        inputText: rawInput,
+        eventId: event.eventId,
+        choiceId:
+          body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
+        primaryNpcId: eventPrimaryNpcId ?? undefined,
+        resolveOutcome: resolveResult.outcome,
+      },
+    ].slice(-10); // 최대 10개 유지
 
     // LOCATION 보상 계산 (resolve 주사위 이후 같은 RNG로 수행)
     const locationReward = this.rewardsService.calculateLocationRewards({
@@ -1472,35 +2140,65 @@ export class TurnsService {
 
     // 아이템 보상 반영 (인벤토리에 추가)
     for (const added of locationReward.items) {
-      const existing = updatedRunState.inventory.find((i) => i.itemId === added.itemId);
+      const existing = updatedRunState.inventory.find(
+        (i) => i.itemId === added.itemId,
+      );
       if (existing) existing.qty += added.qty;
-      else updatedRunState.inventory.push({ itemId: added.itemId, qty: added.qty });
+      else
+        updatedRunState.inventory.push({
+          itemId: added.itemId,
+          qty: added.qty,
+        });
     }
 
     // Phase 4a: LOCATION 장비 드랍 (GOLD_ACTIONS + SUCCESS/PARTIAL)
-    const locationEquipDropEvents: Array<{ id: string; kind: 'LOOT'; text: string; tags: string[]; data?: Record<string, unknown> }> = [];
+    const locationEquipDropEvents: Array<{
+      id: string;
+      kind: 'LOOT';
+      text: string;
+      tags: string[];
+      data?: Record<string, unknown>;
+    }> = [];
     if (resolveResult.outcome !== 'FAIL') {
-      const equipDrop = this.rewardsService.rollLocationEquipmentDrop(locationId, rng);
+      const equipDrop = this.rewardsService.rollLocationEquipmentDrop(
+        locationId,
+        rng,
+      );
       if (equipDrop.droppedInstances.length > 0) {
         if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
         for (const inst of equipDrop.droppedInstances) {
           updatedRunState.equipmentBag.push(inst);
           allEquipmentAdded.push(inst);
           // Phase 3: ItemMemory — LOCATION 드랍 기록
-          this.recordItemMemory(updatedRunState, inst, turnNo, `${locationId} 탐색 드랍`, locationId);
+          this.recordItemMemory(
+            updatedRunState,
+            inst,
+            turnNo,
+            `${locationId} 탐색 드랍`,
+            locationId,
+          );
           locationEquipDropEvents.push({
             id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
             kind: 'LOOT' as const,
             text: `[장비] ${inst.displayName} 획득`,
             tags: ['LOOT', 'EQUIPMENT_DROP'],
-            data: { baseItemId: inst.baseItemId, instanceId: inst.instanceId, displayName: inst.displayName } as Record<string, unknown>,
+            data: {
+              baseItemId: inst.baseItemId,
+              instanceId: inst.instanceId,
+              displayName: inst.displayName,
+            } as Record<string, unknown>,
           });
         }
       }
     }
 
     // === Phase 4b: RegionEconomy — SHOP 액션 + priceIndex + 재고 갱신 ===
-    const shopActionEvents: Array<{ id: string; kind: 'GOLD' | 'LOOT' | 'SYSTEM'; text: string; tags: string[] }> = [];
+    const shopActionEvents: Array<{
+      id: string;
+      kind: 'GOLD' | 'LOOT' | 'SYSTEM';
+      text: string;
+      tags: string[];
+    }> = [];
     if (this.shopService) {
       let economy: RegionEconomy = updatedRunState.regionEconomy ?? {
         priceIndex: 1.0,
@@ -1520,7 +2218,10 @@ export class TurnsService {
       for (const shopDef of allShopDefs) {
         const currentStock = economy.shopStocks[shopDef.shopId];
         const refreshed = this.shopService.refreshStock(
-          shopDef, currentStock, turnNo, run.seed,
+          shopDef,
+          currentStock,
+          turnNo,
+          run.seed,
         );
         if (refreshed !== currentStock) {
           economy = {
@@ -1542,25 +2243,36 @@ export class TurnsService {
           if (!stock) continue;
 
           // 아이템 ID 직접 매칭 또는 부분 매칭
-          const matchedItem = stock.items.find((si) =>
-            si.itemId === targetItemId ||
-            si.itemId.includes(targetItemId) ||
-            (this.content.getItem(si.itemId)?.name ?? '').includes(intent.target!)
+          const matchedItem = stock.items.find(
+            (si) =>
+              si.itemId === targetItemId ||
+              si.itemId.includes(targetItemId) ||
+              (this.content.getItem(si.itemId)?.name ?? '').includes(
+                intent.target!,
+              ),
           );
 
           if (matchedItem && matchedItem.qty > 0) {
-            const { result: purchaseResult, updatedStock } = this.shopService.purchase(
-              stock, matchedItem.itemId, updatedRunState.gold, economy.priceIndex,
-            );
+            const { result: purchaseResult, updatedStock } =
+              this.shopService.purchase(
+                stock,
+                matchedItem.itemId,
+                updatedRunState.gold,
+                economy.priceIndex,
+              );
 
             if (purchaseResult.success) {
               // 골드 감소
-              updatedRunState.gold = Math.max(0, updatedRunState.gold - purchaseResult.goldSpent);
+              updatedRunState.gold = Math.max(
+                0,
+                updatedRunState.gold - purchaseResult.goldSpent,
+              );
 
               // 아이템 추가 (장비 vs 소비)
               const itemDef = this.content.getItem(matchedItem.itemId);
               if (itemDef?.type === 'EQUIPMENT') {
-                if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+                if (!updatedRunState.equipmentBag)
+                  updatedRunState.equipmentBag = [];
                 const instance = {
                   instanceId: `${matchedItem.itemId}_${turnNo}`,
                   baseItemId: matchedItem.itemId,
@@ -1570,7 +2282,13 @@ export class TurnsService {
                 updatedRunState.equipmentBag.push(instance);
                 allEquipmentAdded.push(instance);
                 // Phase 3: ItemMemory — 상점 구매 기록
-                this.recordItemMemory(updatedRunState, instance, turnNo, '상점 구매', locationId);
+                this.recordItemMemory(
+                  updatedRunState,
+                  instance,
+                  turnNo,
+                  '상점 구매',
+                  locationId,
+                );
                 shopActionEvents.push({
                   id: `shop_buy_eq_${turnNo}`,
                   kind: 'LOOT',
@@ -1578,9 +2296,15 @@ export class TurnsService {
                   tags: ['SHOP', 'BUY', 'EQUIPMENT'],
                 });
               } else {
-                const existing = updatedRunState.inventory.find((i) => i.itemId === matchedItem.itemId);
+                const existing = updatedRunState.inventory.find(
+                  (i) => i.itemId === matchedItem.itemId,
+                );
                 if (existing) existing.qty += 1;
-                else updatedRunState.inventory.push({ itemId: matchedItem.itemId, qty: 1 });
+                else
+                  updatedRunState.inventory.push({
+                    itemId: matchedItem.itemId,
+                    qty: 1,
+                  });
                 shopActionEvents.push({
                   id: `shop_buy_${turnNo}`,
                   kind: 'GOLD',
@@ -1592,7 +2316,10 @@ export class TurnsService {
               // 재고 업데이트
               economy = {
                 ...economy,
-                shopStocks: { ...economy.shopStocks, [shopDef.shopId]: updatedStock },
+                shopStocks: {
+                  ...economy.shopStocks,
+                  [shopDef.shopId]: updatedStock,
+                },
               };
               purchased = true;
               break;
@@ -1614,18 +2341,30 @@ export class TurnsService {
     }
 
     // === User-Driven System v3: WorldDelta (세계 변화 기록) ===
-    const { ws: wsWithDelta } = this.worldDeltaService.build(turnNo, priorWsSnapshot, ws);
+    const { ws: wsWithDelta } = this.worldDeltaService.build(
+      turnNo,
+      priorWsSnapshot,
+      ws,
+    );
     ws = wsWithDelta;
 
     // === User-Driven System v3: PlayerThread (반복 행동 패턴 추적) ===
     ws = this.playerThreadService.update(
-      ws, turnNo, locationId, intentV3.approachVector, intentV3.goalCategory,
-      resolveResult.outcome, routingResult,
+      ws,
+      turnNo,
+      locationId,
+      intentV3.approachVector,
+      intentV3.goalCategory,
+      resolveResult.outcome,
+      routingResult,
     );
 
     // === Signal Feed: 행동 결과 기반 시그널 생성 ===
     const actionSignal = this.signalFeed.generateFromActionResult(
-      intent.actionType, resolveResult.outcome, locationId, ws.globalClock,
+      intent.actionType,
+      resolveResult.outcome,
+      locationId,
+      ws.globalClock,
       (event?.payload as any)?.primaryNpcId ?? intent.target,
     );
     if (actionSignal) {
@@ -1644,7 +2383,10 @@ export class TurnsService {
     updatedRunState.pbp = computePBP(newHistory);
 
     // === pendingQuestHint 만료 정리: setAtTurn < turnNo-1 이면 이미 소비됨 → 삭제 ===
-    if (updatedRunState.pendingQuestHint && updatedRunState.pendingQuestHint.setAtTurn < turnNo - 1) {
+    if (
+      updatedRunState.pendingQuestHint &&
+      updatedRunState.pendingQuestHint.setAtTurn < turnNo - 1
+    ) {
       updatedRunState.pendingQuestHint = null;
     }
 
@@ -1655,21 +2397,32 @@ export class TurnsService {
         const existing = updatedRunState.discoveredQuestFacts ?? [];
         const addFact = (factId: string, source: string) => {
           if (factId && !existing.includes(factId)) {
-            updatedRunState.discoveredQuestFacts = [...(updatedRunState.discoveredQuestFacts ?? []), factId];
+            updatedRunState.discoveredQuestFacts = [
+              ...(updatedRunState.discoveredQuestFacts ?? []),
+              factId,
+            ];
             // arcState에도 동기화 (checkTransition + API 응답에서 arcState.discoveredQuestFacts 참조)
             if (updatedRunState.arcState) {
-              updatedRunState.arcState.discoveredQuestFacts = updatedRunState.discoveredQuestFacts;
+              updatedRunState.arcState.discoveredQuestFacts =
+                updatedRunState.discoveredQuestFacts;
             }
             existing.push(factId); // 같은 턴 중복 방지
             discoveredFactIdsThisTurn.push(factId);
-            this.logger.log(`[Quest] Fact discovered: ${factId} (source: ${source})`);
+            this.logger.log(
+              `[Quest] Fact discovered: ${factId} (source: ${source})`,
+            );
           }
         };
 
         // 경로 1: 이벤트 discoverableFact — SUCCESS 시 자동 발견
         if (resolveResult.outcome === 'SUCCESS' && event) {
-          const eventFact = (event.payload as Record<string, unknown>)?.discoverableFact as string | undefined
-            ?? (event as Record<string, unknown>).discoverableFact as string | undefined;
+          const eventFact =
+            ((event.payload as Record<string, unknown>)?.discoverableFact as
+              | string
+              | undefined) ??
+            ((event as Record<string, unknown>).discoverableFact as
+              | string
+              | undefined);
           if (eventFact) {
             addFact(eventFact, `event:${event.eventId}`);
           }
@@ -1677,20 +2430,36 @@ export class TurnsService {
 
         // 경로 2: NPC knownFacts — SUCCESS/PARTIAL + 정보성 행동 + 2단계 NPC 반응 판정
         // effectiveNpcId: 텍스트 매칭 → IntentParser → 대화 잠금 → 이벤트 NPC 순으로 결정됨
-        const INFO_ACTIONS = new Set(['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE', 'SEARCH', 'HELP', 'BRIBE', 'THREATEN', 'STEAL']);
+        const INFO_ACTIONS = new Set([
+          'INVESTIGATE',
+          'PERSUADE',
+          'TALK',
+          'TRADE',
+          'OBSERVE',
+          'SEARCH',
+          'HELP',
+          'BRIBE',
+          'THREATEN',
+          'STEAL',
+        ]);
         if (
-          (resolveResult.outcome === 'SUCCESS' || resolveResult.outcome === 'PARTIAL') &&
+          (resolveResult.outcome === 'SUCCESS' ||
+            resolveResult.outcome === 'PARTIAL') &&
           INFO_ACTIONS.has(intent.actionType)
         ) {
-          const npcId = eventPrimaryNpc
-            ?? ((event?.payload as Record<string, unknown>)?.primaryNpcId as string | undefined)
-            ?? null;
+          const npcId =
+            eventPrimaryNpc ??
+            ((event?.payload as Record<string, unknown>)?.primaryNpcId as
+              | string
+              | undefined) ??
+            null;
           if (npcId) {
             // 2단계: NPC trust 기반 반응 판정
             const npcState = npcStates[npcId];
             const npcTrust = npcState?.emotional?.trust ?? 0;
             // BRIBE/THREATEN은 특수: trust 무관하게 작동 (금전/공포 기반)
-            const bypassTrust = intent.actionType === 'BRIBE' || intent.actionType === 'THREATEN';
+            const bypassTrust =
+              intent.actionType === 'BRIBE' || intent.actionType === 'THREATEN';
 
             // trust 단계별 반응:
             //   trust > 20: 직접 전달 (SUCCESS/PARTIAL 모두)
@@ -1698,12 +2467,14 @@ export class TurnsService {
             //   trust -20~0: 관찰 힌트 (SUCCESS만 — fact 발견되지만 전달 방식만 다름)
             //   trust < -20: 거부 (fact 미발견 — 다른 NPC나 이벤트로 우회 필요)
             let npcWillReveal = false;
-            let npcRevealMode: 'direct' | 'indirect' | 'observe' | 'refuse' = 'refuse';
+            let npcRevealMode: 'direct' | 'indirect' | 'observe' | 'refuse' =
+              'refuse';
 
             if (bypassTrust) {
               // BRIBE/THREATEN: trust 무관, 판정 결과만으로 결정
               npcWillReveal = true;
-              npcRevealMode = resolveResult.outcome === 'SUCCESS' ? 'indirect' : 'observe';
+              npcRevealMode =
+                resolveResult.outcome === 'SUCCESS' ? 'indirect' : 'observe';
             } else if (npcTrust > 20) {
               npcWillReveal = true;
               npcRevealMode = 'direct';
@@ -1719,24 +2490,38 @@ export class TurnsService {
               npcRevealMode = 'refuse';
             }
 
-            this.logger.log(`[Quest:NpcReaction] npc=${npcId} trust=${npcTrust} action=${intent.actionType} outcome=${resolveResult.outcome} → willReveal=${npcWillReveal} mode=${npcRevealMode}`);
+            this.logger.log(
+              `[Quest:NpcReaction] npc=${npcId} trust=${npcTrust} action=${intent.actionType} outcome=${resolveResult.outcome} → willReveal=${npcWillReveal} mode=${npcRevealMode}`,
+            );
 
             if (npcWillReveal) {
-              const revealedFactId = this.questProgression.getRevealableQuestFact(npcId, updatedRunState);
+              const revealedFactId =
+                this.questProgression.getRevealableQuestFact(
+                  npcId,
+                  updatedRunState,
+                );
               if (revealedFactId) {
                 addFact(revealedFactId, `npc:${npcId}:${npcRevealMode}`);
                 // revealMode를 serverResult에 전달하여 context-builder에서 프롬프트 분기에 활용
-                (updatedRunState as unknown as Record<string, unknown>)._npcRevealMode = npcRevealMode;
+                (
+                  updatedRunState as unknown as Record<string, unknown>
+                )._npcRevealMode = npcRevealMode;
               }
             }
           }
         }
 
         // 경로 3: PARTIAL + 이벤트 discoverableFact — P2/P4: 확률은 config에서 관리
-        const { PARTIAL_FACT_DISCOVERY_CHANCE } = require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
+        const { PARTIAL_FACT_DISCOVERY_CHANCE } =
+          require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
         if (resolveResult.outcome === 'PARTIAL' && event) {
-          const eventFact = (event.payload as Record<string, unknown>)?.discoverableFact as string | undefined
-            ?? (event as Record<string, unknown>).discoverableFact as string | undefined;
+          const eventFact =
+            ((event.payload as Record<string, unknown>)?.discoverableFact as
+              | string
+              | undefined) ??
+            ((event as Record<string, unknown>).discoverableFact as
+              | string
+              | undefined);
           if (eventFact && !existing.includes(eventFact)) {
             const roll = rng.range(0, 100);
             if (roll < PARTIAL_FACT_DISCOVERY_CHANCE) {
@@ -1746,27 +2531,46 @@ export class TurnsService {
         }
 
         // 전체 발견 팩트 수집 + 단계 전환 체크
-        const discoveredFacts = this.questProgression.collectDiscoveredFacts(updatedRunState);
+        const discoveredFacts =
+          this.questProgression.collectDiscoveredFacts(updatedRunState);
         const currentQuestState = updatedRunState.questState ?? 'S0_ARRIVE';
-        const transition = this.questProgression.checkTransition(currentQuestState, discoveredFacts);
+        const transition = this.questProgression.checkTransition(
+          currentQuestState,
+          discoveredFacts,
+        );
         if (transition.newState) {
           updatedRunState.questState = transition.newState;
           if (updatedRunState.arcState) {
             updatedRunState.arcState.questState = transition.newState;
           }
-          this.logger.log(`[Quest] ${currentQuestState} -> ${transition.newState}`);
+          this.logger.log(
+            `[Quest] ${currentQuestState} -> ${transition.newState}`,
+          );
         }
 
         // pendingQuestHint: 이번 턴에 발견된 fact의 nextHint를 저장 → 다음 턴 LLM 프롬프트에서 사용
         if (discoveredFactIdsThisTurn.length > 0) {
           // 마지막 발견 fact의 nextHint 사용 (여러 fact 동시 발견 시 가장 최근 것)
-          const lastFactId = discoveredFactIdsThisTurn[discoveredFactIdsThisTurn.length - 1];
+          const lastFactId =
+            discoveredFactIdsThisTurn[discoveredFactIdsThisTurn.length - 1];
           const nextHint = this.questProgression.getFactNextHint(lastFactId);
           if (nextHint) {
-            const HINT_MODES = ['OVERHEARD', 'DOCUMENT', 'SCENE_CLUE', 'NPC_BEHAVIOR', 'RUMOR_ECHO'] as const;
+            const HINT_MODES = [
+              'OVERHEARD',
+              'DOCUMENT',
+              'SCENE_CLUE',
+              'NPC_BEHAVIOR',
+              'RUMOR_ECHO',
+            ] as const;
             const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length)];
-            updatedRunState.pendingQuestHint = { hint: nextHint, setAtTurn: turnNo, mode: hintMode };
-            this.logger.log(`[Quest] pendingQuestHint set for fact=${lastFactId} mode=${hintMode} at turn=${turnNo}`);
+            updatedRunState.pendingQuestHint = {
+              hint: nextHint,
+              setAtTurn: turnNo,
+              mode: hintMode,
+            };
+            this.logger.log(
+              `[Quest] pendingQuestHint set for fact=${lastFactId} mode=${hintMode} at turn=${turnNo}`,
+            );
           }
         }
       } catch (err) {
@@ -1775,13 +2579,19 @@ export class TurnsService {
     }
 
     // === 대화 주제에 factId 역보충: quest 발견 후 해당 NPC의 recentTopics에 factId 기록 ===
-    if (discoveredFactIdsThisTurn.length > 0 && eventPrimaryNpc && npcStates[eventPrimaryNpc]?.llmSummary?.recentTopics) {
+    if (
+      discoveredFactIdsThisTurn.length > 0 &&
+      eventPrimaryNpc &&
+      npcStates[eventPrimaryNpc]?.llmSummary?.recentTopics
+    ) {
       const topics = npcStates[eventPrimaryNpc].llmSummary!.recentTopics!;
-      const thisTurnTopic = topics.find(t => t.turnNo === turnNo);
+      const thisTurnTopic = topics.find((t) => t.turnNo === turnNo);
       if (thisTurnTopic && !thisTurnTopic.factId) {
         thisTurnTopic.factId = discoveredFactIdsThisTurn[0];
         // factDetail을 topic에 반영 (더 정확한 주제 정보)
-        const questFact = this.questProgression?.getFactDetail(discoveredFactIdsThisTurn[0]);
+        const questFact = this.questProgression?.getFactDetail(
+          discoveredFactIdsThisTurn[0],
+        );
         if (questFact) {
           thisTurnTopic.topic = questFact.slice(0, 40);
         }
@@ -1818,9 +2628,12 @@ export class TurnsService {
         newlyEncounteredNpcIds.push(injectedNpcId);
       }
       // 방문 단위 encounterCount 증가
-      const alreadyMetInjected = actionHistory.some((h) => h.primaryNpcId === injectedNpcId);
+      const alreadyMetInjected = actionHistory.some(
+        (h) => h.primaryNpcId === injectedNpcId,
+      );
       if (!alreadyMetInjected) {
-        npcStates[injectedNpcId].encounterCount = (npcStates[injectedNpcId].encounterCount ?? 0) + 1;
+        npcStates[injectedNpcId].encounterCount =
+          (npcStates[injectedNpcId].encounterCount ?? 0) + 1;
       }
       // 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
       const introPosture = npcStates[injectedNpcId].posture;
@@ -1833,8 +2646,12 @@ export class TurnsService {
       // === 주입된 NPC 개인 기록 축적 ===
       const injBriefNote = (event.payload.sceneFrame ?? rawInput).slice(0, 50);
       npcStates[injectedNpcId] = recordNpcEncounter(
-        npcStates[injectedNpcId], turnNo, locationId,
-        intent.actionType, resolveResult.outcome, injBriefNote,
+        npcStates[injectedNpcId],
+        turnNo,
+        locationId,
+        intent.actionType,
+        resolveResult.outcome,
+        injBriefNote,
       );
 
       // === 주입된 NPC LLM Summary 업데이트 ===
@@ -1856,17 +2673,24 @@ export class TurnsService {
           intent.actionType,
           rawInput,
         );
-        npcStates[injectedNpcId] = addRecentTopic(npcStates[injectedNpcId], topicEntry);
+        npcStates[injectedNpcId] = addRecentTopic(
+          npcStates[injectedNpcId],
+          topicEntry,
+        );
       }
     }
 
     // 비도전 행위 여부 (MOVE_LOCATION, REST, SHOP, TALK → 주사위 UI 숨김)
-    const isNonChallenge = ['MOVE_LOCATION', 'REST', 'SHOP'].includes(intent.actionType);
+    const isNonChallenge = ['MOVE_LOCATION', 'REST', 'SHOP'].includes(
+      intent.actionType,
+    );
 
     // 결과 조립 — 선택지 생성 전략:
     // 이벤트 첫 만남 → 이벤트 고유 선택지, 이미 상호작용한 이벤트 → resolve 후속 선택지
     const previousHistory = runState.actionHistory ?? [];
-    const eventAlreadyInteracted = previousHistory.some((h) => h.eventId === event.eventId);
+    const eventAlreadyInteracted = previousHistory.some(
+      (h) => h.eventId === event.eventId,
+    );
     const selectedChoiceIds = newHistory
       .filter((h) => h.choiceId)
       .map((h) => h.choiceId!);
@@ -1874,10 +2698,24 @@ export class TurnsService {
     let choices: ChoiceItem[];
     if (eventAlreadyInteracted) {
       // 이미 상호작용한 이벤트 → resolve 결과 기반 후속 선택지 (sourceEventId 부분 적용 + eventType별 풀)
-      choices = this.sceneShellService.buildFollowUpChoices(locationId, resolveResult.outcome, selectedChoiceIds, event.eventId, event.eventType, turnNo, resolvedChoices);
+      choices = this.sceneShellService.buildFollowUpChoices(
+        locationId,
+        resolveResult.outcome,
+        selectedChoiceIds,
+        event.eventId,
+        event.eventType,
+        turnNo,
+        resolvedChoices,
+      );
     } else {
       // 첫 만남 이벤트 → 이벤트 고유 선택지
-      choices = this.sceneShellService.buildLocationChoices(locationId, event.eventType, resolvedChoices, selectedChoiceIds, event.eventId);
+      choices = this.sceneShellService.buildLocationChoices(
+        locationId,
+        event.eventType,
+        resolvedChoices,
+        selectedChoiceIds,
+        event.eventId,
+      );
     }
     // === 선택지별 예상 보정치(modifier) 부착 ===
     {
@@ -1896,40 +2734,67 @@ export class TurnsService {
     }
 
     // summary.short: "이번 턴의 핵심 한 문장" — 행동 + 판정결과만 (sceneFrame 분리하여 중복 전달 방지)
-    const outcomeLabel = resolveResult.outcome === 'SUCCESS' ? '성공' : resolveResult.outcome === 'PARTIAL' ? '부분 성공' : '실패';
+    const outcomeLabel =
+      resolveResult.outcome === 'SUCCESS'
+        ? '성공'
+        : resolveResult.outcome === 'PARTIAL'
+          ? '부분 성공'
+          : '실패';
     const actionLabel = this.actionTypeToKorean(intent.actionType);
     const summaryText = isNonChallenge
       ? `플레이어가 ${actionLabel}${korParticle(actionLabel, '을', '를')} 했다.`
       : `플레이어가 "${rawInput}"${korParticle(rawInput, '을', '를')} 시도하여 ${outcomeLabel}했다.`;
-    const result = this.buildLocationResult(turnNo, currentNode, summaryText, resolveResult.outcome, choices, ws, {
-      parsedType: intent.actionType,
-      originalInput: rawInput,
-      tone: intent.tone,
-      escalated: intent.escalated,
-      insistenceCount: insistenceCount > 0 ? insistenceCount : undefined,
-      eventSceneFrame: resolvedSceneFrame,
-      eventMatchPolicy: event.matchPolicy,
-      eventId: event.eventId,
-      primaryNpcId: event.payload.primaryNpcId ?? null,
-      goalCategory: intentV3.goalCategory,
-      approachVector: intentV3.approachVector,
-      goalText: intentV3.goalText,
-      targetNpcId: intentV3.targetNpcId ?? undefined,
-    }, isNonChallenge, totalGoldDelta, locationReward.items,
-    isNonChallenge ? undefined : {
-      diceRoll: resolveResult.diceRoll!,
-      statKey: resolveResult.statKey ?? null,
-      statValue: resolveResult.statValue ?? 0,
-      statBonus: resolveResult.statBonus ?? 0,
-      baseMod: resolveResult.baseMod ?? 0,
-      totalScore: resolveResult.score,
-    },
-    allEquipmentAdded.length > 0 ? allEquipmentAdded : undefined);
+    const result = this.buildLocationResult(
+      turnNo,
+      currentNode,
+      summaryText,
+      resolveResult.outcome,
+      choices,
+      ws,
+      {
+        parsedType: intent.actionType,
+        originalInput: rawInput,
+        tone: intent.tone,
+        escalated: intent.escalated,
+        insistenceCount: insistenceCount > 0 ? insistenceCount : undefined,
+        eventSceneFrame: resolvedSceneFrame,
+        eventMatchPolicy: event.matchPolicy,
+        eventId: event.eventId,
+        primaryNpcId: event.payload.primaryNpcId ?? null,
+        goalCategory: intentV3.goalCategory,
+        approachVector: intentV3.approachVector,
+        goalText: intentV3.goalText,
+        targetNpcId: intentV3.targetNpcId ?? undefined,
+      },
+      isNonChallenge,
+      totalGoldDelta,
+      locationReward.items,
+      isNonChallenge
+        ? undefined
+        : {
+            diceRoll: resolveResult.diceRoll!,
+            statKey: resolveResult.statKey ?? null,
+            statValue: resolveResult.statValue ?? 0,
+            statBonus: resolveResult.statBonus ?? 0,
+            baseMod: resolveResult.baseMod ?? 0,
+            totalScore: resolveResult.score,
+          },
+      allEquipmentAdded.length > 0 ? allEquipmentAdded : undefined,
+    );
 
     // 고집 2회째 경고 이벤트 — 다음 반복 시 에스컬레이션 예고
     if (intent.insistenceWarning) {
       const nextType = this.actionTypeToKorean(
-        ({ THREATEN: 'FIGHT', PERSUADE: 'THREATEN', OBSERVE: 'INVESTIGATE', TALK: 'PERSUADE', BRIBE: 'THREATEN', SNEAK: 'STEAL' } as Record<string, string>)[intent.actionType] ?? intent.actionType,
+        (
+          {
+            THREATEN: 'FIGHT',
+            PERSUADE: 'THREATEN',
+            OBSERVE: 'INVESTIGATE',
+            TALK: 'PERSUADE',
+            BRIBE: 'THREATEN',
+            SNEAK: 'STEAL',
+          } as Record<string, string>
+        )[intent.actionType] ?? intent.actionType,
       );
       result.events.push({
         id: `warn_insistence_${turnNo}`,
@@ -2000,9 +2865,11 @@ export class TurnsService {
       (result.ui as any).newlyEncounteredNpcIds = newlyEncounteredNpcIds;
     }
     // Portrait card: 첫 만남(encountered) 또는 첫 소개(introduced)인 NPC에게 초상화 표시
-    const portraitCandidates = [...new Set([...newlyEncounteredNpcIds, ...newlyIntroducedNpcIds])];
+    const portraitCandidates = [
+      ...new Set([...newlyEncounteredNpcIds, ...newlyIntroducedNpcIds]),
+    ];
     if (portraitCandidates.length > 0) {
-      const portraitNpcId = portraitCandidates.find(id => NPC_PORTRAITS[id]);
+      const portraitNpcId = portraitCandidates.find((id) => NPC_PORTRAITS[id]);
       if (portraitNpcId) {
         (result.ui as any).npcPortrait = {
           npcId: portraitNpcId,
@@ -2015,7 +2882,11 @@ export class TurnsService {
 
     // === Speaking NPC: 대사 주체 정보 (클라이언트 DialogueBubble용) ===
     // eventPrimaryNpc는 대화잠금/타겟매칭으로 보정된 실제 NPC ID (PROCEDURAL 이벤트 포함)
-    const primaryNpcIdForSpeaking = eventPrimaryNpc ?? (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
+    const primaryNpcIdForSpeaking =
+      eventPrimaryNpc ??
+      ((event.payload as Record<string, unknown>)?.primaryNpcId as
+        | string
+        | undefined);
     if (primaryNpcIdForSpeaking && npcNames[primaryNpcIdForSpeaking]) {
       (result.ui as any).speakingNpc = {
         npcId: primaryNpcIdForSpeaking,
@@ -2025,42 +2896,50 @@ export class TurnsService {
     }
 
     // === Narrative Engine v1: UI data 추가 ===
-    const finalWs = updatedRunState.worldState!;
+    const finalWs = updatedRunState.worldState;
     // Signal Feed
-    (result.ui as any).signalFeed = (finalWs.signalFeed ?? []).map((s: any) => ({
-      id: s.id,
-      channel: s.channel,
-      severity: s.severity,
-      locationId: s.locationId,
-      text: s.text,
-    })) as SignalFeedItemUI[];
+    (result.ui as any).signalFeed = (finalWs.signalFeed ?? []).map(
+      (s: any) => ({
+        id: s.id,
+        channel: s.channel,
+        severity: s.severity,
+        locationId: s.locationId,
+        text: s.text,
+      }),
+    ) as SignalFeedItemUI[];
 
     // Active Incidents
     const incidentDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
-    (result.ui as any).activeIncidents = (finalWs.activeIncidents ?? []).map((i: IncidentRuntime) => ({
-      incidentId: i.incidentId,
-      title: incidentDefMap.get(i.incidentId)?.title ?? i.incidentId,
-      kind: i.kind,
-      stage: i.stage,
-      control: i.control,
-      pressure: i.pressure,
-      deadlineClock: i.deadlineClock,
-      resolved: i.resolved,
-      outcome: i.outcome,
-    })) as IncidentSummaryUI[];
+    (result.ui as any).activeIncidents = (finalWs.activeIncidents ?? []).map(
+      (i: IncidentRuntime) => ({
+        incidentId: i.incidentId,
+        title: incidentDefMap.get(i.incidentId)?.title ?? i.incidentId,
+        kind: i.kind,
+        stage: i.stage,
+        control: i.control,
+        pressure: i.pressure,
+        deadlineClock: i.deadlineClock,
+        resolved: i.resolved,
+        outcome: i.outcome,
+      }),
+    ) as IncidentSummaryUI[];
 
     // NPC Emotional
-    const npcEmotionalUIs: NpcEmotionalUI[] = Object.entries(npcStates).map(([npcId, npc]) => ({
-      npcId,
-      npcName: npcNames[npcId] ?? npcId,
-      trust: npc.emotional.trust,
-      fear: npc.emotional.fear,
-      respect: npc.emotional.respect,
-      suspicion: npc.emotional.suspicion,
-      attachment: npc.emotional.attachment,
-      posture: npc.posture,
-      marks: (finalWs.narrativeMarks ?? []).filter((m: any) => m.npcId === npcId).map((m: any) => m.type),
-    }));
+    const npcEmotionalUIs: NpcEmotionalUI[] = Object.entries(npcStates).map(
+      ([npcId, npc]) => ({
+        npcId,
+        npcName: npcNames[npcId] ?? npcId,
+        trust: npc.emotional.trust,
+        fear: npc.emotional.fear,
+        respect: npc.emotional.respect,
+        suspicion: npc.emotional.suspicion,
+        attachment: npc.emotional.attachment,
+        posture: npc.posture,
+        marks: (finalWs.narrativeMarks ?? [])
+          .filter((m: any) => m.npcId === npcId)
+          .map((m: any) => m.type),
+      }),
+    );
     if (npcEmotionalUIs.length > 0) {
       (result.ui as any).npcEmotional = npcEmotionalUIs;
     }
@@ -2072,7 +2951,11 @@ export class TurnsService {
       resolveOutcome: resolveResult.outcome,
       actionType: intent.actionType,
       goalText: intentV3.goalText,
-      targetNpcId: intentV3.targetNpcId ?? (event?.payload as any)?.primaryNpcId ?? intent.target ?? null,
+      targetNpcId:
+        intentV3.targetNpcId ??
+        (event?.payload as any)?.primaryNpcId ??
+        intent.target ??
+        null,
       relatedIncidentId: routingResult?.incident?.incidentId ?? null,
       prevIncidents,
       currentIncidents: finalWs.activeIncidents ?? [],
@@ -2094,19 +2977,26 @@ export class TurnsService {
     if (this.shopService && updatedRunState.regionEconomy) {
       const locShops = this.content.getShopsByLocation(locationId);
       if (locShops.length > 0) {
-        const shopDisplays = locShops.map((shopDef) => {
-          const stock = updatedRunState.regionEconomy!.shopStocks[shopDef.shopId];
-          return {
-            shopId: shopDef.shopId,
-            name: shopDef.name,
-            items: stock
-              ? this.shopService!.getDisplayItems(stock, updatedRunState.regionEconomy!.priceIndex)
-              : [],
-          };
-        }).filter((s) => s.items.length > 0);
+        const shopDisplays = locShops
+          .map((shopDef) => {
+            const stock =
+              updatedRunState.regionEconomy!.shopStocks[shopDef.shopId];
+            return {
+              shopId: shopDef.shopId,
+              name: shopDef.name,
+              items: stock
+                ? this.shopService.getDisplayItems(
+                    stock,
+                    updatedRunState.regionEconomy!.priceIndex,
+                  )
+                : [],
+            };
+          })
+          .filter((s) => s.items.length > 0);
         if (shopDisplays.length > 0) {
           (result.ui as any).shops = shopDisplays;
-          (result.ui as any).priceIndex = updatedRunState.regionEconomy.priceIndex;
+          (result.ui as any).priceIndex =
+            updatedRunState.regionEconomy.priceIndex;
         }
       }
     }
@@ -2140,25 +3030,33 @@ export class TurnsService {
 
     // === Narrative Engine v1: NPC passive drift (offscreen) ===
     if (postTickRunState.npcStates) {
-      for (const [npcId, npc] of Object.entries(postTickRunState.npcStates as Record<string, NPCState>)) {
+      for (const [npcId, npc] of Object.entries(postTickRunState.npcStates)) {
         npc.emotional = this.npcEmotional.applyPassiveDrift(npc.emotional);
-        (postTickRunState.npcStates as Record<string, NPCState>)[npcId] = this.npcEmotional.syncLegacyFields(npc);
+        postTickRunState.npcStates[npcId] =
+          this.npcEmotional.syncLegacyFields(npc);
       }
     }
 
     // === Narrative Engine v1: Ending 조건 체크 ===
     const endWs = postTickRunState.worldState!;
-    const { shouldEnd, reason: endReason } = this.endingGenerator.checkEndingConditions(
-      endWs.activeIncidents ?? [],
-      endWs.mainArcClock ?? { startDay: 1, softDeadlineDay: 14, triggered: false },
-      endWs.day ?? 1,
-      turnNo,
-    );
+    const { shouldEnd, reason: endReason } =
+      this.endingGenerator.checkEndingConditions(
+        endWs.activeIncidents ?? [],
+        endWs.mainArcClock ?? {
+          startDay: 1,
+          softDeadlineDay: 14,
+          triggered: false,
+        },
+        endWs.day ?? 1,
+        turnNo,
+      );
 
     // === Structured Memory v2: 실시간 수집 ===
     try {
       // NPC 감정 변화 delta 계산 (이번 턴에서 변경된 축만)
-      let npcEmoDelta: { npcId: string; delta: Record<string, number> } | undefined;
+      let npcEmoDelta:
+        | { npcId: string; delta: Record<string, number> }
+        | undefined;
       if (effectiveNpcId) {
         const npc = npcStates[effectiveNpcId];
         if (npc?.emotional) {
@@ -2187,8 +3085,18 @@ export class TurnsService {
           incidentImpact: relevantIncident
             ? {
                 incidentId: relevantIncident.incident.incidentId,
-                controlDelta: relevantIncident.incident.control - (priorWsSnapshot.activeIncidents?.find((i) => i.incidentId === relevantIncident.incident.incidentId)?.control ?? 0),
-                pressureDelta: relevantIncident.incident.pressure - (priorWsSnapshot.activeIncidents?.find((i) => i.incidentId === relevantIncident.incident.incidentId)?.pressure ?? 0),
+                controlDelta:
+                  relevantIncident.incident.control -
+                  (priorWsSnapshot.activeIncidents?.find(
+                    (i) =>
+                      i.incidentId === relevantIncident.incident.incidentId,
+                  )?.control ?? 0),
+                pressureDelta:
+                  relevantIncident.incident.pressure -
+                  (priorWsSnapshot.activeIncidents?.find(
+                    (i) =>
+                      i.incidentId === relevantIncident.incident.incidentId,
+                  )?.pressure ?? 0),
               }
             : undefined,
           npcEmotionalDelta: npcEmoDelta as any,
@@ -2197,7 +3105,9 @@ export class TurnsService {
       );
     } catch (err) {
       // 수집 실패는 게임 진행에 영향 없음
-      this.logger.warn(`[MemoryCollector] collectFromTurn failed: ${(err as Error).message}`);
+      this.logger.warn(
+        `[MemoryCollector] collectFromTurn failed: ${(err as Error).message}`,
+      );
     }
 
     // 파이프라인 로그를 serverResult에 포함 (commitTurnRecord 전에 추가해야 DB에 저장됨)
@@ -2228,23 +3138,43 @@ export class TurnsService {
       },
       npc: {
         targetNpcId: intentV3.targetNpcId ?? effectiveNpcId ?? null,
-        posture: orchestrationResult?.npcPostures?.[effectiveNpcId ?? ''] ?? null,
+        posture:
+          orchestrationResult?.npcPostures?.[effectiveNpcId ?? ''] ?? null,
       },
-      orchestration: orchestrationResult ? {
-        peakMode: orchestrationResult.peakMode,
-        pressure: orchestrationResult.pressure,
-        npcInjectionId: orchestrationResult.npcInjection?.npcId ?? null,
-      } : undefined,
+      orchestration: orchestrationResult
+        ? {
+            peakMode: orchestrationResult.peakMode,
+            pressure: orchestrationResult.pressure,
+            npcInjectionId: orchestrationResult.npcInjection?.npcId ?? null,
+          }
+        : undefined,
     };
 
-    await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, postTickRunState, body.options?.skipLlm, intent);
+    await this.commitTurnRecord(
+      run,
+      currentNode,
+      turnNo,
+      body,
+      rawInput,
+      result,
+      postTickRunState,
+      body.options?.skipLlm,
+      intent,
+    );
 
     if (shouldEnd && endReason) {
       // Fixplan3-P1: RUN_ENDED 전 structuredMemory 통합 (go_hub 없이 런 종료 시 누락 방지)
       try {
-        const locMemEnd = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, postTickRunState, turnNo);
+        const locMemEnd = await this.memoryIntegration.finalizeVisit(
+          run.id,
+          currentNode.id,
+          postTickRunState,
+          turnNo,
+        );
         if (locMemEnd) postTickRunState.locationMemories = locMemEnd;
-      } catch { /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */ }
+      } catch {
+        /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */
+      }
 
       // 엔딩 생성
       // User-Driven System v3: playerThreads를 엔딩 입력에 전달
@@ -2257,20 +3187,27 @@ export class TurnsService {
       }));
       const endingInput = this.endingGenerator.gatherEndingInputs(
         endWs.activeIncidents ?? [],
-        (postTickRunState.npcStates ?? {}) as Record<string, NPCState>,
+        postTickRunState.npcStates ?? {},
         endWs.narrativeMarks ?? [],
         endWs as unknown as Record<string, unknown>,
         postTickRunState.arcState ?? null,
         postTickRunState.actionHistory ?? [],
         endingThreads,
       );
-      const endingResult = this.endingGenerator.generateEnding(endingInput, endReason, turnNo);
+      const endingResult = this.endingGenerator.generateEnding(
+        endingInput,
+        endReason,
+        turnNo,
+      );
 
       // RUN_ENDED로 상태 변경
-      await this.db.update(runSessions).set({
-        status: 'RUN_ENDED',
-        updatedAt: new Date(),
-      }).where(eq(runSessions.id, run.id));
+      await this.db
+        .update(runSessions)
+        .set({
+          status: 'RUN_ENDED',
+          updatedAt: new Date(),
+        })
+        .where(eq(runSessions.id, run.id));
 
       // Campaign: 시나리오 결과 저장
       await this.saveCampaignResultIfNeeded(run.id);
@@ -2285,15 +3222,25 @@ export class TurnsService {
       });
 
       return {
-        accepted: true, turnNo, serverResult: result,
-        llm: { status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus, narrative: null },
+        accepted: true,
+        turnNo,
+        serverResult: result,
+        llm: {
+          status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus,
+          narrative: null,
+        },
         meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
       };
     }
 
     return {
-      accepted: true, turnNo, serverResult: result,
-      llm: { status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus, narrative: null },
+      accepted: true,
+      turnNo,
+      serverResult: result,
+      llm: {
+        status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus,
+        narrative: null,
+      },
       meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
     };
   }
@@ -2319,7 +3266,7 @@ export class TurnsService {
       nodeType,
       nodeMeta: currentNode.nodeMeta as import('../db/types/index.js').NodeMeta,
       envTags: currentNode.environmentTags ?? [],
-      inputType: body.input.type as 'ACTION' | 'CHOICE' | 'SYSTEM',
+      inputType: body.input.type,
       rawInput,
       choiceId: body.input.choiceId,
       playerStats,
@@ -2335,48 +3282,90 @@ export class TurnsService {
     });
 
     // RunState 반영 (gold, hp, stamina 변동)
-    if (resolveResult.goldDelta) updatedRunState.gold += resolveResult.goldDelta;
+    if (resolveResult.goldDelta)
+      updatedRunState.gold += resolveResult.goldDelta;
     if (resolveResult.hpDelta) {
-      updatedRunState.hp = Math.max(0, Math.min(updatedRunState.maxHp, updatedRunState.hp + resolveResult.hpDelta));
+      updatedRunState.hp = Math.max(
+        0,
+        Math.min(
+          updatedRunState.maxHp,
+          updatedRunState.hp + resolveResult.hpDelta,
+        ),
+      );
     }
     if (resolveResult.staminaDelta) {
-      updatedRunState.stamina = Math.max(0, Math.min(updatedRunState.maxStamina, updatedRunState.stamina + resolveResult.staminaDelta));
+      updatedRunState.stamina = Math.max(
+        0,
+        Math.min(
+          updatedRunState.maxStamina,
+          updatedRunState.stamina + resolveResult.staminaDelta,
+        ),
+      );
     }
     if (resolveResult.itemsBought) {
       for (const item of resolveResult.itemsBought) {
-        const existing = updatedRunState.inventory.find((i) => i.itemId === item.itemId);
+        const existing = updatedRunState.inventory.find(
+          (i) => i.itemId === item.itemId,
+        );
         if (existing) existing.qty += item.qty;
-        else updatedRunState.inventory.push({ itemId: item.itemId, qty: item.qty });
+        else
+          updatedRunState.inventory.push({
+            itemId: item.itemId,
+            qty: item.qty,
+          });
       }
     }
 
     // 턴 커밋
     const llmStatus: LlmStatus = body.options?.skipLlm ? 'SKIPPED' : 'PENDING';
     await this.db.insert(turns).values({
-      runId: run.id, turnNo, nodeInstanceId: currentNode.id,
-      nodeType, inputType: body.input.type,
-      rawInput, idempotencyKey: body.idempotencyKey,
-      parsedBy: null, confidence: null, parsedIntent: null,
-      policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
-      serverResult: resolveResult.serverResult, llmStatus,
+      runId: run.id,
+      turnNo,
+      nodeInstanceId: currentNode.id,
+      nodeType,
+      inputType: body.input.type,
+      rawInput,
+      idempotencyKey: body.idempotencyKey,
+      parsedBy: null,
+      confidence: null,
+      parsedIntent: null,
+      policyResult: 'ALLOW',
+      transformedIntent: null,
+      actionPlan: null,
+      serverResult: resolveResult.serverResult,
+      llmStatus,
     });
 
     // NODE_ENDED → DAG 다음 노드 전환
-    if (resolveResult.nodeOutcome === 'NODE_ENDED' || resolveResult.nodeOutcome === 'RUN_ENDED') {
+    if (
+      resolveResult.nodeOutcome === 'NODE_ENDED' ||
+      resolveResult.nodeOutcome === 'RUN_ENDED'
+    ) {
       // 현재 노드 종료
-      await this.db.update(nodeInstances).set({
-        status: 'NODE_ENDED',
-        nodeState: resolveResult.nextNodeState ?? null,
-        updatedAt: new Date(),
-      }).where(eq(nodeInstances.id, currentNode.id));
+      await this.db
+        .update(nodeInstances)
+        .set({
+          status: 'NODE_ENDED',
+          nodeState: resolveResult.nextNodeState ?? null,
+          updatedAt: new Date(),
+        })
+        .where(eq(nodeInstances.id, currentNode.id));
 
       if (resolveResult.nodeOutcome === 'RUN_ENDED' || nodeType === 'EXIT') {
-        await this.db.update(runSessions).set({
-          status: 'RUN_ENDED', currentTurnNo: turnNo, runState: updatedRunState, updatedAt: new Date(),
-        }).where(eq(runSessions.id, run.id));
+        await this.db
+          .update(runSessions)
+          .set({
+            status: 'RUN_ENDED',
+            currentTurnNo: turnNo,
+            runState: updatedRunState,
+            updatedAt: new Date(),
+          })
+          .where(eq(runSessions.id, run.id));
         await this.saveCampaignResultIfNeeded(run.id);
         return {
-          accepted: true, turnNo, serverResult: resolveResult.serverResult,
+          accepted: true,
+          turnNo,
+          serverResult: resolveResult.serverResult,
           llm: { status: llmStatus, narrative: null },
           meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
         };
@@ -2389,10 +3378,11 @@ export class TurnsService {
         randomSeed: this.rngService.create(run.seed, turnNo + 1).next(),
       };
 
-      const ws = updatedRunState.worldState ?? this.worldStateService.initWorldState();
+      const ws =
+        updatedRunState.worldState ?? this.worldStateService.initWorldState();
       const dagTransition = await this.nodeTransition.transitionByGraphNode(
         run.id,
-        run.currentGraphNodeId!,
+        run.currentGraphNodeId,
         dagRouteContext,
         turnNo + 1,
         ws,
@@ -2403,20 +3393,31 @@ export class TurnsService {
 
       if (!dagTransition || dagTransition.nextNodeType === 'EXIT') {
         // 그래프 종료 → RUN_ENDED
-        await this.db.update(runSessions).set({
-          status: 'RUN_ENDED', currentTurnNo: turnNo, runState: updatedRunState, updatedAt: new Date(),
-        }).where(eq(runSessions.id, run.id));
+        await this.db
+          .update(runSessions)
+          .set({
+            status: 'RUN_ENDED',
+            currentTurnNo: turnNo,
+            runState: updatedRunState,
+            updatedAt: new Date(),
+          })
+          .where(eq(runSessions.id, run.id));
         await this.saveCampaignResultIfNeeded(run.id);
 
         const response: any = {
-          accepted: true, turnNo, serverResult: resolveResult.serverResult,
+          accepted: true,
+          turnNo,
+          serverResult: resolveResult.serverResult,
           llm: { status: llmStatus, narrative: null },
           meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
         };
         if (dagTransition) {
           response.transition = {
-            nextNodeIndex: dagTransition.nextNodeIndex, nextNodeType: dagTransition.nextNodeType,
-            enterResult: dagTransition.enterResult, battleState: null, enterTurnNo: turnNo + 1,
+            nextNodeIndex: dagTransition.nextNodeIndex,
+            nextNodeType: dagTransition.nextNodeType,
+            enterResult: dagTransition.enterResult,
+            battleState: null,
+            enterTurnNo: turnNo + 1,
           };
         }
         return response;
@@ -2425,46 +3426,77 @@ export class TurnsService {
       // routeTag가 결정된 경우 runState에도 반영
       if (dagTransition.routeTag) {
         updatedRunState.worldState = {
-          ...(updatedRunState.worldState ?? this.worldStateService.initWorldState()),
+          ...(updatedRunState.worldState ??
+            this.worldStateService.initWorldState()),
         };
       }
 
       dagTransition.enterResult.turnNo = turnNo + 1;
       await this.db.insert(turns).values({
-        runId: run.id, turnNo: turnNo + 1, nodeInstanceId: dagTransition.enterResult.node.id,
-        nodeType: dagTransition.nextNodeType, inputType: 'SYSTEM', rawInput: '',
+        runId: run.id,
+        turnNo: turnNo + 1,
+        nodeInstanceId: dagTransition.enterResult.node.id,
+        nodeType: dagTransition.nextNodeType,
+        inputType: 'SYSTEM',
+        rawInput: '',
         idempotencyKey: `${run.id}_dag_${dagTransition.nextNodeIndex}`,
-        parsedBy: null, confidence: null, parsedIntent: null,
-        policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
-        serverResult: dagTransition.enterResult, llmStatus: 'PENDING',
+        parsedBy: null,
+        confidence: null,
+        parsedIntent: null,
+        policyResult: 'ALLOW',
+        transformedIntent: null,
+        actionPlan: null,
+        serverResult: dagTransition.enterResult,
+        llmStatus: 'PENDING',
       });
-      await this.db.update(runSessions).set({
-        currentTurnNo: turnNo + 1, runState: updatedRunState, updatedAt: new Date(),
-      }).where(eq(runSessions.id, run.id));
+      await this.db
+        .update(runSessions)
+        .set({
+          currentTurnNo: turnNo + 1,
+          runState: updatedRunState,
+          updatedAt: new Date(),
+        })
+        .where(eq(runSessions.id, run.id));
 
       return {
-        accepted: true, turnNo, serverResult: resolveResult.serverResult,
+        accepted: true,
+        turnNo,
+        serverResult: resolveResult.serverResult,
         llm: { status: llmStatus, narrative: null },
         meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
         transition: {
-          nextNodeIndex: dagTransition.nextNodeIndex, nextNodeType: dagTransition.nextNodeType,
-          enterResult: dagTransition.enterResult, battleState: dagTransition.battleState ?? null, enterTurnNo: turnNo + 1,
+          nextNodeIndex: dagTransition.nextNodeIndex,
+          nextNodeType: dagTransition.nextNodeType,
+          enterResult: dagTransition.enterResult,
+          battleState: dagTransition.battleState ?? null,
+          enterTurnNo: turnNo + 1,
         },
       };
     }
 
     // ONGOING — 노드 상태 업데이트
     if (resolveResult.nextNodeState) {
-      await this.db.update(nodeInstances).set({
-        nodeState: resolveResult.nextNodeState, updatedAt: new Date(),
-      }).where(eq(nodeInstances.id, currentNode.id));
+      await this.db
+        .update(nodeInstances)
+        .set({
+          nodeState: resolveResult.nextNodeState,
+          updatedAt: new Date(),
+        })
+        .where(eq(nodeInstances.id, currentNode.id));
     }
-    await this.db.update(runSessions).set({
-      currentTurnNo: turnNo, runState: updatedRunState, updatedAt: new Date(),
-    }).where(eq(runSessions.id, run.id));
+    await this.db
+      .update(runSessions)
+      .set({
+        currentTurnNo: turnNo,
+        runState: updatedRunState,
+        updatedAt: new Date(),
+      })
+      .where(eq(runSessions.id, run.id));
 
     return {
-      accepted: true, turnNo, serverResult: resolveResult.serverResult,
+      accepted: true,
+      turnNo,
+      serverResult: resolveResult.serverResult,
       llm: { status: llmStatus, narrative: null },
       meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
     };
@@ -2486,17 +3518,22 @@ export class TurnsService {
         eq(battleStates.nodeInstanceId, currentNode.id),
       ),
     });
-    let battleState = bs?.state ?? null;
-    if (!battleState) throw new InternalError('BattleState not found for COMBAT node');
+    const battleState = bs?.state ?? null;
+    if (!battleState)
+      throw new InternalError('BattleState not found for COMBAT node');
 
     // 입력 파이프라인 (기존 로직 재사용)
     let rawInput = body.input.text ?? body.input.choiceId ?? '';
     if (body.input.type === 'CHOICE' && body.input.choiceId) {
       const prevTurn = await this.db.query.turns.findFirst({
-        where: and(eq(turns.runId, run.id), eq(turns.turnNo, run.currentTurnNo)),
+        where: and(
+          eq(turns.runId, run.id),
+          eq(turns.turnNo, run.currentTurnNo),
+        ),
         columns: { serverResult: true },
       });
-      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)?.choices;
+      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)
+        ?.choices;
       const matched = prevChoices?.find((c) => c.id === body.input.choiceId);
       if (matched) rawInput = matched.label;
     }
@@ -2509,20 +3546,43 @@ export class TurnsService {
     if (body.input.type === 'ACTION') {
       parsedIntent = this.ruleParser.parse(rawInput);
       const policyCheck = this.policyService.check(
-        parsedIntent, currentNode.nodeType,
+        parsedIntent,
+        currentNode.nodeType,
         currentNode.status as 'NODE_ACTIVE' | 'NODE_ENDED',
         battleState.player?.stamina ?? playerStats.maxStamina,
       );
       policyResult = policyCheck.result;
-      if (policyCheck.transformedIntents) transformedIntent = policyCheck.transformedIntents;
+      if (policyCheck.transformedIntents)
+        transformedIntent = policyCheck.transformedIntents;
 
       if (policyResult === 'DENY') {
-        const denyResult = this.buildDenyResult(turnNo, currentNode, policyCheck.reason ?? 'Policy denied');
-        return this.commitCombatTurn(run, currentNode, turnNo, body, rawInput, parsedIntent, policyResult, transformedIntent, undefined, denyResult, battleState, body.options?.skipLlm);
+        const denyResult = this.buildDenyResult(
+          turnNo,
+          currentNode,
+          policyCheck.reason ?? 'Policy denied',
+        );
+        return this.commitCombatTurn(
+          run,
+          currentNode,
+          turnNo,
+          body,
+          rawInput,
+          parsedIntent,
+          policyResult,
+          transformedIntent,
+          undefined,
+          denyResult,
+          battleState,
+          body.options?.skipLlm,
+        );
       }
 
       const effectiveIntent = transformedIntent ?? parsedIntent;
-      actionPlan = this.actionPlanService.buildPlan(effectiveIntent, policyResult, battleState.player?.stamina ?? playerStats.maxStamina);
+      actionPlan = this.actionPlanService.buildPlan(
+        effectiveIntent,
+        policyResult,
+        battleState.player?.stamina ?? playerStats.maxStamina,
+      );
     }
 
     if (body.input.type === 'CHOICE' && body.input.choiceId) {
@@ -2538,7 +3598,8 @@ export class TurnsService {
       if (def) {
         const es = def.stats as Record<string, number>;
         enemyStats[e.id] = {
-          maxHP: def.hp, maxStamina: 5,
+          maxHP: def.hp,
+          maxStamina: 5,
           str: es.str ?? es.ATK ?? 10,
           dex: es.dex ?? es.EVA ?? 8,
           wit: es.wit ?? es.ACC ?? 6,
@@ -2551,18 +3612,28 @@ export class TurnsService {
     }
 
     const resolveResult = this.nodeResolver.resolve({
-      turnNo, nodeId: currentNode.id, nodeIndex: currentNode.nodeIndex,
-      nodeType: 'COMBAT', nodeMeta: currentNode.nodeMeta ?? undefined,
-      envTags: currentNode.environmentTags ?? [], inputType: body.input.type,
-      rawInput, choiceId: body.input.choiceId, actionPlan,
-      battleState, playerStats,
+      turnNo,
+      nodeId: currentNode.id,
+      nodeIndex: currentNode.nodeIndex,
+      nodeType: 'COMBAT',
+      nodeMeta: currentNode.nodeMeta ?? undefined,
+      envTags: currentNode.environmentTags ?? [],
+      inputType: body.input.type,
+      rawInput,
+      choiceId: body.input.choiceId,
+      actionPlan,
+      battleState,
+      playerStats,
       enemyStats: Object.keys(enemyStats).length > 0 ? enemyStats : undefined,
       enemyNames: Object.keys(enemyNames).length > 0 ? enemyNames : undefined,
       rewardSeed: `${run.seed}_t${turnNo}`,
       playerHp: battleState.player?.hp ?? runState.hp,
-      playerMaxHp: runState.maxHp, playerStamina: battleState.player?.stamina ?? runState.stamina,
-      playerMaxStamina: runState.maxStamina, playerGold: runState.gold,
-      inventory: runState.inventory, inventoryCount: runState.inventory.length,
+      playerMaxHp: runState.maxHp,
+      playerStamina: battleState.player?.stamina ?? runState.stamina,
+      playerMaxStamina: runState.maxStamina,
+      playerGold: runState.gold,
+      inventory: runState.inventory,
+      inventoryCount: runState.inventory.length,
       inventoryMax: InventoryService.DEFAULT_MAX_SLOTS,
       nodeState: currentNode.nodeState ?? undefined,
       traitEffects: runState.traitEffects,
@@ -2570,43 +3641,76 @@ export class TurnsService {
 
     // runState 업데이트
     const updatedRunState: RunState = { ...runState };
-    const goldDelta = resolveResult.goldDelta ?? resolveResult.serverResult.diff.inventory.goldDelta ?? 0;
+    const goldDelta =
+      resolveResult.goldDelta ??
+      resolveResult.serverResult.diff.inventory.goldDelta ??
+      0;
     updatedRunState.gold = Math.max(0, updatedRunState.gold + goldDelta);
     if (resolveResult.nextBattleState?.player) {
       updatedRunState.hp = resolveResult.nextBattleState.player.hp;
       updatedRunState.stamina = resolveResult.nextBattleState.player.stamina;
     }
-    for (const added of resolveResult.serverResult.diff.inventory.itemsAdded ?? []) {
-      const existing = updatedRunState.inventory.find((i) => i.itemId === added.itemId);
+    for (const added of resolveResult.serverResult.diff.inventory.itemsAdded ??
+      []) {
+      const existing = updatedRunState.inventory.find(
+        (i) => i.itemId === added.itemId,
+      );
       if (existing) existing.qty += added.qty;
-      else updatedRunState.inventory.push({ itemId: added.itemId, qty: added.qty });
+      else
+        updatedRunState.inventory.push({
+          itemId: added.itemId,
+          qty: added.qty,
+        });
     }
 
     // Phase 4a: 전투 승리 시 장비 드랍
     if (resolveResult.combatOutcome === 'VICTORY') {
-      const locationId = updatedRunState.worldState?.currentLocationId ?? 'LOC_HARBOR';
-      const encounterEnc = currentNode.nodeMeta?.encounterId as string | undefined;
-      const isBoss = !!(currentNode.nodeMeta?.isBoss);
-      const enemyIds = Object.keys(resolveResult.nextBattleState?.enemies ?? {});
-      const combatDropRng = this.rngService.create(run.seed + '_eqdrop', turnNo);
+      const locationId =
+        updatedRunState.worldState?.currentLocationId ?? 'LOC_HARBOR';
+      const encounterEnc = currentNode.nodeMeta?.encounterId as
+        | string
+        | undefined;
+      const isBoss = !!currentNode.nodeMeta?.isBoss;
+      const enemyIds = Object.keys(
+        resolveResult.nextBattleState?.enemies ?? {},
+      );
+      const combatDropRng = this.rngService.create(
+        run.seed + '_eqdrop',
+        turnNo,
+      );
       const equipDrop = this.rewardsService.rollCombatEquipmentDrops(
-        enemyIds, encounterEnc, isBoss, locationId, combatDropRng,
+        enemyIds,
+        encounterEnc,
+        isBoss,
+        locationId,
+        combatDropRng,
       );
       if (equipDrop.droppedInstances.length > 0) {
         if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
-        const combatEquipAdded: import('../db/types/equipment.js').ItemInstance[] = [];
+        const combatEquipAdded: import('../db/types/equipment.js').ItemInstance[] =
+          [];
         const acquiredFrom = isBoss ? '보스전 드랍' : '전투 보상';
         for (const inst of equipDrop.droppedInstances) {
           updatedRunState.equipmentBag.push(inst);
           combatEquipAdded.push(inst);
           // Phase 3: ItemMemory — 전투 장비 드랍 기록
-          this.recordItemMemory(updatedRunState, inst, turnNo, acquiredFrom, locationId);
+          this.recordItemMemory(
+            updatedRunState,
+            inst,
+            turnNo,
+            acquiredFrom,
+            locationId,
+          );
           resolveResult.serverResult.events.push({
             id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
             kind: 'LOOT',
             text: `[장비] ${inst.displayName} 획득`,
             tags: ['LOOT', 'EQUIPMENT_DROP'],
-            data: { baseItemId: inst.baseItemId, instanceId: inst.instanceId, displayName: inst.displayName },
+            data: {
+              baseItemId: inst.baseItemId,
+              instanceId: inst.instanceId,
+              displayName: inst.displayName,
+            },
           });
         }
         resolveResult.serverResult.diff.equipmentAdded = combatEquipAdded;
@@ -2614,24 +3718,44 @@ export class TurnsService {
     }
 
     const response = await this.commitCombatTurn(
-      run, currentNode, turnNo, body, rawInput, parsedIntent, policyResult,
-      transformedIntent, actionPlan ? [actionPlan] : undefined,
-      resolveResult.serverResult, resolveResult.nextBattleState ?? battleState,
-      body.options?.skipLlm, resolveResult.nodeOutcome, resolveResult.nextNodeState, updatedRunState,
+      run,
+      currentNode,
+      turnNo,
+      body,
+      rawInput,
+      parsedIntent,
+      policyResult,
+      transformedIntent,
+      actionPlan ? [actionPlan] : undefined,
+      resolveResult.serverResult,
+      resolveResult.nextBattleState ?? battleState,
+      body.options?.skipLlm,
+      resolveResult.nodeOutcome,
+      resolveResult.nextNodeState,
+      updatedRunState,
     );
 
     // 전투 종료 처리 (VICTORY/DEFEAT/FLEE)
     if (resolveResult.nodeOutcome === 'NODE_ENDED') {
-      const ws = updatedRunState.worldState ?? this.worldStateService.initWorldState();
-      const arcState = updatedRunState.arcState ?? this.arcService.initArcState();
+      const ws =
+        updatedRunState.worldState ?? this.worldStateService.initWorldState();
+      const arcState =
+        updatedRunState.arcState ?? this.arcService.initArcState();
 
       // 패배 시 RUN_ENDED + 엔딩 내러티브 생성
       if (resolveResult.combatOutcome === 'DEFEAT') {
         // structuredMemory 통합
         try {
-          const locMemDefeat = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, updatedRunState, turnNo);
+          const locMemDefeat = await this.memoryIntegration.finalizeVisit(
+            run.id,
+            currentNode.id,
+            updatedRunState,
+            turnNo,
+          );
           if (locMemDefeat) updatedRunState.locationMemories = locMemDefeat;
-        } catch { /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */ }
+        } catch {
+          /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */
+        }
 
         // 패배 엔딩 생성
         try {
@@ -2644,14 +3768,18 @@ export class TurnsService {
           }));
           const endingInput = this.endingGenerator.gatherEndingInputs(
             ws.activeIncidents ?? [],
-            (updatedRunState.npcStates ?? {}) as Record<string, NPCState>,
+            updatedRunState.npcStates ?? {},
             ws.narrativeMarks ?? [],
             ws as unknown as Record<string, unknown>,
             updatedRunState.arcState ?? null,
             updatedRunState.actionHistory ?? [],
             endingThreads,
           );
-          const endingResult = this.endingGenerator.generateEnding(endingInput, 'DEFEAT', turnNo);
+          const endingResult = this.endingGenerator.generateEnding(
+            endingInput,
+            'DEFEAT',
+            turnNo,
+          );
           (response as any).serverResult.events.push({
             id: `ending_${turnNo}`,
             kind: 'SYSTEM',
@@ -2663,7 +3791,10 @@ export class TurnsService {
           this.logger.warn(`DEFEAT ending generation failed: ${e}`);
         }
 
-        await this.db.update(runSessions).set({ status: 'RUN_ENDED', updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+        await this.db
+          .update(runSessions)
+          .set({ status: 'RUN_ENDED', updatedAt: new Date() })
+          .where(eq(runSessions.id, run.id));
 
         // Campaign: 시나리오 결과 저장
         await this.saveCampaignResultIfNeeded(run.id);
@@ -2694,16 +3825,29 @@ export class TurnsService {
         if (!dagTransition || dagTransition.nextNodeType === 'EXIT') {
           // 그래프 종료 → RUN_ENDED
           try {
-            const locMemDag = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, updatedRunState, turnNo);
+            const locMemDag = await this.memoryIntegration.finalizeVisit(
+              run.id,
+              currentNode.id,
+              updatedRunState,
+              turnNo,
+            );
             if (locMemDag) updatedRunState.locationMemories = locMemDag;
-          } catch { /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */ }
-          await this.db.update(runSessions).set({ status: 'RUN_ENDED', updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+          } catch {
+            /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */
+          }
+          await this.db
+            .update(runSessions)
+            .set({ status: 'RUN_ENDED', updatedAt: new Date() })
+            .where(eq(runSessions.id, run.id));
           await this.saveCampaignResultIfNeeded(run.id);
           (response as any).meta.nodeOutcome = 'RUN_ENDED';
           if (dagTransition) {
             (response as any).transition = {
-              nextNodeIndex: dagTransition.nextNodeIndex, nextNodeType: dagTransition.nextNodeType,
-              enterResult: dagTransition.enterResult, battleState: null, enterTurnNo: turnNo + 1,
+              nextNodeIndex: dagTransition.nextNodeIndex,
+              nextNodeType: dagTransition.nextNodeType,
+              enterResult: dagTransition.enterResult,
+              battleState: null,
+              enterTurnNo: turnNo + 1,
             };
           }
           return response;
@@ -2711,51 +3855,97 @@ export class TurnsService {
 
         dagTransition.enterResult.turnNo = turnNo + 1;
         await this.db.insert(turns).values({
-          runId: run.id, turnNo: turnNo + 1, nodeInstanceId: dagTransition.enterResult.node.id,
-          nodeType: dagTransition.nextNodeType, inputType: 'SYSTEM', rawInput: '',
+          runId: run.id,
+          turnNo: turnNo + 1,
+          nodeInstanceId: dagTransition.enterResult.node.id,
+          nodeType: dagTransition.nextNodeType,
+          inputType: 'SYSTEM',
+          rawInput: '',
           idempotencyKey: `${run.id}_dag_${dagTransition.nextNodeIndex}`,
-          parsedBy: null, confidence: null, parsedIntent: null,
-          policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
-          serverResult: dagTransition.enterResult, llmStatus: 'PENDING',
+          parsedBy: null,
+          confidence: null,
+          parsedIntent: null,
+          policyResult: 'ALLOW',
+          transformedIntent: null,
+          actionPlan: null,
+          serverResult: dagTransition.enterResult,
+          llmStatus: 'PENDING',
         });
-        await this.db.update(runSessions).set({ currentTurnNo: turnNo + 1, runState: updatedRunState, updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+        await this.db
+          .update(runSessions)
+          .set({
+            currentTurnNo: turnNo + 1,
+            runState: updatedRunState,
+            updatedAt: new Date(),
+          })
+          .where(eq(runSessions.id, run.id));
 
         (response as any).transition = {
-          nextNodeIndex: dagTransition.nextNodeIndex, nextNodeType: dagTransition.nextNodeType,
-          enterResult: dagTransition.enterResult, battleState: dagTransition.battleState ?? null, enterTurnNo: turnNo + 1,
+          nextNodeIndex: dagTransition.nextNodeIndex,
+          nextNodeType: dagTransition.nextNodeType,
+          enterResult: dagTransition.enterResult,
+          battleState: dagTransition.battleState ?? null,
+          enterTurnNo: turnNo + 1,
         };
       } else {
         // HUB 모드: 승리/도주 → 부모 LOCATION 복귀
-        const parentNodeId = currentNode.parentNodeInstanceId ?? (currentNode.nodeState as any)?.parentNodeId;
+        const parentNodeId =
+          currentNode.parentNodeInstanceId ??
+          currentNode.nodeState?.parentNodeId;
         if (parentNodeId) {
           // 부모 노드의 index 찾기
           const parentNode = await this.db.query.nodeInstances.findFirst({
             where: eq(nodeInstances.id, parentNodeId),
           });
-          const parentNodeIndex = parentNode?.nodeIndex ?? currentNode.nodeIndex - 1;
+          const parentNodeIndex =
+            parentNode?.nodeIndex ?? currentNode.nodeIndex - 1;
           const locationId = ws.currentLocationId ?? 'LOC_MARKET';
 
           // Heat 반영 (combatWindowCount는 전투 시작 시 이미 증가됨 — 중복 증가 방지)
           const newWs = this.heatService.applyHeatDelta(ws, 3);
-          updatedRunState.worldState = this.worldStateService.updateHubSafety(newWs);
+          updatedRunState.worldState =
+            this.worldStateService.updateHubSafety(newWs);
 
           const transition = await this.nodeTransition.returnFromCombat(
-            run.id, parentNodeIndex, turnNo + 1, locationId, updatedRunState.worldState!,
+            run.id,
+            parentNodeIndex,
+            turnNo + 1,
+            locationId,
+            updatedRunState.worldState,
           );
           transition.enterResult.turnNo = turnNo + 1;
           await this.db.insert(turns).values({
-            runId: run.id, turnNo: turnNo + 1, nodeInstanceId: transition.enterResult.node.id,
-            nodeType: 'LOCATION', inputType: 'SYSTEM', rawInput: '',
+            runId: run.id,
+            turnNo: turnNo + 1,
+            nodeInstanceId: transition.enterResult.node.id,
+            nodeType: 'LOCATION',
+            inputType: 'SYSTEM',
+            rawInput: '',
             idempotencyKey: `${run.id}_return_${turnNo + 1}`,
-            parsedBy: null, confidence: null, parsedIntent: null,
-            policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
-            serverResult: transition.enterResult, llmStatus: 'PENDING',
+            parsedBy: null,
+            confidence: null,
+            parsedIntent: null,
+            policyResult: 'ALLOW',
+            transformedIntent: null,
+            actionPlan: null,
+            serverResult: transition.enterResult,
+            llmStatus: 'PENDING',
           });
-          await this.db.update(runSessions).set({ currentTurnNo: turnNo + 1, runState: updatedRunState, updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+          await this.db
+            .update(runSessions)
+            .set({
+              currentTurnNo: turnNo + 1,
+              runState: updatedRunState,
+              updatedAt: new Date(),
+            })
+            .where(eq(runSessions.id, run.id));
 
           (response as any).transition = {
-            nextNodeIndex: transition.nextNodeIndex, nextNodeType: 'LOCATION',
-            enterResult: transition.enterResult, battleState: null, enterTurnNo: turnNo + 1,
+            nextNodeIndex: transition.nextNodeIndex,
+            nextNodeType: 'LOCATION',
+            enterResult: transition.enterResult,
+            battleState: null,
+            enterTurnNo: turnNo + 1,
           };
         }
       }
@@ -2766,103 +3956,192 @@ export class TurnsService {
 
   // --- Helper: 전투 턴 커밋 ---
   private async commitCombatTurn(
-    run: any, currentNode: any, turnNo: number, body: SubmitTurnBody,
-    rawInput: string, parsedIntent: ParsedIntent | undefined,
-    policyResult: string, transformedIntent: ParsedIntent | undefined,
-    actionPlan: ActionPlan[] | undefined, serverResult: ServerResultV1,
-    nextBattleState: BattleStateV1 | null | undefined, skipLlm: boolean | undefined,
-    nodeOutcome?: string, nextNodeState?: Record<string, unknown>, runStateUpdate?: RunState,
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    body: SubmitTurnBody,
+    rawInput: string,
+    parsedIntent: ParsedIntent | undefined,
+    policyResult: string,
+    transformedIntent: ParsedIntent | undefined,
+    actionPlan: ActionPlan[] | undefined,
+    serverResult: ServerResultV1,
+    nextBattleState: BattleStateV1 | null | undefined,
+    skipLlm: boolean | undefined,
+    nodeOutcome?: string,
+    nextNodeState?: Record<string, unknown>,
+    runStateUpdate?: RunState,
   ) {
     const llmStatus: LlmStatus = skipLlm ? 'SKIPPED' : 'PENDING';
 
     await this.db.transaction(async (tx) => {
       await tx.insert(turns).values({
-        runId: run.id, turnNo, nodeInstanceId: currentNode.id,
-        nodeType: currentNode.nodeType as NodeType, inputType: body.input.type,
-        rawInput, idempotencyKey: body.idempotencyKey,
-        parsedBy: parsedIntent?.source ?? null, confidence: parsedIntent?.confidence ?? null,
-        parsedIntent: parsedIntent ?? null, policyResult: policyResult as any,
-        transformedIntent: transformedIntent ?? null, actionPlan: actionPlan ?? null,
-        serverResult, llmStatus,
+        runId: run.id,
+        turnNo,
+        nodeInstanceId: currentNode.id,
+        nodeType: currentNode.nodeType as NodeType,
+        inputType: body.input.type,
+        rawInput,
+        idempotencyKey: body.idempotencyKey,
+        parsedBy: parsedIntent?.source ?? null,
+        confidence: parsedIntent?.confidence ?? null,
+        parsedIntent: parsedIntent ?? null,
+        policyResult: policyResult as any,
+        transformedIntent: transformedIntent ?? null,
+        actionPlan: actionPlan ?? null,
+        serverResult,
+        llmStatus,
       });
 
-      await tx.update(runSessions).set({
-        currentTurnNo: turnNo, updatedAt: new Date(),
-        ...(nodeOutcome === 'RUN_ENDED' ? { status: 'RUN_ENDED' } : {}),
-        ...(runStateUpdate ? { runState: runStateUpdate } : {}),
-      }).where(eq(runSessions.id, run.id));
+      await tx
+        .update(runSessions)
+        .set({
+          currentTurnNo: turnNo,
+          updatedAt: new Date(),
+          ...(nodeOutcome === 'RUN_ENDED' ? { status: 'RUN_ENDED' } : {}),
+          ...(runStateUpdate ? { runState: runStateUpdate } : {}),
+        })
+        .where(eq(runSessions.id, run.id));
 
       if (nodeOutcome === 'NODE_ENDED' || nodeOutcome === 'RUN_ENDED') {
-        await tx.update(nodeInstances).set({
-          status: 'NODE_ENDED', nodeState: nextNodeState ?? null, updatedAt: new Date(),
-        }).where(eq(nodeInstances.id, currentNode.id));
+        await tx
+          .update(nodeInstances)
+          .set({
+            status: 'NODE_ENDED',
+            nodeState: nextNodeState ?? null,
+            updatedAt: new Date(),
+          })
+          .where(eq(nodeInstances.id, currentNode.id));
       } else if (nextNodeState) {
-        await tx.update(nodeInstances).set({ nodeState: nextNodeState, updatedAt: new Date() })
+        await tx
+          .update(nodeInstances)
+          .set({ nodeState: nextNodeState, updatedAt: new Date() })
           .where(eq(nodeInstances.id, currentNode.id));
       }
 
       if (nextBattleState && currentNode.nodeType === 'COMBAT') {
-        await tx.update(battleStates).set({ state: nextBattleState, updatedAt: new Date() })
-          .where(and(eq(battleStates.runId, run.id), eq(battleStates.nodeInstanceId, currentNode.id)));
+        await tx
+          .update(battleStates)
+          .set({ state: nextBattleState, updatedAt: new Date() })
+          .where(
+            and(
+              eq(battleStates.runId, run.id),
+              eq(battleStates.nodeInstanceId, currentNode.id),
+            ),
+          );
       }
     });
 
     return {
-      accepted: true, turnNo, serverResult,
+      accepted: true,
+      turnNo,
+      serverResult,
       llm: { status: llmStatus, narrative: null },
       meta: { nodeOutcome: nodeOutcome ?? 'ONGOING', policyResult },
     };
   }
 
-
   // --- Helper: 일반 턴 레코드 커밋 ---
   private async commitTurnRecord(
-    run: any, currentNode: any, turnNo: number, body: SubmitTurnBody,
-    rawInput: string, serverResult: ServerResultV1, runStateUpdate: RunState,
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    body: SubmitTurnBody,
+    rawInput: string,
+    serverResult: ServerResultV1,
+    runStateUpdate: RunState,
     skipLlm?: boolean,
     intent?: Record<string, unknown> | null,
   ) {
     const llmStatus: LlmStatus = skipLlm ? 'SKIPPED' : 'PENDING';
     await this.db.insert(turns).values({
-      runId: run.id, turnNo, nodeInstanceId: currentNode.id,
-      nodeType: currentNode.nodeType as NodeType, inputType: body.input.type,
-      rawInput, idempotencyKey: body.idempotencyKey,
+      runId: run.id,
+      turnNo,
+      nodeInstanceId: currentNode.id,
+      nodeType: currentNode.nodeType as NodeType,
+      inputType: body.input.type,
+      rawInput,
+      idempotencyKey: body.idempotencyKey,
       parsedBy: (intent?.source as any) ?? null,
       confidence: (intent?.confidence as number) ?? null,
       parsedIntent: (intent as any) ?? null,
-      policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
-      serverResult, llmStatus,
+      policyResult: 'ALLOW',
+      transformedIntent: null,
+      actionPlan: null,
+      serverResult,
+      llmStatus,
     });
-    await this.db.update(runSessions).set({
-      currentTurnNo: turnNo, runState: runStateUpdate, updatedAt: new Date(),
-    }).where(eq(runSessions.id, run.id));
+    await this.db
+      .update(runSessions)
+      .set({
+        currentTurnNo: turnNo,
+        runState: runStateUpdate,
+        updatedAt: new Date(),
+      })
+      .where(eq(runSessions.id, run.id));
   }
 
   // --- Result builders ---
-  private buildSystemResult(turnNo: number, node: any, text: string): ServerResultV1 {
+  private buildSystemResult(
+    turnNo: number,
+    node: any,
+    text: string,
+  ): ServerResultV1 {
     return {
-      version: 'server_result_v1', turnNo,
-      node: { id: node.id, type: node.nodeType, index: node.nodeIndex, state: 'NODE_ACTIVE' },
+      version: 'server_result_v1',
+      turnNo,
+      node: {
+        id: node.id,
+        type: node.nodeType,
+        index: node.nodeIndex,
+        state: 'NODE_ACTIVE',
+      },
       summary: { short: text, display: text },
       events: [{ id: `sys_${turnNo}`, kind: 'SYSTEM', text, tags: [] }],
       diff: {
-        player: { hp: { from: 0, to: 0, delta: 0 }, stamina: { from: 0, to: 0, delta: 0 }, status: [] },
-        enemies: [], inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
+        player: {
+          hp: { from: 0, to: 0, delta: 0 },
+          stamina: { from: 0, to: 0, delta: 0 },
+          status: [],
+        },
+        enemies: [],
+        inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
         meta: { battle: { phase: 'NONE' }, position: { env: [] } },
       },
-      ui: { availableActions: [], targetLabels: [], actionSlots: { base: 2, bonusAvailable: false, max: 3 }, toneHint: 'neutral' },
+      ui: {
+        availableActions: [],
+        targetLabels: [],
+        actionSlots: { base: 2, bonusAvailable: false, max: 3 },
+        toneHint: 'neutral',
+      },
       choices: [],
       flags: { bonusSlot: false, downed: false, battleEnded: false },
     };
   }
 
-  private buildHubActionResult(turnNo: number, node: any, text: string, choices: ServerResultV1['choices'], ws: WorldState): ServerResultV1 {
+  private buildHubActionResult(
+    turnNo: number,
+    node: any,
+    text: string,
+    choices: ServerResultV1['choices'],
+    ws: WorldState,
+  ): ServerResultV1 {
     return {
       ...this.buildSystemResult(turnNo, node, text),
       ui: {
-        availableActions: ['CHOICE'], targetLabels: [],
-        actionSlots: { base: 2, bonusAvailable: false, max: 3 }, toneHint: 'neutral',
-        worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: null, locationDynamicStates: ws.locationDynamicStates ?? {}, playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed), reputation: ws.reputation ?? {} },
+        availableActions: ['CHOICE'],
+        targetLabels: [],
+        actionSlots: { base: 2, bonusAvailable: false, max: 3 },
+        toneHint: 'neutral',
+        worldState: {
+          hubHeat: ws.hubHeat,
+          hubSafety: ws.hubSafety,
+          timePhase: ws.timePhase,
+          currentLocationId: null,
+          locationDynamicStates: ws.locationDynamicStates ?? {},
+          playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
+          reputation: ws.reputation ?? {},
+        },
       },
       choices,
     };
@@ -2948,8 +4227,17 @@ export class TurnsService {
     // 핵심 행동+결과 요약 (행동 라인)
     const summaryLines = visitTurns.map((t) => {
       const sr = t.serverResult as ServerResultV1 | null;
-      const outcome = (sr?.ui as Record<string, unknown>)?.resolveOutcome as string | undefined;
-      const outcomeText = outcome === 'SUCCESS' ? '성공' : outcome === 'PARTIAL' ? '부분 성공' : outcome === 'FAIL' ? '실패' : '';
+      const outcome = (sr?.ui as Record<string, unknown>)?.resolveOutcome as
+        | string
+        | undefined;
+      const outcomeText =
+        outcome === 'SUCCESS'
+          ? '성공'
+          : outcome === 'PARTIAL'
+            ? '부분 성공'
+            : outcome === 'FAIL'
+              ? '실패'
+              : '';
       const outcomePart = outcomeText ? `(${outcomeText})` : '';
       // 이벤트 sceneFrame → 어떤 상황이었는지 보존
       const sceneFrame = (sr?.summary?.short as string) ?? '';
@@ -2969,9 +4257,13 @@ export class TurnsService {
         }
       }
     }
-    const npcPart = mentionedNpcs.size > 0 ? ` 만난 인물: ${[...mentionedNpcs].join(', ')}.` : '';
+    const npcPart =
+      mentionedNpcs.size > 0
+        ? ` 만난 인물: ${[...mentionedNpcs].join(', ')}.`
+        : '';
 
-    const visitSummary = `[${locName} 방문]${npcPart} ${summaryLines.join('; ')}`.slice(0, 600);
+    const visitSummary =
+      `[${locName} 방문]${npcPart} ${summaryLines.join('; ')}`.slice(0, 600);
 
     // run_memories.storySummary에 추가
     const existing = await this.db.query.runMemories.findFirst({
@@ -2998,14 +4290,26 @@ export class TurnsService {
 
   /** LOCATION→LOCATION 직접 이동 (HUB 경유 없이) */
   private async performLocationTransition(
-    run: any, currentNode: any, turnNo: number, body: SubmitTurnBody,
-    rawInput: string, runState: RunState, ws: WorldState, arcState: ArcState,
-    fromLocationId: string, toLocationId: string,
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    body: SubmitTurnBody,
+    rawInput: string,
+    runState: RunState,
+    ws: WorldState,
+    arcState: ArcState,
+    fromLocationId: string,
+    toLocationId: string,
   ) {
     const updatedRunState: RunState = { ...runState };
 
     // Structured Memory v2: 방문 종료 통합
-    const locMemTransition = await this.memoryIntegration.finalizeVisit(run.id, currentNode.id, runState, turnNo);
+    const locMemTransition = await this.memoryIntegration.finalizeVisit(
+      run.id,
+      currentNode.id,
+      runState,
+      turnNo,
+    );
     if (locMemTransition) updatedRunState.locationMemories = locMemTransition;
 
     // WorldState 업데이트
@@ -3014,44 +4318,81 @@ export class TurnsService {
     updatedRunState.actionHistory = []; // 이동 시 고집 이력 초기화
 
     // 현재 노드 종료
-    await this.db.update(nodeInstances)
+    await this.db
+      .update(nodeInstances)
       .set({ status: 'NODE_ENDED', updatedAt: new Date() })
       .where(eq(nodeInstances.id, currentNode.id));
 
     // 이동 턴 커밋
     const locationNames: Record<string, string> = {
-      LOC_MARKET: '시장 거리', LOC_GUARD: '경비대 지구',
-      LOC_HARBOR: '항만 부두', LOC_SLUMS: '빈민가',
-      LOC_NOBLE: '상류 거리', LOC_TAVERN: '잠긴 닻 선술집',
+      LOC_MARKET: '시장 거리',
+      LOC_GUARD: '경비대 지구',
+      LOC_HARBOR: '항만 부두',
+      LOC_SLUMS: '빈민가',
+      LOC_NOBLE: '상류 거리',
+      LOC_TAVERN: '잠긴 닻 선술집',
       LOC_DOCKS_WAREHOUSE: '항만 창고구',
     };
     const toName = locationNames[toLocationId] ?? toLocationId;
-    const moveResult = this.buildSystemResult(turnNo, currentNode, `${toName}(으)로 향한다.`);
-    await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, moveResult, updatedRunState, body.options?.skipLlm);
+    const moveResult = this.buildSystemResult(
+      turnNo,
+      currentNode,
+      `${toName}(으)로 향한다.`,
+    );
+    await this.commitTurnRecord(
+      run,
+      currentNode,
+      turnNo,
+      body,
+      rawInput,
+      moveResult,
+      updatedRunState,
+      body.options?.skipLlm,
+    );
 
     // 새 LOCATION 노드 생성
     const transition = await this.nodeTransition.transitionToLocation(
-      run.id, currentNode.nodeIndex, turnNo + 1, toLocationId,
-      updatedRunState.worldState!, updatedRunState,
+      run.id,
+      currentNode.nodeIndex,
+      turnNo + 1,
+      toLocationId,
+      updatedRunState.worldState,
+      updatedRunState,
     );
 
     // 전환 턴 생성
     transition.enterResult.turnNo = turnNo + 1;
     await this.db.insert(turns).values({
-      runId: run.id, turnNo: turnNo + 1, nodeInstanceId: transition.enterResult.node.id,
-      nodeType: 'LOCATION', inputType: 'SYSTEM', rawInput: '',
+      runId: run.id,
+      turnNo: turnNo + 1,
+      nodeInstanceId: transition.enterResult.node.id,
+      nodeType: 'LOCATION',
+      inputType: 'SYSTEM',
+      rawInput: '',
       idempotencyKey: `${run.id}_loc_${transition.nextNodeIndex}`,
-      parsedBy: null, confidence: null, parsedIntent: null,
-      policyResult: 'ALLOW', transformedIntent: null, actionPlan: null,
-      serverResult: transition.enterResult, llmStatus: 'PENDING',
+      parsedBy: null,
+      confidence: null,
+      parsedIntent: null,
+      policyResult: 'ALLOW',
+      transformedIntent: null,
+      actionPlan: null,
+      serverResult: transition.enterResult,
+      llmStatus: 'PENDING',
     });
 
-    await this.db.update(runSessions).set({
-      currentTurnNo: turnNo + 1, runState: updatedRunState, updatedAt: new Date(),
-    }).where(eq(runSessions.id, run.id));
+    await this.db
+      .update(runSessions)
+      .set({
+        currentTurnNo: turnNo + 1,
+        runState: updatedRunState,
+        updatedAt: new Date(),
+      })
+      .where(eq(runSessions.id, run.id));
 
     return {
-      accepted: true, turnNo, serverResult: moveResult,
+      accepted: true,
+      turnNo,
+      serverResult: moveResult,
       llm: { status: 'PENDING' as LlmStatus, narrative: null },
       meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
       transition: {
@@ -3095,9 +4436,12 @@ export class TurnsService {
       // 텍스트 매칭: displayName 또는 baseItemId 일부 매칭
       if (!targetInstance) {
         const normalized = rawInput.toLowerCase();
-        targetInstance = equipmentBag.find((i) =>
-          normalized.includes(i.displayName.toLowerCase()) ||
-          normalized.includes((this.content.getItem(i.baseItemId)?.name ?? '').toLowerCase()),
+        targetInstance = equipmentBag.find(
+          (i) =>
+            normalized.includes(i.displayName.toLowerCase()) ||
+            normalized.includes(
+              (this.content.getItem(i.baseItemId)?.name ?? '').toLowerCase(),
+            ),
         );
       }
 
@@ -3106,10 +4450,25 @@ export class TurnsService {
         if (equipmentBag.length > 0) {
           targetInstance = equipmentBag[0];
         } else {
-          const result = this.buildSystemResult(turnNo, currentNode, '장착할 장비가 가방에 없다.');
-          await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, runState, true);
+          const result = this.buildSystemResult(
+            turnNo,
+            currentNode,
+            '장착할 장비가 가방에 없다.',
+          );
+          await this.commitTurnRecord(
+            run,
+            currentNode,
+            turnNo,
+            body,
+            rawInput,
+            result,
+            runState,
+            true,
+          );
           return {
-            accepted: true, turnNo, serverResult: result,
+            accepted: true,
+            turnNo,
+            serverResult: result,
             llm: { status: 'SKIPPED' as LlmStatus, narrative: null },
             meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
           };
@@ -3117,8 +4476,11 @@ export class TurnsService {
       }
 
       // 장비 착용
-      const { equipped: newEquipped, unequippedInstance } = this.equipmentService.equip(equipped, targetInstance);
-      const updatedBag = equipmentBag.filter((i) => i.instanceId !== targetInstance!.instanceId);
+      const { equipped: newEquipped, unequippedInstance } =
+        this.equipmentService.equip(equipped, targetInstance);
+      const updatedBag = equipmentBag.filter(
+        (i) => i.instanceId !== targetInstance.instanceId,
+      );
       if (unequippedInstance) {
         updatedBag.push(unequippedInstance);
       }
@@ -3134,7 +4496,10 @@ export class TurnsService {
         kind: 'SYSTEM',
         text: `[장비] ${summaryText}`,
         tags: ['EQUIP'],
-        data: { equipped: targetInstance.baseItemId, unequipped: unequippedInstance?.baseItemId },
+        data: {
+          equipped: targetInstance.baseItemId,
+          unequipped: unequippedInstance?.baseItemId,
+        },
       });
     } else {
       // UNEQUIP: 슬롯 이름 또는 아이템 이름으로 대상 탐색
@@ -3151,7 +4516,10 @@ export class TurnsService {
         RELIC: ['유물', '나침반', '렐릭'],
       };
       for (const [slot, keywords] of Object.entries(slotKeywords)) {
-        if (keywords.some((kw) => normalized.includes(kw)) && equipped[slot as keyof typeof equipped]) {
+        if (
+          keywords.some((kw) => normalized.includes(kw)) &&
+          equipped[slot as keyof typeof equipped]
+        ) {
           targetSlot = slot;
           break;
         }
@@ -3162,8 +4530,14 @@ export class TurnsService {
         for (const slot of EQUIPMENT_SLOTS) {
           const instance = equipped[slot];
           if (!instance) continue;
-          if (normalized.includes(instance.displayName.toLowerCase()) ||
-              normalized.includes((this.content.getItem(instance.baseItemId)?.name ?? '').toLowerCase())) {
+          if (
+            normalized.includes(instance.displayName.toLowerCase()) ||
+            normalized.includes(
+              (
+                this.content.getItem(instance.baseItemId)?.name ?? ''
+              ).toLowerCase(),
+            )
+          ) {
             targetSlot = slot;
             break;
           }
@@ -3171,18 +4545,35 @@ export class TurnsService {
       }
 
       if (!targetSlot) {
-        const result = this.buildSystemResult(turnNo, currentNode, '해제할 장비를 특정할 수 없다.');
-        await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, runState, true);
+        const result = this.buildSystemResult(
+          turnNo,
+          currentNode,
+          '해제할 장비를 특정할 수 없다.',
+        );
+        await this.commitTurnRecord(
+          run,
+          currentNode,
+          turnNo,
+          body,
+          rawInput,
+          result,
+          runState,
+          true,
+        );
         return {
-          accepted: true, turnNo, serverResult: result,
+          accepted: true,
+          turnNo,
+          serverResult: result,
           llm: { status: 'SKIPPED' as LlmStatus, narrative: null },
           meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
         };
       }
 
-      const { equipped: newEquipped, unequippedInstance } = this.equipmentService.unequip(
-        equipped, targetSlot as import('../db/types/equipment.js').EquipmentSlot,
-      );
+      const { equipped: newEquipped, unequippedInstance } =
+        this.equipmentService.unequip(
+          equipped,
+          targetSlot as import('../db/types/equipment.js').EquipmentSlot,
+        );
       if (unequippedInstance) {
         equipmentBag.push(unequippedInstance);
       }
@@ -3204,76 +4595,129 @@ export class TurnsService {
 
     const result = this.buildSystemResult(turnNo, currentNode, summaryText);
     result.events = events;
-    await this.commitTurnRecord(run, currentNode, turnNo, body, rawInput, result, runState, body.options?.skipLlm);
-    await this.db.update(runSessions).set({ runState, updatedAt: new Date() }).where(eq(runSessions.id, run.id));
+    await this.commitTurnRecord(
+      run,
+      currentNode,
+      turnNo,
+      body,
+      rawInput,
+      result,
+      runState,
+      body.options?.skipLlm,
+    );
+    await this.db
+      .update(runSessions)
+      .set({ runState, updatedAt: new Date() })
+      .where(eq(runSessions.id, run.id));
 
     return {
-      accepted: true, turnNo, serverResult: result,
-      llm: { status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus, narrative: null },
+      accepted: true,
+      turnNo,
+      serverResult: result,
+      llm: {
+        status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus,
+        narrative: null,
+      },
       meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
     };
   }
 
   /** 자유 텍스트에서 목표 위치 추출 */
-  private extractTargetLocation(input: string, currentLocationId: string): string | null {
+  private extractTargetLocation(
+    input: string,
+    currentLocationId: string,
+  ): string | null {
     const normalized = input.toLowerCase();
-    const locationKeywords: Array<{ keywords: string[]; locationId: string }> = [
-      {
-        keywords: [
-          '시장', '상점가', '장터', '노점가', '노점', '좌판거리',
-          '상인들이 모인', '물건 파는',
-        ],
-        locationId: 'LOC_MARKET',
-      },
-      {
-        keywords: [
-          '경비대', '경비', '초소', '병영', '수비대', '순찰대',
-          '경비병', '병사들', '관청',
-        ],
-        locationId: 'LOC_GUARD',
-      },
-      {
-        keywords: [
-          '항만', '부두', '항구', '선착장', '포구', '배터',
-          '창고가', '선박', '정박', '바닷가',
-        ],
-        locationId: 'LOC_HARBOR',
-      },
-      {
-        keywords: [
-          '빈민가', '빈민', '슬럼', '뒷골목', '하층가', '빈민굴',
-          '어두운 골목', '허름한 골목',
-        ],
-        locationId: 'LOC_SLUMS',
-      },
-      {
-        keywords: [
-          '귀족', '상류', '저택', '귀족가', '귀족 거리', '정원',
-          '의회', '노블',
-        ],
-        locationId: 'LOC_NOBLE',
-      },
-      {
-        keywords: [
-          '선술집', '잠긴 닻', '숙소', '주점', '술집',
-          '거점',
-        ],
-        locationId: 'LOC_TAVERN',
-      },
-      {
-        keywords: [
-          '창고', '창고구', '창고 지구', '물류', '하역장',
-          '화물 창고',
-        ],
-        locationId: 'LOC_DOCKS_WAREHOUSE',
-      },
-      {
-        keywords: [
-          '거점', '본거지', '돌아가',
-        ],
-        locationId: 'LOC_TAVERN',
-      },
-    ];
+    const locationKeywords: Array<{ keywords: string[]; locationId: string }> =
+      [
+        {
+          keywords: [
+            '시장',
+            '상점가',
+            '장터',
+            '노점가',
+            '노점',
+            '좌판거리',
+            '상인들이 모인',
+            '물건 파는',
+          ],
+          locationId: 'LOC_MARKET',
+        },
+        {
+          keywords: [
+            '경비대',
+            '경비',
+            '초소',
+            '병영',
+            '수비대',
+            '순찰대',
+            '경비병',
+            '병사들',
+            '관청',
+          ],
+          locationId: 'LOC_GUARD',
+        },
+        {
+          keywords: [
+            '항만',
+            '부두',
+            '항구',
+            '선착장',
+            '포구',
+            '배터',
+            '창고가',
+            '선박',
+            '정박',
+            '바닷가',
+          ],
+          locationId: 'LOC_HARBOR',
+        },
+        {
+          keywords: [
+            '빈민가',
+            '빈민',
+            '슬럼',
+            '뒷골목',
+            '하층가',
+            '빈민굴',
+            '어두운 골목',
+            '허름한 골목',
+          ],
+          locationId: 'LOC_SLUMS',
+        },
+        {
+          keywords: [
+            '귀족',
+            '상류',
+            '저택',
+            '귀족가',
+            '귀족 거리',
+            '정원',
+            '의회',
+            '노블',
+          ],
+          locationId: 'LOC_NOBLE',
+        },
+        {
+          keywords: ['선술집', '잠긴 닻', '숙소', '주점', '술집', '거점'],
+          locationId: 'LOC_TAVERN',
+        },
+        {
+          keywords: [
+            '창고',
+            '창고구',
+            '창고 지구',
+            '물류',
+            '하역장',
+            '화물 창고',
+          ],
+          locationId: 'LOC_DOCKS_WAREHOUSE',
+        },
+        {
+          keywords: ['거점', '본거지', '돌아가'],
+          locationId: 'LOC_TAVERN',
+        },
+      ];
     for (const entry of locationKeywords) {
       for (const kw of entry.keywords) {
         if (normalized.includes(kw)) return entry.locationId;
@@ -3284,7 +4728,11 @@ export class TurnsService {
 
   /** 고집(insistence) 카운트: 같은 actionType 연속 반복 횟수 + 반복 타입 반환 */
   private calculateInsistenceCount(
-    history: Array<{ actionType: string; suppressedActionType?: string; inputText: string }>,
+    history: Array<{
+      actionType: string;
+      suppressedActionType?: string;
+      inputText: string;
+    }>,
   ): { count: number; repeatedType: string | null } {
     if (history.length === 0) return { count: 0, repeatedType: null };
     const lastType = history[history.length - 1].actionType;
@@ -3302,18 +4750,47 @@ export class TurnsService {
   /** IntentActionType → 한국어 라벨 (summary.short용) */
   private actionTypeToKorean(actionType: string): string {
     const map: Record<string, string> = {
-      INVESTIGATE: '조사', PERSUADE: '설득', SNEAK: '은밀 행동', BRIBE: '뇌물',
-      THREATEN: '위협', HELP: '도움', STEAL: '절도', FIGHT: '전투',
-      OBSERVE: '관찰', TRADE: '거래', TALK: '대화', SEARCH: '탐색',
-      MOVE_LOCATION: '이동', REST: '휴식', SHOP: '상점 이용',
+      INVESTIGATE: '조사',
+      PERSUADE: '설득',
+      SNEAK: '은밀 행동',
+      BRIBE: '뇌물',
+      THREATEN: '위협',
+      HELP: '도움',
+      STEAL: '절도',
+      FIGHT: '전투',
+      OBSERVE: '관찰',
+      TRADE: '거래',
+      TALK: '대화',
+      SEARCH: '탐색',
+      MOVE_LOCATION: '이동',
+      REST: '휴식',
+      SHOP: '상점 이용',
     };
     return map[actionType] ?? actionType;
   }
 
   private buildLocationResult(
-    turnNo: number, node: any, text: string, outcome: string,
-    choices: ServerResultV1['choices'], ws: WorldState,
-    actionContext?: { parsedType: string; originalInput: string; tone: string; escalated?: boolean; insistenceCount?: number; eventSceneFrame?: string; eventMatchPolicy?: string; eventId?: string; primaryNpcId?: string | null; goalCategory?: string; approachVector?: string; goalText?: string; targetNpcId?: string },
+    turnNo: number,
+    node: any,
+    text: string,
+    outcome: string,
+    choices: ServerResultV1['choices'],
+    ws: WorldState,
+    actionContext?: {
+      parsedType: string;
+      originalInput: string;
+      tone: string;
+      escalated?: boolean;
+      insistenceCount?: number;
+      eventSceneFrame?: string;
+      eventMatchPolicy?: string;
+      eventId?: string;
+      primaryNpcId?: string | null;
+      goalCategory?: string;
+      approachVector?: string;
+      goalText?: string;
+      targetNpcId?: string;
+    },
     hideResolve?: boolean,
     goldDelta?: number,
     itemsAdded?: import('../db/types/index.js').ItemStack[],
@@ -3335,10 +4812,24 @@ export class TurnsService {
       // 내러티브 텍스트는 summary(NARRATOR)에만 — SYSTEM 이벤트로 표시하지 않음
       events: [],
       ui: {
-        availableActions: ['ACTION', 'CHOICE'], targetLabels: [],
+        availableActions: ['ACTION', 'CHOICE'],
+        targetLabels: [],
         actionSlots: { base: 2, bonusAvailable: false, max: 3 },
-        toneHint: outcome === 'FAIL' ? 'danger' : outcome === 'SUCCESS' ? 'triumph' : 'neutral',
-        worldState: { hubHeat: ws.hubHeat, hubSafety: ws.hubSafety, timePhase: ws.timePhase, currentLocationId: ws.currentLocationId, locationDynamicStates: ws.locationDynamicStates ?? {}, playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed), reputation: ws.reputation ?? {} },
+        toneHint:
+          outcome === 'FAIL'
+            ? 'danger'
+            : outcome === 'SUCCESS'
+              ? 'triumph'
+              : 'neutral',
+        worldState: {
+          hubHeat: ws.hubHeat,
+          hubSafety: ws.hubSafety,
+          timePhase: ws.timePhase,
+          currentLocationId: ws.currentLocationId,
+          locationDynamicStates: ws.locationDynamicStates ?? {},
+          playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
+          reputation: ws.reputation ?? {},
+        },
         // 비도전 행위는 주사위 UI를 표시하지 않음
         ...(hideResolve ? {} : { resolveOutcome: outcome as any }),
         ...(resolveBreakdown ? { resolveBreakdown } : {}),
@@ -3348,47 +4839,118 @@ export class TurnsService {
     };
   }
 
-  private buildDenyResult(turnNo: number, node: any, reason: string): ServerResultV1 {
+  private buildDenyResult(
+    turnNo: number,
+    node: any,
+    reason: string,
+  ): ServerResultV1 {
     return {
       ...this.buildSystemResult(turnNo, node, reason),
-      events: [{ id: `deny_${turnNo}`, kind: 'SYSTEM', text: reason, tags: ['POLICY_DENY'] }],
+      events: [
+        {
+          id: `deny_${turnNo}`,
+          kind: 'SYSTEM',
+          text: reason,
+          tags: ['POLICY_DENY'],
+        },
+      ],
     };
   }
 
   // --- 전투 CHOICE 매핑 (기존 재사용) ---
   private mapCombatChoiceToActionPlan(choiceId: string): ActionPlan {
-    if (choiceId.startsWith('combo_')) return this.parseComboChoiceToActionPlan(choiceId);
-    if (choiceId === 'env_action') return { units: [{ type: 'INTERACT', meta: { envAction: true } }], consumedSlots: { base: 2, used: 1, bonusUsed: false }, staminaCost: 1, policyResult: 'ALLOW', parsedBy: 'RULE' };
-    if (choiceId === 'combat_avoid') return { units: [{ type: 'FLEE', meta: { isAvoid: true } }], consumedSlots: { base: 2, used: 1, bonusUsed: false }, staminaCost: 1, policyResult: 'ALLOW', parsedBy: 'RULE' };
+    if (choiceId.startsWith('combo_'))
+      return this.parseComboChoiceToActionPlan(choiceId);
+    if (choiceId === 'env_action')
+      return {
+        units: [{ type: 'INTERACT', meta: { envAction: true } }],
+        consumedSlots: { base: 2, used: 1, bonusUsed: false },
+        staminaCost: 1,
+        policyResult: 'ALLOW',
+        parsedBy: 'RULE',
+      };
+    if (choiceId === 'combat_avoid')
+      return {
+        units: [{ type: 'FLEE', meta: { isAvoid: true } }],
+        consumedSlots: { base: 2, used: 1, bonusUsed: false },
+        staminaCost: 1,
+        policyResult: 'ALLOW',
+        parsedBy: 'RULE',
+      };
     const unit = this.parseCombatChoiceId(choiceId);
-    return { units: [unit], consumedSlots: { base: 2, used: 1, bonusUsed: false }, staminaCost: 1, policyResult: 'ALLOW', parsedBy: 'RULE' };
+    return {
+      units: [unit],
+      consumedSlots: { base: 2, used: 1, bonusUsed: false },
+      staminaCost: 1,
+      policyResult: 'ALLOW',
+      parsedBy: 'RULE',
+    };
   }
 
   private parseComboChoiceToActionPlan(choiceId: string): ActionPlan {
     if (choiceId.startsWith('combo_double_attack_')) {
       const targetId = choiceId.replace('combo_double_attack_', '');
-      return { units: [{ type: 'ATTACK_MELEE', targetId }, { type: 'ATTACK_MELEE', targetId }], consumedSlots: { base: 2, used: 2, bonusUsed: false }, staminaCost: 2, policyResult: 'ALLOW', parsedBy: 'RULE' };
+      return {
+        units: [
+          { type: 'ATTACK_MELEE', targetId },
+          { type: 'ATTACK_MELEE', targetId },
+        ],
+        consumedSlots: { base: 2, used: 2, bonusUsed: false },
+        staminaCost: 2,
+        policyResult: 'ALLOW',
+        parsedBy: 'RULE',
+      };
     }
     if (choiceId.startsWith('combo_attack_defend_')) {
       const targetId = choiceId.replace('combo_attack_defend_', '');
-      return { units: [{ type: 'ATTACK_MELEE', targetId }, { type: 'DEFEND' }], consumedSlots: { base: 2, used: 2, bonusUsed: false }, staminaCost: 2, policyResult: 'ALLOW', parsedBy: 'RULE' };
+      return {
+        units: [{ type: 'ATTACK_MELEE', targetId }, { type: 'DEFEND' }],
+        consumedSlots: { base: 2, used: 2, bonusUsed: false },
+        staminaCost: 2,
+        policyResult: 'ALLOW',
+        parsedBy: 'RULE',
+      };
     }
-    return { units: [{ type: 'DEFEND' }], consumedSlots: { base: 2, used: 1, bonusUsed: false }, staminaCost: 1, policyResult: 'ALLOW', parsedBy: 'RULE' };
+    return {
+      units: [{ type: 'DEFEND' }],
+      consumedSlots: { base: 2, used: 1, bonusUsed: false },
+      staminaCost: 1,
+      policyResult: 'ALLOW',
+      parsedBy: 'RULE',
+    };
   }
 
-  private parseCombatChoiceId(choiceId: string): import('../db/types/index.js').ActionUnit {
-    if (choiceId.startsWith('attack_melee_')) return { type: 'ATTACK_MELEE', targetId: choiceId.replace('attack_melee_', '') };
+  private parseCombatChoiceId(
+    choiceId: string,
+  ): import('../db/types/index.js').ActionUnit {
+    if (choiceId.startsWith('attack_melee_'))
+      return {
+        type: 'ATTACK_MELEE',
+        targetId: choiceId.replace('attack_melee_', ''),
+      };
     if (choiceId === 'defend') return { type: 'DEFEND' };
     if (choiceId === 'evade') return { type: 'EVADE' };
     if (choiceId === 'flee') return { type: 'FLEE' };
-    if (choiceId === 'move_forward') return { type: 'MOVE', direction: 'FORWARD' };
+    if (choiceId === 'move_forward')
+      return { type: 'MOVE', direction: 'FORWARD' };
     if (choiceId === 'move_back') return { type: 'MOVE', direction: 'BACK' };
-    if (choiceId.startsWith('use_item_')) return { type: 'USE_ITEM', meta: { itemHint: choiceId.replace('use_item_', '') } };
+    if (choiceId.startsWith('use_item_'))
+      return {
+        type: 'USE_ITEM',
+        meta: { itemHint: choiceId.replace('use_item_', '') },
+      };
     return { type: 'DEFEND' };
   }
 
-  async getTurnDetail(runId: string, turnNo: number, userId: string, query: GetTurnQuery) {
-    const run = await this.db.query.runSessions.findFirst({ where: eq(runSessions.id, runId) });
+  async getTurnDetail(
+    runId: string,
+    turnNo: number,
+    userId: string,
+    query: GetTurnQuery,
+  ) {
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+    });
     if (!run) throw new NotFoundError('Run not found');
     if (run.userId !== userId) throw new ForbiddenError('Not your run');
 
@@ -3398,17 +4960,40 @@ export class TurnsService {
     if (!turn) throw new NotFoundError('Turn not found');
 
     const response: Record<string, unknown> = {
-      run: { id: run.id, status: run.status, actLevel: run.actLevel, currentTurnNo: run.currentTurnNo },
-      turn: { turnNo: turn.turnNo, nodeInstanceId: turn.nodeInstanceId, nodeType: turn.nodeType, inputType: turn.inputType, rawInput: turn.rawInput, createdAt: turn.createdAt },
+      run: {
+        id: run.id,
+        status: run.status,
+        actLevel: run.actLevel,
+        currentTurnNo: run.currentTurnNo,
+      },
+      turn: {
+        turnNo: turn.turnNo,
+        nodeInstanceId: turn.nodeInstanceId,
+        nodeType: turn.nodeType,
+        inputType: turn.inputType,
+        rawInput: turn.rawInput,
+        createdAt: turn.createdAt,
+      },
       serverResult: turn.serverResult,
-      llm: { status: turn.llmStatus, output: turn.llmOutput, modelUsed: turn.llmModelUsed, completedAt: turn.llmCompletedAt, error: turn.llmError, tokenStats: turn.llmTokenStats ?? null, choices: turn.llmChoices ?? null },
+      llm: {
+        status: turn.llmStatus,
+        output: turn.llmOutput,
+        modelUsed: turn.llmModelUsed,
+        completedAt: turn.llmCompletedAt,
+        error: turn.llmError,
+        tokenStats: turn.llmTokenStats ?? null,
+        choices: turn.llmChoices ?? null,
+      },
     };
 
     if (query.includeDebug) {
       response.debug = {
-        parsedBy: turn.parsedBy, parseConfidence: turn.confidence,
-        parsedIntent: turn.parsedIntent, policyResult: turn.policyResult,
-        actionPlan: turn.actionPlan, idempotencyKey: turn.idempotencyKey,
+        parsedBy: turn.parsedBy,
+        parseConfidence: turn.confidence,
+        parsedIntent: turn.parsedIntent,
+        policyResult: turn.policyResult,
+        actionPlan: turn.actionPlan,
+        idempotencyKey: turn.idempotencyKey,
         llmPrompt: turn.llmPrompt ?? null,
       };
     }
@@ -3420,7 +5005,9 @@ export class TurnsService {
    * LLM 재시도 — FAILED 상태의 턴을 PENDING으로 리셋하여 Worker가 다시 처리하도록 한다.
    */
   async retryLlm(runId: string, turnNo: number, userId: string) {
-    const run = await this.db.query.runSessions.findFirst({ where: eq(runSessions.id, runId) });
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+    });
     if (!run) throw new NotFoundError('Run not found');
     if (run.userId !== userId) throw new ForbiddenError('Not your run');
 
@@ -3430,7 +5017,9 @@ export class TurnsService {
     if (!turn) throw new NotFoundError('Turn not found');
 
     if (turn.llmStatus !== 'FAILED') {
-      throw new InvalidInputError(`Cannot retry: current LLM status is ${turn.llmStatus}`);
+      throw new InvalidInputError(
+        `Cannot retry: current LLM status is ${turn.llmStatus}`,
+      );
     }
 
     // FAILED → PENDING 리셋
@@ -3451,7 +5040,9 @@ export class TurnsService {
    * 런 전체 턴의 LLM 토큰 사용량 집계
    */
   async getLlmUsage(runId: string, userId: string) {
-    const run = await this.db.query.runSessions.findFirst({ where: eq(runSessions.id, runId) });
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+    });
     if (!run) throw new NotFoundError('Run not found');
     if (run.userId !== userId) throw new ForbiddenError('Not your run');
 

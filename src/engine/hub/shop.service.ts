@@ -2,7 +2,10 @@
 
 import { Injectable } from '@nestjs/common';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
-import type { ShopDefinition, ItemDefinition } from '../../content/content.types.js';
+import type {
+  ShopDefinition,
+  ItemDefinition,
+} from '../../content/content.types.js';
 import type { ShopStock, StockItem } from '../../db/types/region-state.js';
 import { Rng } from '../rng/rng.service.js';
 
@@ -100,10 +103,7 @@ export class ShopService {
   /**
    * 상점 표시용 아이템 목록 생성 (priceIndex 반영).
    */
-  getDisplayItems(
-    stock: ShopStock,
-    priceIndex: number,
-  ): ShopDisplayItem[] {
+  getDisplayItems(stock: ShopStock, priceIndex: number): ShopDisplayItem[] {
     const result: ShopDisplayItem[] = [];
     for (const si of stock.items) {
       if (si.qty <= 0) continue;
@@ -139,7 +139,12 @@ export class ShopService {
     const stockItem = stock.items.find((i) => i.itemId === itemId);
     if (!stockItem || stockItem.qty <= 0) {
       return {
-        result: { success: false, reason: 'OUT_OF_STOCK', goldSpent: 0, itemId },
+        result: {
+          success: false,
+          reason: 'OUT_OF_STOCK',
+          goldSpent: 0,
+          itemId,
+        },
         updatedStock: stock,
       };
     }
@@ -147,7 +152,12 @@ export class ShopService {
     const itemDef = this.contentLoader.getItem(itemId);
     if (!itemDef) {
       return {
-        result: { success: false, reason: 'ITEM_NOT_FOUND', goldSpent: 0, itemId },
+        result: {
+          success: false,
+          reason: 'ITEM_NOT_FOUND',
+          goldSpent: 0,
+          itemId,
+        },
         updatedStock: stock,
       };
     }
@@ -157,7 +167,12 @@ export class ShopService {
 
     if (playerGold < price) {
       return {
-        result: { success: false, reason: 'NOT_ENOUGH_GOLD', goldSpent: 0, itemId },
+        result: {
+          success: false,
+          reason: 'NOT_ENOUGH_GOLD',
+          goldSpent: 0,
+          itemId,
+        },
         updatedStock: stock,
       };
     }
@@ -176,13 +191,15 @@ export class ShopService {
   /**
    * 판매 처리. sellPrice = buyPrice × 0.5 (기본)
    */
-  sell(
-    itemId: string,
-    priceIndex: number,
-  ): SellResult {
+  sell(itemId: string, priceIndex: number): SellResult {
     const itemDef = this.contentLoader.getItem(itemId);
     if (!itemDef) {
-      return { success: false, reason: 'ITEM_NOT_FOUND', goldGained: 0, itemId };
+      return {
+        success: false,
+        reason: 'ITEM_NOT_FOUND',
+        goldGained: 0,
+        itemId,
+      };
     }
 
     // Legendary, KEY_ITEM, CLUE는 판매 불가
@@ -194,7 +211,8 @@ export class ShopService {
       return { success: false, reason: 'NOT_SELLABLE', goldGained: 0, itemId };
     }
 
-    const sellPrice = itemDef.sellPrice ?? Math.floor((itemDef.buyPrice ?? 0) * 0.5);
+    const sellPrice =
+      itemDef.sellPrice ?? Math.floor((itemDef.buyPrice ?? 0) * 0.5);
     const adjustedPrice = Math.round(sellPrice * priceIndex);
 
     return { success: true, goldGained: adjustedPrice, itemId };
@@ -204,10 +222,7 @@ export class ShopService {
    * priceIndex 업데이트 (리전 상태 기반).
    * tension↑ → 가격↑, security↓ → 암시장 효과
    */
-  calculatePriceIndex(
-    tension: number,
-    avgCrime: number,
-  ): number {
+  calculatePriceIndex(tension: number, avgCrime: number): number {
     // 기본 1.0, tension 0~10 → +0%~+30%, crime 50+ → -5%~-15% (암시장 효과)
     const tensionBonus = tension * 0.03; // 최대 +0.3
     const crimeDiscount = avgCrime > 50 ? (avgCrime - 50) * 0.003 : 0; // 최대 ~-0.15

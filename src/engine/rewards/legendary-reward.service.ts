@@ -74,7 +74,10 @@ export class LegendaryRewardService {
     // 모든 LEGENDARY 아이템 중 아직 지급하지 않은 후보
     const candidates = this.contentLoader
       .getAllItems()
-      .filter((item) => item.rarity === 'LEGENDARY' && !alreadyAwarded.has(item.itemId));
+      .filter(
+        (item) =>
+          item.rarity === 'LEGENDARY' && !alreadyAwarded.has(item.itemId),
+      );
 
     if (candidates.length === 0) return result;
 
@@ -82,13 +85,18 @@ export class LegendaryRewardService {
     let candidateIdx = 0;
     for (const tier of LEGENDARY_TIERS) {
       if (candidateIdx >= candidates.length) break;
-      if (commitment >= tier.commitmentMin && containedCount >= tier.containedCountMin) {
+      if (
+        commitment >= tier.commitmentMin &&
+        containedCount >= tier.containedCountMin
+      ) {
         // 이 tier에 대해 이미 지급했는지 체크 (alreadyAwarded 기준)
         // -> candidates는 이미 필터링됐으므로 추가 체크 불필요
         const candidate = candidates[candidateIdx];
         candidateIdx++;
 
-        const instance = this.affixService.createPlainInstance(candidate.itemId);
+        const instance = this.affixService.createPlainInstance(
+          candidate.itemId,
+        );
         result.awarded.push(instance);
         result.events.push({
           id: `legendary_${instance.instanceId.slice(0, 8)}`,
