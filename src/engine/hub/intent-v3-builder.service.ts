@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import type { ParsedIntentV2, IntentActionType } from '../../db/types/parsed-intent-v2.js';
+import type {
+  ParsedIntentV2,
+  IntentActionType,
+} from '../../db/types/parsed-intent-v2.js';
 import type {
   ParsedIntentV3,
   ApproachVector,
@@ -54,7 +57,9 @@ const ACTION_TO_GOAL: Record<IntentActionType, IntentGoalCategory> = {
 
 // --- target 존재 시 goalCategory 보정 ---
 
-const TARGET_GOAL_OVERRIDES: Partial<Record<IntentActionType, IntentGoalCategory>> = {
+const TARGET_GOAL_OVERRIDES: Partial<
+  Record<IntentActionType, IntentGoalCategory>
+> = {
   BRIBE: 'GET_INFO',
   SNEAK: 'HIDE_TRACE',
   TALK: 'SHIFT_RELATION',
@@ -82,7 +87,7 @@ export class IntentV3BuilderService {
     const approachVector = ACTION_TO_VECTOR[primaryActionType] ?? 'SOCIAL';
 
     const secondaryApproachVector = intentV2.secondaryActionType
-      ? ACTION_TO_VECTOR[intentV2.secondaryActionType] ?? null
+      ? (ACTION_TO_VECTOR[intentV2.secondaryActionType] ?? null)
       : null;
 
     const goalCategory = this.resolveGoalCategory(
@@ -110,7 +115,9 @@ export class IntentV3BuilderService {
       goalText,
       approachVector,
       secondaryApproachVector:
-        secondaryApproachVector !== approachVector ? secondaryApproachVector : null,
+        secondaryApproachVector !== approachVector
+          ? secondaryApproachVector
+          : null,
       riskLevel: intentV2.riskLevel,
       confidence: intentV2.confidence as 0 | 1 | 2 | 3,
       source,
@@ -197,7 +204,9 @@ export class IntentV3BuilderService {
     }
   }
 
-  private mapSource(v2Source: 'RULE' | 'LLM' | 'CHOICE'): ParsedIntentV3['source'] {
+  private mapSource(
+    v2Source: 'RULE' | 'LLM' | 'CHOICE',
+  ): ParsedIntentV3['source'] {
     return v2Source;
   }
 }

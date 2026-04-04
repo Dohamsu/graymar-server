@@ -82,10 +82,18 @@ export class IncidentManagementService {
         for (const [factionId, cond] of Object.entries(sc.requiredReputation)) {
           const rep = ws.reputation[factionId] ?? 0;
           switch (cond.op) {
-            case 'gt': if (!(rep > cond.value)) return false; break;
-            case 'lt': if (!(rep < cond.value)) return false; break;
-            case 'gte': if (!(rep >= cond.value)) return false; break;
-            case 'lte': if (!(rep <= cond.value)) return false; break;
+            case 'gt':
+              if (!(rep > cond.value)) return false;
+              break;
+            case 'lt':
+              if (!(rep < cond.value)) return false;
+              break;
+            case 'gte':
+              if (!(rep >= cond.value)) return false;
+              break;
+            case 'lte':
+              if (!(rep <= cond.value)) return false;
+              break;
           }
         }
       }
@@ -140,7 +148,10 @@ export class IncidentManagementService {
       }
 
       // pressure 자동 증가
-      const newPressure = Math.min(100, incident.pressure + stageDef.pressurePerTick);
+      const newPressure = Math.min(
+        100,
+        incident.pressure + stageDef.pressurePerTick,
+      );
       const updated: IncidentRuntime = {
         ...incident,
         pressure: newPressure,
@@ -197,7 +208,10 @@ export class IncidentManagementService {
       controlDelta = Math.floor(stageDef.controlReward / 2);
     }
 
-    const newControl = Math.max(0, Math.min(100, incident.control + controlDelta));
+    const newControl = Math.max(
+      0,
+      Math.min(100, incident.control + controlDelta),
+    );
 
     // stage 진행: control 50 이상이고 다음 stage가 존재하면
     let newStage = incident.stage;
@@ -263,8 +277,11 @@ export class IncidentManagementService {
     // affordance 매칭 우선 (primary OR secondary)
     const affordanceMatch = candidates.find(({ def, incident }) => {
       const stageDef = def.stages[incident.stage];
-      return stageDef?.affordances.includes(actionType as any) ||
-        (secondaryActionType && stageDef?.affordances.includes(secondaryActionType as any));
+      return (
+        stageDef?.affordances.includes(actionType as any) ||
+        (secondaryActionType &&
+          stageDef?.affordances.includes(secondaryActionType as any))
+      );
     });
 
     return affordanceMatch ?? candidates[0];
@@ -292,7 +309,10 @@ export class IncidentManagementService {
     return currentClock >= incident.deadlineClock;
   }
 
-  private createRuntime(def: IncidentDef, currentClock: number): IncidentRuntime {
+  private createRuntime(
+    def: IncidentDef,
+    currentClock: number,
+  ): IncidentRuntime {
     return {
       incidentId: def.incidentId,
       kind: def.kind,
@@ -335,7 +355,14 @@ export class IncidentManagementService {
     const vectors: IncidentVectorState[] = [];
 
     // kind 기반 기본 벡터
-    const kindVectors: Record<string, Array<{ vector: string; preferred: boolean; failForward: IncidentVectorState['failForwardMode'] }>> = {
+    const kindVectors: Record<
+      string,
+      Array<{
+        vector: string;
+        preferred: boolean;
+        failForward: IncidentVectorState['failForwardMode'];
+      }>
+    > = {
       CRIMINAL: [
         { vector: 'STEALTH', preferred: true, failForward: 'SUSPICION' },
         { vector: 'SOCIAL', preferred: false, failForward: 'HEAT' },

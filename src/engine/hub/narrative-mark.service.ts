@@ -99,7 +99,8 @@ export class NarrativeMarkService {
         if (!found) return false;
       } else {
         const found = ctx.ws.activeIncidents.find(
-          (i) => i.incidentId === incidentId && i.resolved && i.outcome === outcome,
+          (i) =>
+            i.incidentId === incidentId && i.resolved && i.outcome === outcome,
         );
         if (!found) return false;
       }
@@ -117,14 +118,16 @@ export class NarrativeMarkService {
       } else {
         const emo = ctx.npcEmotionals[npcId];
         if (!emo) return false;
-        if (!this.compareValue((emo as any)[axis] ?? 0, op, value)) return false;
+        if (!this.compareValue((emo as any)[axis] ?? 0, op, value))
+          return false;
       }
     }
 
     // resolve outcome 횟수 체크
     if (c.resolveOutcome) {
       const count = ctx.resolveOutcomes[c.resolveOutcome.outcome] ?? 0;
-      if (c.resolveOutcome.minCount && count < c.resolveOutcome.minCount) return false;
+      if (c.resolveOutcome.minCount && count < c.resolveOutcome.minCount)
+        return false;
     }
 
     // 기존 마크 수 체크
@@ -138,11 +141,16 @@ export class NarrativeMarkService {
 
   private compareValue(actual: number, op: string, expected: number): boolean {
     switch (op) {
-      case 'gt': return actual > expected;
-      case 'lt': return actual < expected;
-      case 'gte': return actual >= expected;
-      case 'lte': return actual <= expected;
-      default: return false;
+      case 'gt':
+        return actual > expected;
+      case 'lt':
+        return actual < expected;
+      case 'gte':
+        return actual >= expected;
+      case 'lte':
+        return actual <= expected;
+      default:
+        return false;
     }
   }
 
@@ -168,14 +176,16 @@ export class NarrativeMarkService {
     // {{incidentTitle}} 치환
     if (cond.conditions.incidentOutcome) {
       const inc = ctx.ws.activeIncidents.find(
-        (i) => i.incidentId === cond.conditions.incidentOutcome!.incidentId ||
-          (cond.conditions.incidentOutcome!.incidentId === '*critical*' && i.resolved),
+        (i) =>
+          i.incidentId === cond.conditions.incidentOutcome!.incidentId ||
+          (cond.conditions.incidentOutcome!.incidentId === '*critical*' &&
+            i.resolved),
       );
       // incidentId는 기계용 ID — 사람이 읽을 수 있도록 변환
       const readableTitle = inc
         ? inc.incidentId
-            .replace(/^INC_/i, '')     // 접두사 제거
-            .replace(/_/g, ' ')        // 언더스코어 → 공백
+            .replace(/^INC_/i, '') // 접두사 제거
+            .replace(/_/g, ' ') // 언더스코어 → 공백
             .toLowerCase()
             .replace(/\b\w/g, (c) => c.toUpperCase()) // 각 단어 첫 글자 대문자
         : '사건';

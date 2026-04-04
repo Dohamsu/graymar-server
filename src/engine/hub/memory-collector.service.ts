@@ -9,7 +9,10 @@ import type {
   VisitAction,
   StructuredMemory,
 } from '../../db/types/structured-memory.js';
-import { createEmptyVisitContext, createEmptyStructuredMemory } from '../../db/types/structured-memory.js';
+import {
+  createEmptyVisitContext,
+  createEmptyStructuredMemory,
+} from '../../db/types/structured-memory.js';
 import type { IntentActionType } from '../../db/types/parsed-intent-v2.js';
 import type { ResolveOutcome } from '../../db/types/resolve-result.js';
 import type { NpcEmotionalState } from '../../db/types/npc-state.js';
@@ -168,8 +171,7 @@ export class MemoryCollectorService {
       const { npcId, delta } = data.npcEmotionalDelta;
       const existing = ctx.npcEmotionalDeltas[npcId] ?? {};
       for (const [axis, val] of Object.entries(delta)) {
-        (existing as any)[axis] =
-          ((existing as any)[axis] ?? 0) + (val as number);
+        (existing as any)[axis] = ((existing as any)[axis] ?? 0) + val;
       }
       ctx.npcEmotionalDeltas[npcId] = existing;
     }
@@ -183,18 +185,32 @@ export class MemoryCollectorService {
 
     // NPC Knowledge 수집: 대화형 행동 + SUCCESS/PARTIAL 시
     const knowledgeActionTypes = [
-      'TALK', 'PERSUADE', 'BRIBE', 'INVESTIGATE', 'OBSERVE', 'HELP', 'THREATEN',
+      'TALK',
+      'PERSUADE',
+      'BRIBE',
+      'INVESTIGATE',
+      'OBSERVE',
+      'HELP',
+      'THREATEN',
     ] as const;
     // NPC ID: intentTargetNpcId 최우선, primaryNpcId 차순, 없으면 이벤트 태그에서 추론
-    const targetNpcId = data.intentTargetNpcId ?? data.primaryNpcId ?? this.resolveNpcFromTags(data.eventTags);
+    const targetNpcId =
+      data.intentTargetNpcId ??
+      data.primaryNpcId ??
+      this.resolveNpcFromTags(data.eventTags);
     if (
       knowledgeActionTypes.includes(data.actionType as any) &&
       (data.outcome === 'SUCCESS' || data.outcome === 'PARTIAL') &&
       targetNpcId
     ) {
       await this.collectNpcKnowledge(
-        runId, targetNpcId, locationId, turnNo,
-        data.actionType, data.outcome, data.rawInput,
+        runId,
+        targetNpcId,
+        locationId,
+        turnNo,
+        data.actionType,
+        data.outcome,
+        data.rawInput,
         'PLAYER_TOLD',
       );
     }
@@ -202,15 +218,33 @@ export class MemoryCollectorService {
     // PR-E: 자동 수집 — NPC가 있는 턴이면 이벤트 태그 기반 정보도 수집
     if (targetNpcId && data.eventTags && data.eventTags.length > 0) {
       const infoTags = data.eventTags.filter((t) =>
-        ['EVIDENCE', 'SECRET', 'RUMOR', 'CORRUPTION', 'SMUGGLING', 'THEFT', 'ASSASSINATION'].some(
-          (kw) => t.toUpperCase().includes(kw),
-        ),
+        [
+          'EVIDENCE',
+          'SECRET',
+          'RUMOR',
+          'CORRUPTION',
+          'SMUGGLING',
+          'THEFT',
+          'ASSASSINATION',
+        ].some((kw) => t.toUpperCase().includes(kw)),
       );
-      if (infoTags.length > 0 && (data.outcome === 'SUCCESS' || data.outcome === 'PARTIAL')) {
-        const tagText = `[${infoTags.slice(0, 2).join(',')}] ${data.rawInput.slice(0, 50)}`.slice(0, 80);
+      if (
+        infoTags.length > 0 &&
+        (data.outcome === 'SUCCESS' || data.outcome === 'PARTIAL')
+      ) {
+        const tagText =
+          `[${infoTags.slice(0, 2).join(',')}] ${data.rawInput.slice(0, 50)}`.slice(
+            0,
+            80,
+          );
         await this.collectNpcKnowledge(
-          runId, targetNpcId, locationId, turnNo,
-          data.actionType, data.outcome, tagText,
+          runId,
+          targetNpcId,
+          locationId,
+          turnNo,
+          data.actionType,
+          data.outcome,
+          tagText,
           'AUTO_COLLECT',
         );
       }
@@ -258,7 +292,7 @@ export class MemoryCollectorService {
       });
       if (!memRow) return;
 
-      let structured = (memRow.structuredMemory ?? null) as StructuredMemory | null;
+      let structured = memRow.structuredMemory ?? null;
       if (!structured) {
         structured = createEmptyStructuredMemory();
       }
@@ -267,31 +301,42 @@ export class MemoryCollectorService {
       const entries = knowledge[npcId] ?? [];
 
       const factId = `nk_${turnNo}_${npcId}_${source}`;
-      const text = `${actionType} → ${outcome}: ${rawInput.slice(0, 70)}`.slice(0, 80);
+      const text = `${actionType} → ${outcome}: ${rawInput.slice(0, 70)}`.slice(
+        0,
+        80,
+      );
       const importance = outcome === 'SUCCESS' ? 0.8 : 0.5;
 
       // PR-E: 중복 방지 — 같은 턴+NPC에 이미 동일 source 기록이 있으면 스킵
-      const duplicate = entries.some((e) => e.turnNo === turnNo && e.source === source);
+      const duplicate = entries.some(
+        (e) => e.turnNo === turnNo && e.source === source,
+      );
       if (duplicate) return;
 
       const newEntry: NpcKnowledgeEntry = {
-        factId, text,
+        factId,
+        text,
         source,
-        turnNo, locationId, importance,
+        turnNo,
+        locationId,
+        importance,
       };
 
       entries.push(newEntry);
 
       // NPC당 최대 5개 — importance 기반 정리
       if (entries.length > 5) {
-        entries.sort((a, b) => b.importance - a.importance || b.turnNo - a.turnNo);
+        entries.sort(
+          (a, b) => b.importance - a.importance || b.turnNo - a.turnNo,
+        );
         entries.length = 5;
       }
 
       knowledge[npcId] = entries;
       structured.npcKnowledge = knowledge;
 
-      await this.db.update(runMemories)
+      await this.db
+        .update(runMemories)
         .set({ structuredMemory: structured, updatedAt: new Date() })
         .where(eq(runMemories.runId, runId));
     } catch {

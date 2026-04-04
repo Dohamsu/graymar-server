@@ -20,7 +20,9 @@ export class AuthGuard implements CanActivate {
     }
 
     // 2. httpOnly cookie 확인
-    const cookieToken = (req.cookies as Record<string, string> | undefined)?.[COOKIE_NAME];
+    const cookieToken = (req.cookies as Record<string, string> | undefined)?.[
+      COOKIE_NAME
+    ];
     if (cookieToken) {
       return this.verifyToken(req, cookieToken);
     }
@@ -34,9 +36,7 @@ export class AuthGuard implements CanActivate {
       }
     }
 
-    throw new UnauthorizedError(
-      '로그인이 필요합니다. 다시 로그인해주세요.',
-    );
+    throw new UnauthorizedError('로그인이 필요합니다. 다시 로그인해주세요.');
   }
 
   private verifyToken(req: Request, token: string): boolean {
@@ -45,7 +45,9 @@ export class AuthGuard implements CanActivate {
       (req as unknown as Record<string, unknown>)[USER_ID_KEY] = payload.sub;
       return true;
     } catch {
-      throw new UnauthorizedError('로그인이 만료되었습니다. 다시 로그인해주세요.');
+      throw new UnauthorizedError(
+        '로그인이 만료되었습니다. 다시 로그인해주세요.',
+      );
     }
   }
 }

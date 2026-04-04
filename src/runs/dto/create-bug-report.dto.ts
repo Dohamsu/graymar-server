@@ -1,14 +1,7 @@
 import { z } from 'zod';
 
 export const CreateBugReportBodySchema = z.object({
-  category: z.enum([
-    'narrative',
-    'choices',
-    'npc',
-    'judgment',
-    'ui',
-    'other',
-  ]),
+  category: z.enum(['narrative', 'choices', 'npc', 'judgment', 'ui', 'other']),
   description: z.string().max(2000).optional(),
   recentTurns: z.array(z.any()).min(1).max(5),
 });

@@ -25,7 +25,16 @@ import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { AgendaService } from '../engine/hub/agenda.service.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
-import { type ServerResultV1, type RunState, type IncidentDef, type NPCState, type CarryOverState, type ScenarioMeta, type PermanentStats, DEFAULT_PERMANENT_STATS } from '../db/types/index.js';
+import {
+  type ServerResultV1,
+  type RunState,
+  type IncidentDef,
+  type NPCState,
+  type CarryOverState,
+  type ScenarioMeta,
+  type PermanentStats,
+  DEFAULT_PERMANENT_STATS,
+} from '../db/types/index.js';
 import { initNPCState } from '../db/types/npc-state.js';
 import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
@@ -94,7 +103,8 @@ export class RunsService {
       }
     }
 
-    const isFirstScenario = !carryOver || carryOver.completedScenarios.length === 0;
+    const isFirstScenario =
+      !carryOver || carryOver.completedScenarios.length === 0;
     const carryOverRules = scenarioMeta?.carryOverRules;
 
     // 0-1. 프리셋 검증 — 첫 시나리오 또는 캠페인 아닌 경우 필수
@@ -214,7 +224,11 @@ export class RunsService {
     // Narrative Engine v1: 초기 Incident spawn
     const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
     const initRng = this.rngService.create(seed, 0);
-    const initialIncidents = this.incidentMgmt.initIncidents(incidentDefs, worldState, initRng);
+    const initialIncidents = this.incidentMgmt.initIncidents(
+      incidentDefs,
+      worldState,
+      initRng,
+    );
     worldState.activeIncidents = initialIncidents;
 
     // Living World v2: 장소 동적 상태 + NPC 위치 + WorldFacts + PlayerGoals 초기화
@@ -222,7 +236,14 @@ export class RunsService {
     worldState.locationDynamicStates = {};
     for (const loc of allLocations) {
       const locDef = loc as Record<string, unknown>;
-      const baseState = locDef.baseState as { controllingFaction: string | null; security: number; prosperity: number; unrest: number } | undefined;
+      const baseState = locDef.baseState as
+        | {
+            controllingFaction: string | null;
+            security: number;
+            prosperity: number;
+            unrest: number;
+          }
+        | undefined;
       worldState.locationDynamicStates[loc.locationId] = {
         locationId: loc.locationId,
         controllingFaction: baseState?.controllingFaction ?? null,
@@ -269,15 +290,20 @@ export class RunsService {
 
     // 프리셋별 NPC posture/trust 오버라이드 적용
     if (preset?.npcPostureOverrides) {
-      for (const [npcId, override] of Object.entries(preset.npcPostureOverrides)) {
+      for (const [npcId, override] of Object.entries(
+        preset.npcPostureOverrides,
+      )) {
         const npcState = npcStates[npcId];
         if (npcState) {
           npcState.posture = override.posture as any;
           if (override.trustDelta) {
-            npcState.emotional.trust = (npcState.emotional.trust ?? 0) + override.trustDelta;
+            npcState.emotional.trust =
+              (npcState.emotional.trust ?? 0) + override.trustDelta;
             npcState.trustToPlayer = npcState.emotional.trust;
           }
-          this.logger.log(`[PresetOverride] ${presetId} → ${npcId}: posture=${override.posture}, trustDelta=${override.trustDelta ?? 0}`);
+          this.logger.log(
+            `[PresetOverride] ${presetId} → ${npcId}: posture=${override.posture}, trustDelta=${override.trustDelta ?? 0}`,
+          );
         }
       }
     }
@@ -289,14 +315,21 @@ export class RunsService {
         npcState.emotional.trust = (npcState.emotional.trust ?? 0) + trustBonus;
         npcState.trustToPlayer = npcState.emotional.trust;
       }
-      this.logger.log(`[TraitEffect] globalTrustBonus=${trustBonus} applied to ${Object.keys(npcStates).length} NPCs`);
+      this.logger.log(
+        `[TraitEffect] globalTrustBonus=${trustBonus} applied to ${Object.keys(npcStates).length} NPCs`,
+      );
     }
 
     // 특성 actionBonuses를 프리셋 actionBonuses에 합산
-    const mergedActionBonuses: Record<string, number> = { ...(preset?.actionBonuses ?? {}) };
+    const mergedActionBonuses: Record<string, number> = {
+      ...(preset?.actionBonuses ?? {}),
+    };
     if (traitDef?.effects?.actionBonuses) {
-      for (const [action, bonus] of Object.entries(traitDef.effects.actionBonuses)) {
-        mergedActionBonuses[action] = (mergedActionBonuses[action] ?? 0) + bonus;
+      for (const [action, bonus] of Object.entries(
+        traitDef.effects.actionBonuses,
+      )) {
+        mergedActionBonuses[action] =
+          (mergedActionBonuses[action] ?? 0) + bonus;
       }
     }
 
@@ -304,7 +337,9 @@ export class RunsService {
     const traitGoldBonus = traitDef?.effects?.goldBonus ?? 0;
 
     // 특성 런타임 효과 저장용 (failToPartialChance, criticalDisabled, lowHpBonus 등)
-    const traitEffects = traitDef?.effects ? { ...traitDef.effects } : undefined;
+    const traitEffects = traitDef?.effects
+      ? { ...traitDef.effects }
+      : undefined;
 
     // 초기 RunState 결정 — CarryOver 또는 프리셋 기반
     let initialRunState: RunState;
@@ -315,7 +350,8 @@ export class RunsService {
       const itemsCarry = carryOverRules?.itemsCarry ?? true;
       const reputationDecay = carryOverRules?.reputationDecay ?? 1.0;
 
-      const carryMaxHp = (carryOver.finalMaxHp ?? 100) + (carryOver.maxHpBonus ?? 0);
+      const carryMaxHp =
+        (carryOver.finalMaxHp ?? 100) + (carryOver.maxHpBonus ?? 0);
       const carryHp = Math.min(carryOver.finalHp ?? carryMaxHp, carryMaxHp);
 
       // reputation decay 적용
@@ -358,7 +394,10 @@ export class RunsService {
       const startBag: import('../db/types/equipment.js').ItemInstance[] = [];
       const equipRng = this.rngService.create(seed + '_start_eq', 0);
 
-      const startItemMemories: Record<string, import('../db/types/permanent-stats.js').ItemPersonalMemory> = {};
+      const startItemMemories: Record<
+        string,
+        import('../db/types/permanent-stats.js').ItemPersonalMemory
+      > = {};
 
       for (const si of startingItems) {
         if (si.itemId.startsWith('EQ_')) {
@@ -366,7 +405,7 @@ export class RunsService {
           const instance = this.affixService.createPlainInstance(si.itemId);
           const itemDef = this.content.getItem(si.itemId);
           if (itemDef?.slot) {
-            const slot = itemDef.slot as import('../db/types/equipment.js').EquipmentSlot;
+            const slot = itemDef.slot;
             if (!startEquipped[slot]) {
               startEquipped[slot] = instance;
             } else {
@@ -415,7 +454,10 @@ export class RunsService {
         portraitUrl: options?.portraitUrl ?? undefined,
         traitId,
         traitEffects,
-        actionBonuses: Object.keys(mergedActionBonuses).length > 0 ? mergedActionBonuses : undefined,
+        actionBonuses:
+          Object.keys(mergedActionBonuses).length > 0
+            ? mergedActionBonuses
+            : undefined,
       };
     }
 
@@ -424,7 +466,10 @@ export class RunsService {
     const shopStocks: RegionEconomy['shopStocks'] = {};
     for (const shopDef of allShops) {
       shopStocks[shopDef.shopId] = this.shopService.refreshStock(
-        shopDef, undefined, 0, seed,
+        shopDef,
+        undefined,
+        0,
+        seed,
       );
     }
     initialRunState.regionEconomy = {
@@ -433,13 +478,18 @@ export class RunsService {
     };
 
     // 4. HUB 선택지 생성
-    const hubChoices = this.sceneShellService.buildHubChoices(worldState, arcState);
+    const hubChoices = this.sceneShellService.buildHubChoices(
+      worldState,
+      arcState,
+    );
 
     // 5. 트랜잭션: run + 첫 노드 + memory + 첫 턴
     // DAG 모드: 첫 노드는 DAG 그래프의 시작 노드 (common_s0)
     const isDag = runMode === 'dag';
     const dagStartNodeId = isDag ? this.planner.getStartNodeId() : null;
-    const dagStartNode = dagStartNodeId ? this.planner.findNode(dagStartNodeId) : null;
+    const dagStartNode = dagStartNodeId
+      ? this.planner.findNode(dagStartNodeId)
+      : null;
 
     const result = await this.db.transaction(async (tx) => {
       // run_sessions INSERT
@@ -473,7 +523,7 @@ export class RunsService {
           nodeIndex: 0,
           graphNodeId: dagStartNodeId,
           nodeType: dagStartNode.nodeType,
-          nodeMeta: dagStartNode.nodeMeta as Record<string, unknown>,
+          nodeMeta: dagStartNode.nodeMeta,
           environmentTags: dagStartNode.environmentTags,
           edges: dagStartNode.edges,
           status: 'NODE_ACTIVE',
@@ -495,40 +545,40 @@ export class RunsService {
 
       // run_memories INSERT — L0 theme 구성 (캠페인 요약 포함)
       const themeEntries = [
-          {
-            key: 'location',
-            value:
-              '그레이마르 항만 — 왕국 남서부 최대 무역항. 세 세력(항만 노동 길드, 해관청, 밀수 조직)이 이권을 다툰다.',
-            importance: 1.0,
-            tags: ['LOCATION', 'THEME'],
-          },
-          {
-            key: 'quest',
-            value:
-              '사라진 공물 장부 — 길드가 해관청에 바친 공물 내역이 담긴 장부가 도난당했다. 장부에는 뒷거래 기록도 포함되어 있어, 공개되면 길드 간부 다수가 처형당할 수 있다.',
-            importance: 1.0,
-            tags: ['QUEST', 'THEME'],
-          },
-          {
-            key: 'npc_client',
-            value:
-              '의뢰인 로넨 — 항만 노동 길드의 말단 서기관. 장부 관리 책임자였으나 도난 사실을 상부에 보고하지 못해 쫓기는 처지.',
-            importance: 0.9,
-            tags: ['NPC', 'THEME'],
-          },
-          {
-            key: 'hub_system',
-            value:
-              "HUB 거점 — '잠긴 닻' 선술집. 항만 한구석의 허름하지만 안전한 선술집. 이곳에서 시장/경비대/항만/빈민가로 이동하며 임무를 수행한다.",
-            importance: 0.8,
-            tags: ['HUB', 'THEME'],
-          },
-          {
-            key: 'protagonist',
-            value: `${characterName ? characterName : '이름 없는 용병'} — ${preset?.protagonistTheme ?? '이름 없는 용병.'} 그레이마르에는 일거리를 찾아 며칠 전 도착했다.`,
-            importance: 0.8,
-            tags: ['PROTAGONIST', 'THEME'],
-          },
+        {
+          key: 'location',
+          value:
+            '그레이마르 항만 — 왕국 남서부 최대 무역항. 세 세력(항만 노동 길드, 해관청, 밀수 조직)이 이권을 다툰다.',
+          importance: 1.0,
+          tags: ['LOCATION', 'THEME'],
+        },
+        {
+          key: 'quest',
+          value:
+            '사라진 공물 장부 — 길드가 해관청에 바친 공물 내역이 담긴 장부가 도난당했다. 장부에는 뒷거래 기록도 포함되어 있어, 공개되면 길드 간부 다수가 처형당할 수 있다.',
+          importance: 1.0,
+          tags: ['QUEST', 'THEME'],
+        },
+        {
+          key: 'npc_client',
+          value:
+            '의뢰인 로넨 — 항만 노동 길드의 말단 서기관. 장부 관리 책임자였으나 도난 사실을 상부에 보고하지 못해 쫓기는 처지.',
+          importance: 0.9,
+          tags: ['NPC', 'THEME'],
+        },
+        {
+          key: 'hub_system',
+          value:
+            "HUB 거점 — '잠긴 닻' 선술집. 항만 한구석의 허름하지만 안전한 선술집. 이곳에서 시장/경비대/항만/빈민가로 이동하며 임무를 수행한다.",
+          importance: 0.8,
+          tags: ['HUB', 'THEME'],
+        },
+        {
+          key: 'protagonist',
+          value: `${characterName ? characterName : '이름 없는 용병'} — ${preset?.protagonistTheme ?? '이름 없는 용병.'} 그레이마르에는 일거리를 찾아 며칠 전 도착했다.`,
+          importance: 0.8,
+          tags: ['PROTAGONIST', 'THEME'],
+        },
       ];
 
       // 특성 정보를 L0 theme에 추가
@@ -627,7 +677,7 @@ export class RunsService {
           },
           summary: {
             short: [
-              '[배경] 그레이마르 항만 — 왕국 남서부 최대 무역항. 안개 낀 밤, 허름한 선술집 \'잠긴 닻\'.',
+              "[배경] 그레이마르 항만 — 왕국 남서부 최대 무역항. 안개 낀 밤, 허름한 선술집 '잠긴 닻'.",
               `[주인공] ${preset?.protagonistTheme ?? '이름 없는 용병.'} 일거리를 찾아 며칠 전 그레이마르에 도착했다. 이 도시에서 아직 이름이 알려지지 않은 떠돌이 용병.`,
               '[NPC] 서기관 로넨 — 항만 노동 길드 말단 서기관. 장부 관리 책임자였으나 도난 당해 쫓기는 처지. 초조하고 겁에 질려 있다. ⚠️ 말투: 중세 하급 관리 특유의 공손하지만 딱딱한 경어체. "~하오", "~이오", "~소"체를 사용. 예: "실례하겠소", "장부가 사라졌소", "찾아주시오". 현대 존댓말("~합니다", "~입니다", "~세요")은 절대 사용하지 마세요.',
               '',
@@ -644,7 +694,7 @@ export class RunsService {
               '- 당신의 내면 심리 금지. 행동/시선/표정으로만 반응.',
             ].join('\n'),
             display: [
-              '짙은 안개가 항만을 감싸는 밤이었다. 선술집 \'잠긴 닻\'의 구석 자리에서 당신은 싸구려 에일을 홀짝이고 있었다. 기름때 묻은 등잔이 흔들릴 때마다 주변의 그림자가 일렁였다.',
+              "짙은 안개가 항만을 감싸는 밤이었다. 선술집 '잠긴 닻'의 구석 자리에서 당신은 싸구려 에일을 홀짝이고 있었다. 기름때 묻은 등잔이 흔들릴 때마다 주변의 그림자가 일렁였다.",
               '',
               '"실례하겠소. 항만 노동 길드 서기관 로넨이라 하오." 초라한 행색의 사내가 테이블 건너편에 조심스럽게 앉았다. 끊임없이 문 쪽을 훔쳐보는 눈동자가 불안을 감추지 못했다.',
               '',
@@ -703,7 +753,8 @@ export class RunsService {
         };
       }
 
-      const firstNodeType = isDag && dagStartNode ? dagStartNode.nodeType : 'HUB';
+      const firstNodeType =
+        isDag && dagStartNode ? dagStartNode.nodeType : 'HUB';
       await tx.insert(turns).values({
         runId: run.id,
         turnNo: 0,
@@ -888,13 +939,21 @@ export class RunsService {
         resolveOutcome: t.serverResult?.ui?.resolveOutcome ?? null,
         eventTexts: (t.serverResult?.events ?? [])
           .filter((e: { kind: string }) =>
-            ['SYSTEM', 'LOOT', 'GOLD', 'INCIDENT_PROGRESS', 'INCIDENT_RESOLVED'].includes(e.kind),
+            [
+              'SYSTEM',
+              'LOOT',
+              'GOLD',
+              'INCIDENT_PROGRESS',
+              'INCIDENT_RESOLVED',
+            ].includes(e.kind),
           )
           .map((e: { text: string }) => e.text),
-        choices: (t.serverResult?.choices ?? []).map((c: { id: string; label: string }) => ({
-          id: c.id,
-          label: c.label,
-        })),
+        choices: (t.serverResult?.choices ?? []).map(
+          (c: { id: string; label: string }) => ({
+            id: c.id,
+            label: c.label,
+          }),
+        ),
         displaySummary: t.serverResult?.summary?.display ?? null,
       })),
       setDefinitions: this.content.getAllSets(),
@@ -913,7 +972,8 @@ export class RunsService {
     });
     if (!run) throw new NotFoundError('Run not found');
     if (run.userId !== userId) throw new ForbiddenError('Not your run');
-    if (run.status !== 'RUN_ACTIVE') throw new BadRequestError('Run is not active');
+    if (run.status !== 'RUN_ACTIVE')
+      throw new BadRequestError('Run is not active');
 
     const runState = run.runState as RunState;
     const equipped = runState.equipped ?? {};
@@ -970,7 +1030,8 @@ export class RunsService {
     });
     if (!run) throw new NotFoundError('Run not found');
     if (run.userId !== userId) throw new ForbiddenError('Not your run');
-    if (run.status !== 'RUN_ACTIVE') throw new BadRequestError('Run is not active');
+    if (run.status !== 'RUN_ACTIVE')
+      throw new BadRequestError('Run is not active');
 
     const runState = run.runState as RunState;
     const equipped = runState.equipped ?? {};
@@ -1020,7 +1081,8 @@ export class RunsService {
     });
     if (!run) throw new NotFoundError('Run not found');
     if (run.userId !== userId) throw new ForbiddenError('Not your run');
-    if (run.status !== 'RUN_ACTIVE') throw new BadRequestError('Run is not active');
+    if (run.status !== 'RUN_ACTIVE')
+      throw new BadRequestError('Run is not active');
 
     // 전투 중이면 거부
     const currentNode = await this.db.query.nodeInstances.findFirst({
@@ -1030,7 +1092,9 @@ export class RunsService {
       ),
     });
     if (currentNode?.nodeType === 'COMBAT') {
-      throw new BadRequestError('Cannot use items during combat. Use ACTION turn instead.');
+      throw new BadRequestError(
+        'Cannot use items during combat. Use ACTION turn instead.',
+      );
     }
 
     const runState = run.runState as RunState;
@@ -1077,7 +1141,10 @@ export class RunsService {
     }
 
     // 수량 감소
-    inventory[invIndex] = { ...inventory[invIndex], qty: inventory[invIndex].qty - 1 };
+    inventory[invIndex] = {
+      ...inventory[invIndex],
+      qty: inventory[invIndex].qty - 1,
+    };
     if (inventory[invIndex].qty <= 0) {
       inventory.splice(invIndex, 1);
     }

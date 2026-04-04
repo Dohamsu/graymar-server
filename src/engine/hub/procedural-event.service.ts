@@ -3,7 +3,11 @@
 
 import { Injectable } from '@nestjs/common';
 import type { EventDefV2, Affordance } from '../../db/types/event-def.js';
-import type { ProceduralSeed, ProceduralHistoryEntry, SeedConstraints } from '../../db/types/procedural-event.js';
+import type {
+  ProceduralSeed,
+  ProceduralHistoryEntry,
+  SeedConstraints,
+} from '../../db/types/procedural-event.js';
 import { TRIGGERS, SUBJECTS, ACTIONS, OUTCOMES } from './procedural-seeds.js';
 import type { Rng } from '../rng/rng.service.js';
 
@@ -34,8 +38,17 @@ export class ProceduralEventService {
     if (validTriggers.length === 0 || validSubjects.length === 0) return null;
 
     // 2. Anti-Repetition: history 대조하여 차단된 seed 제외
-    const availableTriggers = this.applyTriggerCooldown(validTriggers, history, turnNo);
-    const availableSubjects = this.applySubjectActionCooldown(validSubjects, validActions, history, turnNo);
+    const availableTriggers = this.applyTriggerCooldown(
+      validTriggers,
+      history,
+      turnNo,
+    );
+    const availableSubjects = this.applySubjectActionCooldown(
+      validSubjects,
+      validActions,
+      history,
+      turnNo,
+    );
 
     if (availableTriggers.length === 0) return null;
 
@@ -44,15 +57,22 @@ export class ProceduralEventService {
     if (!trigger) return null;
     const subject = this.randomPick(availableSubjects.subjects, rng);
     if (!subject) return null;
-    const action = this.pickAvailableAction(validActions, subject, history, turnNo, rng);
+    const action = this.pickAvailableAction(
+      validActions,
+      subject,
+      history,
+      turnNo,
+      rng,
+    );
     if (!action) return null;
     const outcome = this.pickAvailableOutcome(validOutcomes, history, rng);
     if (!outcome) return null;
 
     // Anti-Repetition: 같은 NPC 연속 체크
-    const npcId = subject.npcId && !this.isNpcConsecutiveBlocked(subject.npcId, history)
-      ? subject.npcId
-      : undefined;
+    const npcId =
+      subject.npcId && !this.isNpcConsecutiveBlocked(subject.npcId, history)
+        ? subject.npcId
+        : undefined;
 
     // 4. EventDefV2 생성
     const sceneFrame = `${trigger.text} ${subject.text}${subject.text.endsWith('이') || subject.text.endsWith('가') ? '' : '이(가)'} ${action.text} ${outcome.text}`;
@@ -110,12 +130,23 @@ export class ProceduralEventService {
     };
   }
 
-  private filterSeeds(seeds: ProceduralSeed[], constraints: SeedConstraints): ProceduralSeed[] {
+  private filterSeeds(
+    seeds: ProceduralSeed[],
+    constraints: SeedConstraints,
+  ): ProceduralSeed[] {
     return seeds.filter((s) => {
-      if (s.locationIds && s.locationIds.length > 0 && !s.locationIds.includes(constraints.locationId)) {
+      if (
+        s.locationIds &&
+        s.locationIds.length > 0 &&
+        !s.locationIds.includes(constraints.locationId)
+      ) {
         return false;
       }
-      if (s.timePhases && s.timePhases.length > 0 && !s.timePhases.includes(constraints.timePhase)) {
+      if (
+        s.timePhases &&
+        s.timePhases.length > 0 &&
+        !s.timePhases.includes(constraints.timePhase)
+      ) {
         return false;
       }
       return true;
@@ -167,7 +198,9 @@ export class ProceduralEventService {
         .filter((h) => turnNo - h.turnNo < SUBJECT_ACTION_COOLDOWN)
         .map((h) => h.subjectActionKey),
     );
-    const available = actions.filter((a) => !recentKeys.has(`${subject.id}:${a.id}`));
+    const available = actions.filter(
+      (a) => !recentKeys.has(`${subject.id}:${a.id}`),
+    );
     return this.randomPick(available.length > 0 ? available : actions, rng);
   }
 
@@ -177,8 +210,13 @@ export class ProceduralEventService {
     rng: Rng,
   ): ProceduralSeed | null {
     // 같은 outcome 연속 max 2
-    const recentOutcomes = history.slice(-MAX_CONSECUTIVE_OUTCOME).map((h) => h.outcomeId);
-    const lastOutcome = recentOutcomes.length > 0 ? recentOutcomes[recentOutcomes.length - 1] : null;
+    const recentOutcomes = history
+      .slice(-MAX_CONSECUTIVE_OUTCOME)
+      .map((h) => h.outcomeId);
+    const lastOutcome =
+      recentOutcomes.length > 0
+        ? recentOutcomes[recentOutcomes.length - 1]
+        : null;
     const consecutiveCount = lastOutcome
       ? recentOutcomes.filter((o) => o === lastOutcome).length
       : 0;
@@ -191,19 +229,32 @@ export class ProceduralEventService {
     return this.randomPick(available.length > 0 ? available : outcomes, rng);
   }
 
-  private isNpcConsecutiveBlocked(npcId: string, history: ProceduralHistoryEntry[]): boolean {
+  private isNpcConsecutiveBlocked(
+    npcId: string,
+    history: ProceduralHistoryEntry[],
+  ): boolean {
     const recent = history.slice(-MAX_CONSECUTIVE_NPC);
-    return recent.length >= MAX_CONSECUTIVE_NPC && recent.every((h) => h.npcId === npcId);
+    return (
+      recent.length >= MAX_CONSECUTIVE_NPC &&
+      recent.every((h) => h.npcId === npcId)
+    );
   }
 
-  private deriveAffordances(action: ProceduralSeed, outcome: ProceduralSeed): Affordance[] {
+  private deriveAffordances(
+    action: ProceduralSeed,
+    outcome: ProceduralSeed,
+  ): Affordance[] {
     const affordances: Affordance[] = ['ANY'];
 
     // action 기반 affordance 추가
-    if (action.id === 'ACT_HIDE' || action.id === 'ACT_WATCH') affordances.push('OBSERVE', 'SNEAK');
-    if (action.id === 'ACT_ARGUE' || action.id === 'ACT_FIGHT') affordances.push('FIGHT', 'THREATEN');
-    if (action.id === 'ACT_BEG' || action.id === 'ACT_COLLAPSE') affordances.push('HELP');
-    if (action.id === 'ACT_SELL' || action.id === 'ACT_TRADE') affordances.push('TRADE', 'BRIBE');
+    if (action.id === 'ACT_HIDE' || action.id === 'ACT_WATCH')
+      affordances.push('OBSERVE', 'SNEAK');
+    if (action.id === 'ACT_ARGUE' || action.id === 'ACT_FIGHT')
+      affordances.push('FIGHT', 'THREATEN');
+    if (action.id === 'ACT_BEG' || action.id === 'ACT_COLLAPSE')
+      affordances.push('HELP');
+    if (action.id === 'ACT_SELL' || action.id === 'ACT_TRADE')
+      affordances.push('TRADE', 'BRIBE');
     if (action.id === 'ACT_SEARCH') affordances.push('INVESTIGATE', 'OBSERVE');
     if (action.id === 'ACT_STEAL') affordances.push('STEAL', 'SNEAK');
     if (action.id === 'ACT_WHISPER') affordances.push('INVESTIGATE', 'SNEAK');

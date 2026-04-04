@@ -1,5 +1,8 @@
 import { IntentV3BuilderService } from './intent-v3-builder.service.js';
-import type { ParsedIntentV2, IntentActionType } from '../../db/types/parsed-intent-v2.js';
+import type {
+  ParsedIntentV2,
+  IntentActionType,
+} from '../../db/types/parsed-intent-v2.js';
 import type { ParsedIntentV3 } from '../../db/types/parsed-intent-v3.js';
 
 function makeV2(overrides: Partial<ParsedIntentV2> = {}): ParsedIntentV2 {
@@ -187,7 +190,9 @@ describe('IntentV3BuilderService', () => {
 
   it('choicePayload에 goalCategory가 있으면 우선', () => {
     const v2 = makeV2({ actionType: 'TALK', source: 'CHOICE' });
-    const v3 = service.build(v2, '선택지', 'market', { goalCategory: 'BLOCK_RIVAL' });
+    const v3 = service.build(v2, '선택지', 'market', {
+      goalCategory: 'BLOCK_RIVAL',
+    });
     expect(v3.goalCategory).toBe('BLOCK_RIVAL');
   });
 

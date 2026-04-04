@@ -3,9 +3,9 @@
 export interface ProceduralSeed {
   id: string;
   text: string;
-  locationIds?: string[];   // 빈 배열 = 모든 LOCATION
-  timePhases?: string[];    // 빈 배열 = 모든 시간대
-  npcId?: string;           // 관련 NPC
+  locationIds?: string[]; // 빈 배열 = 모든 LOCATION
+  timePhases?: string[]; // 빈 배열 = 모든 시간대
+  npcId?: string; // 관련 NPC
   tags?: string[];
 }
 

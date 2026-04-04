@@ -12,14 +12,15 @@ describe('StatsService', () => {
     it('modifier 없으면 기본 스탯 그대로', () => {
       const snap = service.buildSnapshot(DEFAULT_PERMANENT_STATS, []);
       expect(snap.maxHP).toBe(100);
-      expect(snap.atk).toBe(15);
+      // deriveCombatStats: atk = str(12), def = con(10), acc = dex(10)
+      expect(snap.atk).toBe(12);
       expect(snap.def).toBe(10);
-      expect(snap.acc).toBe(5);
-      expect(snap.eva).toBe(3);
-      expect(snap.crit).toBe(5);
-      expect(snap.critDmg).toBe(150);
-      expect(snap.resist).toBe(5);
-      expect(snap.speed).toBe(5);
+      expect(snap.acc).toBe(10);
+      expect(snap.eva).toBe(6); // floor(dex(10) * 0.6)
+      expect(snap.crit).toBe(5); // floor(dex(10)/3) + 2
+      expect(snap.critDmg).toBe(154); // round(130 + str(12) * 2)
+      expect(snap.resist).toBe(5); // floor(con(10) * 0.5)
+      expect(snap.speed).toBe(8); // cha(8)
       expect(snap.damageMult).toBe(1.0);
       expect(snap.hitMult).toBe(1.0);
       expect(snap.takenDmgMult).toBe(1.0);
@@ -27,12 +28,12 @@ describe('StatsService', () => {
   });
 
   describe('buildSnapshot — FLAT modifier', () => {
-    it('ATK +10 FLAT → 25', () => {
+    it('ATK +10 FLAT → 22', () => {
       const mods: StatModifier[] = [
         { stat: 'atk', op: 'FLAT', value: 10, priority: 200 },
       ];
       const snap = service.buildSnapshot(DEFAULT_PERMANENT_STATS, mods);
-      expect(snap.atk).toBe(25);
+      expect(snap.atk).toBe(22); // str(12) + 10
     });
 
     it('복수 FLAT 합산', () => {
@@ -46,12 +47,12 @@ describe('StatsService', () => {
   });
 
   describe('buildSnapshot — PERCENT modifier', () => {
-    it('ATK +20% → 18 (15 * 1.2 = 18)', () => {
+    it('ATK +20% → 14 (12 * 1.2 = 14.4 → 14)', () => {
       const mods: StatModifier[] = [
         { stat: 'atk', op: 'PERCENT', value: 0.2, priority: 300 },
       ];
       const snap = service.buildSnapshot(DEFAULT_PERMANENT_STATS, mods);
-      expect(snap.atk).toBe(18);
+      expect(snap.atk).toBe(14); // floor(str(12) * 1.2)
     });
 
     it('DEF -15% → 9 (10 * 0.85 = 8.5 → 9)', () => {
@@ -65,16 +66,16 @@ describe('StatsService', () => {
 
   describe('buildSnapshot — Priority 순서', () => {
     it('priority 순으로 적용 (GEAR→BUFF→DEBUFF)', () => {
-      // GEAR: ATK +10 flat @200
-      // BUFF: ATK +20% @300 → (15+10)*1.2 = 30
-      // DEBUFF: ATK -10% @400 → 30*0.9 = 27
+      // GEAR: ATK +10 flat @200 → 12+10 = 22
+      // BUFF: ATK +20% @300 → 22*1.2 = 26.4
+      // DEBUFF: ATK -10% @400 → 26.4*0.9 = 23.76 → round = 24
       const mods: StatModifier[] = [
         { stat: 'atk', op: 'PERCENT', value: -0.1, priority: 400 },
         { stat: 'atk', op: 'FLAT', value: 10, priority: 200 },
         { stat: 'atk', op: 'PERCENT', value: 0.2, priority: 300 },
       ];
       const snap = service.buildSnapshot(DEFAULT_PERMANENT_STATS, mods);
-      expect(snap.atk).toBe(27);
+      expect(snap.atk).toBe(24);
     });
   });
 

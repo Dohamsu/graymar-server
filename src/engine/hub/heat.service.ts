@@ -21,7 +21,10 @@ const TIER_REDUCTIONS = [-5, -8, -10, -13, -16] as const;
 @Injectable()
 export class HeatService {
   applyHeatDelta(ws: WorldState, delta: number): WorldState {
-    const clamped = Math.max(-HEAT_DELTA_CLAMP, Math.min(HEAT_DELTA_CLAMP, delta));
+    const clamped = Math.max(
+      -HEAT_DELTA_CLAMP,
+      Math.min(HEAT_DELTA_CLAMP, delta),
+    );
     const newHeat = Math.max(0, Math.min(100, ws.hubHeat + clamped));
     return { ...ws, hubHeat: newHeat };
   }

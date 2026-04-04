@@ -18,9 +18,7 @@ export const campaigns = pgTable('campaigns', {
   status: text('status', { enum: ['ACTIVE', 'COMPLETED'] as const })
     .notNull()
     .default('ACTIVE'),
-  currentScenarioOrder: integer('current_scenario_order')
-    .notNull()
-    .default(1),
+  currentScenarioOrder: integer('current_scenario_order').notNull().default(1),
   carryOverState: jsonb('carry_over_state').$type<CarryOverState>(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),

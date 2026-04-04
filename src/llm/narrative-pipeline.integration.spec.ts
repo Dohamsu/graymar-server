@@ -8,7 +8,13 @@ import { EventDirectorService } from '../engine/hub/event-director.service.js';
 import { EventMatcherService } from '../engine/hub/event-matcher.service.js';
 import { ProceduralEventService } from '../engine/hub/procedural-event.service.js';
 import type { RecentTurnEntry } from './context-builder.service.js';
-import type { EventDefV2, WorldState, ArcState, ParsedIntentV2, PlayerAgenda } from '../db/types/index.js';
+import type {
+  EventDefV2,
+  WorldState,
+  ArcState,
+  ParsedIntentV2,
+  PlayerAgenda,
+} from '../db/types/index.js';
 import type { StructuredMemory } from '../db/types/structured-memory.js';
 import { createEmptyStructuredMemory } from '../db/types/structured-memory.js';
 import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
@@ -18,14 +24,21 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
   const tokenBudget = new TokenBudgetService();
   const mockLlmCaller = { callLight: jest.fn().mockResolvedValue('') };
   const mockAiTurnLog = { log: jest.fn() };
-  const midSummary = new MidSummaryService(mockLlmCaller as any, mockAiTurnLog as any);
+  const midSummary = new MidSummaryService(
+    mockLlmCaller as any,
+    mockAiTurnLog as any,
+  );
   const intentMemory = new IntentMemoryService();
   const memoryRenderer = new MemoryRendererService();
   const eventMatcher = new EventMatcherService();
   const eventDirector = new EventDirectorService(eventMatcher);
   const proceduralEvent = new ProceduralEventService();
 
-  const fakeRng = { next: () => 0.5, chance: () => false, nextInt: () => 1 } as any;
+  const fakeRng = {
+    next: () => 0.5,
+    chance: () => false,
+    nextInt: () => 1,
+  } as any;
 
   // ── 헬퍼 ──
   function makeTurn(overrides: Partial<RecentTurnEntry> = {}): RecentTurnEntry {
@@ -51,7 +64,13 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
       affordances: ['INVESTIGATE', 'ANY'],
       friction: 0,
       matchPolicy: 'SUPPORT',
-      payload: { sceneFrame: 'test', primaryNpcId: null, choices: [], effectsOnEnter: [], tags: [] },
+      payload: {
+        sceneFrame: 'test',
+        primaryNpcId: null,
+        choices: [],
+        effectsOnEnter: [],
+        tags: [],
+      },
       ...overrides,
     } as EventDefV2;
   }
@@ -82,18 +101,27 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
     operationSession: null,
   };
 
-  const baseArcState: ArcState = { currentRoute: null, commitment: 0, routeHistory: [] } as any;
+  const baseArcState: ArcState = {
+    currentRoute: null,
+    commitment: 0,
+    routeHistory: [],
+  } as any;
   const baseAgenda: PlayerAgenda = { dominant: 'neutral', implicit: {} } as any;
-  const baseIntent: ParsedIntentV2 = { actionType: 'INVESTIGATE', rawInput: '조사한다', tone: 'NEUTRAL' } as any;
+  const baseIntent: ParsedIntentV2 = {
+    actionType: 'INVESTIGATE',
+    rawInput: '조사한다',
+    tone: 'NEUTRAL',
+  } as any;
 
   // ── 시나리오 1: 신규 LOCATION 방문 (0턴) ──
   it('1. 신규 방문 (0턴): midSummary=null, intentMemory=null', () => {
     const locationTurns: RecentTurnEntry[] = [];
     // midSummary: 6턴 이하 → null
     expect(locationTurns.length).toBeLessThanOrEqual(6);
-    const summary = locationTurns.length > 6
-      ? midSummary.generate(locationTurns.slice(0, -6))
-      : null;
+    const summary =
+      locationTurns.length > 6
+        ? midSummary.generate(locationTurns.slice(0, -6))
+        : null;
     expect(summary).toBeNull();
 
     // intentMemory: 빈 history → null
@@ -104,7 +132,11 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
   // ── 시나리오 2: 8턴 방문 → midSummary 존재, locationSessionTurns ≤ 6 ──
   it('2. 8턴 방문: midSummary 존재, locationSessionTurns ≤ 6', async () => {
     const allTurns = Array.from({ length: 8 }, (_, i) =>
-      makeTurn({ turnNo: i + 1, rawInput: `행동${i + 1}`, resolveOutcome: i % 2 === 0 ? 'SUCCESS' : 'PARTIAL' }),
+      makeTurn({
+        turnNo: i + 1,
+        rawInput: `행동${i + 1}`,
+        resolveOutcome: i % 2 === 0 ? 'SUCCESS' : 'PARTIAL',
+      }),
     );
 
     expect(allTurns.length).toBe(8);
@@ -122,12 +154,21 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
   // ── 시나리오 3: 토큰 오버플로 → 저우선 블록 트리밍 ──
   it('3. 토큰 오버플로: 저우선 블록 트리밍', () => {
     // 각 1000자 = ~333 토큰 × 10 블록 = ~3330 토큰 → TOTAL 2500 초과
-    const parts = Array.from({ length: 10 }, (_, i) => `[블록 ${i}]\n${'가'.repeat(1000)}`);
-    const totalBefore = parts.reduce((sum, p) => sum + tokenBudget.estimateTokens(p), 0);
+    const parts = Array.from(
+      { length: 10 },
+      (_, i) => `[블록 ${i}]\n${'가'.repeat(1000)}`,
+    );
+    const totalBefore = parts.reduce(
+      (sum, p) => sum + tokenBudget.estimateTokens(p),
+      0,
+    );
     expect(totalBefore).toBeGreaterThan(TOKEN_BUDGET.TOTAL);
 
     const trimmed = tokenBudget.enforceTotal(parts);
-    const totalAfter = trimmed.reduce((sum, p) => sum + tokenBudget.estimateTokens(p), 0);
+    const totalAfter = trimmed.reduce(
+      (sum, p) => sum + tokenBudget.estimateTokens(p),
+      0,
+    );
     expect(totalAfter).toBeLessThanOrEqual(TOKEN_BUDGET.TOTAL);
   });
 
@@ -135,11 +176,29 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
   it('4. 고정 이벤트 전부 쿨다운 → 절차적 이벤트 생성', () => {
     // 모든 고정 이벤트에 쿨다운 설정 → EventDirector가 null 반환
     const events = [
-      makeEvent({ eventId: 'EVT_1', gates: [{ type: 'COOLDOWN_TURNS', turns: 100 }] }),
-      makeEvent({ eventId: 'EVT_2', gates: [{ type: 'COOLDOWN_TURNS', turns: 100 }] }),
+      makeEvent({
+        eventId: 'EVT_1',
+        gates: [{ type: 'COOLDOWN_TURNS', turns: 100 }],
+      }),
+      makeEvent({
+        eventId: 'EVT_2',
+        gates: [{ type: 'COOLDOWN_TURNS', turns: 100 }],
+      }),
     ];
     const cooldowns: Record<string, number> = { EVT_1: 50, EVT_2: 50 };
-    const result = eventDirector.select(events, 'LOC_MARKET', baseIntent, baseWs, baseArcState, baseAgenda, cooldowns, 55, fakeRng, [], null);
+    const result = eventDirector.select(
+      events,
+      'LOC_MARKET',
+      baseIntent,
+      baseWs,
+      baseArcState,
+      baseAgenda,
+      cooldowns,
+      55,
+      fakeRng,
+      [],
+      null,
+    );
 
     // 고정 이벤트 실패
     expect(result.selectedEvent).toBeNull();
@@ -167,7 +226,11 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
         history,
         turn,
         // 매 턴 다른 랜덤 값
-        { next: () => (turn * 0.17) % 1, chance: () => false, nextInt: () => turn } as any,
+        {
+          next: () => (turn * 0.17) % 1,
+          chance: () => false,
+          nextInt: () => turn,
+        } as any,
       );
 
       if (result) {
@@ -208,11 +271,37 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
     const structured: StructuredMemory = {
       ...createEmptyStructuredMemory(),
       llmExtracted: [
-        { turnNo: 1, category: 'PLOT_HINT', text: '항만 세금 이중 징수 의혹', importance: 0.8, relatedLocationId: 'LOC_HARBOR' },
-        { turnNo: 2, category: 'PLOT_HINT', text: '에드릭이 장부를 감추고 있다', importance: 0.7 },
-        { turnNo: 3, category: 'PLOT_HINT', text: '밀수 조직의 연결고리', importance: 0.6 },
-        { turnNo: 4, category: 'NPC_DETAIL', text: '하를런의 흉터', importance: 0.5 }, // 제외 대상
-        { turnNo: 5, category: 'PLOT_HINT', text: '낮은 중요도 단서', importance: 0.4 }, // importance < 0.6 → 제외
+        {
+          turnNo: 1,
+          category: 'PLOT_HINT',
+          text: '항만 세금 이중 징수 의혹',
+          importance: 0.8,
+          relatedLocationId: 'LOC_HARBOR',
+        },
+        {
+          turnNo: 2,
+          category: 'PLOT_HINT',
+          text: '에드릭이 장부를 감추고 있다',
+          importance: 0.7,
+        },
+        {
+          turnNo: 3,
+          category: 'PLOT_HINT',
+          text: '밀수 조직의 연결고리',
+          importance: 0.6,
+        },
+        {
+          turnNo: 4,
+          category: 'NPC_DETAIL',
+          text: '하를런의 흉터',
+          importance: 0.5,
+        }, // 제외 대상
+        {
+          turnNo: 5,
+          category: 'PLOT_HINT',
+          text: '낮은 중요도 단서',
+          importance: 0.4,
+        }, // importance < 0.6 → 제외
       ],
     };
 
@@ -239,7 +328,19 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
       makeEvent({ eventId: 'EVT_NO_STAGE' }), // stages 없음 → 통과
     ];
 
-    const result = eventDirector.select(events, 'LOC_MARKET', baseIntent, wsWithStage, baseArcState, baseAgenda, {}, 1, fakeRng, [], null);
+    const result = eventDirector.select(
+      events,
+      'LOC_MARKET',
+      baseIntent,
+      wsWithStage,
+      baseArcState,
+      baseAgenda,
+      {},
+      1,
+      fakeRng,
+      [],
+      null,
+    );
 
     // stage=2이므로 EVT_STAGE_1은 제외, EVT_STAGE_2 또는 EVT_NO_STAGE 선택
     expect(result.selectedEvent).not.toBeNull();

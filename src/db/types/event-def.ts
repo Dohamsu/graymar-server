@@ -57,7 +57,12 @@ export type EventChoice = {
 };
 
 export type EventEffect = {
-  type: 'SET_FLAG' | 'HEAT_DELTA' | 'TENSION_DELTA' | 'RELATION_DELTA' | 'GOLD_DELTA';
+  type:
+    | 'SET_FLAG'
+    | 'HEAT_DELTA'
+    | 'TENSION_DELTA'
+    | 'RELATION_DELTA'
+    | 'GOLD_DELTA';
   target?: string;
   value: number | string | boolean;
 };
@@ -85,8 +90,8 @@ export type EventDefV2 = {
   commitmentDeltaOnSuccess?: number;
   payload: EventPayload;
   // PR5: Event Director 확장 (optional)
-  eventCategory?: string;   // 'atmosphere' | 'discovery' | 'interaction' | 'conflict' | 'plot'
-  cooldownTurns?: number;   // 간편 쿨다운 (gates COOLDOWN_TURNS 대체)
-  stages?: string[];         // mainArcClock.stage 필터
+  eventCategory?: string; // 'atmosphere' | 'discovery' | 'interaction' | 'conflict' | 'plot'
+  cooldownTurns?: number; // 간편 쿨다운 (gates COOLDOWN_TURNS 대체)
+  stages?: string[]; // mainArcClock.stage 필터
   effects?: { progress?: number }; // 이벤트 진행도 효과
 };

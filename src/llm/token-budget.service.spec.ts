@@ -40,7 +40,8 @@ describe('TokenBudgetService', () => {
     });
 
     it('예산 초과 시 문장 경계에서 자르기', () => {
-      const text = '첫 번째 문장입니다. 두 번째 문장입니다. 세 번째 문장으로 매우 길게 계속됩니다.';
+      const text =
+        '첫 번째 문장입니다. 두 번째 문장입니다. 세 번째 문장으로 매우 길게 계속됩니다.';
       const result = service.trimToFit(text, 10); // 30자 제한
       expect(result.length).toBeLessThanOrEqual(30);
       // 문장 경계에서 잘렸는지 확인
@@ -65,7 +66,9 @@ describe('TokenBudgetService', () => {
     it('SCENE_CONTEXT 예산(150 토큰) 초과 시 트리밍', () => {
       const text = '가'.repeat(600); // 600자 = ~200 토큰 → 150 예산 초과
       const result = service.fitBlock(text, 'SCENE_CONTEXT')!;
-      expect(service.estimateTokens(result)).toBeLessThanOrEqual(TOKEN_BUDGET.SCENE_CONTEXT);
+      expect(service.estimateTokens(result)).toBeLessThanOrEqual(
+        TOKEN_BUDGET.SCENE_CONTEXT,
+      );
     });
   });
 
@@ -81,7 +84,10 @@ describe('TokenBudgetService', () => {
       const longBlock = '가'.repeat(4000); // ~1333 토큰
       const parts = [longBlock, longBlock, longBlock]; // ~4000 토큰 → 초과
       const result = service.enforceTotal(parts);
-      const totalTokens = result.reduce((sum, p) => sum + service.estimateTokens(p), 0);
+      const totalTokens = result.reduce(
+        (sum, p) => sum + service.estimateTokens(p),
+        0,
+      );
       expect(totalTokens).toBeLessThanOrEqual(TOKEN_BUDGET.TOTAL);
     });
 

@@ -13,14 +13,14 @@ export type WorldDeltaChangeKind =
 
 export type WorldDeltaChange = {
   kind: WorldDeltaChangeKind;
-  field: string;            // 변경된 필드 (e.g. "hubHeat", "incident:inc_01.stage")
+  field: string; // 변경된 필드 (e.g. "hubHeat", "incident:inc_01.stage")
   from: unknown;
   to: unknown;
-  detail?: string;          // 한국어 설명
+  detail?: string; // 한국어 설명
 };
 
 export type WorldDelta = {
   turnNo: number;
-  clock: number;            // globalClock at delta
+  clock: number; // globalClock at delta
   changes: WorldDeltaChange[];
 };

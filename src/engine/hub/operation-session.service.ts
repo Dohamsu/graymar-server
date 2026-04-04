@@ -16,7 +16,11 @@ export class OperationSessionService {
    * 새 Operation Session 생성.
    * LOCATION 진입 시 호출.
    */
-  createSession(locationId: string, startClock: number, maxSteps?: number): OperationSession {
+  createSession(
+    locationId: string,
+    startClock: number,
+    maxSteps?: number,
+  ): OperationSession {
     const steps: OperationStep[] = [];
     const max = maxSteps ?? DEFAULT_MAX_STEPS;
     for (let i = 0; i < max; i++) {
@@ -89,7 +93,10 @@ export class OperationSessionService {
 
     const updated = { ...session, currentStep: nextStep };
     updated.steps = [...updated.steps];
-    updated.steps[nextStep] = { ...updated.steps[nextStep], status: 'IN_PROGRESS' };
+    updated.steps[nextStep] = {
+      ...updated.steps[nextStep],
+      status: 'IN_PROGRESS',
+    };
     return updated;
   }
 

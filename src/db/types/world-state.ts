@@ -78,14 +78,14 @@ export type WorldState = {
   mainArcClock: MainArcClock; // 메인 아크 데드라인
   operationSession: OperationSession | null; // 현재 진행 중인 Operation Session
   // User-Driven System v3 확장
-  worldDeltas?: WorldDelta[];       // 최근 턴 변화 기록 (최대 10개)
-  playerThreads?: PlayerThread[];   // 플레이어 행동 패턴 스레드
+  worldDeltas?: WorldDelta[]; // 최근 턴 변화 기록 (최대 10개)
+  playerThreads?: PlayerThread[]; // 플레이어 행동 패턴 스레드
   // PR7: Procedural Event 히스토리 (최대 15개)
   proceduralHistory?: import('./procedural-event.js').ProceduralHistoryEntry[];
 
   // --- Living World v2 확장 ---
-  worldFacts?: WorldFact[];                         // 세계 사실 (최대 50개)
-  npcLocations?: Record<string, string>;            // npcId → locationId (현재 위치)
+  worldFacts?: WorldFact[]; // 세계 사실 (최대 50개)
+  npcLocations?: Record<string, string>; // npcId → locationId (현재 위치)
   locationDynamicStates?: Record<string, LocationDynamicState>; // locationId → 동적 상태
-  playerGoals?: PlayerGoal[];                       // 플레이어 목표 (최대 5개)
+  playerGoals?: PlayerGoal[]; // 플레이어 목표 (최대 5개)
 };

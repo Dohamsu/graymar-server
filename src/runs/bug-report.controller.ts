@@ -41,8 +41,7 @@ export class BugReportController {
 
   @Get('bug-reports')
   async findAll(@Query() rawQuery: Record<string, unknown>) {
-    const query: GetBugReportsQuery =
-      GetBugReportsQuerySchema.parse(rawQuery);
+    const query: GetBugReportsQuery = GetBugReportsQuerySchema.parse(rawQuery);
     return this.bugReportService.findAll(query);
   }
 

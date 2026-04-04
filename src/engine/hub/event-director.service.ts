@@ -2,7 +2,10 @@
 // 기존 EventMatcher를 래핑하여 5단계 정책 파이프라인 적용
 
 import { Injectable } from '@nestjs/common';
-import { EventMatcherService, type SessionNpcContext } from './event-matcher.service.js';
+import {
+  EventMatcherService,
+  type SessionNpcContext,
+} from './event-matcher.service.js';
 import type {
   EventDefV2,
   WorldState,
@@ -11,8 +14,15 @@ import type {
   PlayerAgenda,
   IncidentRoutingResult,
 } from '../../db/types/index.js';
-import type { ParsedIntentV3, IntentGoalCategory, ApproachVector } from '../../db/types/parsed-intent-v3.js';
-import type { EventDirectorResult, EventPriority } from '../../db/types/event-director.js';
+import type {
+  ParsedIntentV3,
+  IntentGoalCategory,
+  ApproachVector,
+} from '../../db/types/parsed-intent-v3.js';
+import type {
+  EventDirectorResult,
+  EventPriority,
+} from '../../db/types/event-director.js';
 import type { Rng } from '../rng/rng.service.js';
 
 // goalCategory → 이벤트 태그 연관 매핑 (목표 기반 이벤트 선호)
@@ -103,7 +113,9 @@ export class EventDirectorService {
     });
     filterLog.push(`priority 리매핑: ${remapped.length}개`);
     if (intentV3) {
-      filterLog.push(`intentV3: goal=${intentV3.goalCategory}, vector=${intentV3.approachVector}`);
+      filterLog.push(
+        `intentV3: goal=${intentV3.goalCategory}, vector=${intentV3.approachVector}`,
+      );
     }
 
     // Stage 2,3,5: EventMatcher에 위임 (condition, gates, affordances, heat, weighted random)
@@ -122,8 +134,12 @@ export class EventDirectorService {
       sessionNpcContext,
     );
 
-    const candidateCount = remapped.filter((e) => e.locationId === locationId).length;
-    filterLog.push(`최종 후보: ${candidateCount}개, 선택: ${selected?.eventId ?? 'null'}`);
+    const candidateCount = remapped.filter(
+      (e) => e.locationId === locationId,
+    ).length;
+    filterLog.push(
+      `최종 후보: ${candidateCount}개, 선택: ${selected?.eventId ?? 'null'}`,
+    );
 
     return {
       selectedEvent: selected,
@@ -144,7 +160,14 @@ export class EventDirectorService {
     if (!event.eventCategory) return event;
 
     const tier = this.getPriorityTier(event.priority);
-    const weightMultiplier = tier === 'critical' ? 10 : tier === 'high' ? 6 : tier === 'medium' ? 3 : 1;
+    const weightMultiplier =
+      tier === 'critical'
+        ? 10
+        : tier === 'high'
+          ? 6
+          : tier === 'medium'
+            ? 3
+            : 1;
 
     return {
       ...event,
@@ -156,7 +179,10 @@ export class EventDirectorService {
    * IntentV3 목표/접근방식과 이벤트 태그의 연관도에 따른 가중치 부스트.
    * goalCategory 매칭: +15, approachVector 매칭: +10
    */
-  private computeGoalBoost(event: EventDefV2, intentV3: ParsedIntentV3): number {
+  private computeGoalBoost(
+    event: EventDefV2,
+    intentV3: ParsedIntentV3,
+  ): number {
     const tags = event.payload?.tags ?? [];
     if (tags.length === 0) return 0;
 

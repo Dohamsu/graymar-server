@@ -3,8 +3,17 @@
 import { Injectable } from '@nestjs/common';
 import type { LlmContext } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
-import type { NpcEmotionalState, NpcLlmSummary, NpcTopicEntry, NPCState } from '../../db/types/npc-state.js';
-import { computeEffectivePosture, getNpcDisplayName, condenseSpeechStyle } from '../../db/types/npc-state.js';
+import type {
+  NpcEmotionalState,
+  NpcLlmSummary,
+  NpcTopicEntry,
+  NPCState,
+} from '../../db/types/npc-state.js';
+import {
+  computeEffectivePosture,
+  getNpcDisplayName,
+  condenseSpeechStyle,
+} from '../../db/types/npc-state.js';
 import type { LlmMessage } from '../types/index.js';
 import { NARRATIVE_SYSTEM_PROMPT } from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
@@ -38,13 +47,19 @@ export class PromptBuilderService {
     const isHub = sr.node.type === 'HUB';
 
     // 1. System prompt + L0 theme 병합 (Tier 1: 런 전체 고정 → prefix 캐싱 대상)
-    const genderHint = ctx.gender === 'female'
-      ? '\n\n## 주인공 성별\n주인공("당신")은 **여성**입니다. NPC의 호칭(아가씨, 자매, 부인 등), 외모 묘사, 주변 반응에 성별을 자연스럽게 반영하세요. 단, 과도한 성별 강조는 피하세요.'
-      : '';
-    const systemContent = ctx.theme.length > 0
-      ? `${NARRATIVE_SYSTEM_PROMPT}${genderHint}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}`
-      : `${NARRATIVE_SYSTEM_PROMPT}${genderHint}`;
-    messages.push({ role: 'system', content: systemContent, cacheControl: 'ephemeral' });
+    const genderHint =
+      ctx.gender === 'female'
+        ? '\n\n## 주인공 성별\n주인공("당신")은 **여성**입니다. NPC의 호칭(아가씨, 자매, 부인 등), 외모 묘사, 주변 반응에 성별을 자연스럽게 반영하세요. 단, 과도한 성별 강조는 피하세요.'
+        : '';
+    const systemContent =
+      ctx.theme.length > 0
+        ? `${NARRATIVE_SYSTEM_PROMPT}${genderHint}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}`
+        : `${NARRATIVE_SYSTEM_PROMPT}${genderHint}`;
+    messages.push({
+      role: 'system',
+      content: systemContent,
+      cacheControl: 'ephemeral',
+    });
 
     // 2. Memory block (assistant role로 이전 컨텍스트 제공)
     const memoryParts: string[] = [];
@@ -58,23 +73,27 @@ export class PromptBuilderService {
     if (ctx.protagonistBackground) {
       memoryParts.push(
         `[PROTAGONIST_BACKGROUND — 내부 참조용, 매 턴 언급 금지]\n${ctx.protagonistBackground}\n` +
-        '이 배경은 캐릭터의 내면에 깔린 설정입니다. 서술에 직접 언급하지 마세요.\n' +
-        '다음 상황에서만 은연중에 드러내세요:\n' +
-        '- NPC가 캐릭터의 과거를 알아볼 때 (첫 만남, 소문)\n' +
-        '- 캐릭터의 전문 분야 행동 시 (익숙한 동작, 본능적 반응)\n' +
-        '- 감정적으로 과거와 연결되는 순간 (트라우마, 향수)\n' +
-        '평상시에는 언급하지 말고, 5~8턴에 1회 정도만 자연스럽게 스며들게 하세요.',
+          '이 배경은 캐릭터의 내면에 깔린 설정입니다. 서술에 직접 언급하지 마세요.\n' +
+          '다음 상황에서만 은연중에 드러내세요:\n' +
+          '- NPC가 캐릭터의 과거를 알아볼 때 (첫 만남, 소문)\n' +
+          '- 캐릭터의 전문 분야 행동 시 (익숙한 동작, 본능적 반응)\n' +
+          '- 감정적으로 과거와 연결되는 순간 (트라우마, 향수)\n' +
+          '평상시에는 언급하지 말고, 5~8턴에 1회 정도만 자연스럽게 스며들게 하세요.',
       );
     }
 
     // Structured Memory v2: 서사 이정표 (milestones)
     if (ctx.milestonesText) {
-      memoryParts.push(`[서사 이정표]\n${ctx.milestonesText}\n이 이정표들은 플레이어의 여정에서 중요한 순간입니다. NPC 대사나 배경 묘사에서 자연스럽게 콜백하세요.`);
+      memoryParts.push(
+        `[서사 이정표]\n${ctx.milestonesText}\n이 이정표들은 플레이어의 여정에서 중요한 순간입니다. NPC 대사나 배경 묘사에서 자연스럽게 콜백하세요.`,
+      );
     }
 
     // L1: Story summary — 구조화 메모리 우선, fallback으로 기존 storySummary
     if (ctx.structuredSummary) {
-      memoryParts.push(`[이야기 요약]\n${ctx.structuredSummary}\n재방문 장소에서는 이전 방문의 행동과 결과가 세계에 남긴 흔적을 묘사하세요.`);
+      memoryParts.push(
+        `[이야기 요약]\n${ctx.structuredSummary}\n재방문 장소에서는 이전 방문의 행동과 결과가 세계에 남긴 흔적을 묘사하세요.`,
+      );
     } else if (ctx.storySummary) {
       memoryParts.push(`[이야기 요약]\n${ctx.storySummary}`);
     }
@@ -83,17 +102,23 @@ export class PromptBuilderService {
     if (ctx.previousVisitContext) {
       const trimmed = this.tokenBudget.trimToFit(ctx.previousVisitContext, 150);
       if (trimmed) {
-        memoryParts.push(`[직전 장소 정보]\n${trimmed}\n직전 장소에서의 행동과 미해결 단서를 현재 장면의 NPC 반응이나 배경 묘사에 자연스럽게 반영하세요.`);
+        memoryParts.push(
+          `[직전 장소 정보]\n${trimmed}\n직전 장소에서의 행동과 미해결 단서를 현재 장면의 NPC 반응이나 배경 묘사에 자연스럽게 반영하세요.`,
+        );
       }
     }
 
     // NPC 개인 기록: 현재 턴 관련 NPC의 상세 기록 (relevantNpcMemoryText 우선) — HUB에서는 생략
     if (!isHub) {
       if (ctx.relevantNpcMemoryText) {
-        memoryParts.push(`[관련 NPC 기록]\n${ctx.relevantNpcMemoryText}\n⚠️ 이 NPC와의 과거 상호작용을 대사와 행동에 반드시 반영하라. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다. 과거 만남의 결과(성공/실패)가 현재 태도에 영향을 주어야 합니다.`);
+        memoryParts.push(
+          `[관련 NPC 기록]\n${ctx.relevantNpcMemoryText}\n⚠️ 이 NPC와의 과거 상호작용을 대사와 행동에 반드시 반영하라. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다. 과거 만남의 결과(성공/실패)가 현재 태도에 영향을 주어야 합니다.`,
+        );
       } else if (ctx.npcJournalText) {
         // fallback: personalMemory가 없는 경우 기존 NPC 관계 일지 사용
-        memoryParts.push(`[NPC 관계]\n${ctx.npcJournalText}\n⚠️ NPC가 등장하면, 위 태도와 과거 상호작용을 반드시 대사 톤과 행동에 반영하세요. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다.`);
+        memoryParts.push(
+          `[NPC 관계]\n${ctx.npcJournalText}\n⚠️ NPC가 등장하면, 위 태도와 과거 상호작용을 반드시 대사 톤과 행동에 반영하세요. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다.`,
+        );
       }
     }
 
@@ -102,11 +127,13 @@ export class PromptBuilderService {
       if (ctx.relevantIncidentMemoryText) {
         memoryParts.push(
           `[관련 사건 기록]\n${ctx.relevantIncidentMemoryText}\n` +
-          '플레이어의 이전 행동과 발견한 단서를 대사와 서술에 반영하라. ' +
-          '사건에 적극 개입한 플레이어는 관련 NPC가 알아보고, 방관한 플레이어에게는 상황 변화를 암시하라.',
+            '플레이어의 이전 행동과 발견한 단서를 대사와 서술에 반영하라. ' +
+            '사건에 적극 개입한 플레이어는 관련 NPC가 알아보고, 방관한 플레이어에게는 상황 변화를 암시하라.',
         );
       } else if (ctx.incidentChronicleText) {
-        memoryParts.push(`[사건 일지]\n${ctx.incidentChronicleText}\n진행 중인 사건의 여파를 배경 묘사에 반영하세요 — 주민 반응, 경비 변화, 분위기 등.`);
+        memoryParts.push(
+          `[사건 일지]\n${ctx.incidentChronicleText}\n진행 중인 사건의 여파를 배경 묘사에 반영하세요 — 주민 반응, 경비 변화, 분위기 등.`,
+        );
       }
     }
 
@@ -115,11 +142,21 @@ export class PromptBuilderService {
       let factsText = ctx.llmFactsText;
       if (ctx.activeClues) {
         // activeClues에 이미 포함된 [사건] 라인 제거
-        const factsLines = factsText.split('\n').filter((line) => !line.includes('[사건]') || !ctx.activeClues!.includes(line.replace('- [사건] ', '').trim().slice(0, 30)));
+        const factsLines = factsText
+          .split('\n')
+          .filter(
+            (line) =>
+              !line.includes('[사건]') ||
+              !ctx.activeClues!.includes(
+                line.replace('- [사건] ', '').trim().slice(0, 30),
+              ),
+          );
         factsText = factsLines.join('\n');
       }
       if (factsText.trim()) {
-        memoryParts.push(`[기억된 사실]\n${factsText}\n⚠️ 위 사실들을 서술에 적극 활용하세요. 해당 장소나 NPC 관련 장면에서 이 디테일을 감각적 묘사로 녹여내세요.`);
+        memoryParts.push(
+          `[기억된 사실]\n${factsText}\n⚠️ 위 사실들을 서술에 적극 활용하세요. 해당 장소나 NPC 관련 장면에서 이 디테일을 감각적 묘사로 녹여내세요.`,
+        );
       }
     }
 
@@ -163,10 +200,14 @@ export class PromptBuilderService {
     let hasNarrativeThread = false;
     if (ctx.narrativeThread) {
       try {
-        const thread = JSON.parse(ctx.narrativeThread) as { entries: { turnNo: number; summary: string }[] };
+        const thread = JSON.parse(ctx.narrativeThread) as {
+          entries: { turnNo: number; summary: string }[];
+        };
         if (thread.entries.length > 0) {
           hasNarrativeThread = true;
-          const threadLines = thread.entries.map(e => `[턴 ${e.turnNo}] ${e.summary}`);
+          const threadLines = thread.entries.map(
+            (e) => `[턴 ${e.turnNo}] ${e.summary}`,
+          );
           memoryParts.push(
             [
               '[장면 흐름]',
@@ -177,22 +218,34 @@ export class PromptBuilderService {
             ].join('\n'),
           );
         }
-      } catch { /* ignore parse failure */ }
+      } catch {
+        /* ignore parse failure */
+      }
     }
 
     // PR3: Intent Memory — 플레이어 행동 패턴 (200 토큰 예산)
     if (ctx.intentMemory) {
-      const trimmed = this.tokenBudget.fitBlock(ctx.intentMemory, 'INTENT_MEMORY');
+      const trimmed = this.tokenBudget.fitBlock(
+        ctx.intentMemory,
+        'INTENT_MEMORY',
+      );
       if (trimmed) {
-        memoryParts.push(`[플레이어 행동 패턴]\n${trimmed}\n플레이어의 최근 행동 패턴에 맞는 톤과 분위기로 서술하세요.`);
+        memoryParts.push(
+          `[플레이어 행동 패턴]\n${trimmed}\n플레이어의 최근 행동 패턴에 맞는 톤과 분위기로 서술하세요.`,
+        );
       }
     }
 
     // PR4: Active Clues — 활성 단서 (150 토큰 예산)
     if (ctx.activeClues) {
-      const trimmed = this.tokenBudget.fitBlock(ctx.activeClues, 'ACTIVE_CLUES');
+      const trimmed = this.tokenBudget.fitBlock(
+        ctx.activeClues,
+        'ACTIVE_CLUES',
+      );
       if (trimmed) {
-        memoryParts.push(`[활성 단서]\n${trimmed}\n이 단서들을 서술에 자연스럽게 활용하세요. 관련 장면에서 플레이어가 이미 알고 있는 단서로 취급하세요.`);
+        memoryParts.push(
+          `[활성 단서]\n${trimmed}\n이 단서들을 서술에 자연스럽게 활용하세요. 관련 장면에서 플레이어가 이미 알고 있는 단서로 취급하세요.`,
+        );
       }
     }
 
@@ -202,35 +255,47 @@ export class PromptBuilderService {
     }
 
     // L3: 현재 LOCATION 방문 전체 대화 (단기 기억 — 우선 사용) — HUB에서는 생략
-    if (!isHub && ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
+    if (
+      !isHub &&
+      ctx.locationSessionTurns &&
+      ctx.locationSessionTurns.length > 0
+    ) {
       const totalTurns = ctx.locationSessionTurns.length;
       const sessionLines = ctx.locationSessionTurns.map((t, idx) => {
         const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
-        const outcomeLabel = t.resolveOutcome === 'SUCCESS' ? '성공'
-          : t.resolveOutcome === 'PARTIAL' ? '부분 성공'
-          : t.resolveOutcome === 'FAIL' ? '실패' : '';
+        const outcomeLabel =
+          t.resolveOutcome === 'SUCCESS'
+            ? '성공'
+            : t.resolveOutcome === 'PARTIAL'
+              ? '부분 성공'
+              : t.resolveOutcome === 'FAIL'
+                ? '실패'
+                : '';
         const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
         const distFromEnd = totalTurns - 1 - idx; // 0 = 직전, 1 = 그 이전, ...
         let narrativePart = '';
         if (t.narrative) {
           if (distFromEnd === 0) {
             // 직전 턴: 마지막 500자 표시 (핵심 발견/대화 유실 방지)
-            const trimmed = t.narrative.length > 500
-              ? '...' + t.narrative.slice(-500)
-              : t.narrative;
+            const trimmed =
+              t.narrative.length > 500
+                ? '...' + t.narrative.slice(-500)
+                : t.narrative;
             narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
           } else if (distFromEnd <= 2) {
             // 2~3번째 이전 턴: 300/200자
             const maxLen = distFromEnd === 1 ? 300 : 200;
-            const trimmed = t.narrative.length > maxLen
-              ? '...' + t.narrative.slice(-maxLen)
-              : t.narrative;
+            const trimmed =
+              t.narrative.length > maxLen
+                ? '...' + t.narrative.slice(-maxLen)
+                : t.narrative;
             narrativePart = `\n서술(맥락 참고 — 복사 금지): ${trimmed}`;
           } else {
             // 4번째 이전부터: 핵심 맥락 유지를 위해 NPC 대사와 핵심 정보 150자 포함
-            const trimmed = t.narrative.length > 150
-              ? '...' + t.narrative.slice(-150)
-              : t.narrative;
+            const trimmed =
+              t.narrative.length > 150
+                ? '...' + t.narrative.slice(-150)
+                : t.narrative;
             narrativePart = `\n서술(요약 참고): ${trimmed}`;
           }
         }
@@ -259,19 +324,28 @@ export class PromptBuilderService {
 
       // Mod4: 직전 턴 핵심 정보 — 맥락 유지 강화
       if (ctx.locationSessionTurns.length >= 1) {
-        const lastTurn = ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1];
+        const lastTurn =
+          ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1];
         const actionLabel = lastTurn.inputType === 'ACTION' ? '행동' : '선택';
-        const outcomeLabel = lastTurn.resolveOutcome === 'SUCCESS' ? '성공'
-          : lastTurn.resolveOutcome === 'PARTIAL' ? '부분 성공'
-          : lastTurn.resolveOutcome === 'FAIL' ? '실패' : '';
+        const outcomeLabel =
+          lastTurn.resolveOutcome === 'SUCCESS'
+            ? '성공'
+            : lastTurn.resolveOutcome === 'PARTIAL'
+              ? '부분 성공'
+              : lastTurn.resolveOutcome === 'FAIL'
+                ? '실패'
+                : '';
         const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
         const keyInfoLines: string[] = [];
-        keyInfoLines.push(`- ${actionLabel}: "${sanitizeUserInput(lastTurn.rawInput)}"${outcomePart}`);
+        keyInfoLines.push(
+          `- ${actionLabel}: "${sanitizeUserInput(lastTurn.rawInput)}"${outcomePart}`,
+        );
         // narrative에서 핵심 정보 추출 (마지막 150자 — 대화/발견 집중)
         if (lastTurn.narrative) {
-          const snippet = lastTurn.narrative.length > 150
-            ? lastTurn.narrative.slice(-150)
-            : lastTurn.narrative;
+          const snippet =
+            lastTurn.narrative.length > 150
+              ? lastTurn.narrative.slice(-150)
+              : lastTurn.narrative;
           keyInfoLines.push(`- 직전 장면: ...${snippet}`);
         }
         // NPC delta 정보 (context에 포함된 경우)
@@ -281,18 +355,27 @@ export class PromptBuilderService {
             keyInfoLines.push(`- NPC 반응: ${deltaMatch[1]}`);
           }
         }
-        keyInfoLines.push('→ 위 정보를 이번 턴 서술의 출발점으로 삼으세요. 직전 장면과 단절되지 않게 이어쓰세요.');
+        keyInfoLines.push(
+          '→ 위 정보를 이번 턴 서술의 출발점으로 삼으세요. 직전 장면과 단절되지 않게 이어쓰세요.',
+        );
         memoryParts.push(`[직전 턴 핵심 정보]\n${keyInfoLines.join('\n')}`);
       }
     } else if (ctx.recentTurns && ctx.recentTurns.length > 0) {
       // LOCATION 세션 없으면 글로벌 최근 이력 사용
       const turnLines = ctx.recentTurns.map((t) => {
         const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
-        const outcomeLabel = t.resolveOutcome === 'SUCCESS' ? '성공'
-          : t.resolveOutcome === 'PARTIAL' ? '부분 성공'
-          : t.resolveOutcome === 'FAIL' ? '실패' : '';
+        const outcomeLabel =
+          t.resolveOutcome === 'SUCCESS'
+            ? '성공'
+            : t.resolveOutcome === 'PARTIAL'
+              ? '부분 성공'
+              : t.resolveOutcome === 'FAIL'
+                ? '실패'
+                : '';
         const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
-        const narrativePart = t.narrative ? `\n서술: ${t.narrative.slice(0, 200)}${t.narrative.length > 200 ? '...' : ''}` : '';
+        const narrativePart = t.narrative
+          ? `\n서술: ${t.narrative.slice(0, 200)}${t.narrative.length > 200 ? '...' : ''}`
+          : '';
         return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
       });
       memoryParts.push(`[최근 대화 이력]\n${turnLines.join('\n---\n')}`);
@@ -309,7 +392,9 @@ export class PromptBuilderService {
       const fullList = this.content.getAllNpcs();
 
       // ⓪ IntentParser가 파싱한 targetNpcId 최우선 사용
-      const intentTargetNpcId = (sr.ui?.actionContext as any)?.targetNpcId as string | undefined;
+      const intentTargetNpcId = (sr.ui?.actionContext as any)?.targetNpcId as
+        | string
+        | undefined;
       if (intentTargetNpcId) {
         targetNpcIds.add(intentTargetNpcId);
       }
@@ -319,13 +404,19 @@ export class PromptBuilderService {
       let playerTargetedNpc: string | null = intentTargetNpcId ?? null;
       for (const npc of fullList) {
         if (intentTargetNpcId) break; // IntentParser 결과가 있으면 스킵
-        const nameMatch = npc.name && playerInput.includes(npc.name.toLowerCase());
-        const aliasMatch = npc.unknownAlias && playerInput.includes(npc.unknownAlias.toLowerCase());
+        const nameMatch =
+          npc.name && playerInput.includes(npc.name.toLowerCase());
+        const aliasMatch =
+          npc.unknownAlias &&
+          playerInput.includes(npc.unknownAlias.toLowerCase());
         // 부분 키워드 매칭 (예: "과일장수" → "웃는 얼굴의 과일장수")
         const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
-        const keywordMatch = aliasKeywords.length > 0 && aliasKeywords.some(
-          (kw: string) => kw.length >= 2 && playerInput.includes(kw.toLowerCase()),
-        );
+        const keywordMatch =
+          aliasKeywords.length > 0 &&
+          aliasKeywords.some(
+            (kw: string) =>
+              kw.length >= 2 && playerInput.includes(kw.toLowerCase()),
+          );
         if (nameMatch || aliasMatch || keywordMatch) {
           targetNpcIds.add(npc.npcId);
           playerTargetedNpc = npc.npcId;
@@ -335,20 +426,28 @@ export class PromptBuilderService {
 
       // ② 이벤트 primaryNpc (플레이어 지정이 없을 때만)
       if (targetNpcIds.size === 0) {
-        const eventPrimaryNpcId = (sr.ui?.actionContext as any)?.primaryNpcId as string | undefined;
+        const eventPrimaryNpcId = (sr.ui?.actionContext as any)
+          ?.primaryNpcId as string | undefined;
         if (eventPrimaryNpcId) targetNpcIds.add(eventPrimaryNpcId);
         if (ctx.npcInjection?.npcId) targetNpcIds.add(ctx.npcInjection.npcId);
       }
 
       // ③ 새로 만나는 NPC
-      for (const npcId of ctx.newlyEncounteredNpcIds ?? []) targetNpcIds.add(npcId);
-      for (const npcId of ctx.newlyIntroducedNpcIds ?? []) targetNpcIds.add(npcId);
+      for (const npcId of ctx.newlyEncounteredNpcIds ?? [])
+        targetNpcIds.add(npcId);
+      for (const npcId of ctx.newlyIntroducedNpcIds ?? [])
+        targetNpcIds.add(npcId);
 
       // ④ 이전 턴 대화 NPC (아무 NPC도 못 찾았을 때)
       if (targetNpcIds.size === 0 && ctx.locationSessionTurns?.length) {
-        const lastNarr = ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]?.narrative ?? '';
+        const lastNarr =
+          ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]
+            ?.narrative ?? '';
         for (const npc of fullList) {
-          if (lastNarr.includes(npc.name) || (npc.unknownAlias && lastNarr.includes(npc.unknownAlias))) {
+          if (
+            lastNarr.includes(npc.name) ||
+            (npc.unknownAlias && lastNarr.includes(npc.unknownAlias))
+          ) {
             targetNpcIds.add(npc.npcId);
             break;
           }
@@ -374,7 +473,11 @@ export class PromptBuilderService {
 
       // 예외: 플레이어가 등록되지 않은 NPC를 언급한 경우 (매칭 실패 + NPC명 포함)
       // → 목록이 비어있고 플레이어 입력에 고유명사가 있으면 안내 메시지
-      if (playerTargetedNpc === null && allNpcs.length === 0 && /[가-힣]{2,}에게|[가-힣]{2,}을|[가-힣]{2,}와/.test(rawInput)) {
+      if (
+        playerTargetedNpc === null &&
+        allNpcs.length === 0 &&
+        /[가-힣]{2,}에게|[가-힣]{2,}을|[가-힣]{2,}와/.test(rawInput)
+      ) {
         // 등록되지 않은 NPC → 장소 NPC fallback으로 처리 (LLM이 익명 인물로 대체)
         const locId = ctx.currentLocationId;
         const phase = ctx.currentTimePhase ?? 'DAY';
@@ -413,18 +516,20 @@ export class PromptBuilderService {
         } else if (isIntroduced) {
           // 이미 소개됨 → 실명 + knowledge
           const knowledgeEntries = (ctx.npcKnowledge ?? {})[npc.npcId];
-          const knowledgePart = knowledgeEntries && knowledgeEntries.length > 0
-            ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k: any) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`
-            : '';
+          const knowledgePart =
+            knowledgeEntries && knowledgeEntries.length > 0
+              ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k: any) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`
+              : '';
           return `- ${npc.name}${title}: ${npc.role} [이미 소개됨, 대명사: ${pronoun}]${knowledgePart}`;
         } else {
           // 아직 만나지 않았거나 소개 안 됨 → 별칭 (간략히)
           return `- "${alias}": ${npc.role} [이름 미공개]`;
         }
       });
-      const relationPart = ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0
-        ? `\n\n현재 관계:\n${ctx.npcRelationFacts.join('\n')}`
-        : '';
+      const relationPart =
+        ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0
+          ? `\n\n현재 관계:\n${ctx.npcRelationFacts.join('\n')}`
+          : '';
       memoryParts.push(
         [
           '[등장 가능 NPC 목록 — 참조용]',
@@ -458,10 +563,17 @@ export class PromptBuilderService {
     }
 
     // Narrative Engine v1: Incident/감정/마크/시그널 컨텍스트
-    const hasStructured = !!(ctx.structuredSummary || ctx.npcJournalText || ctx.incidentChronicleText || ctx.relevantIncidentMemoryText);
+    const hasStructured = !!(
+      ctx.structuredSummary ||
+      ctx.npcJournalText ||
+      ctx.incidentChronicleText ||
+      ctx.relevantIncidentMemoryText
+    );
     if (!hasStructured) {
       if (ctx.incidentContext) {
-        memoryParts.push(`[도시 사건]\n${ctx.incidentContext}\n플레이어의 행동이 사건의 통제/압력에 영향을 줍니다. 사건의 긴장감을 서술에 자연스럽게 반영하세요.`);
+        memoryParts.push(
+          `[도시 사건]\n${ctx.incidentContext}\n플레이어의 행동이 사건의 통제/압력에 영향을 줍니다. 사건의 긴장감을 서술에 자연스럽게 반영하세요.`,
+        );
       }
     } else {
       // 구조화 메모리 사용 시에도 활성 Incident의 런타임 수치는 보충 (chronicle은 과거 기록, 런타임은 현재 수치)
@@ -481,15 +593,21 @@ export class PromptBuilderService {
       if (ctx.npcInjection?.npcId) sceneNpcIds.add(ctx.npcInjection.npcId);
       const npcEmotionalBlock = this.buildNpcEmotionalBlock(ctx, sceneNpcIds);
       if (npcEmotionalBlock) {
-        memoryParts.push(`[NPC 감정 상태]\n${npcEmotionalBlock}\n⚠️ NPC의 현재 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요. 위 행동 힌트를 반드시 반영하세요.`);
+        memoryParts.push(
+          `[NPC 감정 상태]\n${npcEmotionalBlock}\n⚠️ NPC의 현재 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요. 위 행동 힌트를 반드시 반영하세요.`,
+        );
       }
     }
     // 서사 표식: 구조화 메모리 유무와 무관하게 항상 포함
     if (ctx.narrativeMarkContext) {
-      memoryParts.push(`[서사 표식]\n${ctx.narrativeMarkContext}\n이 표식들은 이야기에 영구적 영향을 줍니다. 관련 장면에서 자연스럽게 참조하세요.`);
+      memoryParts.push(
+        `[서사 표식]\n${ctx.narrativeMarkContext}\n이 표식들은 이야기에 영구적 영향을 줍니다. 관련 장면에서 자연스럽게 참조하세요.`,
+      );
     }
     if (ctx.signalContext) {
-      memoryParts.push(`[도시 시그널]\n${ctx.signalContext}\n배경 분위기와 NPC 대화에 시그널 정보를 자연스럽게 녹여내세요.`);
+      memoryParts.push(
+        `[도시 시그널]\n${ctx.signalContext}\n배경 분위기와 NPC 대화에 시그널 정보를 자연스럽게 녹여내세요.`,
+      );
     }
 
     // L4 확장: Agenda/Arc 진행도
@@ -505,18 +623,21 @@ export class PromptBuilderService {
     // Phase 4: 장비 인상 (서술 톤 영향)
     if (ctx.equipmentTags && ctx.equipmentTags.length > 0) {
       const tagLine = ctx.equipmentTags.join(', ');
-      const setPart = ctx.activeSetNames.length > 0
-        ? `\n활성 세트: ${ctx.activeSetNames.join(', ')}`
-        : '';
-      memoryParts.push(`[장비 인상]\n플레이어의 장비가 주는 인상: ${tagLine}${setPart}\n이 인상을 서술의 묘사와 NPC 반응 톤에 자연스럽게 반영하세요. 수치 효과에는 절대 영향 없음.`);
+      const setPart =
+        ctx.activeSetNames.length > 0
+          ? `\n활성 세트: ${ctx.activeSetNames.join(', ')}`
+          : '';
+      memoryParts.push(
+        `[장비 인상]\n플레이어의 장비가 주는 인상: ${tagLine}${setPart}\n이 인상을 서술의 묘사와 NPC 반응 톤에 자연스럽게 반영하세요. 수치 효과에는 절대 영향 없음.`,
+      );
     }
 
     // Phase 3: ItemMemory — 아이템 획득 배경 서술 참조
     if (ctx.relevantItemMemoryText) {
       memoryParts.push(
         `${ctx.relevantItemMemoryText}\n` +
-        '장비의 획득 배경을 전투/행동 묘사에 자연스럽게 녹여라. ' +
-        '매 턴 언급 금지 — 전투나 해당 장비와 관련된 행동 시에만 간결하게 활용하라.',
+          '장비의 획득 배경을 전투/행동 묘사에 자연스럽게 녹여라. ' +
+          '매 턴 언급 금지 — 전투나 해당 장비와 관련된 행동 시에만 간결하게 활용하라.',
       );
     }
 
@@ -524,8 +645,24 @@ export class PromptBuilderService {
       // PR1: Token Budget — 총합 2500 토큰 예산 내로 트리밍
       // 우선순위: 낮은 인덱스 = 먼저 트리밍 대상 (저우선)
       // enforceTotal은 priorityOrder를 역순으로 순회하므로, 배열 앞쪽이 먼저 제거됨
-      const LOW_PRIORITY_TAGS = ['[서사 이정표]', '[장비 인상]', '[장비 서술 참조]', '[기억된 사실]', '[직전 장소 정보]', '[성향/아크]', '[플레이어 프로필]'];
-      const HIGH_PRIORITY_TAGS = ['[이번 방문 대화]', '[직전 턴 핵심 정보]', '[NPC 감정 상태]', '[현재 장면 상태]', '[현재 노드 사실]', '[장면 흐름]', '[현재 장소]'];
+      const LOW_PRIORITY_TAGS = [
+        '[서사 이정표]',
+        '[장비 인상]',
+        '[장비 서술 참조]',
+        '[기억된 사실]',
+        '[직전 장소 정보]',
+        '[성향/아크]',
+        '[플레이어 프로필]',
+      ];
+      const HIGH_PRIORITY_TAGS = [
+        '[이번 방문 대화]',
+        '[직전 턴 핵심 정보]',
+        '[NPC 감정 상태]',
+        '[현재 장면 상태]',
+        '[현재 노드 사실]',
+        '[장면 흐름]',
+        '[현재 장소]',
+      ];
 
       const getPriority = (part: string): number => {
         for (const tag of HIGH_PRIORITY_TAGS) {
@@ -541,10 +678,17 @@ export class PromptBuilderService {
       const priorityOrder = memoryParts
         .map((part, idx) => ({ idx, priority: getPriority(part) }))
         .sort((a, b) => a.priority - b.priority)
-        .map(item => item.idx);
+        .map((item) => item.idx);
 
-      const trimmedParts = this.tokenBudget.enforceTotal(memoryParts, priorityOrder);
-      messages.push({ role: 'assistant', content: trimmedParts.join('\n\n'), cacheControl: 'ephemeral' });
+      const trimmedParts = this.tokenBudget.enforceTotal(
+        memoryParts,
+        priorityOrder,
+      );
+      messages.push({
+        role: 'assistant',
+        content: trimmedParts.join('\n\n'),
+        cacheControl: 'ephemeral',
+      });
     }
 
     // 3. Facts block (user role — 이번 턴 정보)
@@ -553,30 +697,51 @@ export class PromptBuilderService {
     // 플레이어 행동 (가장 중요 — 서술에 반드시 반영)
     if (rawInput && inputType !== 'SYSTEM') {
       if (inputType === 'ACTION') {
-        const actionCtx = sr.ui?.actionContext as { parsedType?: string; originalInput?: string; tone?: string; escalated?: boolean; insistenceCount?: number; eventSceneFrame?: string; eventMatchPolicy?: string } | undefined;
+        const actionCtx = sr.ui?.actionContext as
+          | {
+              parsedType?: string;
+              originalInput?: string;
+              tone?: string;
+              escalated?: boolean;
+              insistenceCount?: number;
+              eventSceneFrame?: string;
+              eventMatchPolicy?: string;
+            }
+          | undefined;
         const parts = [
           `⚠️ [이번 턴 플레이어 행동 — 서술의 핵심]`,
           `플레이어 원문: "${sanitizeUserInput(rawInput)}"`,
           `이 행동이 이번 서술의 주제입니다. 반드시 이 행동을 시도하는 장면으로 시작하세요.`,
         ];
         if (actionCtx?.parsedType) {
-          parts.push(`엔진 해석: ${actionCtx.parsedType}${actionCtx.tone && actionCtx.tone !== 'NEUTRAL' ? ` (${actionCtx.tone})` : ''}`);
+          parts.push(
+            `엔진 해석: ${actionCtx.parsedType}${actionCtx.tone && actionCtx.tone !== 'NEUTRAL' ? ` (${actionCtx.tone})` : ''}`,
+          );
         }
         // 이벤트 전환 브리징: 진행 중 장면이 있으면 sceneFrame 완전 억제
         if (actionCtx?.eventSceneFrame) {
-          const ongoingTurnsWithNarrative = (ctx.locationSessionTurns ?? [])
-            .filter(t => t.narrative && t.narrative.length > 0);
+          const ongoingTurnsWithNarrative = (
+            ctx.locationSessionTurns ?? []
+          ).filter((t) => t.narrative && t.narrative.length > 0);
           if (ongoingTurnsWithNarrative.length >= 2) {
             // 2턴 이상 진행된 장면: sceneFrame 완전 억제 — 직전 서술의 흐름만 따름
-            parts.push('⚠️ 장면 연속성 절대 우선: [이번 방문 대화]의 직전 서술에서 등장한 인물, 장소, 대화 흐름을 그대로 이어가세요. 새로운 인물이나 장소로 전환하지 마세요.');
+            parts.push(
+              '⚠️ 장면 연속성 절대 우선: [이번 방문 대화]의 직전 서술에서 등장한 인물, 장소, 대화 흐름을 그대로 이어가세요. 새로운 인물이나 장소로 전환하지 마세요.',
+            );
           } else if (ongoingTurnsWithNarrative.length === 1) {
             // 1턴만 진행: sceneFrame을 약하게 참고
-            parts.push(`[참고 배경 — 분위기 참고만, 인물/장소 전환 금지] ${actionCtx.eventSceneFrame}`);
-            parts.push('⚠️ 직전 서술의 장면(등장 인물, 장소)을 유지하세요. 위 배경은 분위기 참고용이며, 직전 서술과 다른 인물이 언급되어 있으면 무시하세요.');
+            parts.push(
+              `[참고 배경 — 분위기 참고만, 인물/장소 전환 금지] ${actionCtx.eventSceneFrame}`,
+            );
+            parts.push(
+              '⚠️ 직전 서술의 장면(등장 인물, 장소)을 유지하세요. 위 배경은 분위기 참고용이며, 직전 서술과 다른 인물이 언급되어 있으면 무시하세요.',
+            );
           } else {
             // 첫 턴: sceneFrame으로 새 장면 설정
             parts.push(`현재 장면 상황: ${actionCtx.eventSceneFrame}`);
-            parts.push('서술 규칙: 플레이어의 행동을 먼저 묘사한 뒤, 위 장면 상황이 자연스럽게 펼쳐지도록 연결하세요. 예: "~하려던 도중, ~" 또는 "~하며 걸어가는데, ~" 형태로 행동과 상황을 매끄럽게 이어붙이세요.');
+            parts.push(
+              '서술 규칙: 플레이어의 행동을 먼저 묘사한 뒤, 위 장면 상황이 자연스럽게 펼쳐지도록 연결하세요. 예: "~하려던 도중, ~" 또는 "~하며 걸어가는데, ~" 형태로 행동과 상황을 매끄럽게 이어붙이세요.',
+            );
           }
         }
         if (actionCtx?.escalated) {
@@ -590,7 +755,9 @@ export class PromptBuilderService {
         }
         factsParts.push(parts.join('\n'));
       } else if (inputType === 'CHOICE') {
-        const actionCtx = sr.ui?.actionContext as { parsedType?: string; originalInput?: string; tone?: string } | undefined;
+        const actionCtx = sr.ui?.actionContext as
+          | { parsedType?: string; originalInput?: string; tone?: string }
+          | undefined;
         const parts = [
           `[플레이어 선택] 당신은 "${sanitizeUserInput(rawInput)}"을(를) 선택했습니다.`,
           '서술 규칙: 먼저 플레이어가 이 선택을 실행하는 장면을 구체적으로 묘사하세요.',
@@ -606,10 +773,16 @@ export class PromptBuilderService {
 
     // LOCATION 후속 턴에 장소 컨텍스트 보충 (MOVE 이벤트가 없는 턴)
     // summary.short에 [장소] 블록이 없으면 현재 위치명을 삽입
-    if (!isHub && !sr.summary.short.includes('[장소]') && ctx.currentLocationId) {
+    if (
+      !isHub &&
+      !sr.summary.short.includes('[장소]') &&
+      ctx.currentLocationId
+    ) {
       const locNames: Record<string, string> = {
-        LOC_MARKET: '시장 거리', LOC_GUARD: '경비대 지구',
-        LOC_HARBOR: '항만 부두', LOC_SLUMS: '빈민가',
+        LOC_MARKET: '시장 거리',
+        LOC_GUARD: '경비대 지구',
+        LOC_HARBOR: '항만 부두',
+        LOC_SLUMS: '빈민가',
       };
       const locName = locNames[ctx.currentLocationId] ?? ctx.currentLocationId;
       factsParts.push(`[현재 장소] ${locName}`);
@@ -631,14 +804,20 @@ export class PromptBuilderService {
     // Phase 3: NPC 주입 (Step 5) — 소개 상태 반영
     if (ctx.npcInjection) {
       const npc = ctx.npcInjection;
-      const isNewlyIntroduced = (ctx.newlyIntroducedNpcIds ?? []).includes(npc.npcId ?? '');
-      const isNewlyEncountered = (ctx.newlyEncounteredNpcIds ?? []).includes(npc.npcId ?? '');
+      const isNewlyIntroduced = (ctx.newlyIntroducedNpcIds ?? []).includes(
+        npc.npcId ?? '',
+      );
+      const isNewlyEncountered = (ctx.newlyEncounteredNpcIds ?? []).includes(
+        npc.npcId ?? '',
+      );
 
       let introInstruction = '';
       if (isNewlyIntroduced && isNewlyEncountered) {
-        introInstruction = '\n이 NPC는 처음 만나며 자기소개를 합니다. 이름을 포함한 자연스러운 소개를 서술하세요.';
+        introInstruction =
+          '\n이 NPC는 처음 만나며 자기소개를 합니다. 이름을 포함한 자연스러운 소개를 서술하세요.';
       } else if (isNewlyIntroduced) {
-        introInstruction = '\n이 NPC의 이름이 이번 장면에서 드러납니다. 다른 인물의 언급이나 상황 단서를 통해 자연스럽게 이름이 밝혀지도록 서술하세요.';
+        introInstruction =
+          '\n이 NPC의 이름이 이번 장면에서 드러납니다. 다른 인물의 언급이나 상황 단서를 통해 자연스럽게 이름이 밝혀지도록 서술하세요.';
       } else if (npc.introduced === false) {
         const npcDef = npc.npcId ? this.content.getNpc(npc.npcId) : undefined;
         const alias = npcDef?.unknownAlias || '낯선 인물';
@@ -659,11 +838,14 @@ export class PromptBuilderService {
       const npcTier = npcDef?.tier ?? 'SUB';
       let tierInstruction = '';
       if (npcTier === 'BACKGROUND') {
-        tierInstruction = '\n⚠️ 이 인물은 배경 인물입니다. 대사는 1~2마디로 제한하고, 서술의 초점은 이 인물이 아닌 플레이어의 행동에 맞추세요.';
+        tierInstruction =
+          '\n⚠️ 이 인물은 배경 인물입니다. 대사는 1~2마디로 제한하고, 서술의 초점은 이 인물이 아닌 플레이어의 행동에 맞추세요.';
       } else if (npcTier === 'CORE' && npc.introduced === true) {
-        tierInstruction = '\n이 인물은 핵심 인물입니다. 충분한 대사와 깊이 있는 상호작용을 서술하세요.';
+        tierInstruction =
+          '\n이 인물은 핵심 인물입니다. 충분한 대사와 깊이 있는 상호작용을 서술하세요.';
       } else if (npcTier === 'CORE' && npc.introduced === false) {
-        tierInstruction = '\n이 인물은 핵심 인물이지만 아직 미소개 상태입니다. 짧고 의미심장한 대사로 존재감만 드러내세요. 소개 후부터 깊이 있는 상호작용이 가능합니다.';
+        tierInstruction =
+          '\n이 인물은 핵심 인물이지만 아직 미소개 상태입니다. 짧고 의미심장한 대사로 존재감만 드러내세요. 소개 후부터 깊이 있는 상호작용이 가능합니다.';
       }
 
       // NPC 연속 등장 턴 수 계산
@@ -671,22 +853,37 @@ export class PromptBuilderService {
       let consecutiveAppearance = 0;
       for (let i = sessionTurns.length - 1; i >= 0; i--) {
         // 이전 턴 서술에 이 NPC 이름/별칭이 포함되어 있으면 연속
-        if (sessionTurns[i].narrative?.includes(npcDisplayName)) consecutiveAppearance++;
+        if (sessionTurns[i].narrative?.includes(npcDisplayName))
+          consecutiveAppearance++;
         else break;
       }
-      const continuityHint = consecutiveAppearance >= 2
-        ? `\n⚠️ 이 인물은 이미 ${consecutiveAppearance}턴 연속 등장했습니다. 이전 대화를 이어가세요. 같은 말이나 같은 묘사를 반복하지 마세요. 대화를 한 단계 진전시키세요.`
-        : consecutiveAppearance === 1
-          ? '\n이 인물은 직전 턴에도 등장했습니다. 대화를 이어가세요.'
-          : '';
+      const continuityHint =
+        consecutiveAppearance >= 2
+          ? `\n⚠️ 이 인물은 이미 ${consecutiveAppearance}턴 연속 등장했습니다. 이전 대화를 이어가세요. 같은 말이나 같은 묘사를 반복하지 마세요. 대화를 한 단계 진전시키세요.`
+          : consecutiveAppearance === 1
+            ? '\n이 인물은 직전 턴에도 등장했습니다. 대화를 이어가세요.'
+            : '';
 
       // 행동 유형에 따라 NPC 등장 모드 결정
-      const actionCtxForNpc = sr.ui?.actionContext as { parsedType?: string } | undefined;
+      const actionCtxForNpc = sr.ui?.actionContext as
+        | { parsedType?: string }
+        | undefined;
       const actionType = actionCtxForNpc?.parsedType ?? '';
-      const NON_DIALOGUE_ACTIONS = new Set(['OBSERVE', 'INVESTIGATE', 'SEARCH', 'SNEAK', 'STEAL']);
+      const NON_DIALOGUE_ACTIONS = new Set([
+        'OBSERVE',
+        'INVESTIGATE',
+        'SEARCH',
+        'SNEAK',
+        'STEAL',
+      ]);
       const COMBAT_ACTIONS = new Set(['FIGHT']);
-      const isNonDialogueAction = NON_DIALOGUE_ACTIONS.has(actionType) || (rawInput && /관찰|살핀|살펴|지켜|훑|둘러|조사|잠입|숨어|몰래/.test(rawInput));
-      const isCombatAction = COMBAT_ACTIONS.has(actionType) || (rawInput && /싸움|공격|던져|때려|기습/.test(rawInput));
+      const isNonDialogueAction =
+        NON_DIALOGUE_ACTIONS.has(actionType) ||
+        (rawInput &&
+          /관찰|살핀|살펴|지켜|훑|둘러|조사|잠입|숨어|몰래/.test(rawInput));
+      const isCombatAction =
+        COMBAT_ACTIONS.has(actionType) ||
+        (rawInput && /싸움|공격|던져|때려|기습/.test(rawInput));
 
       let npcBehaviorInstruction: string;
       if (isNonDialogueAction) {
@@ -703,7 +900,8 @@ export class PromptBuilderService {
           '서술은 전투 동작, 타격감, 긴장감에 집중하세요.',
         ].join('\n');
       } else {
-        npcBehaviorInstruction = '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.';
+        npcBehaviorInstruction =
+          '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.';
       }
 
       factsParts.push(
@@ -711,14 +909,18 @@ export class PromptBuilderService {
           `[NPC 등장] ${npcDisplayName}이(가) 이 장면에 나타납니다.`,
           `이유: ${npc.reason}`,
           `자세: ${npc.posture}`,
-          ...((isNonDialogueAction || isCombatAction) ? [] : [`대화 시드: ${npc.dialogueSeed}`]),
+          ...(isNonDialogueAction || isCombatAction
+            ? []
+            : [`대화 시드: ${npc.dialogueSeed}`]),
           npcBehaviorInstruction,
           '⚠️ NPC의 personality 설명을 직접 인용하지 마세요. 행동과 대사로 성격을 보여주세요.',
           introInstruction,
           nameRevealHint,
           tierInstruction,
           continuityHint,
-        ].filter(Boolean).join('\n'),
+        ]
+          .filter(Boolean)
+          .join('\n'),
       );
     }
 
@@ -738,28 +940,34 @@ export class PromptBuilderService {
     // Phase 3: NPC 대화 자세 (Step 7) — posture + personality 기반 개인화 가이드 — HUB에서는 생략
     if (!isHub && ctx.npcPostures && Object.keys(ctx.npcPostures).length > 0) {
       const POSTURE_BASELINE: Record<string, string> = {
-        FRIENDLY: '마음이 열려 있고 상대에게 호감을 느낀다. 대화를 즐기며, 자기 이야기도 기꺼이 꺼낸다. 다만 무조건적인 순종은 아니다 — 자기 선이 있고, 어리석은 부탁은 거절할 수 있다.',
-        CAUTIOUS: '쉽게 믿지 않는다. 속내를 드러내기 전에 상대를 시험하고 떠본다. 말보다 침묵이 많고, 대답할 때도 핵심을 돌려 말한다. 하지만 신뢰를 얻으면 태도가 서서히 달라진다.',
-        HOSTILE: '적의가 있다. 상대의 존재 자체가 불쾌하거나 위협적으로 느껴진다. 대화를 원치 않으며, 응하더라도 짧고 날카롭다. 그러나 적대감 아래에도 이유가 있다 — 두려움, 배신의 기억, 또는 지켜야 할 것.',
-        FEARFUL: '겁을 먹고 있다. 불안이 몸과 목소리에 배어 나온다. 대화를 피하고 싶지만 상황이 허락하지 않을 때, 말이 짧아지거나 엉뚱한 방향으로 튄다. 압박에 약하지만 자존심이 아예 없는 건 아니다.',
-        CALCULATING: '이익을 따진다. 모든 대화에서 자신에게 돌아올 것을 계산하고, 빈손으로 무언가를 내주는 법이 없다. 하지만 계산하는 방식은 다양하다 — 눈앞의 이익, 장기적 관계, 정치적 포석, 또는 자존심.',
+        FRIENDLY:
+          '마음이 열려 있고 상대에게 호감을 느낀다. 대화를 즐기며, 자기 이야기도 기꺼이 꺼낸다. 다만 무조건적인 순종은 아니다 — 자기 선이 있고, 어리석은 부탁은 거절할 수 있다.',
+        CAUTIOUS:
+          '쉽게 믿지 않는다. 속내를 드러내기 전에 상대를 시험하고 떠본다. 말보다 침묵이 많고, 대답할 때도 핵심을 돌려 말한다. 하지만 신뢰를 얻으면 태도가 서서히 달라진다.',
+        HOSTILE:
+          '적의가 있다. 상대의 존재 자체가 불쾌하거나 위협적으로 느껴진다. 대화를 원치 않으며, 응하더라도 짧고 날카롭다. 그러나 적대감 아래에도 이유가 있다 — 두려움, 배신의 기억, 또는 지켜야 할 것.',
+        FEARFUL:
+          '겁을 먹고 있다. 불안이 몸과 목소리에 배어 나온다. 대화를 피하고 싶지만 상황이 허락하지 않을 때, 말이 짧아지거나 엉뚱한 방향으로 튄다. 압박에 약하지만 자존심이 아예 없는 건 아니다.',
+        CALCULATING:
+          '이익을 따진다. 모든 대화에서 자신에게 돌아올 것을 계산하고, 빈손으로 무언가를 내주는 법이 없다. 하지만 계산하는 방식은 다양하다 — 눈앞의 이익, 장기적 관계, 정치적 포석, 또는 자존심.',
       };
       const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
 
       // 이번 턴 등장 NPC만 필터링 (말투 오염 방지)
-      const relevantNpcIds = targetNpcIds.size > 0
-        ? targetNpcIds
-        : new Set(Object.keys(ctx.npcPostures)); // fallback: 전체
+      const relevantNpcIds =
+        targetNpcIds.size > 0
+          ? targetNpcIds
+          : new Set(Object.keys(ctx.npcPostures)); // fallback: 전체
       const postureLines = Object.entries(ctx.npcPostures)
         .filter(([npcId]) => relevantNpcIds.has(npcId))
         .map(([npcId, posture]) => {
-          const baseline = POSTURE_BASELINE[posture as string] ?? '';
+          const baseline = POSTURE_BASELINE[posture] ?? '';
           const npcDef = this.content.getNpc(npcId);
           let displayName: string;
           if (npcDef) {
             displayName = introducedNpcIds.has(npcId)
               ? npcDef.name
-              : (npcDef.unknownAlias || '낯선 인물');
+              : npcDef.unknownAlias || '낯선 인물';
           } else {
             displayName = '낯선 인물';
           }
@@ -769,8 +977,8 @@ export class PromptBuilderService {
           const personality = npcDef?.personality;
           if (personality) {
             const sessionTurns = ctx.locationSessionTurns ?? [];
-            const isFirstAppearance = !sessionTurns.some(
-              (t) => t.narrative?.includes(displayName),
+            const isFirstAppearance = !sessionTurns.some((t) =>
+              t.narrative?.includes(displayName),
             );
 
             const parts = [`- ${displayName}: ${posture} — ${baseline}`];
@@ -778,13 +986,14 @@ export class PromptBuilderService {
               parts.push(`    성격 특성: ${personality.traits.join(' / ')}`);
             }
             if (personality.speechStyle) {
-              parts.push(`    말투 (이 어조로 새 대사를 만들 것): ${personality.speechStyle}`);
+              parts.push(
+                `    말투 (이 어조로 새 대사를 만들 것): ${personality.speechStyle}`,
+              );
             }
             return parts.join('\n');
           }
           return `- ${displayName}: ${posture} — ${baseline}`;
-        },
-      );
+        });
       factsParts.push(
         [
           '[NPC 대화 자세]',
@@ -801,10 +1010,17 @@ export class PromptBuilderService {
     }
 
     // === 작업 1: 직전 NPC 대사 추출 & 반복 방지 지시 (LOCATION only) ===
-    if (!isHub && ctx.locationSessionTurns && ctx.locationSessionTurns.length > 0) {
-      const lastSessionTurn = ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1];
+    if (
+      !isHub &&
+      ctx.locationSessionTurns &&
+      ctx.locationSessionTurns.length > 0
+    ) {
+      const lastSessionTurn =
+        ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1];
       if (lastSessionTurn.narrative) {
-        const dialogueMatches = lastSessionTurn.narrative.match(/\u201c([^\u201d]+)\u201d|"([^"]+)"/g);
+        const dialogueMatches = lastSessionTurn.narrative.match(
+          /\u201c([^\u201d]+)\u201d|"([^"]+)"/g,
+        );
         if (dialogueMatches && dialogueMatches.length > 0) {
           // 마지막 1~2개 대사 추출
           const recentDialogues = dialogueMatches.slice(-2);
@@ -812,16 +1028,22 @@ export class PromptBuilderService {
           const openingPhrases = recentDialogues
             .map((d) => d.replace(/^["\u201c]|["\u201d]$/g, '').trim())
             .filter((d) => d.length > 3)
-            .map((d) => d.slice(0, Math.min(15, d.indexOf(',') > 3 ? d.indexOf(',') : 15)))
+            .map((d) =>
+              d.slice(
+                0,
+                Math.min(15, d.indexOf(',') > 3 ? d.indexOf(',') : 15),
+              ),
+            )
             .filter(Boolean);
-          const openingWarning = openingPhrases.length > 0
-            ? `\n⚠️ 시작 어구 반복 금지: 이전 대사가 "${openingPhrases[0]}"로 시작했으므로, 이번 대사는 완전히 다른 어구로 시작하세요. 같은 호칭이나 인사말("듣고 계시오", "그대" 등)을 연속 사용하면 안 됩니다.`
-            : '';
+          const openingWarning =
+            openingPhrases.length > 0
+              ? `\n⚠️ 시작 어구 반복 금지: 이전 대사가 "${openingPhrases[0]}"로 시작했으므로, 이번 대사는 완전히 다른 어구로 시작하세요. 같은 호칭이나 인사말("듣고 계시오", "그대" 등)을 연속 사용하면 안 됩니다.`
+              : '';
           factsParts.push(
             `[직전 NPC 대사]\n${recentDialogues.join('\n')}\n` +
-            '⚠️ 이 대사를 반복하지 마세요. 이전 대사에 이어지는 새로운 반응이나 화제로 시작하세요. ' +
-            '같은 질문("무슨 용무요?", "조심하시오" 등)을 다시 하면 안 됩니다.' +
-            openingWarning,
+              '⚠️ 이 대사를 반복하지 마세요. 이전 대사에 이어지는 새로운 반응이나 화제로 시작하세요. ' +
+              '같은 질문("무슨 용무요?", "조심하시오" 등)을 다시 하면 안 됩니다.' +
+              openingWarning,
           );
         }
       }
@@ -836,22 +1058,31 @@ export class PromptBuilderService {
       for (const npcId of Object.keys(ctx.npcPostures)) {
         const npcDef = this.content.getNpc(npcId);
         const displayName = npcDef
-          ? (introducedNpcIdsForCounter.has(npcId) ? npcDef.name : (npcDef.unknownAlias || '낯선 인물'))
+          ? introducedNpcIdsForCounter.has(npcId)
+            ? npcDef.name
+            : npcDef.unknownAlias || '낯선 인물'
           : '낯선 인물';
-        const count = sessionTurnsForCounter.filter(t => t.narrative?.includes(displayName)).length;
+        const count = sessionTurnsForCounter.filter((t) =>
+          t.narrative?.includes(displayName),
+        ).length;
         if (count >= 2) {
           npcAppearanceCounts[displayName] = count;
         }
       }
 
       if (Object.keys(npcAppearanceCounts).length > 0) {
-        const lines = Object.entries(npcAppearanceCounts).map(([name, count]) => {
-          if (count === 2) return `- ${name}: 2턴째 대화 → 플레이어 행동에 대한 평가, 자기 입장 표명`;
-          if (count === 3) return `- ${name}: 3턴째 대화 → 자기 사정 토로, 감정 변화(한숨, 자조, 초조), 새로운 화제`;
-          return `- ${name}: ${count}턴째 대화 → 거래 제안, 비밀 암시, 또는 대화 종료 시도. 더 이상 같은 경고를 반복하지 마세요.`;
-        });
+        const lines = Object.entries(npcAppearanceCounts).map(
+          ([name, count]) => {
+            if (count === 2)
+              return `- ${name}: 2턴째 대화 → 플레이어 행동에 대한 평가, 자기 입장 표명`;
+            if (count === 3)
+              return `- ${name}: 3턴째 대화 → 자기 사정 토로, 감정 변화(한숨, 자조, 초조), 새로운 화제`;
+            return `- ${name}: ${count}턴째 대화 → 거래 제안, 비밀 암시, 또는 대화 종료 시도. 더 이상 같은 경고를 반복하지 마세요.`;
+          },
+        );
         factsParts.push(
-          '[NPC 대화 단계]\n이 NPC와 연속 대화 중입니다. 대화 단계에 맞는 반응을 하세요:\n' + lines.join('\n'),
+          '[NPC 대화 단계]\n이 NPC와 연속 대화 중입니다. 대화 단계에 맞는 반응을 하세요:\n' +
+            lines.join('\n'),
         );
       }
     }
@@ -861,22 +1092,68 @@ export class PromptBuilderService {
       const inputLower = rawInput.toLowerCase();
       let reactionGuide = '';
 
-      if (inputLower.includes('훔') || inputLower.includes('절도') || inputLower.includes('빼앗') || inputLower.includes('슬쩍')) {
-        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 절도를 시도합니다. NPC는 "조심하시오" 경고가 아니라, 놀람/분노/공포/목격자로서의 반응을 보여야 합니다. 예: 눈이 커지며 뒷걸음질, 물건을 움켜쥠, 경비를 부르려는 시선 등.';
-      } else if (inputLower.includes('부수') || inputLower.includes('부쉈') || inputLower.includes('깨뜨') || inputLower.includes('내리치') || inputLower.includes('박살') || inputLower.includes('뜯') || inputLower.includes('파괴')) {
-        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 물리적 파괴를 시도합니다. 행동의 물리적 결과를 구체적으로 묘사하세요. 무엇이 부서졌는지, 안에서 무엇이 나왔는지, 주변이 어떻게 변했는지를 명확히 서술. SUCCESS: 의미 있는 새 발견(증거, 통로, 숨겨진 물건)이 드러남. PARTIAL: 일부만 드러나고 더 파야 할 것이 암시됨. FAIL: 소음으로 주목을 끌거나, 예상과 다른 결과. 같은 발견을 반복하지 말고 상황이 한 단계 진전되어야 합니다.';
-      } else if (inputLower.includes('싸움') || inputLower.includes('때') || inputLower.includes('공격')) {
-        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 폭력을 시도합니다. NPC는 경고가 아니라, 공포/도주/방관/대항 중 하나로 반응하세요. CAUTIOUS NPC는 움츠러들거나 물러남. HOSTILE은 대항. FEARFUL은 도주.';
-      } else if (inputLower.includes('위협') || inputLower.includes('협박') || inputLower.includes('겁을') || inputLower.includes('안 그러면')) {
-        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 위협합니다. NPC의 평소 speechStyle이 무너져야 합니다. SUCCESS: 시선을 피하고, 목소리가 떨리며, 짧고 끊긴 문장으로 복종. 차분한 설명조 금지. PARTIAL: 저항하려 하나 두려움에 일부 정보를 흘림. FAIL: 위협을 무시하거나 적대적으로 돌변.';
-      } else if (inputLower.includes('말을 건') || inputLower.includes('설득') || inputLower.includes('대화')) {
-        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 대화를 시도합니다. NPC는 경고 대신 되묻기, 자기 사정 이야기, 조건 제시, 또는 화제 전환으로 반응하세요.';
-      } else if (inputLower.includes('뇌물') || inputLower.includes('거래') || inputLower.includes('돈을')) {
-        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 뇌물/거래를 시도합니다. NPC는 경고가 아니라, 탐욕/망설임/거래 조건 제시/주변 경계로 반응하세요.';
-      } else if (inputLower.includes('관찰') || inputLower.includes('살핀') || inputLower.includes('살펴')) {
-        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 관찰합니다. NPC는 절대 플레이어에게 말을 걸거나 대사를 하지 않습니다. NPC의 행동만 묘사하세요 — 시선을 피하거나, 무심히 행동하거나, 뭔가를 숨기는 동작 등. 플레이어는 관찰자이므로 NPC와 대화가 일어나지 않습니다.';
-      } else if (inputLower.includes('잠입') || inputLower.includes('숨') || inputLower.includes('몰래')) {
-        reactionGuide = '⚠️ NPC 반응 가이드: 플레이어가 은밀히 행동합니다. NPC는 발각 시 경악/추격, 미발각 시 무관심하게 행동하세요.';
+      if (
+        inputLower.includes('훔') ||
+        inputLower.includes('절도') ||
+        inputLower.includes('빼앗') ||
+        inputLower.includes('슬쩍')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 절도를 시도합니다. NPC는 "조심하시오" 경고가 아니라, 놀람/분노/공포/목격자로서의 반응을 보여야 합니다. 예: 눈이 커지며 뒷걸음질, 물건을 움켜쥠, 경비를 부르려는 시선 등.';
+      } else if (
+        inputLower.includes('부수') ||
+        inputLower.includes('부쉈') ||
+        inputLower.includes('깨뜨') ||
+        inputLower.includes('내리치') ||
+        inputLower.includes('박살') ||
+        inputLower.includes('뜯') ||
+        inputLower.includes('파괴')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 물리적 파괴를 시도합니다. 행동의 물리적 결과를 구체적으로 묘사하세요. 무엇이 부서졌는지, 안에서 무엇이 나왔는지, 주변이 어떻게 변했는지를 명확히 서술. SUCCESS: 의미 있는 새 발견(증거, 통로, 숨겨진 물건)이 드러남. PARTIAL: 일부만 드러나고 더 파야 할 것이 암시됨. FAIL: 소음으로 주목을 끌거나, 예상과 다른 결과. 같은 발견을 반복하지 말고 상황이 한 단계 진전되어야 합니다.';
+      } else if (
+        inputLower.includes('싸움') ||
+        inputLower.includes('때') ||
+        inputLower.includes('공격')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 폭력을 시도합니다. NPC는 경고가 아니라, 공포/도주/방관/대항 중 하나로 반응하세요. CAUTIOUS NPC는 움츠러들거나 물러남. HOSTILE은 대항. FEARFUL은 도주.';
+      } else if (
+        inputLower.includes('위협') ||
+        inputLower.includes('협박') ||
+        inputLower.includes('겁을') ||
+        inputLower.includes('안 그러면')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 위협합니다. NPC의 평소 speechStyle이 무너져야 합니다. SUCCESS: 시선을 피하고, 목소리가 떨리며, 짧고 끊긴 문장으로 복종. 차분한 설명조 금지. PARTIAL: 저항하려 하나 두려움에 일부 정보를 흘림. FAIL: 위협을 무시하거나 적대적으로 돌변.';
+      } else if (
+        inputLower.includes('말을 건') ||
+        inputLower.includes('설득') ||
+        inputLower.includes('대화')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 대화를 시도합니다. NPC는 경고 대신 되묻기, 자기 사정 이야기, 조건 제시, 또는 화제 전환으로 반응하세요.';
+      } else if (
+        inputLower.includes('뇌물') ||
+        inputLower.includes('거래') ||
+        inputLower.includes('돈을')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 뇌물/거래를 시도합니다. NPC는 경고가 아니라, 탐욕/망설임/거래 조건 제시/주변 경계로 반응하세요.';
+      } else if (
+        inputLower.includes('관찰') ||
+        inputLower.includes('살핀') ||
+        inputLower.includes('살펴')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 관찰합니다. NPC는 절대 플레이어에게 말을 걸거나 대사를 하지 않습니다. NPC의 행동만 묘사하세요 — 시선을 피하거나, 무심히 행동하거나, 뭔가를 숨기는 동작 등. 플레이어는 관찰자이므로 NPC와 대화가 일어나지 않습니다.';
+      } else if (
+        inputLower.includes('잠입') ||
+        inputLower.includes('숨') ||
+        inputLower.includes('몰래')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 은밀히 행동합니다. NPC는 발각 시 경악/추격, 미발각 시 무관심하게 행동하세요.';
       }
 
       if (reactionGuide) {
@@ -885,7 +1162,10 @@ export class PromptBuilderService {
     }
 
     // === NPC가 이미 공개한 정보 (반복 방지) ===
-    if (ctx.npcAlreadyRevealedFacts && ctx.npcAlreadyRevealedFacts.facts.length > 0) {
+    if (
+      ctx.npcAlreadyRevealedFacts &&
+      ctx.npcAlreadyRevealedFacts.facts.length > 0
+    ) {
       const { npcDisplayName, facts } = ctx.npcAlreadyRevealedFacts;
       factsParts.push(
         [
@@ -901,7 +1181,11 @@ export class PromptBuilderService {
 
     // === NPC knownFacts: SUCCESS/PARTIAL 판정 시 NPC가 공개할 단서 ===
     if (ctx.npcRevealableFact) {
-      const { npcDisplayName, detail, resolveOutcome: factOutcome } = ctx.npcRevealableFact;
+      const {
+        npcDisplayName,
+        detail,
+        resolveOutcome: factOutcome,
+      } = ctx.npcRevealableFact;
       // NPC 말투 가이드 추출 (llmSummary.behaviorGuide > speechStyle 압축)
       let factNpcSpeechGuide = '';
       if (targetNpcIds.size > 0 && ctx.npcStates) {
@@ -925,24 +1209,42 @@ export class PromptBuilderService {
       let previousTopicWarning = '';
       if (targetNpcIds.size > 0 && ctx.npcStates) {
         const factNpcIdForTopic = [...targetNpcIds][0];
-        const factNpcStateForTopic = ctx.npcStates[factNpcIdForTopic] as NPCState | undefined;
+        const factNpcStateForTopic = ctx.npcStates[factNpcIdForTopic] as
+          | NPCState
+          | undefined;
         const topics = factNpcStateForTopic?.llmSummary?.recentTopics;
         if (topics && topics.length > 0) {
-          const prevTopics = topics.map(t => t.topic).join(', ');
-          const prevKeywords = [...new Set(topics.flatMap(t => t.keywords))].slice(0, 8);
-          previousTopicWarning = prevKeywords.length > 0
-            ? `\n이전에 다룬 주제: ${prevTopics}\n반복 금지 키워드: ${prevKeywords.join(', ')}\n위 주제/키워드와 다른 새로운 각도로 아래 정보를 전달하세요.`
-            : `\n이전에 다룬 주제: ${prevTopics}\n위 주제와 다른 새로운 각도로 아래 정보를 전달하세요.`;
+          const prevTopics = topics.map((t) => t.topic).join(', ');
+          const prevKeywords = [
+            ...new Set(topics.flatMap((t) => t.keywords)),
+          ].slice(0, 8);
+          previousTopicWarning =
+            prevKeywords.length > 0
+              ? `\n이전에 다룬 주제: ${prevTopics}\n반복 금지 키워드: ${prevKeywords.join(', ')}\n위 주제/키워드와 다른 새로운 각도로 아래 정보를 전달하세요.`
+              : `\n이전에 다룬 주제: ${prevTopics}\n위 주제와 다른 새로운 각도로 아래 정보를 전달하세요.`;
         }
       }
 
       // 서버 2단계 판정 기반 정보 전달 방식 (revealMode)
       // 비대화 행동에서는 강제로 observe 모드 (NPC 대사 대신 관찰로 정보 획득)
-      const actionCtxForFact = sr.ui?.actionContext as { parsedType?: string } | undefined;
+      const actionCtxForFact = sr.ui?.actionContext as
+        | { parsedType?: string }
+        | undefined;
       const factActionType = actionCtxForFact?.parsedType ?? '';
-      const FACT_NON_DIALOGUE = new Set(['OBSERVE', 'INVESTIGATE', 'SEARCH', 'SNEAK', 'STEAL']);
-      const isFactNonDialogue = FACT_NON_DIALOGUE.has(factActionType) || (rawInput && /관찰|살핀|살펴|지켜|훑|둘러|조사|잠입|숨어|몰래|훔/.test(rawInput));
-      const effectiveRevealMode = isFactNonDialogue ? 'observe' : ctx.npcRevealableFact.revealMode;
+      const FACT_NON_DIALOGUE = new Set([
+        'OBSERVE',
+        'INVESTIGATE',
+        'SEARCH',
+        'SNEAK',
+        'STEAL',
+      ]);
+      const isFactNonDialogue =
+        FACT_NON_DIALOGUE.has(factActionType) ||
+        (rawInput &&
+          /관찰|살핀|살펴|지켜|훑|둘러|조사|잠입|숨어|몰래|훔/.test(rawInput));
+      const effectiveRevealMode = isFactNonDialogue
+        ? 'observe'
+        : ctx.npcRevealableFact.revealMode;
       const { revealMode: _originalRevealMode } = ctx.npcRevealableFact;
 
       if (factOutcome === 'SUCCESS' || factOutcome === 'PARTIAL') {
@@ -985,7 +1287,9 @@ export class PromptBuilderService {
             `전달 방식: ${effectiveRevealMode === 'direct' ? '직접 대화' : effectiveRevealMode === 'observe' ? '관찰/추리' : '간접 흘림'}`,
             speechLine + deliveryGuide,
             previousTopicWarning,
-          ].filter(Boolean).join('\n'),
+          ]
+            .filter(Boolean)
+            .join('\n'),
         );
       }
       // revealMode === 'refuse'인 경우: 서버에서 fact를 발견하지 않으므로 이 블록 자체가 실행 안 됨
@@ -1062,7 +1366,9 @@ export class PromptBuilderService {
         for (const label of previousChoiceLabels) {
           choiceParts.push(`- ${label}`);
         }
-        choiceParts.push('위 선택지와 동일하거나 유사한 선택지를 생성하지 마세요. 이번 서술에 새로 등장한 구체적 디테일을 활용하세요.');
+        choiceParts.push(
+          '위 선택지와 동일하거나 유사한 선택지를 생성하지 마세요. 이번 서술에 새로 등장한 구체적 디테일을 활용하세요.',
+        );
       }
       factsParts.push(choiceParts.join('\n'));
     }
@@ -1075,13 +1381,14 @@ export class PromptBuilderService {
         const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
         const displayName = introducedNpcIds.has(npcId)
           ? npcDef.name
-          : (npcDef.unknownAlias || '이번 턴 NPC');
+          : npcDef.unknownAlias || '이번 턴 NPC';
         // 재등장 + llmSummary가 있으면 간소 말투, 첫 등장이면 풀 speechStyle
         const npcState = ctx.npcStates?.[npcId] as NPCState | undefined;
         const isReEncounter = (npcState?.encounterCount ?? 0) > 1;
-        const speechGuide = isReEncounter && npcState?.llmSummary?.behaviorGuide
-          ? npcState.llmSummary.behaviorGuide
-          : npcDef.personality.speechStyle;
+        const speechGuide =
+          isReEncounter && npcState?.llmSummary?.behaviorGuide
+            ? npcState.llmSummary.behaviorGuide
+            : npcDef.personality.speechStyle;
         const speechParts = [
           `[이번 턴 NPC 말투]`,
           `${displayName}의 말투: ${speechGuide}`,
@@ -1096,10 +1403,14 @@ export class PromptBuilderService {
     {
       let lastNarr = '';
       // 1차: locationSessionTurns에서 서술 있는 마지막 턴
-      for (const turns of [ctx.locationSessionTurns ?? [], ctx.recentTurns ?? []]) {
+      for (const turns of [
+        ctx.locationSessionTurns ?? [],
+        ctx.recentTurns ?? [],
+      ]) {
         for (let i = turns.length - 1; i >= 0; i--) {
           const narr = turns[i]?.narrative ?? '';
-          if (narr.length > 20) { // 의미 있는 서술 (현재 턴의 빈 narrative 제외)
+          if (narr.length > 20) {
+            // 의미 있는 서술 (현재 턴의 빈 narrative 제외)
             lastNarr = narr;
             break;
           }
@@ -1130,7 +1441,10 @@ export class PromptBuilderService {
    * context-builder에서 이관된 로직 — targetNpcIds를 사용하여
    * [NPC 대화 자세] 블록과 동일한 NPC 필터링을 적용한다.
    */
-  private buildNpcEmotionalBlock(ctx: LlmContext, targetNpcIds: Set<string>): string | null {
+  private buildNpcEmotionalBlock(
+    ctx: LlmContext,
+    targetNpcIds: Set<string>,
+  ): string | null {
     const npcStates = ctx.npcStates;
     if (!npcStates) return null;
 
@@ -1146,7 +1460,7 @@ export class PromptBuilderService {
       const npcDef = this.content.getNpc(npcId);
       // newlyIntroducedNpcIds에 해당하면 별칭 사용 (첫 소개 턴 실명 누출 방지)
       const displayName = newlyIntroducedSet.has(npcId)
-        ? (npcDef?.unknownAlias || '낯선 인물')
+        ? npcDef?.unknownAlias || '낯선 인물'
         : getNpcDisplayName(npc, npcDef);
       const posture = computeEffectivePosture(npc);
       const personality = npcDef?.personality;
@@ -1157,7 +1471,8 @@ export class PromptBuilderService {
       // trust 기반 태도 변화
       if (em.trust > 40) {
         hints.push('당신을 신뢰하며 경계를 내려놓았다');
-        if (personality?.softSpot) hints.push(`인간적 순간이 드러날 수 있다: ${personality.softSpot}`);
+        if (personality?.softSpot)
+          hints.push(`인간적 순간이 드러날 수 있다: ${personality.softSpot}`);
       } else if (em.trust > 15) {
         hints.push('마음을 열기 시작했다 — 가끔 본심이 살짝 보인다');
       } else if (em.trust < -20) {
@@ -1166,19 +1481,27 @@ export class PromptBuilderService {
 
       // fear 기반 (높을수록 성격/말투를 오버라이드)
       if (em.fear > 40) {
-        hints.push('⚠️ [감정 우선] 겁에 질려 있다 — 판단력이 흐려지고 몸이 굳는다. 말투가 무너지고 더듬거린다. 이 공포가 posture/speechStyle보다 우선 반영되어야 한다');
+        hints.push(
+          '⚠️ [감정 우선] 겁에 질려 있다 — 판단력이 흐려지고 몸이 굳는다. 말투가 무너지고 더듬거린다. 이 공포가 posture/speechStyle보다 우선 반영되어야 한다',
+        );
       } else if (em.fear > 30) {
-        hints.push('⚠️ [감정 우선] 두려움이 뚜렷하다 — 몸을 움츠리고 시선을 피한다. 평소 말투가 흔들리며 짧고 경계적으로 말한다. 이 감정이 speechStyle보다 우선한다');
+        hints.push(
+          '⚠️ [감정 우선] 두려움이 뚜렷하다 — 몸을 움츠리고 시선을 피한다. 평소 말투가 흔들리며 짧고 경계적으로 말한다. 이 감정이 speechStyle보다 우선한다',
+        );
       } else if (em.fear > 15) {
-        hints.push('불안해하고 있다 — 말을 더듬거나 시선을 피한다. 평소보다 짧고 조심스럽게 말한다');
+        hints.push(
+          '불안해하고 있다 — 말을 더듬거나 시선을 피한다. 평소보다 짧고 조심스럽게 말한다',
+        );
       }
 
       // respect 기반
-      if (em.respect > 30) hints.push('당신을 인정하고 있다 — 말투가 격식에서 벗어나기도 한다');
+      if (em.respect > 30)
+        hints.push('당신을 인정하고 있다 — 말투가 격식에서 벗어나기도 한다');
       else if (em.respect < -20) hints.push('당신을 얕보고 있다');
 
       // suspicion 기반
-      if (em.suspicion > 40) hints.push('당신의 의도를 강하게 의심한다 — 방어적이고 공격적');
+      if (em.suspicion > 40)
+        hints.push('당신의 의도를 강하게 의심한다 — 방어적이고 공격적');
       else if (em.suspicion > 15) hints.push('경계심을 늦추지 않는다');
 
       // attachment 기반
@@ -1187,7 +1510,7 @@ export class PromptBuilderService {
       // personality 기반 행동 힌트 (핵심: posture와 personality 조합)
       // 첫 등장 판정: encounterCount 기반 (이전의 narrative 텍스트 매칭 대신 정확한 카운터 사용)
       const isFirstEncounter = (npc.encounterCount ?? 0) <= 1;
-      const llmSummary = (npc as NPCState).llmSummary as NpcLlmSummary | undefined;
+      const llmSummary = (npc as NPCState).llmSummary;
 
       const behaviorParts: string[] = [];
 
@@ -1197,19 +1520,26 @@ export class PromptBuilderService {
           if (personality.core) {
             behaviorParts.push(personality.core);
           }
-          if (personality.speechStyle) behaviorParts.push(`말투: ${personality.speechStyle}`);
+          if (personality.speechStyle)
+            behaviorParts.push(`말투: ${personality.speechStyle}`);
           // innerConflict는 trust > 15 또는 respect > 20일 때만 노출
           if (personality.innerConflict && (em.trust > 15 || em.respect > 20)) {
             behaviorParts.push(`내면: ${personality.innerConflict}`);
           }
           // signature 표현 (첫 등장이므로 항상 포함)
           if (personality.signature?.length) {
-            behaviorParts.push(`가끔 보이는 습관(매 턴 반복 금지, 2~3턴에 1번 정도): ${personality.signature.join(' / ')}`);
+            behaviorParts.push(
+              `가끔 보이는 습관(매 턴 반복 금지, 2~3턴에 1번 정도): ${personality.signature.join(' / ')}`,
+            );
           }
           // npcRelations: 현재 장면에 등장한 NPC + introduced NPC만 필터
           if (personality.npcRelations) {
             const relLines = this.buildFilteredNpcRelations(
-              personality.npcRelations, npcId, npcStates, newlyIntroducedSet, targetNpcIds,
+              personality.npcRelations,
+              npcId,
+              npcStates,
+              newlyIntroducedSet,
+              targetNpcIds,
             );
             if (relLines.length > 0) {
               behaviorParts.push(`관계: ${relLines.join(' | ')}`);
@@ -1226,7 +1556,9 @@ export class PromptBuilderService {
           behaviorParts.push(`직전 대화: ${llmSummary.lastDialogueTopic}`);
         }
         if (llmSummary.lastDialogueSnippet) {
-          behaviorParts.push(`마지막 대사: "${llmSummary.lastDialogueSnippet}"`);
+          behaviorParts.push(
+            `마지막 대사: "${llmSummary.lastDialogueSnippet}"`,
+          );
         }
         if (llmSummary.currentConcern) {
           behaviorParts.push(`현재 관심: ${llmSummary.currentConcern}`);
@@ -1235,9 +1567,9 @@ export class PromptBuilderService {
         // 대화 주제 반복 방지: recentTopics 요약 주입
         const recentTopics = llmSummary.recentTopics;
         if (recentTopics && recentTopics.length > 0) {
-          const topicSummary = recentTopics.map(t => t.topic).join(' / ');
+          const topicSummary = recentTopics.map((t) => t.topic).join(' / ');
           behaviorParts.push(`이미 다룬 주제: ${topicSummary}`);
-          const allKeywords = recentTopics.flatMap(t => t.keywords);
+          const allKeywords = recentTopics.flatMap((t) => t.keywords);
           const uniqueKw = [...new Set(allKeywords)].slice(0, 8);
           if (uniqueKw.length > 0) {
             behaviorParts.push(`반복 금지 키워드: ${uniqueKw.join(', ')}`);
@@ -1252,14 +1584,23 @@ export class PromptBuilderService {
         // signature 카운터: lastSignatureTurn 기반 3턴 간격
         const lastSigTurn = (npc as NPCState).lastSignatureTurn ?? 0;
         const currentTurnNo = llmSummary.updatedAtTurn;
-        if (personality?.signature?.length && (currentTurnNo - lastSigTurn) >= 3) {
-          behaviorParts.push(`가끔 보이는 습관(이번 턴에 넣어도 됨): ${personality.signature.join(' / ')}`);
+        if (
+          personality?.signature?.length &&
+          currentTurnNo - lastSigTurn >= 3
+        ) {
+          behaviorParts.push(
+            `가끔 보이는 습관(이번 턴에 넣어도 됨): ${personality.signature.join(' / ')}`,
+          );
         }
 
         // npcRelations: 재등장에서도 장면 등장 NPC만 필터
         if (personality?.npcRelations) {
           const relLines = this.buildFilteredNpcRelations(
-            personality.npcRelations, npcId, npcStates, newlyIntroducedSet, targetNpcIds,
+            personality.npcRelations,
+            npcId,
+            npcStates,
+            newlyIntroducedSet,
+            targetNpcIds,
           );
           if (relLines.length > 0) {
             behaviorParts.push(`관계: ${relLines.join(' | ')}`);
@@ -1278,10 +1619,12 @@ export class PromptBuilderService {
 
         // Heat 기반 무드
         if (heat > 70) {
-          if (faction === 'CITY_GUARD') moodParts.push('비상 경계 중 — 극도로 긴장하고 예민하다');
+          if (faction === 'CITY_GUARD')
+            moodParts.push('비상 경계 중 — 극도로 긴장하고 예민하다');
           else moodParts.push('도시 전체가 긴장 — 불안하고 조심스럽다');
         } else if (heat > 40) {
-          if (faction === 'CITY_GUARD') moodParts.push('경계 강화 중 — 평소보다 날카롭다');
+          if (faction === 'CITY_GUARD')
+            moodParts.push('경계 강화 중 — 평소보다 날카롭다');
           else moodParts.push('거리가 어수선하다 — 경계하고 있다');
         }
 
@@ -1296,12 +1639,14 @@ export class PromptBuilderService {
         }
       }
 
-      const hintText = hints.length > 0 ? `\n    감정: ${hints.join('. ')}` : '';
-      const behaviorText = behaviorParts.length > 0
-        ? `\n    ${behaviorParts.join('\n    ')}`
-        : '';
+      const hintText =
+        hints.length > 0 ? `\n    감정: ${hints.join('. ')}` : '';
+      const behaviorText =
+        behaviorParts.length > 0 ? `\n    ${behaviorParts.join('\n    ')}` : '';
       const moodText = currentMood ? `\n    현재 상태: ${currentMood}` : '';
-      emotionalLines.push(`- ${displayName} [${posture}]${hintText}${behaviorText}${moodText}`);
+      emotionalLines.push(
+        `- ${displayName} [${posture}]${hintText}${behaviorText}${moodText}`,
+      );
     }
 
     // 이번 턴 NPC 감정 변화 delta
@@ -1338,9 +1683,12 @@ export class PromptBuilderService {
       if (eligibleNpcIds.has(relNpcId) || relNpcId === ownerNpcId) {
         const relNpcDef = this.content.getNpc(relNpcId);
         const relNpcState = npcStates[relNpcId];
-        const relDisplayName = relNpcDef && relNpcState
-          ? (newlyIntroducedSet.has(relNpcId) ? (relNpcDef.unknownAlias || '낯선 인물') : getNpcDisplayName(relNpcState, relNpcDef))
-          : relNpcDef?.unknownAlias ?? relNpcId;
+        const relDisplayName =
+          relNpcDef && relNpcState
+            ? newlyIntroducedSet.has(relNpcId)
+              ? relNpcDef.unknownAlias || '낯선 인물'
+              : getNpcDisplayName(relNpcState, relNpcDef)
+            : (relNpcDef?.unknownAlias ?? relNpcId);
         // 관계 설명 내 NPC 실명을 강제 치환 (introduced 상태와 무관하게)
         let sanitizedDesc = relDesc;
         if (relNpcDef?.name) {

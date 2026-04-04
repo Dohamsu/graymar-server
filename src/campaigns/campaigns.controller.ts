@@ -37,10 +37,7 @@ export class CampaignsController {
   }
 
   @Get(':id')
-  async getCampaign(
-    @Param('id') id: string,
-    @UserId() userId: string,
-  ) {
+  async getCampaign(@Param('id') id: string, @UserId() userId: string) {
     return this.campaignsService.getCampaign(id, userId);
   }
 

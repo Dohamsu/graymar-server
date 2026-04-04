@@ -15,7 +15,12 @@ import type {
   WorldState,
   ArcState,
 } from '../../db/types/index.js';
-import type { NodeType, ToneHint, RouteContext, RouteTag } from '../../db/types/index.js';
+import type {
+  NodeType,
+  ToneHint,
+  RouteContext,
+  RouteTag,
+} from '../../db/types/index.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { SceneShellService } from '../hub/scene-shell.service.js';
 import { RunPlannerService } from '../planner/run-planner.service.js';
@@ -294,7 +299,10 @@ export class NodeTransitionService {
       nodeIndex: nextIndex,
       graphNodeId: null,
       nodeType: 'COMBAT',
-      nodeMeta: { eventId: encounterId, isBoss: encounter.nodeMeta?.isBoss ?? false },
+      nodeMeta: {
+        eventId: encounterId,
+        isBoss: encounter.nodeMeta?.isBoss ?? false,
+      },
       environmentTags: encounter.envTags ?? envTags,
       edges: null,
       status: 'NODE_ACTIVE',
@@ -339,7 +347,10 @@ export class NodeTransitionService {
     });
 
     // 전투 선택지
-    const combatChoices = this.buildCombatChoices(battleState, encounter.envTags ?? envTags);
+    const combatChoices = this.buildCombatChoices(
+      battleState,
+      encounter.envTags ?? envTags,
+    );
 
     const enterResult: ServerResultV1 = {
       version: 'server_result_v1',
@@ -515,16 +526,15 @@ export class NodeTransitionService {
 
     const plannedNode = this.planner.findNode(nextGraphNodeId);
     if (!plannedNode) {
-      throw new InternalError(
-        `Graph node not found: ${nextGraphNodeId}`,
-      );
+      throw new InternalError(`Graph node not found: ${nextGraphNodeId}`);
     }
 
     // 2. routeTag 결정 (S2 분기점에서 결정됨)
-    const newRouteTag = this.planner.resolveRouteTag(
-      routeContext.lastChoiceId,
-    );
-    const effectiveRouteTag = newRouteTag ?? (routeContext.routeTag as RouteTag | undefined) ?? undefined;
+    const newRouteTag = this.planner.resolveRouteTag(routeContext.lastChoiceId);
+    const effectiveRouteTag =
+      newRouteTag ??
+      (routeContext.routeTag as RouteTag | undefined) ??
+      undefined;
 
     // 3. nodeIndex 할당
     const nextIndex = await this.getNextNodeIndex(runId);
@@ -535,7 +545,7 @@ export class NodeTransitionService {
       nodeIndex: nextIndex,
       graphNodeId: nextGraphNodeId,
       nodeType: plannedNode.nodeType,
-      nodeMeta: plannedNode.nodeMeta as Record<string, unknown>,
+      nodeMeta: plannedNode.nodeMeta,
       environmentTags: plannedNode.environmentTags,
       edges: plannedNode.edges,
       status: 'NODE_ACTIVE',
@@ -573,7 +583,7 @@ export class NodeTransitionService {
       const battleState = await this.initBattleState(
         runId,
         newNode.id,
-        plannedNode.nodeMeta as Record<string, unknown>,
+        plannedNode.nodeMeta,
         plannedNode.environmentTags,
         seed,
         turnNo,
@@ -618,12 +628,7 @@ export class NodeTransitionService {
           },
         },
         ui: {
-          availableActions: [
-            'ATTACK_MELEE',
-            'DEFEND',
-            'EVADE',
-            'FLEE',
-          ],
+          availableActions: ['ATTACK_MELEE', 'DEFEND', 'EVADE', 'FLEE'],
           targetLabels: battleState.enemies.map((e) => {
             const def = this.content.getEnemy(e.id.replace(/_\d+$/, ''));
             return {
@@ -679,7 +684,10 @@ export class NodeTransitionService {
           },
           enemies: [],
           inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
-          meta: { battle: { phase: 'NONE' }, position: { env: plannedNode.environmentTags } },
+          meta: {
+            battle: { phase: 'NONE' },
+            position: { env: plannedNode.environmentTags },
+          },
         },
         ui: {
           availableActions: [],
@@ -797,7 +805,8 @@ export class NodeTransitionService {
             ? overrides.personality
             : enemyDef.personality;
 
-        const suffix = enemyEntry.count > 1 ? ` ${String.fromCharCode(65 + i)}` : '';
+        const suffix =
+          enemyEntry.count > 1 ? ` ${String.fromCharCode(65 + i)}` : '';
         enemies.push({
           id: `${enemyEntry.ref}_${i}`,
           name: `${enemyDef.name}${suffix}`,
@@ -846,14 +855,25 @@ export class NodeTransitionService {
         choices.push({
           id: `attack_melee_${e.id}`,
           label: `${e.name}에게 근접 공격`,
-          action: { type: 'CHOICE', payload: { choiceId: `attack_melee_${e.id}` } },
+          action: {
+            type: 'CHOICE',
+            payload: { choiceId: `attack_melee_${e.id}` },
+          },
         });
       }
     }
 
     choices.push(
-      { id: 'defend', label: '방어 태세', action: { type: 'CHOICE', payload: { choiceId: 'defend' } } },
-      { id: 'evade', label: '회피', action: { type: 'CHOICE', payload: { choiceId: 'evade' } } },
+      {
+        id: 'defend',
+        label: '방어 태세',
+        action: { type: 'CHOICE', payload: { choiceId: 'defend' } },
+      },
+      {
+        id: 'evade',
+        label: '회피',
+        action: { type: 'CHOICE', payload: { choiceId: 'evade' } },
+      },
     );
 
     if (battleState.player.stamina >= 2) {
@@ -863,15 +883,20 @@ export class NodeTransitionService {
             id: `combo_double_attack_${e.id}`,
             label: `${e.name}에게 연속 공격`,
             hint: '2회 연속 공격 (기력 2)',
-            action: { type: 'CHOICE', payload: { choiceId: `combo_double_attack_${e.id}` } },
+            action: {
+              type: 'CHOICE',
+              payload: { choiceId: `combo_double_attack_${e.id}` },
+            },
           });
         }
       }
     }
 
-    choices.push(
-      { id: 'flee', label: '도주 시도', action: { type: 'CHOICE', payload: { choiceId: 'flee' } } },
-    );
+    choices.push({
+      id: 'flee',
+      label: '도주 시도',
+      action: { type: 'CHOICE', payload: { choiceId: 'flee' } },
+    });
 
     return choices;
   }

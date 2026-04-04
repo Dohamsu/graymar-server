@@ -14,9 +14,9 @@ export interface VisitExitSummary {
   locationId: string;
   locationName: string;
   turnCount: number;
-  keyActions: string[];       // max 3, 80자
-  keyDialogues: string[];     // max 3, 80자
-  unresolvedLeads: string[];  // max 2, 60자
+  keyActions: string[]; // max 3, 80자
+  keyDialogues: string[]; // max 3, 80자
+  unresolvedLeads: string[]; // max 2, 60자
 }
 
 export interface StructuredMemory {

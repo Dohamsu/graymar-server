@@ -55,13 +55,21 @@ export class WorldDeltaService {
     }
 
     // Incident 변화
-    this.diffIncidents(priorWs.activeIncidents ?? [], currentWs.activeIncidents ?? [], changes);
+    this.diffIncidents(
+      priorWs.activeIncidents ?? [],
+      currentWs.activeIncidents ?? [],
+      changes,
+    );
 
     // Reputation 변화
     this.diffReputation(priorWs.reputation, currentWs.reputation, changes);
 
     // Narrative Marks 변화
-    this.diffMarks(priorWs.narrativeMarks ?? [], currentWs.narrativeMarks ?? [], changes);
+    this.diffMarks(
+      priorWs.narrativeMarks ?? [],
+      currentWs.narrativeMarks ?? [],
+      changes,
+    );
 
     const delta: WorldDelta = {
       turnNo,

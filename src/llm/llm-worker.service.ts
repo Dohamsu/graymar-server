@@ -9,7 +9,13 @@ import {
 } from '@nestjs/common';
 import { and, eq, lt, or, isNull, desc } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
-import { turns, recentSummaries, runSessions, nodeMemories, runMemories } from '../db/schema/index.js';
+import {
+  turns,
+  recentSummaries,
+  runSessions,
+  nodeMemories,
+  runMemories,
+} from '../db/schema/index.js';
 import { ContextBuilderService } from './context-builder.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
@@ -19,16 +25,33 @@ import { AiTurnLogService } from './ai-turn-log.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { toDisplayText } from '../common/text-utils.js';
 import type { ServerResultV1, ChoiceItem } from '../db/types/index.js';
-import type { StructuredMemory, LlmExtractedFact, LlmFactCategory } from '../db/types/structured-memory.js';
-import { LLM_FACT_CATEGORY, createEmptyStructuredMemory } from '../db/types/structured-memory.js';
+import type {
+  StructuredMemory,
+  LlmExtractedFact,
+  LlmFactCategory,
+} from '../db/types/structured-memory.js';
+import {
+  LLM_FACT_CATEGORY,
+  createEmptyStructuredMemory,
+} from '../db/types/structured-memory.js';
 
 const POLL_INTERVAL_MS = 2000;
 const LOCK_TIMEOUT_S = 60;
 const WORKER_ID = `worker_${process.pid}_${Date.now()}`;
 
 const VALID_CHOICE_AFFORDANCES = new Set([
-  'INVESTIGATE', 'PERSUADE', 'SNEAK', 'BRIBE', 'THREATEN',
-  'HELP', 'STEAL', 'FIGHT', 'OBSERVE', 'TRADE', 'TALK', 'SEARCH',
+  'INVESTIGATE',
+  'PERSUADE',
+  'SNEAK',
+  'BRIBE',
+  'THREATEN',
+  'HELP',
+  'STEAL',
+  'FIGHT',
+  'OBSERVE',
+  'TRADE',
+  'TALK',
+  'SEARCH',
 ]);
 
 @Injectable()
@@ -143,9 +166,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           columns: { llmChoices: true },
         });
         if (prevTurn?.llmChoices && Array.isArray(prevTurn.llmChoices)) {
-          previousChoiceLabels = (prevTurn.llmChoices as ChoiceItem[])
-            .filter(c => c.id !== 'go_hub')
-            .map(c => c.label);
+          previousChoiceLabels = prevTurn.llmChoices
+            .filter((c) => c.id !== 'go_hub')
+            .map((c) => c.label);
         }
       }
 
@@ -162,11 +185,15 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       // 4. LLM 호출 (재시도/fallback 포함)
       // COMBAT 턴은 경량 모델(nano) 사용 — 정형화된 짧은 전투 서술이라 충분
       const isCombat = pending.nodeType === 'COMBAT';
-      const lightConfig = isCombat ? this.configService.getLightModelConfig() : null;
+      const lightConfig = isCombat
+        ? this.configService.getLightModelConfig()
+        : null;
       const reasoningEffort = this.determineReasoningEffort(llmContext);
       const callResult = await this.llmCaller.call({
         messages,
-        maxTokens: isCombat ? Math.min(config.maxTokens, 512) : config.maxTokens,
+        maxTokens: isCombat
+          ? Math.min(config.maxTokens, 512)
+          : config.maxTokens,
         temperature: config.temperature,
         reasoningEffort,
         ...(lightConfig ? { model: lightConfig.model } : {}),
@@ -176,21 +203,31 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       let narrative: string;
       let modelUsed: string;
       let threadEntry: string | null = null;
-      let extractedFacts: LlmExtractedFact[] = [];
+      const extractedFacts: LlmExtractedFact[] = [];
       let llmChoices: ChoiceItem[] | null = null;
 
-      const isMockFallback = callResult.success && callResult.providerUsed === 'mock' && config.provider !== 'mock';
+      const isMockFallback =
+        callResult.success &&
+        callResult.providerUsed === 'mock' &&
+        config.provider !== 'mock';
 
       if (callResult.success && callResult.response && !isMockFallback) {
         narrative = callResult.response.text;
         modelUsed = callResult.response.model;
 
         // 4-a-0. [MEMORY] 태그 파싱 및 스트립 (최대 4개, 80자)
-        const memoryMatches = [...narrative.matchAll(/\[MEMORY:(\w+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g)];
+        const memoryMatches = [
+          ...narrative.matchAll(
+            /\[MEMORY:(\w+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
+          ),
+        ];
         for (const m of memoryMatches.slice(0, 4)) {
-          const category = m[1] as string;
+          const category = m[1];
           const text = m[2].trim().slice(0, 80);
-          if (LLM_FACT_CATEGORY.includes(category as LlmFactCategory) && text.length > 0) {
+          if (
+            LLM_FACT_CATEGORY.includes(category as LlmFactCategory) &&
+            text.length > 0
+          ) {
             extractedFacts.push({
               turnNo: pending.turnNo,
               category: category as LlmFactCategory,
@@ -200,16 +237,21 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           }
         }
         // 4-a-0b. [MEMORY:NPC_KNOWLEDGE:NPC_ID] 파싱 → npcKnowledge 저장
-        const npcKnowledgeMatches = [...narrative.matchAll(
-          /\[MEMORY:NPC_KNOWLEDGE:([^\]]+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
-        )];
+        const npcKnowledgeMatches = [
+          ...narrative.matchAll(
+            /\[MEMORY:NPC_KNOWLEDGE:([^\]]+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
+          ),
+        ];
         if (npcKnowledgeMatches.length > 0) {
           try {
             const memRow = await this.db.query.runMemories.findFirst({
               where: eq(runMemories.runId, pending.runId),
             });
             if (memRow) {
-              const structured = ((memRow.structuredMemory ?? null) as StructuredMemory | null) ?? createEmptyStructuredMemory();
+              const structured =
+                memRow.structuredMemory ??
+                null ??
+                createEmptyStructuredMemory();
               {
                 const knowledge = structured.npcKnowledge ?? {};
                 for (const km of npcKnowledgeMatches.slice(0, 3)) {
@@ -226,42 +268,59 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                     importance: 0.7,
                   });
                   if (entries.length > 5) {
-                    entries.sort((a, b) => b.importance - a.importance || b.turnNo - a.turnNo);
+                    entries.sort(
+                      (a, b) =>
+                        b.importance - a.importance || b.turnNo - a.turnNo,
+                    );
                     entries.length = 5;
                   }
                   knowledge[npcId] = entries;
                 }
                 structured.npcKnowledge = knowledge;
-                await this.db.update(runMemories)
+                await this.db
+                  .update(runMemories)
                   .set({ structuredMemory: structured, updatedAt: new Date() })
                   .where(eq(runMemories.runId, pending.runId));
               }
             }
           } catch (err) {
-            this.logger.warn(`Failed to save NPC_KNOWLEDGE for turn ${pending.turnNo}: ${err}`);
+            this.logger.warn(
+              `Failed to save NPC_KNOWLEDGE for turn ${pending.turnNo}: ${err}`,
+            );
           }
         }
 
         // 서술 본문에서 [MEMORY] 태그 제거 (NPC_KNOWLEDGE 포함, 한국어 NPC 이름 대응)
-        narrative = narrative.replace(/\s*\[MEMORY:[^\]]+\][\s\S]*?\[\/MEMORY\]/g, '').trim();
+        narrative = narrative
+          .replace(/\s*\[MEMORY:[^\]]+\][\s\S]*?\[\/MEMORY\]/g, '')
+          .trim();
 
         // 4-a. [THREAD] 태그 파싱 및 스트립
         const threadMatch = narrative.match(/\[THREAD\]([\s\S]*?)\[\/THREAD\]/);
         if (threadMatch) {
           threadEntry = threadMatch[1].trim().slice(0, 200);
-          narrative = narrative.replace(/\s*\[THREAD\][\s\S]*?\[\/THREAD\]\s*/g, '').trim();
+          narrative = narrative
+            .replace(/\s*\[THREAD\][\s\S]*?\[\/THREAD\]\s*/g, '')
+            .trim();
         } else {
           // Fallback: serverResult 기반 구조화 요약
-          threadEntry = this.buildFallbackThread(serverResult, pending.rawInput);
+          threadEntry = this.buildFallbackThread(
+            serverResult,
+            pending.rawInput,
+          );
         }
 
         // 4-a-3. [CHOICES] 파싱 (LOCATION 턴만)
         if (pending.nodeType === 'LOCATION') {
-          const choiceResult = this.parseAndValidateChoices(narrative, pending.turnNo);
+          const choiceResult = this.parseAndValidateChoices(
+            narrative,
+            pending.turnNo,
+          );
           narrative = choiceResult.cleanedNarrative;
           if (choiceResult.choices) {
             choiceResult.choices.push({
-              id: 'go_hub', label: "'잠긴 닻' 선술집으로 돌아간다",
+              id: 'go_hub',
+              label: "'잠긴 닻' 선술집으로 돌아간다",
               action: { type: 'CHOICE', payload: { returnToHub: true } },
             });
             llmChoices = choiceResult.choices;
@@ -312,7 +371,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
 
         // P2. 말투 위반 감지 (대사 내 금지 패턴)
-        const speechViolations = /["""].*?(?:자네|이보게|~일세|말일세|삼가게|하네만|어쩌겠나)["""]|["""].*?(?:해요|세요|합니다|입니다|에요|죠)["""]|["""].*?(?:~야|~해|~지만|~거든|~잖아)["""]/g;
+        const speechViolations =
+          /["""].*?(?:자네|이보게|~일세|말일세|삼가게|하네만|어쩌겠나)["""]|["""].*?(?:해요|세요|합니다|입니다|에요|죠)["""]|["""].*?(?:~야|~해|~지만|~거든|~잖아)["""]/g;
         const speechMatches = narrative.match(speechViolations);
         if (speechMatches) {
           violations.push(`SPEECH_VIOLATION(${speechMatches.length}회)`);
@@ -332,7 +392,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         // P4. 미소개 NPC 실명 sanitize (서술 + 선택지 label)
         const rs = runSession?.runState as Record<string, unknown> | undefined;
         if (rs) {
-          const npcStates = rs.npcStates as Record<string, { introduced?: boolean }> | undefined;
+          const npcStates = rs.npcStates as
+            | Record<string, { introduced?: boolean }>
+            | undefined;
           if (npcStates) {
             for (const [npcId, state] of Object.entries(npcStates)) {
               if (state.introduced) continue;
@@ -344,7 +406,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 narrative = narrative.replaceAll(npcDef.name, alias);
                 violations.push(`AUTO_FIX: NPC_NAME(${npcDef.name}→${alias})`);
               }
-              for (const a of (npcDef.aliases ?? []) as string[]) {
+              for (const a of npcDef.aliases ?? []) {
                 if (narrative.includes(a)) {
                   narrative = narrative.replaceAll(a, alias);
                 }
@@ -355,7 +417,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                   if (choice.label.includes(npcDef.name)) {
                     choice.label = choice.label.replaceAll(npcDef.name, alias);
                   }
-                  for (const a of (npcDef.aliases ?? []) as string[]) {
+                  for (const a of npcDef.aliases ?? []) {
                     if (choice.label.includes(a)) {
                       choice.label = choice.label.replaceAll(a, alias);
                     }
@@ -404,7 +466,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
 
         if (violations.length > 0) {
-          this.logger.warn(`[NarrativeFilter] turn=${pending.turnNo} violations: ${violations.join(' | ')}`);
+          this.logger.warn(
+            `[NarrativeFilter] turn=${pending.turnNo} violations: ${violations.join(' | ')}`,
+          );
         }
       } else {
         // LLM 호출 실패 → FAILED로 마킹하여 클라이언트에 알림
@@ -427,11 +491,19 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           .update(turns)
           .set({
             llmStatus: 'FAILED',
-            llmError: { error: errorMsg, worker: WORKER_ID, provider: config.provider },
-            llmModelUsed: config.provider === 'openai' ? config.openaiModel
-              : config.provider === 'gemini' ? config.geminiModel
-              : config.provider === 'claude' ? config.claudeModel
-              : 'unknown',
+            llmError: {
+              error: errorMsg,
+              worker: WORKER_ID,
+              provider: config.provider,
+            },
+            llmModelUsed:
+              config.provider === 'openai'
+                ? config.openaiModel
+                : config.provider === 'gemini'
+                  ? config.geminiModel
+                  : config.provider === 'claude'
+                    ? config.claudeModel
+                    : 'unknown',
           })
           .where(eq(turns.id, pending.id));
         return;
@@ -487,7 +559,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         type ThreadData = { entries: { turnNo: number; summary: string }[] };
         let thread: ThreadData = { entries: [] };
         if (existingNode?.narrativeThread) {
-          try { thread = JSON.parse(existingNode.narrativeThread); } catch { /* ignore */ }
+          try {
+            thread = JSON.parse(existingNode.narrativeThread);
+          } catch {
+            /* ignore */
+          }
         }
 
         thread.entries.push({ turnNo: pending.turnNo, summary: threadEntry });
@@ -503,7 +579,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         const threadJson = JSON.stringify(thread);
 
         if (existingNode) {
-          await this.db.update(nodeMemories)
+          await this.db
+            .update(nodeMemories)
             .set({ narrativeThread: threadJson, updatedAt: new Date() })
             .where(eq(nodeMemories.id, existingNode.id));
         } else {
@@ -523,7 +600,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             where: eq(runMemories.runId, pending.runId),
           });
           if (memRow) {
-            const structured = ((memRow.structuredMemory ?? null) as StructuredMemory | null) ?? createEmptyStructuredMemory();
+            const structured =
+              memRow.structuredMemory ?? null ?? createEmptyStructuredMemory();
             {
               // NPC 자동 매칭: 텍스트에서 NPC 이름 탐지
               for (const fact of extractedFacts) {
@@ -531,16 +609,21 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               }
               // 예산 체크 (최대 20개, importance 낮은 것부터 제거)
               if (structured.llmExtracted.length > 20) {
-                structured.llmExtracted.sort((a, b) => b.importance - a.importance || b.turnNo - a.turnNo);
+                structured.llmExtracted.sort(
+                  (a, b) => b.importance - a.importance || b.turnNo - a.turnNo,
+                );
                 structured.llmExtracted = structured.llmExtracted.slice(0, 20);
               }
-              await this.db.update(runMemories)
+              await this.db
+                .update(runMemories)
                 .set({ structuredMemory: structured, updatedAt: new Date() })
                 .where(eq(runMemories.runId, pending.runId));
             }
           }
         } catch (err) {
-          this.logger.warn(`Failed to save MEMORY facts for turn ${pending.turnNo}: ${err}`);
+          this.logger.warn(
+            `Failed to save MEMORY facts for turn ${pending.turnNo}: ${err}`,
+          );
         }
       }
 
@@ -576,12 +659,17 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     const match = rawNarrative.match(/\[CHOICES\]([\s\S]*?)\[\/CHOICES\]/);
     if (!match) return { cleanedNarrative: rawNarrative, choices: null };
 
-    const cleaned = rawNarrative.replace(/\s*\[CHOICES\][\s\S]*?\[\/CHOICES\]/g, '').trim();
-    const lines = match[1].split('\n').map(l => l.trim()).filter(l => l.includes('|'));
+    const cleaned = rawNarrative
+      .replace(/\s*\[CHOICES\][\s\S]*?\[\/CHOICES\]/g, '')
+      .trim();
+    const lines = match[1]
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.includes('|'));
 
     const valid: ChoiceItem[] = [];
     for (const line of lines.slice(0, 5)) {
-      const [label, aff, hint] = line.split('|').map(s => s.trim());
+      const [label, aff, hint] = line.split('|').map((s) => s.trim());
       const affordance = aff?.toUpperCase();
       if (!label || label.length < 3 || label.length > 80) continue;
       if (!affordance || !VALID_CHOICE_AFFORDANCES.has(affordance)) continue;
@@ -592,7 +680,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         hint: hint?.slice(0, 60) || undefined,
         action: {
           type: 'CHOICE' as const,
-          payload: { affordance, source: 'llm', ...(sourceEventId ? { sourceEventId } : {}) },
+          payload: {
+            affordance,
+            source: 'llm',
+            ...(sourceEventId ? { sourceEventId } : {}),
+          },
         },
       });
       if (valid.length >= 3) break;
@@ -639,18 +731,25 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
     // 2. 플레이어 행동 + 결과
     if (rawInput) {
-      const actionCtx = uiAny?.actionContext as {
-        parsedType?: string;
-        originalInput?: string;
-      } | undefined;
+      const actionCtx = uiAny?.actionContext as
+        | {
+            parsedType?: string;
+            originalInput?: string;
+          }
+        | undefined;
       const resolveOutcome = uiAny?.resolveOutcome as string | undefined;
 
       const actionDesc = actionCtx?.parsedType
         ? `${rawInput.slice(0, 20)}(${actionCtx.parsedType})`
         : rawInput.slice(0, 25);
-      const outcome = resolveOutcome === 'SUCCESS' ? '성공'
-        : resolveOutcome === 'PARTIAL' ? '부분 성공'
-        : resolveOutcome === 'FAIL' ? '실패' : '';
+      const outcome =
+        resolveOutcome === 'SUCCESS'
+          ? '성공'
+          : resolveOutcome === 'PARTIAL'
+            ? '부분 성공'
+            : resolveOutcome === 'FAIL'
+              ? '실패'
+              : '';
       const outcomeSuffix = outcome ? ` → ${outcome}` : '';
       parts.push(`당신이 ${actionDesc}${outcomeSuffix}`);
     }

@@ -33,10 +33,7 @@ export class TurnsController {
   }
 
   @Get('llm-usage')
-  async getLlmUsage(
-    @Param('runId') runId: string,
-    @UserId() userId: string,
-  ) {
+  async getLlmUsage(@Param('runId') runId: string, @UserId() userId: string) {
     return this.turnsService.getLlmUsage(runId, userId);
   }
 

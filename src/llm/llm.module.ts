@@ -32,7 +32,12 @@ import { ContentModule } from '../content/content.module.js';
     MidSummaryService,
     LlmProviderRegistryService,
   ],
-  exports: [ContextBuilderService, LlmConfigService, LlmCallerService, LlmProviderRegistryService],
+  exports: [
+    ContextBuilderService,
+    LlmConfigService,
+    LlmCallerService,
+    LlmProviderRegistryService,
+  ],
 })
 export class LlmModule implements OnModuleInit {
   constructor(

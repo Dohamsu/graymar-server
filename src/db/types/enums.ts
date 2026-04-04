@@ -1,6 +1,14 @@
 // Canonical Enums (CLAUDE.md 정본)
 
-export const NODE_TYPE = ['COMBAT', 'EVENT', 'REST', 'SHOP', 'EXIT', 'HUB', 'LOCATION'] as const;
+export const NODE_TYPE = [
+  'COMBAT',
+  'EVENT',
+  'REST',
+  'SHOP',
+  'EXIT',
+  'HUB',
+  'LOCATION',
+] as const;
 export type NodeType = (typeof NODE_TYPE)[number];
 
 export const RUN_STATUS = ['RUN_ACTIVE', 'RUN_ENDED', 'RUN_ABORTED'] as const;
@@ -115,10 +123,7 @@ export type EdgeConditionType = (typeof EDGE_CONDITION_TYPE)[number];
 // --- Narrative Engine v1 Enums ---
 // 상세 타입 정의는 각 전문 타입 파일에 위치 (incident.ts, signal-feed.ts, etc.)
 // enums.ts는 re-export만 제공
-export type {
-  IncidentOutcome,
-  IncidentKind,
-} from './incident.js';
+export type { IncidentOutcome, IncidentKind } from './incident.js';
 export type { SignalChannel } from './signal-feed.js';
 export type { NarrativeMarkType } from './narrative-mark.js';
 export type { StepStatus } from './operation-session.js';

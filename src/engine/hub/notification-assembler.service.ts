@@ -77,11 +77,16 @@ export class NotificationAssemblerService {
     const safetyNotif = this.buildSafetyNotification(input);
     if (safetyNotif) {
       notifications.push(safetyNotif);
-      visibleChanges.push(`도시 경계가 ${input.ws.hubSafety}로 변경되었습니다.`);
+      visibleChanges.push(
+        `도시 경계가 ${input.ws.hubSafety}로 변경되었습니다.`,
+      );
     }
 
     // 5. WorldDeltaSummary 생성
-    const worldDeltaSummary = this.buildWorldDeltaSummary(visibleChanges, input);
+    const worldDeltaSummary = this.buildWorldDeltaSummary(
+      visibleChanges,
+      input,
+    );
 
     // 6. 중복 제거
     const deduped = this.dedupeNotifications(notifications);
@@ -93,7 +98,9 @@ export class NotificationAssemblerService {
     };
   }
 
-  private buildResolveNotification(input: NotificationAssemblerInput): GameNotification | null {
+  private buildResolveNotification(
+    input: NotificationAssemblerInput,
+  ): GameNotification | null {
     if (!input.resolveOutcome) return null;
 
     const titleMap: Record<string, string> = {
@@ -104,17 +111,61 @@ export class NotificationAssemblerService {
 
     // actionType별 구체적인 body 텍스트
     const ACTION_BODY: Record<string, Record<string, string>> = {
-      INVESTIGATE: { SUCCESS: '핵심 단서를 발견했습니다.', PARTIAL: '일부 정보만 확보했습니다.', FAIL: '아무런 단서도 찾지 못했습니다.' },
-      OBSERVE: { SUCCESS: '중요한 동향을 포착했습니다.', PARTIAL: '일부만 관찰할 수 있었습니다.', FAIL: '아무것도 파악하지 못했습니다.' },
-      PERSUADE: { SUCCESS: '상대를 설득하는 데 성공했습니다.', PARTIAL: '상대가 망설이고 있습니다.', FAIL: '상대가 단호히 거부했습니다.' },
-      TALK: { SUCCESS: '유익한 대화를 나눴습니다.', PARTIAL: '대화가 어색하게 끝났습니다.', FAIL: '상대가 대화를 거부했습니다.' },
-      SNEAK: { SUCCESS: '들키지 않고 목표를 달성했습니다.', PARTIAL: '의심을 받았지만 넘어갔습니다.', FAIL: '발각당했습니다.' },
-      BRIBE: { SUCCESS: '거래가 성사되었습니다.', PARTIAL: '상대가 더 큰 대가를 원합니다.', FAIL: '상대가 뇌물을 거부했습니다.' },
-      THREATEN: { SUCCESS: '위협이 먹혔습니다.', PARTIAL: '상대가 동요하고 있습니다.', FAIL: '상대가 위협에 굴하지 않았습니다.' },
-      FIGHT: { SUCCESS: '전투에서 우위를 점했습니다.', PARTIAL: '치열한 접전이었습니다.', FAIL: '압도당했습니다.' },
-      HELP: { SUCCESS: '도움이 큰 효과를 거뒀습니다.', PARTIAL: '도움이 제한적이었습니다.', FAIL: '도움을 주지 못했습니다.' },
-      TRADE: { SUCCESS: '좋은 거래였습니다.', PARTIAL: '거래가 그럭저럭 성사되었습니다.', FAIL: '거래가 무산되었습니다.' },
-      STEAL: { SUCCESS: '아무도 모르게 성공했습니다.', PARTIAL: '일부만 챙겼습니다.', FAIL: '현장에서 들켰습니다.' },
+      INVESTIGATE: {
+        SUCCESS: '핵심 단서를 발견했습니다.',
+        PARTIAL: '일부 정보만 확보했습니다.',
+        FAIL: '아무런 단서도 찾지 못했습니다.',
+      },
+      OBSERVE: {
+        SUCCESS: '중요한 동향을 포착했습니다.',
+        PARTIAL: '일부만 관찰할 수 있었습니다.',
+        FAIL: '아무것도 파악하지 못했습니다.',
+      },
+      PERSUADE: {
+        SUCCESS: '상대를 설득하는 데 성공했습니다.',
+        PARTIAL: '상대가 망설이고 있습니다.',
+        FAIL: '상대가 단호히 거부했습니다.',
+      },
+      TALK: {
+        SUCCESS: '유익한 대화를 나눴습니다.',
+        PARTIAL: '대화가 어색하게 끝났습니다.',
+        FAIL: '상대가 대화를 거부했습니다.',
+      },
+      SNEAK: {
+        SUCCESS: '들키지 않고 목표를 달성했습니다.',
+        PARTIAL: '의심을 받았지만 넘어갔습니다.',
+        FAIL: '발각당했습니다.',
+      },
+      BRIBE: {
+        SUCCESS: '거래가 성사되었습니다.',
+        PARTIAL: '상대가 더 큰 대가를 원합니다.',
+        FAIL: '상대가 뇌물을 거부했습니다.',
+      },
+      THREATEN: {
+        SUCCESS: '위협이 먹혔습니다.',
+        PARTIAL: '상대가 동요하고 있습니다.',
+        FAIL: '상대가 위협에 굴하지 않았습니다.',
+      },
+      FIGHT: {
+        SUCCESS: '전투에서 우위를 점했습니다.',
+        PARTIAL: '치열한 접전이었습니다.',
+        FAIL: '압도당했습니다.',
+      },
+      HELP: {
+        SUCCESS: '도움이 큰 효과를 거뒀습니다.',
+        PARTIAL: '도움이 제한적이었습니다.',
+        FAIL: '도움을 주지 못했습니다.',
+      },
+      TRADE: {
+        SUCCESS: '좋은 거래였습니다.',
+        PARTIAL: '거래가 그럭저럭 성사되었습니다.',
+        FAIL: '거래가 무산되었습니다.',
+      },
+      STEAL: {
+        SUCCESS: '아무도 모르게 성공했습니다.',
+        PARTIAL: '일부만 챙겼습니다.',
+        FAIL: '현장에서 들켰습니다.',
+      },
     };
 
     const actionBody = ACTION_BODY[input.actionType]?.[input.resolveOutcome];
@@ -259,12 +310,16 @@ export class NotificationAssemblerService {
           priority: current.outcome === 'CONTAINED' ? 'MID' : 'HIGH',
           presentation: 'FEED_ITEM',
           title: '사건 종결',
-          body: outcomeText[current.outcome ?? 'EXPIRED'] ?? '사건이 종결되었습니다.',
+          body:
+            outcomeText[current.outcome ?? 'EXPIRED'] ??
+            '사건이 종결되었습니다.',
           incidentId: current.incidentId,
           visibleFromTurn: input.turnNo,
           dedupeKey: `incident_resolved:${current.incidentId}`,
         });
-        changes.push(outcomeText[current.outcome ?? 'EXPIRED'] ?? '사건이 종결되었습니다.');
+        changes.push(
+          outcomeText[current.outcome ?? 'EXPIRED'] ?? '사건이 종결되었습니다.',
+        );
       }
 
       // deadline 접근 경고 (남은 tick <= 5)
@@ -303,7 +358,11 @@ export class NotificationAssemblerService {
     if (prevBand === currentBand) return null;
 
     const priority: NotificationPriority =
-      currentBand === 'CRITICAL' ? 'CRITICAL' : currentBand === 'HIGH' ? 'HIGH' : 'MID';
+      currentBand === 'CRITICAL'
+        ? 'CRITICAL'
+        : currentBand === 'HIGH'
+          ? 'HIGH'
+          : 'MID';
 
     const bodyMap: Record<string, string> = {
       LOW: '도시 긴장이 완화되었습니다.',
@@ -329,7 +388,9 @@ export class NotificationAssemblerService {
     return { notification, change: bodyMap[currentBand] };
   }
 
-  private buildSafetyNotification(input: NotificationAssemblerInput): GameNotification | null {
+  private buildSafetyNotification(
+    input: NotificationAssemblerInput,
+  ): GameNotification | null {
     if (input.prevSafety === input.ws.hubSafety) return null;
 
     const priorityMap: Record<string, NotificationPriority> = {
@@ -379,7 +440,9 @@ export class NotificationAssemblerService {
     };
   }
 
-  private dedupeNotifications(notifications: GameNotification[]): GameNotification[] {
+  private dedupeNotifications(
+    notifications: GameNotification[],
+  ): GameNotification[] {
     const seen = new Set<string>();
     return notifications.filter((n) => {
       if (!n.dedupeKey) return true;

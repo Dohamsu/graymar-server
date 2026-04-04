@@ -47,9 +47,7 @@ export class SceneImageService {
     maxAllowed: number;
     remaining: number;
   }> {
-    const result = await this.db
-      .select({ total: count() })
-      .from(sceneImages);
+    const result = await this.db.select({ total: count() }).from(sceneImages);
     const totalGenerated = result[0]?.total ?? 0;
     return {
       totalGenerated,
@@ -59,7 +57,9 @@ export class SceneImageService {
   }
 
   /** 특정 런의 생성된 이미지 목록 반환 */
-  async listByRun(runId: string): Promise<Array<{ turnNo: number; imageUrl: string }>> {
+  async listByRun(
+    runId: string,
+  ): Promise<Array<{ turnNo: number; imageUrl: string }>> {
     const rows = await this.db
       .select({ turnNo: sceneImages.turnNo, imageUrl: sceneImages.imageUrl })
       .from(sceneImages)
@@ -82,10 +82,7 @@ export class SceneImageService {
 
     // 2. 이미 생성된 이미지가 있으면 반환
     const existing = await this.db.query.sceneImages.findFirst({
-      where: and(
-        eq(sceneImages.runId, runId),
-        eq(sceneImages.turnNo, turnNo),
-      ),
+      where: and(eq(sceneImages.runId, runId), eq(sceneImages.turnNo, turnNo)),
     });
     if (existing) {
       const status = await this.getStatus();
@@ -116,9 +113,7 @@ export class SceneImageService {
     // 5. 한국어 내러티브 → 영어 장면 요약 → 이미지 프롬프트
     const englishScene = await this.translateToEnglishScene(turn.llmOutput);
     const imagePrompt = this.buildImagePrompt(englishScene);
-    this.logger.log(
-      `Generating scene image for run=${runId} turn=${turnNo}`,
-    );
+    this.logger.log(`Generating scene image for run=${runId} turn=${turnNo}`);
 
     const imageBuffer = await this.callGeminiImageGeneration(imagePrompt);
 
@@ -152,7 +147,8 @@ export class SceneImageService {
 
   /** 한국어 내러티브를 영어 장면 요약으로 번역 (Gemini 텍스트) */
   private async translateToEnglishScene(narrative: string): Promise<string> {
-    const trimmed = narrative.length > 800 ? narrative.slice(0, 800) + '...' : narrative;
+    const trimmed =
+      narrative.length > 800 ? narrative.slice(0, 800) + '...' : narrative;
     const client = this.getGeminiClient();
 
     try {
@@ -165,7 +161,9 @@ export class SceneImageService {
       });
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const text = response.candidates?.[0]?.content?.parts?.[0]?.text as string | undefined;
+      const text = response.candidates?.[0]?.content?.parts?.[0]?.text as
+        | string
+        | undefined;
       if (text && text.length > 10) {
         this.logger.debug(`[SceneImage] Translated: ${text.slice(0, 100)}...`);
         return text;
@@ -190,9 +188,7 @@ export class SceneImageService {
   }
 
   /** Gemini 이미지 생성 API 호출 */
-  private async callGeminiImageGeneration(
-    prompt: string,
-  ): Promise<Buffer> {
+  private async callGeminiImageGeneration(prompt: string): Promise<Buffer> {
     const client = this.getGeminiClient();
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call

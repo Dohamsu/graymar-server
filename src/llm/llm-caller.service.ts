@@ -92,10 +92,15 @@ export class LlmCallerService {
     temperature: number;
   }): Promise<string> {
     const lightConfig = this.configService.getLightModelConfig();
-    const provider = this.registry.getByName(lightConfig.provider) ?? this.registry.getPrimary();
+    const provider =
+      this.registry.getByName(lightConfig.provider) ??
+      this.registry.getPrimary();
 
     const request: LlmProviderRequest = {
-      messages: params.messages.map(m => ({ role: m.role as 'system' | 'user' | 'assistant', content: m.content })),
+      messages: params.messages.map((m) => ({
+        role: m.role as 'system' | 'user' | 'assistant',
+        content: m.content,
+      })),
       maxTokens: params.maxTokens,
       temperature: params.temperature,
       model: lightConfig.model,

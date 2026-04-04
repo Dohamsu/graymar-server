@@ -1,4 +1,11 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Res,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ZodError } from 'zod';
 import type { Response } from 'express';
@@ -26,7 +33,10 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ short: { ttl: 60000, limit: 5 } })
-  async register(@Body() body: unknown, @Res({ passthrough: true }) res: Response) {
+  async register(
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const parsed = this.safeParse(RegisterBodySchema, body);
     const result = await this.authService.register(parsed);
     setAuthCookie(res, result.token);
@@ -36,7 +46,10 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle({ short: { ttl: 60000, limit: 10 } })
-  async login(@Body() body: unknown, @Res({ passthrough: true }) res: Response) {
+  async login(
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const parsed = this.safeParse(LoginBodySchema, body);
     const result = await this.authService.login(parsed);
     setAuthCookie(res, result.token);

@@ -19,11 +19,7 @@ export const BUG_REPORT_CATEGORY = [
   'other',
 ] as const;
 
-export const BUG_REPORT_STATUS = [
-  'open',
-  'reviewed',
-  'resolved',
-] as const;
+export const BUG_REPORT_STATUS = ['open', 'reviewed', 'resolved'] as const;
 
 export const bugReports = pgTable(
   'bug_reports',

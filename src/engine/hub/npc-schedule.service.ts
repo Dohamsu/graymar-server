@@ -13,7 +13,8 @@ import { ContentLoaderService } from '../../content/content-loader.service.js';
 @Injectable()
 export class NpcScheduleService {
   constructor(
-    @Inject(ContentLoaderService) private readonly content: ContentLoaderService,
+    @Inject(ContentLoaderService)
+    private readonly content: ContentLoaderService,
   ) {}
 
   /**
@@ -113,21 +114,37 @@ export class NpcScheduleService {
       // "day >= N" 형식
       const dayMatch = condition.match(/^day\s*(>=|>|<=|<|==)\s*(\d+)$/);
       if (dayMatch) {
-        return this.compareNumber(ws.day, dayMatch[1], parseInt(dayMatch[2], 10));
+        return this.compareNumber(
+          ws.day,
+          dayMatch[1],
+          parseInt(dayMatch[2], 10),
+        );
       }
 
       // "incident.INC_XXX.stage >= N" 형식
-      const incidentMatch = condition.match(/^incident\.(\w+)\.stage\s*(>=|>|<=|<|==)\s*(\d+)$/);
+      const incidentMatch = condition.match(
+        /^incident\.(\w+)\.stage\s*(>=|>|<=|<|==)\s*(\d+)$/,
+      );
       if (incidentMatch) {
-        const incident = ws.activeIncidents?.find((i) => i.incidentId === incidentMatch[1]);
+        const incident = ws.activeIncidents?.find(
+          (i) => i.incidentId === incidentMatch[1],
+        );
         if (!incident) return false;
-        return this.compareNumber(incident.stage, incidentMatch[2], parseInt(incidentMatch[3], 10));
+        return this.compareNumber(
+          incident.stage,
+          incidentMatch[2],
+          parseInt(incidentMatch[3], 10),
+        );
       }
 
       // "hubHeat >= N" 형식
       const heatMatch = condition.match(/^hubHeat\s*(>=|>|<=|<|==)\s*(\d+)$/);
       if (heatMatch) {
-        return this.compareNumber(ws.hubHeat, heatMatch[1], parseInt(heatMatch[2], 10));
+        return this.compareNumber(
+          ws.hubHeat,
+          heatMatch[1],
+          parseInt(heatMatch[2], 10),
+        );
       }
 
       // "flag.XXX" 형식 (플래그 존재 여부)
@@ -144,12 +161,18 @@ export class NpcScheduleService {
 
   private compareNumber(actual: number, op: string, expected: number): boolean {
     switch (op) {
-      case '>=': return actual >= expected;
-      case '>': return actual > expected;
-      case '<=': return actual <= expected;
-      case '<': return actual < expected;
-      case '==': return actual === expected;
-      default: return false;
+      case '>=':
+        return actual >= expected;
+      case '>':
+        return actual > expected;
+      case '<=':
+        return actual <= expected;
+      case '<':
+        return actual < expected;
+      case '==':
+        return actual === expected;
+      default:
+        return false;
     }
   }
 }

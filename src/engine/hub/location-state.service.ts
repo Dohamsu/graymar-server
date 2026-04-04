@@ -43,7 +43,10 @@ export class LocationStateService {
   }
 
   /** 장소 상태 조회 (없으면 기본값) */
-  getState(ws: WorldState, locationId: string): LocationDynamicState | undefined {
+  getState(
+    ws: WorldState,
+    locationId: string,
+  ): LocationDynamicState | undefined {
     return ws.locationDynamicStates?.[locationId];
   }
 
@@ -58,8 +61,13 @@ export class LocationStateService {
     if (!state) return false;
 
     // 동일 id 조건이 이미 있으면 갱신
-    const existing = state.activeConditions.findIndex((c) => c.id === condition.id);
-    const fullCondition: LocationCondition = { ...condition, startTurn: currentTurn };
+    const existing = state.activeConditions.findIndex(
+      (c) => c.id === condition.id,
+    );
+    const fullCondition: LocationCondition = {
+      ...condition,
+      startTurn: currentTurn,
+    };
 
     if (existing >= 0) {
       state.activeConditions[existing] = fullCondition;
@@ -76,7 +84,11 @@ export class LocationStateService {
   }
 
   /** 장소에서 조건 제거 */
-  removeCondition(ws: WorldState, locationId: string, conditionId: string): boolean {
+  removeCondition(
+    ws: WorldState,
+    locationId: string,
+    conditionId: string,
+  ): boolean {
     const state = ws.locationDynamicStates?.[locationId];
     if (!state) return false;
 
@@ -106,7 +118,11 @@ export class LocationStateService {
   }
 
   /** 장소의 현재 NPC 목록 갱신 */
-  updatePresentNpcs(ws: WorldState, locationId: string, npcIds: string[]): void {
+  updatePresentNpcs(
+    ws: WorldState,
+    locationId: string,
+    npcIds: string[],
+  ): void {
     const state = ws.locationDynamicStates?.[locationId];
     if (state) {
       state.presentNpcs = npcIds;
@@ -134,7 +150,13 @@ export class LocationStateService {
   }
 
   /** 장소 수치의 자연 회귀 (매 일 단위, WorldTick에서 호출) */
-  naturalDecay(ws: WorldState, baseStates: Record<string, { security: number; prosperity: number; unrest: number }>): void {
+  naturalDecay(
+    ws: WorldState,
+    baseStates: Record<
+      string,
+      { security: number; prosperity: number; unrest: number }
+    >,
+  ): void {
     if (!ws.locationDynamicStates) return;
 
     for (const [locId, state] of Object.entries(ws.locationDynamicStates)) {
@@ -143,7 +165,9 @@ export class LocationStateService {
 
       // 10% 회귀
       state.security += Math.round((base.security - state.security) * 0.1);
-      state.prosperity += Math.round((base.prosperity - state.prosperity) * 0.1);
+      state.prosperity += Math.round(
+        (base.prosperity - state.prosperity) * 0.1,
+      );
       state.unrest += Math.round((base.unrest - state.unrest) * 0.1);
 
       // 클램프

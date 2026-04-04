@@ -22,7 +22,9 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
       const r = parser.parse('시비를 걸어 반응을 떠본다');
       expect(r.actionType).toBe('THREATEN');
       // secondary가 INVESTIGATE 또는 OBSERVE면 OK
-      expect(['INVESTIGATE', 'OBSERVE', undefined]).toContain(r.secondaryActionType);
+      expect(['INVESTIGATE', 'OBSERVE', undefined]).toContain(
+        r.secondaryActionType,
+      );
     });
 
     it('"경비대에 치안을 요청한다" → PERSUADE (primary)', () => {
@@ -55,7 +57,11 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
   // 기존 정확 사례 — 단일 의도 (회귀 테스트)
   // ============================================================
   describe('단일 의도 — 기존 정확 사례 회귀', () => {
-    const singleIntentCases: Array<{ input: string; expected: IntentActionType; label: string }> = [
+    const singleIntentCases: Array<{
+      input: string;
+      expected: IntentActionType;
+      label: string;
+    }> = [
       // FIGHT (5)
       { input: '주먹으로 가격한다', expected: 'FIGHT', label: 'FIGHT-주먹' },
       { input: '칼로 벤다', expected: 'FIGHT', label: 'FIGHT-칼' },
@@ -65,7 +71,11 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
 
       // THREATEN (3)
       { input: '협박한다', expected: 'THREATEN', label: 'THREATEN-협박' },
-      { input: '칼을 꺼내 보인다', expected: 'THREATEN', label: 'THREATEN-칼꺼내' },
+      {
+        input: '칼을 꺼내 보인다',
+        expected: 'THREATEN',
+        label: 'THREATEN-칼꺼내',
+      },
       { input: '추궁한다', expected: 'THREATEN', label: 'THREATEN-추궁' },
 
       // STEAL (2)
@@ -74,20 +84,40 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
 
       // SNEAK (2)
       { input: '몰래 뒤를 밟는다', expected: 'SNEAK', label: 'SNEAK-미행' },
-      { input: '살금살금 접근한다', expected: 'SNEAK', label: 'SNEAK-살금살금' },
+      {
+        input: '살금살금 접근한다',
+        expected: 'SNEAK',
+        label: 'SNEAK-살금살금',
+      },
 
       // INVESTIGATE (3)
-      { input: '장부를 조사한다', expected: 'INVESTIGATE', label: 'INVESTIGATE-조사' },
-      { input: '단서를 찾아본다', expected: 'INVESTIGATE', label: 'INVESTIGATE-단서' },
+      {
+        input: '장부를 조사한다',
+        expected: 'INVESTIGATE',
+        label: 'INVESTIGATE-조사',
+      },
+      {
+        input: '단서를 찾아본다',
+        expected: 'INVESTIGATE',
+        label: 'INVESTIGATE-단서',
+      },
       { input: '물어본다', expected: 'TALK', label: 'TALK-물어본다' },
 
       // OBSERVE (2)
-      { input: '주변을 둘러본다', expected: 'OBSERVE', label: 'OBSERVE-둘러보기' },
+      {
+        input: '주변을 둘러본다',
+        expected: 'OBSERVE',
+        label: 'OBSERVE-둘러보기',
+      },
       { input: '동태를 살핀다', expected: 'OBSERVE', label: 'OBSERVE-동태' },
 
       // PERSUADE (2)
       { input: '설득한다', expected: 'PERSUADE', label: 'PERSUADE-설득' },
-      { input: '도움을 청한다', expected: 'PERSUADE', label: 'PERSUADE-도움청' },
+      {
+        input: '도움을 청한다',
+        expected: 'PERSUADE',
+        label: 'PERSUADE-도움청',
+      },
 
       // BRIBE (2)
       { input: '금화를 건넨다', expected: 'BRIBE', label: 'BRIBE-금화' },
@@ -98,22 +128,33 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
 
       // TRADE (2)
       { input: '흥정한다', expected: 'TRADE', label: 'TRADE-흥정' },
-      { input: '상점에서 물건을 산다', expected: 'TRADE', label: 'TRADE-상점(리다이렉트)' },
+      {
+        input: '상점에서 물건을 산다',
+        expected: 'TRADE',
+        label: 'TRADE-상점(리다이렉트)',
+      },
 
       // TALK (1)
       { input: '인사를 건넨다', expected: 'TALK', label: 'TALK-인사' },
 
       // MOVE_LOCATION (1)
-      { input: '다른 곳으로 이동한다', expected: 'MOVE_LOCATION', label: 'MOVE-이동' },
+      {
+        input: '다른 곳으로 이동한다',
+        expected: 'MOVE_LOCATION',
+        label: 'MOVE-이동',
+      },
 
       // REST (1)
       { input: '잠시 쉬겠다', expected: 'REST', label: 'REST-쉬겠다' },
     ];
 
-    it.each(singleIntentCases)('[$label] "$input" → $expected', ({ input, expected }) => {
-      const r = parser.parse(input);
-      expect(r.actionType).toBe(expected);
-    });
+    it.each(singleIntentCases)(
+      '[$label] "$input" → $expected',
+      ({ input, expected }) => {
+        const r = parser.parse(input);
+        expect(r.actionType).toBe(expected);
+      },
+    );
   });
 
   // ============================================================
@@ -292,7 +333,11 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
   describe('에스컬레이션과 듀얼의 독립성', () => {
     it('에스컬레이션 시 primary만 승격, secondary 유지', () => {
       const r = parser.parseWithInsistence(
-        '몰래 접근해서 위협한다', 'RULE', undefined, 2, 'THREATEN',
+        '몰래 접근해서 위협한다',
+        'RULE',
+        undefined,
+        2,
+        'THREATEN',
       );
       // THREATEN이 에스컬레이션되면 FIGHT
       // SNEAK은 secondary로 유지
@@ -315,16 +360,30 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
       '엿듣는다',
       '둘러보다 물건 산다',
       // 단일 의도 26건
-      '주먹으로 가격한다', '칼로 벤다', '쫓아가서 제압한다', '선제공격을 한다', '달려들어 때린다',
-      '협박한다', '칼을 꺼내 보인다', '추궁한다',
-      '소매치기한다', '슬쩍 집어넣는다',
-      '몰래 뒤를 밟는다', '살금살금 접근한다',
-      '장부를 조사한다', '단서를 찾아본다', '물어본다',
-      '주변을 둘러본다', '동태를 살핀다',
-      '설득한다', '도움을 청한다',
-      '금화를 건넨다', '뇌물을 준다',
+      '주먹으로 가격한다',
+      '칼로 벤다',
+      '쫓아가서 제압한다',
+      '선제공격을 한다',
+      '달려들어 때린다',
+      '협박한다',
+      '칼을 꺼내 보인다',
+      '추궁한다',
+      '소매치기한다',
+      '슬쩍 집어넣는다',
+      '몰래 뒤를 밟는다',
+      '살금살금 접근한다',
+      '장부를 조사한다',
+      '단서를 찾아본다',
+      '물어본다',
+      '주변을 둘러본다',
+      '동태를 살핀다',
+      '설득한다',
+      '도움을 청한다',
+      '금화를 건넨다',
+      '뇌물을 준다',
       '다친 사람을 치료한다',
-      '흥정한다', '상점에서 물건을 산다',
+      '흥정한다',
+      '상점에서 물건을 산다',
       '인사를 건넨다',
       '다른 곳으로 이동한다',
       '잠시 쉬겠다',
@@ -336,8 +395,15 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
     it(`총 ${ALL_INPUTS.length}개 입력 파싱 성공`, () => {
       const results = ALL_INPUTS.map((input) => {
         const r = parser.parse(input);
-        const secondary = r.secondaryActionType ? `+${r.secondaryActionType}` : '';
-        return { input, primary: r.actionType, secondary: r.secondaryActionType ?? null, display: `${r.actionType}${secondary}` };
+        const secondary = r.secondaryActionType
+          ? `+${r.secondaryActionType}`
+          : '';
+        return {
+          input,
+          primary: r.actionType,
+          secondary: r.secondaryActionType ?? null,
+          display: `${r.actionType}${secondary}`,
+        };
       });
 
       // 콘솔 출력 (테스트 실행 시 확인용)
@@ -365,33 +431,108 @@ describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () 
   // 30턴 플레이테스트 오분류 회귀 방지 (LLM이 INVESTIGATE 편향일 때 KW가 올바른 수단 잡는지)
   // ============================================================
   describe('30턴 플레이테스트 오분류 회귀 방지', () => {
-    const playtestCases: Array<{ input: string; expected: IntentActionType; label: string }> = [
-      { input: '선원들과 어울려 술 한잔 하며 이야기를 나눈다', expected: 'TALK', label: 'TALK-이야기를 나' },
-      { input: '감독관에게 슬쩍 금화를 건네며 특별 화물에 대해 묻는다', expected: 'BRIBE', label: 'BRIBE-금화를 건네' },
-      { input: '밤에 항만 창고에 몰래 잠입해 문서를 뒤진다', expected: 'SNEAK', label: 'SNEAK-몰래 잠입' },
-      { input: '부두 노동자들의 파업 현장에서 도움을 준다', expected: 'HELP', label: 'HELP-도움' },
-      { input: '노숙자에게 동전을 주며 소문을 캐낸다', expected: 'BRIBE', label: 'BRIBE-동전' },
-      { input: '어둠 속에서 수상한 인물을 미행한다', expected: 'SNEAK', label: 'SNEAK-미행' },
-      { input: '쓰러진 부랑자를 일으켜 세우고 약초를 나눠준다', expected: 'HELP', label: 'HELP-일으켜+약초' },
-      { input: '폐건물 안에서 비밀 모임이 있는지 은밀히 들여다본다', expected: 'SNEAK', label: 'SNEAK-은밀히' },
-      { input: '경비대장을 찾아가 협력을 제안한다', expected: 'PERSUADE', label: 'PERSUADE-협력을 제' },
-      { input: '하급 경비병에게 접근해 최근 단속 정보를 물어본다', expected: 'TALK', label: 'TALK-물어본다' },
-      { input: '구금된 죄수에게 면회를 시도한다', expected: 'TALK', label: 'TALK-면회(대화)' },
-      { input: '쓰러진 부랑자를 일으켜 세우고 약초를 나눠준다', expected: 'HELP', label: 'HELP-약초' },
+    const playtestCases: Array<{
+      input: string;
+      expected: IntentActionType;
+      label: string;
+    }> = [
+      {
+        input: '선원들과 어울려 술 한잔 하며 이야기를 나눈다',
+        expected: 'TALK',
+        label: 'TALK-이야기를 나',
+      },
+      {
+        input: '감독관에게 슬쩍 금화를 건네며 특별 화물에 대해 묻는다',
+        expected: 'BRIBE',
+        label: 'BRIBE-금화를 건네',
+      },
+      {
+        input: '밤에 항만 창고에 몰래 잠입해 문서를 뒤진다',
+        expected: 'SNEAK',
+        label: 'SNEAK-몰래 잠입',
+      },
+      {
+        input: '부두 노동자들의 파업 현장에서 도움을 준다',
+        expected: 'HELP',
+        label: 'HELP-도움',
+      },
+      {
+        input: '노숙자에게 동전을 주며 소문을 캐낸다',
+        expected: 'BRIBE',
+        label: 'BRIBE-동전',
+      },
+      {
+        input: '어둠 속에서 수상한 인물을 미행한다',
+        expected: 'SNEAK',
+        label: 'SNEAK-미행',
+      },
+      {
+        input: '쓰러진 부랑자를 일으켜 세우고 약초를 나눠준다',
+        expected: 'HELP',
+        label: 'HELP-일으켜+약초',
+      },
+      {
+        input: '폐건물 안에서 비밀 모임이 있는지 은밀히 들여다본다',
+        expected: 'SNEAK',
+        label: 'SNEAK-은밀히',
+      },
+      {
+        input: '경비대장을 찾아가 협력을 제안한다',
+        expected: 'PERSUADE',
+        label: 'PERSUADE-협력을 제',
+      },
+      {
+        input: '하급 경비병에게 접근해 최근 단속 정보를 물어본다',
+        expected: 'TALK',
+        label: 'TALK-물어본다',
+      },
+      {
+        input: '구금된 죄수에게 면회를 시도한다',
+        expected: 'TALK',
+        label: 'TALK-면회(대화)',
+      },
+      {
+        input: '쓰러진 부랑자를 일으켜 세우고 약초를 나눠준다',
+        expected: 'HELP',
+        label: 'HELP-약초',
+      },
       { input: '응급 처치를 해준다', expected: 'HELP', label: 'HELP-응급' },
       // "도박에 참여한다"는 키워드 매칭 없음 → TALK fallback → LLM이 보완
-      { input: '도박에 참여한다', expected: 'TALK', label: 'TALK-도박(KW없음)' },
+      {
+        input: '도박에 참여한다',
+        expected: 'TALK',
+        label: 'TALK-도박(KW없음)',
+      },
       // P7 회귀 테스트: "~에 대해 물어본다" 패턴 → TALK (INVESTIGATE의 '장부' 키워드보다 우선)
-      { input: '주변 상인에게 장부에 대해 물어본다', expected: 'TALK', label: 'TALK-장부에 대해 물어' },
-      { input: '경비병에게 최근 사건에 대해 물어본다', expected: 'TALK', label: 'TALK-사건에 대해 물어' },
+      {
+        input: '주변 상인에게 장부에 대해 물어본다',
+        expected: 'TALK',
+        label: 'TALK-장부에 대해 물어',
+      },
+      {
+        input: '경비병에게 최근 사건에 대해 물어본다',
+        expected: 'TALK',
+        label: 'TALK-사건에 대해 물어',
+      },
       // P7 회귀 테스트: "주머니를 뒤진다" 패턴 → STEAL (SNEAK의 '틈을 타'보다 우선)
-      { input: '방심한 틈을 타 주머니를 뒤진다', expected: 'STEAL', label: 'STEAL-주머니를 뒤진다' },
-      { input: '주머니를 털어본다', expected: 'STEAL', label: 'STEAL-주머니를 털어' },
+      {
+        input: '방심한 틈을 타 주머니를 뒤진다',
+        expected: 'STEAL',
+        label: 'STEAL-주머니를 뒤진다',
+      },
+      {
+        input: '주머니를 털어본다',
+        expected: 'STEAL',
+        label: 'STEAL-주머니를 털어',
+      },
     ];
 
-    it.each(playtestCases)('[$label] "$input" → $expected', ({ input, expected }) => {
-      const r = parser.parse(input);
-      expect(r.actionType).toBe(expected);
-    });
+    it.each(playtestCases)(
+      '[$label] "$input" → $expected',
+      ({ input, expected }) => {
+        const r = parser.parse(input);
+        expect(r.actionType).toBe(expected);
+      },
+    );
   });
 });

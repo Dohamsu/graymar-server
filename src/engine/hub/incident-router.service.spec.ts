@@ -1,5 +1,11 @@
 import { IncidentRouterService } from './incident-router.service.js';
-import type { WorldState, IncidentRuntime, IncidentDef, ParsedIntentV3, IncidentVectorState } from '../../db/types/index.js';
+import type {
+  WorldState,
+  IncidentRuntime,
+  IncidentDef,
+  ParsedIntentV3,
+  IncidentVectorState,
+} from '../../db/types/index.js';
 
 function makeIntentV3(overrides: Partial<ParsedIntentV3> = {}): ParsedIntentV3 {
   return {
@@ -18,7 +24,9 @@ function makeIntentV3(overrides: Partial<ParsedIntentV3> = {}): ParsedIntentV3 {
   };
 }
 
-function makeIncident(overrides: Partial<IncidentRuntime> = {}): IncidentRuntime {
+function makeIncident(
+  overrides: Partial<IncidentRuntime> = {},
+): IncidentRuntime {
   return {
     incidentId: 'inc_test',
     kind: 'POLITICAL',
@@ -34,8 +42,22 @@ function makeIncident(overrides: Partial<IncidentRuntime> = {}): IncidentRuntime
     playerProgress: 0,
     rivalProgress: 0,
     vectors: [
-      { vector: 'SOCIAL', enabled: true, preferred: true, friction: 0, effectivenessBase: 0.8, failForwardMode: 'HEAT' },
-      { vector: 'OBSERVATIONAL', enabled: true, preferred: false, friction: 1, effectivenessBase: 0.5, failForwardMode: 'SUSPICION' },
+      {
+        vector: 'SOCIAL',
+        enabled: true,
+        preferred: true,
+        friction: 0,
+        effectivenessBase: 0.8,
+        failForwardMode: 'HEAT',
+      },
+      {
+        vector: 'OBSERVATIONAL',
+        enabled: true,
+        preferred: false,
+        friction: 1,
+        effectivenessBase: 0.5,
+        failForwardMode: 'SUSPICION',
+      },
     ],
     mutationFlags: [],
     ...overrides,
@@ -52,13 +74,44 @@ function makeDef(overrides: Partial<IncidentDef> = {}): IncidentDef {
     priority: 3,
     weight: 10,
     spawnConditions: {},
-    stages: [{ stage: 1, description: '1단계', affordances: ['ANY'], matchPolicy: 'SUPPORT', pressurePerTick: 2, controlReward: 10, controlPenalty: 5, sceneFrame: '긴장', choices: [] }],
+    stages: [
+      {
+        stage: 1,
+        description: '1단계',
+        affordances: ['ANY'],
+        matchPolicy: 'SUPPORT',
+        pressurePerTick: 2,
+        controlReward: 10,
+        controlPenalty: 5,
+        sceneFrame: '긴장',
+        choices: [],
+      },
+    ],
     signalTemplates: [],
-    resolutionConditions: { controlThreshold: 80, pressureThreshold: 95, deadlineTicks: 50 },
+    resolutionConditions: {
+      controlThreshold: 80,
+      pressureThreshold: 95,
+      deadlineTicks: 50,
+    },
     impactOnResolve: {
-      CONTAINED: { heatDelta: -5, tensionDelta: -2, reputationChanges: {}, flagsSet: [] },
-      ESCALATED: { heatDelta: 10, tensionDelta: 5, reputationChanges: {}, flagsSet: [] },
-      EXPIRED: { heatDelta: 3, tensionDelta: 1, reputationChanges: {}, flagsSet: [] },
+      CONTAINED: {
+        heatDelta: -5,
+        tensionDelta: -2,
+        reputationChanges: {},
+        flagsSet: [],
+      },
+      ESCALATED: {
+        heatDelta: 10,
+        tensionDelta: 5,
+        reputationChanges: {},
+        flagsSet: [],
+      },
+      EXPIRED: {
+        heatDelta: 3,
+        tensionDelta: 1,
+        reputationChanges: {},
+        flagsSet: [],
+      },
     },
     relatedNpcIds: ['npc_elder'],
     tags: ['corruption'],
@@ -113,7 +166,12 @@ describe('IncidentRouterService', () => {
   it('SOCIAL vector 매칭 → DIRECT_MATCH', () => {
     const incident = makeIncident();
     const ws = makeWs([incident]);
-    const result = service.route(ws, 'market', makeIntentV3({ approachVector: 'SOCIAL' }), [makeDef()]);
+    const result = service.route(
+      ws,
+      'market',
+      makeIntentV3({ approachVector: 'SOCIAL' }),
+      [makeDef()],
+    );
     expect(result.routeMode).toBe('DIRECT_MATCH');
     expect(result.matchedVector).toBe('SOCIAL');
     expect(result.matchScore).toBeGreaterThanOrEqual(40);
@@ -122,15 +180,35 @@ describe('IncidentRouterService', () => {
   it('preferred vector는 추가 점수', () => {
     const incident = makeIncident();
     const ws = makeWs([incident]);
-    const resultPreferred = service.route(ws, 'market', makeIntentV3({ approachVector: 'SOCIAL' }), [makeDef()]);
-    const resultNonPref = service.route(ws, 'market', makeIntentV3({ approachVector: 'OBSERVATIONAL' }), [makeDef()]);
-    expect(resultPreferred.matchScore).toBeGreaterThan(resultNonPref.matchScore);
+    const resultPreferred = service.route(
+      ws,
+      'market',
+      makeIntentV3({ approachVector: 'SOCIAL' }),
+      [makeDef()],
+    );
+    const resultNonPref = service.route(
+      ws,
+      'market',
+      makeIntentV3({ approachVector: 'OBSERVATIONAL' }),
+      [makeDef()],
+    );
+    expect(resultPreferred.matchScore).toBeGreaterThan(
+      resultNonPref.matchScore,
+    );
   });
 
   it('매칭 안 되는 vector → GOAL_AFFINITY 또는 FALLBACK', () => {
     const incident = makeIncident();
     const ws = makeWs([incident]);
-    const result = service.route(ws, 'market', makeIntentV3({ approachVector: 'VIOLENT', goalCategory: 'ESCALATE_CONFLICT' }), [makeDef()]);
+    const result = service.route(
+      ws,
+      'market',
+      makeIntentV3({
+        approachVector: 'VIOLENT',
+        goalCategory: 'ESCALATE_CONFLICT',
+      }),
+      [makeDef()],
+    );
     // POLITICAL kind + ESCALATE_CONFLICT = 10 affinity + 10 location = 20 > threshold
     expect(result.routeMode).toBe('GOAL_AFFINITY');
     expect(result.incident?.incidentId).toBe('inc_test');
@@ -140,24 +218,51 @@ describe('IncidentRouterService', () => {
     const incident = makeIncident({ vectors: [] });
     const def = makeDef({ locationId: 'market' });
     const ws = makeWs([incident]);
-    const resultMatch = service.route(ws, 'market', makeIntentV3({ approachVector: 'VIOLENT', goalCategory: 'SHIFT_RELATION' }), [def]);
+    const resultMatch = service.route(
+      ws,
+      'market',
+      makeIntentV3({
+        approachVector: 'VIOLENT',
+        goalCategory: 'SHIFT_RELATION',
+      }),
+      [def],
+    );
     // POLITICAL + SHIFT_RELATION = 20 + location 10 = 30 > threshold
-    expect(resultMatch.matchScore).toBeGreaterThanOrEqual(MATCH_THRESHOLD_VALUE());
+    expect(resultMatch.matchScore).toBeGreaterThanOrEqual(
+      MATCH_THRESHOLD_VALUE(),
+    );
   });
 
   it('pressure >= 80이면 추가 점수', () => {
     const lowPressure = makeIncident({ pressure: 40, vectors: [] });
-    const highPressure = makeIncident({ incidentId: 'inc_urgent', pressure: 85, vectors: [] });
+    const highPressure = makeIncident({
+      incidentId: 'inc_urgent',
+      pressure: 85,
+      vectors: [],
+    });
     const defs = [makeDef(), makeDef({ incidentId: 'inc_urgent' })];
     const ws = makeWs([lowPressure, highPressure]);
-    const result = service.route(ws, 'market', makeIntentV3({ approachVector: 'VIOLENT', goalCategory: 'SHIFT_RELATION' }), defs);
+    const result = service.route(
+      ws,
+      'market',
+      makeIntentV3({
+        approachVector: 'VIOLENT',
+        goalCategory: 'SHIFT_RELATION',
+      }),
+      defs,
+    );
     expect(result.incident?.incidentId).toBe('inc_urgent');
   });
 
   it('tags에 incident/kind/npc 태그 포함', () => {
     const incident = makeIncident();
     const ws = makeWs([incident]);
-    const result = service.route(ws, 'market', makeIntentV3({ approachVector: 'SOCIAL' }), [makeDef()]);
+    const result = service.route(
+      ws,
+      'market',
+      makeIntentV3({ approachVector: 'SOCIAL' }),
+      [makeDef()],
+    );
     expect(result.tags).toContain('incident:inc_test');
     expect(result.tags).toContain('kind:POLITICAL');
     expect(result.tags).toContain('npc:npc_elder');
@@ -167,10 +272,15 @@ describe('IncidentRouterService', () => {
   it('secondary vector도 점수에 반영', () => {
     const incident = makeIncident();
     const ws = makeWs([incident]);
-    const result = service.route(ws, 'market', makeIntentV3({
-      approachVector: 'VIOLENT',
-      secondaryApproachVector: 'SOCIAL',
-    }), [makeDef()]);
+    const result = service.route(
+      ws,
+      'market',
+      makeIntentV3({
+        approachVector: 'VIOLENT',
+        secondaryApproachVector: 'SOCIAL',
+      }),
+      [makeDef()],
+    );
     // secondary SOCIAL 매칭으로 DIRECT_MATCH
     expect(result.routeMode).toBe('DIRECT_MATCH');
     expect(result.matchedVector).toBe('SOCIAL');
@@ -181,10 +291,20 @@ describe('IncidentRouterService', () => {
     const def = makeDef({ locationId: 'harbor' }); // location 불일치
     const ws = makeWs([incident]);
     // VIOLENT + GET_INFO + POLITICAL = 0 affinity, location mismatch = 0
-    const result = service.route(ws, 'market', makeIntentV3({ approachVector: 'VIOLENT', goalCategory: 'ACQUIRE_RESOURCE' }), [def]);
+    const result = service.route(
+      ws,
+      'market',
+      makeIntentV3({
+        approachVector: 'VIOLENT',
+        goalCategory: 'ACQUIRE_RESOURCE',
+      }),
+      [def],
+    );
     expect(result.routeMode).toBe('FALLBACK_SCENE');
   });
 });
 
 // threshold 값을 테스트에서 참조
-function MATCH_THRESHOLD_VALUE() { return 15; }
+function MATCH_THRESHOLD_VALUE() {
+  return 15;
+}

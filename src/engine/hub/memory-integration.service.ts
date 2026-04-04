@@ -4,7 +4,11 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../../db/drizzle.module.js';
 import { runMemories, nodeMemories } from '../../db/schema/index.js';
-import type { RunState, WorldState, LocationPersonalMemory } from '../../db/types/index.js';
+import type {
+  RunState,
+  WorldState,
+  LocationPersonalMemory,
+} from '../../db/types/index.js';
 import type { NPCState, NpcPosture } from '../../db/types/npc-state.js';
 import { computeEffectivePosture } from '../../db/types/npc-state.js';
 import type { IncidentKind } from '../../db/types/incident.js';
@@ -74,8 +78,12 @@ export class MemoryIntegrationService {
       if (locationId) {
         const existing = { ...(runState.locationMemories ?? {}) };
         const prev = existing[locationId] ?? {
-          visitCount: 0, totalTurnsSpent: 0, lastVisitTurn: 0,
-          significantEvents: [], discoveredSecrets: [], reputationNote: '',
+          visitCount: 0,
+          totalTurnsSpent: 0,
+          lastVisitTurn: 0,
+          significantEvents: [],
+          discoveredSecrets: [],
+          reputationNote: '',
         };
         existing[locationId] = {
           ...prev,
@@ -94,23 +102,34 @@ export class MemoryIntegrationService {
       where: eq(runMemories.runId, runId),
     });
     if (!memRow) {
-      this.logger.warn(`run_memories not found for run ${runId} — skip structured memory update`);
+      this.logger.warn(
+        `run_memories not found for run ${runId} — skip structured memory update`,
+      );
       return null;
     }
 
     let memory: StructuredMemory =
-      (memRow.structuredMemory as StructuredMemory | null) ??
-      createEmptyStructuredMemory();
+      memRow.structuredMemory ?? createEmptyStructuredMemory();
 
     const ws = runState.worldState!;
     const locationId = ctx.locationId;
     const locName = LOCATION_NAMES[locationId] ?? locationId;
 
     // 3. Milestone 체크 — visitLog push 전에 해야 FIRST_VISIT 감지 가능
-    const newMilestones = this.checkMilestones(ctx, ws, runState, memory, locationId, turnNo);
+    const newMilestones = this.checkMilestones(
+      ctx,
+      ws,
+      runState,
+      memory,
+      locationId,
+      turnNo,
+    );
     memory.milestones.push(...newMilestones);
     if (memory.milestones.length > MAX_MILESTONES) {
-      memory.milestones = this.pruneMilestones(memory.milestones, MAX_MILESTONES);
+      memory.milestones = this.pruneMilestones(
+        memory.milestones,
+        MAX_MILESTONES,
+      );
     }
 
     // 4. VisitLogEntry 생성
@@ -126,11 +145,12 @@ export class MemoryIntegrationService {
     // 5. NpcJournal 업데이트 — ctx.npcsEncountered + runState에서 변동 있는 NPC도 추가
     const npcIdsToProcess = new Set(ctx.npcsEncountered);
     // runState.npcStates에서 trust/emotional이 초기값과 다른 NPC도 자동 추가
-    for (const [npcId, npc] of Object.entries((runState.npcStates ?? {}) as Record<string, NPCState>)) {
-      if (npc.emotional && (
+    for (const [npcId, npc] of Object.entries(runState.npcStates ?? {})) {
+      if (
+        npc.emotional &&
         npc.emotional.trust !== (npc as any).initialTrust &&
         Math.abs(npc.emotional.trust) >= 5
-      )) {
+      ) {
         npcIdsToProcess.add(npcId);
       }
     }
@@ -170,7 +190,9 @@ export class MemoryIntegrationService {
       }
     }
     if (memory.llmExtracted.length > MAX_LLM_FACTS) {
-      memory.llmExtracted.sort((a, b) => b.importance - a.importance || b.turnNo - a.turnNo);
+      memory.llmExtracted.sort(
+        (a, b) => b.importance - a.importance || b.turnNo - a.turnNo,
+      );
       memory.llmExtracted = memory.llmExtracted.slice(0, MAX_LLM_FACTS);
     }
 
@@ -187,7 +209,8 @@ export class MemoryIntegrationService {
       ? `${newStorySummary}\n${storySummaryLine}`
       : storySummaryLine;
     if (newStorySummary.length > 3000) {
-      newStorySummary = '...' + newStorySummary.slice(newStorySummary.length - 2997);
+      newStorySummary =
+        '...' + newStorySummary.slice(newStorySummary.length - 2997);
     }
 
     await this.db
@@ -201,13 +224,19 @@ export class MemoryIntegrationService {
 
     // 10. LocationMemory 갱신 — RunState.locationMemories에 이 방문 기록 축적
     const updatedLocationMemories = this.buildLocationMemoryUpdate(
-      runState, ctx, locationId, turnNo,
+      runState,
+      ctx,
+      locationId,
+      turnNo,
     );
     return updatedLocationMemories;
   }
 
   /** visitContext가 없을 때 최소한의 storySummary만 기록 */
-  private async saveMinimalVisitSummary(runId: string, runState: RunState): Promise<void> {
+  private async saveMinimalVisitSummary(
+    runId: string,
+    runState: RunState,
+  ): Promise<void> {
     try {
       const memRow = await this.db.query.runMemories.findFirst({
         where: eq(runMemories.runId, runId),
@@ -228,7 +257,9 @@ export class MemoryIntegrationService {
         .set({ storySummary: newStorySummary, updatedAt: new Date() })
         .where(eq(runMemories.runId, runId));
     } catch (err) {
-      this.logger.warn(`saveMinimalVisitSummary failed: ${(err as Error).message}`);
+      this.logger.warn(
+        `saveMinimalVisitSummary failed: ${(err as Error).message}`,
+      );
     }
   }
 
@@ -247,7 +278,11 @@ export class MemoryIntegrationService {
       .slice(0, 3)
       .map((a) => {
         const outcomeStr =
-          a.outcome === 'SUCCESS' ? '성공' : a.outcome === 'PARTIAL' ? '부분성공' : '실패';
+          a.outcome === 'SUCCESS'
+            ? '성공'
+            : a.outcome === 'PARTIAL'
+              ? '부분성공'
+              : '실패';
         return `${this.actionTypeKorean(a.actionType)}(${outcomeStr})`;
       })
       .join(', ');
@@ -286,7 +321,9 @@ export class MemoryIntegrationService {
     if (log.length <= max) return log;
     const sorted = [...log].sort((a, b) => a.importance - b.importance);
     const toRemove = log.length - max;
-    const removeSet = new Set(sorted.slice(0, toRemove).map((e) => e.turnRange[0]));
+    const removeSet = new Set(
+      sorted.slice(0, toRemove).map((e) => e.turnRange[0]),
+    );
     const result = log.filter((e) => !removeSet.has(e.turnRange[0]));
     return result.length >= 8 ? result : log.slice(-max);
   }
@@ -302,17 +339,27 @@ export class MemoryIntegrationService {
     const keyActions = ctx.actions
       .filter((a) => a.outcome === 'SUCCESS' || a.outcome === 'PARTIAL')
       .slice(-3)
-      .map((a) => `${this.actionTypeKorean(a.actionType)}(${a.outcome === 'SUCCESS' ? '성공' : '부분성공'}): ${a.brief}`.slice(0, 80));
+      .map((a) =>
+        `${this.actionTypeKorean(a.actionType)}(${a.outcome === 'SUCCESS' ? '성공' : '부분성공'}): ${a.brief}`.slice(
+          0,
+          80,
+        ),
+      );
 
     // keyDialogues: NPC 관련 행동 (TALK/PERSUADE 등)
     const keyDialogues = ctx.actions
-      .filter((a) => ['TALK', 'PERSUADE', 'BRIBE', 'THREATEN'].includes(a.actionType))
+      .filter((a) =>
+        ['TALK', 'PERSUADE', 'BRIBE', 'THREATEN'].includes(a.actionType),
+      )
       .slice(-3)
       .map((a) => `${a.brief}`.slice(0, 80));
 
     // unresolvedLeads: 해당 location의 PLOT_HINT 최근 2개
     const unresolvedLeads = memory.llmExtracted
-      .filter((f) => f.category === 'PLOT_HINT' && f.relatedLocationId === ctx.locationId)
+      .filter(
+        (f) =>
+          f.category === 'PLOT_HINT' && f.relatedLocationId === ctx.locationId,
+      )
       .slice(-2)
       .map((f) => f.text.slice(0, 60));
 
@@ -346,7 +393,14 @@ export class MemoryIntegrationService {
         npcId,
         npcName,
         interactions: [],
-        latestEmotional: { trust: 0, fear: 0, respect: 0, suspicion: 0, attachment: 0, posture: 'CAUTIOUS' as NpcPosture },
+        latestEmotional: {
+          trust: 0,
+          fear: 0,
+          respect: 0,
+          suspicion: 0,
+          attachment: 0,
+          posture: 'CAUTIOUS' as NpcPosture,
+        },
         marks: [],
         summaryText: '',
       };
@@ -354,12 +408,16 @@ export class MemoryIntegrationService {
     }
 
     // PR-B: NPC별 관련 행동만 필터링 — relatedNpcId 매칭 우선, 없으면 이벤트 기반
-    const npcSpecificActions = ctx.actions.filter((a) => a.relatedNpcId === npcId);
-    const npcEventActions = npcSpecificActions.length > 0
-      ? npcSpecificActions
-      : ctx.actions.filter((a) => a.eventId); // fallback: 이벤트가 있는 행동
+    const npcSpecificActions = ctx.actions.filter(
+      (a) => a.relatedNpcId === npcId,
+    );
+    const npcEventActions =
+      npcSpecificActions.length > 0
+        ? npcSpecificActions
+        : ctx.actions.filter((a) => a.eventId); // fallback: 이벤트가 있는 행동
     // npcsEncountered에 포함되었지만 관련 행동이 없으면 스킵 (오염 방지)
-    const relevantActions = npcSpecificActions.length > 0 ? npcSpecificActions : npcEventActions;
+    const relevantActions =
+      npcSpecificActions.length > 0 ? npcSpecificActions : npcEventActions;
     if (relevantActions.length === 0 && !ctx.npcsEncountered.includes(npcId)) {
       // trust delta만으로 추가된 NPC는 행동 없으면 interaction 미기록
       return journal;
@@ -372,7 +430,10 @@ export class MemoryIntegrationService {
         outcome: action.outcome,
         emotionalDelta: ctx.npcEmotionalDeltas[npcId] ?? {},
         // PR-B: snippet을 summaryShort 기반으로 (실제 행동 요약)
-        snippet: (action.summaryShort ?? action.rawInput ?? action.brief).slice(0, 50),
+        snippet: (action.summaryShort ?? action.rawInput ?? action.brief).slice(
+          0,
+          50,
+        ),
       };
       entry.interactions.push(interaction);
       if (entry.interactions.length > MAX_NPC_INTERACTIONS) {
@@ -423,7 +484,10 @@ export class MemoryIntegrationService {
       : '';
 
     const emotionStr = parts.length > 0 ? parts.join('/') : '초기';
-    return `${entry.npcName}: ${emotionStr} 태도${emo.posture}. ${lastAction}`.slice(0, 100);
+    return `${entry.npcName}: ${emotionStr} 태도${emo.posture}. ${lastAction}`.slice(
+      0,
+      100,
+    );
   }
 
   // ── IncidentChronicle 업데이트 ──
@@ -464,9 +528,11 @@ export class MemoryIntegrationService {
       pressureDelta: inv.pressureDelta,
       snippet: (relevantAction?.brief ?? '').slice(0, 50),
     };
-    entry!.playerInvolvements.push(involvement);
-    if (entry!.playerInvolvements.length > MAX_INCIDENT_INVOLVEMENTS) {
-      entry!.playerInvolvements = entry!.playerInvolvements.slice(-MAX_INCIDENT_INVOLVEMENTS);
+    entry.playerInvolvements.push(involvement);
+    if (entry.playerInvolvements.length > MAX_INCIDENT_INVOLVEMENTS) {
+      entry.playerInvolvements = entry.playerInvolvements.slice(
+        -MAX_INCIDENT_INVOLVEMENTS,
+      );
     }
 
     // 해결 상태 업데이트
@@ -474,10 +540,10 @@ export class MemoryIntegrationService {
       (i) => i.incidentId === inv.incidentId,
     );
     if (runtimeInc?.resolved) {
-      entry!.resolved = true;
-      entry!.outcome = runtimeInc.outcome;
-      entry!.finalControl = runtimeInc.control;
-      entry!.finalPressure = runtimeInc.pressure;
+      entry.resolved = true;
+      entry.outcome = runtimeInc.outcome;
+      entry.finalControl = runtimeInc.control;
+      entry.finalPressure = runtimeInc.pressure;
     }
 
     return chronicle;
@@ -516,7 +582,10 @@ export class MemoryIntegrationService {
         type: 'MARK_ACQUIRED',
         turnNo,
         day,
-        detail: `★${markType} 표식 — ${mark?.context ?? markType}`.slice(0, 100),
+        detail: `★${markType} 표식 — ${mark?.context ?? markType}`.slice(
+          0,
+          100,
+        ),
         importance: 0.9,
         relatedNpcId: mark?.npcId,
         relatedIncidentId: mark?.incidentId,
@@ -527,7 +596,9 @@ export class MemoryIntegrationService {
     const arcState = runState.arcState;
     if (arcState?.commitment === 3 && arcState.currentRoute) {
       const alreadyHas = memory.milestones.some(
-        (m) => m.type === 'ARC_COMMITTED' && m.detail.includes(arcState.currentRoute!),
+        (m) =>
+          m.type === 'ARC_COMMITTED' &&
+          m.detail.includes(arcState.currentRoute!),
       );
       if (!alreadyHas) {
         milestones.push({
@@ -551,7 +622,11 @@ export class MemoryIntegrationService {
           type: 'INCIDENT_RESOLVED',
           turnNo,
           day,
-          detail: `${def?.title ?? inv.incidentId} ${runtime.outcome ?? 'RESOLVED'}`.slice(0, 100),
+          detail:
+            `${def?.title ?? inv.incidentId} ${runtime.outcome ?? 'RESOLVED'}`.slice(
+              0,
+              100,
+            ),
           importance: 0.7,
           relatedIncidentId: inv.incidentId,
         });
@@ -562,7 +637,9 @@ export class MemoryIntegrationService {
     for (const npcId of ctx.npcsEncountered) {
       const prevEntry = memory.npcJournal.find((e) => e.npcId === npcId);
       if (!prevEntry) continue;
-      const npcState = (runState.npcStates ?? {})[npcId] as NPCState | undefined;
+      const npcState = (runState.npcStates ?? {})[npcId] as
+        | NPCState
+        | undefined;
       if (!npcState) continue;
       const newPosture = computeEffectivePosture(npcState);
       if (prevEntry.latestEmotional.posture !== newPosture) {
@@ -582,7 +659,10 @@ export class MemoryIntegrationService {
       if (Math.abs(delta) >= 3) {
         const factionName = FACTION_NAMES[factionId] ?? factionId;
         const alreadyHas = memory.milestones.some(
-          (m) => m.type === 'REPUTATION_SHIFT' && m.detail.includes(factionName) && m.turnNo === turnNo,
+          (m) =>
+            m.type === 'REPUTATION_SHIFT' &&
+            m.detail.includes(factionName) &&
+            m.turnNo === turnNo,
         );
         if (!alreadyHas) {
           milestones.push({
@@ -599,7 +679,10 @@ export class MemoryIntegrationService {
     return milestones;
   }
 
-  private pruneMilestones(milestones: MilestoneEntry[], max: number): MilestoneEntry[] {
+  private pruneMilestones(
+    milestones: MilestoneEntry[],
+    max: number,
+  ): MilestoneEntry[] {
     if (milestones.length <= max) return milestones;
     // MARK_ACQUIRED는 절대 보존
     const permanent = milestones.filter((m) => m.type === 'MARK_ACQUIRED');
@@ -612,8 +695,9 @@ export class MemoryIntegrationService {
     const keepOthers = others.slice(-Math.min(others.length, available));
     const keepFirstVisits = firstVisits.slice(-(available - keepOthers.length));
 
-    return [...permanent, ...keepFirstVisits, ...keepOthers]
-      .sort((a, b) => a.turnNo - b.turnNo);
+    return [...permanent, ...keepFirstVisits, ...keepOthers].sort(
+      (a, b) => a.turnNo - b.turnNo,
+    );
   }
 
   // ── WorldSnapshot ──
@@ -629,8 +713,11 @@ export class MemoryIntegrationService {
       hubHeat: ws.hubHeat,
       hubSafety: ws.hubSafety,
       reputation: { ...ws.reputation },
-      activeIncidentCount: (ws.activeIncidents ?? []).filter((i) => !i.resolved).length,
-      resolvedIncidentCount: (ws.activeIncidents ?? []).filter((i) => i.resolved).length,
+      activeIncidentCount: (ws.activeIncidents ?? []).filter((i) => !i.resolved)
+        .length,
+      resolvedIncidentCount: (ws.activeIncidents ?? []).filter(
+        (i) => i.resolved,
+      ).length,
       arcRoute: runState.arcState?.currentRoute ?? undefined,
       arcCommitment: runState.arcState?.commitment ?? 0,
       updatedAtTurnNo: turnNo,
@@ -680,7 +767,12 @@ export class MemoryIntegrationService {
     for (const inv of ctx.incidentInvolvements) {
       const def = this.content.getIncident(inv.incidentId);
       if (def) {
-        const direction = inv.controlDelta > 0 ? '통제 강화' : inv.controlDelta < 0 ? '상황 악화' : '관찰';
+        const direction =
+          inv.controlDelta > 0
+            ? '통제 강화'
+            : inv.controlDelta < 0
+              ? '상황 악화'
+              : '관찰';
         facts.push({
           turnNo,
           category: 'PLOT_HINT' as LlmFactCategory,
@@ -691,7 +783,8 @@ export class MemoryIntegrationService {
     }
 
     // 4. 특이한 판정 패턴 → ATMOSPHERE
-    const totalOutcomes = ctx.outcomes.success + ctx.outcomes.partial + ctx.outcomes.fail;
+    const totalOutcomes =
+      ctx.outcomes.success + ctx.outcomes.partial + ctx.outcomes.fail;
     if (totalOutcomes >= 2) {
       if (ctx.outcomes.success >= 2 && ctx.outcomes.fail === 0) {
         const locName = LOCATION_NAMES[locationId] ?? locationId;
@@ -733,7 +826,9 @@ export class MemoryIntegrationService {
     if (size <= MAX_JSON_SIZE) return memory;
 
     // 1단계: llmExtracted에서 importance < 0.6 제거
-    memory.llmExtracted = memory.llmExtracted.filter((f) => f.importance >= 0.6);
+    memory.llmExtracted = memory.llmExtracted.filter(
+      (f) => f.importance >= 0.6,
+    );
 
     // 2단계: visitLog에서 importance < 0.3 제거 (최소 8개 보존)
     if (memory.visitLog.length > 8) {
@@ -765,7 +860,11 @@ export class MemoryIntegrationService {
 
   private static readonly MAX_SIGNIFICANT_EVENTS = 8;
   private static readonly MAX_DISCOVERED_SECRETS = 5;
-  private static readonly SECRET_ACTION_TYPES = new Set(['INVESTIGATE', 'SEARCH', 'OBSERVE']);
+  private static readonly SECRET_ACTION_TYPES = new Set([
+    'INVESTIGATE',
+    'SEARCH',
+    'OBSERVE',
+  ]);
 
   /**
    * 장소를 떠날 때 RunState.locationMemories 갱신.
@@ -791,11 +890,16 @@ export class MemoryIntegrationService {
     const turnsSpent = Math.max(1, ctx.actions.length);
 
     // significantEvents 추출: resolve 결과가 있는 행동 (MOVE_LOCATION 제외)
-    const newSignificantEvents: LocationPersonalMemory['significantEvents'] = [];
+    const newSignificantEvents: LocationPersonalMemory['significantEvents'] =
+      [];
     for (const action of ctx.actions) {
       if (action.actionType === 'MOVE_LOCATION') continue;
       if (!action.outcome) continue;
-      const summary = (action.summaryShort ?? action.brief ?? this.actionTypeKorean(action.actionType)).slice(0, 40);
+      const summary = (
+        action.summaryShort ??
+        action.brief ??
+        this.actionTypeKorean(action.actionType)
+      ).slice(0, 40);
       newSignificantEvents.push({
         turnNo: ctx.startTurnNo + newSignificantEvents.length,
         eventSummary: summary,
@@ -805,9 +909,10 @@ export class MemoryIntegrationService {
 
     // 기존 + 신규 병합, 최대 8개 유지 (최신 우선)
     const mergedEvents = [...prev.significantEvents, ...newSignificantEvents];
-    const cappedEvents = mergedEvents.length > MemoryIntegrationService.MAX_SIGNIFICANT_EVENTS
-      ? mergedEvents.slice(-MemoryIntegrationService.MAX_SIGNIFICANT_EVENTS)
-      : mergedEvents;
+    const cappedEvents =
+      mergedEvents.length > MemoryIntegrationService.MAX_SIGNIFICANT_EVENTS
+        ? mergedEvents.slice(-MemoryIntegrationService.MAX_SIGNIFICANT_EVENTS)
+        : mergedEvents;
 
     // discoveredSecrets 추출: SUCCESS 판정 + INVESTIGATE/SEARCH/OBSERVE 행동의 brief
     const newSecrets: string[] = [];
@@ -819,18 +924,26 @@ export class MemoryIntegrationService {
       ) {
         const secret = action.brief.slice(0, 50);
         // 기존 비밀과 중복 방지
-        if (!prev.discoveredSecrets.includes(secret) && !newSecrets.includes(secret)) {
+        if (
+          !prev.discoveredSecrets.includes(secret) &&
+          !newSecrets.includes(secret)
+        ) {
           newSecrets.push(secret);
         }
       }
     }
     const mergedSecrets = [...prev.discoveredSecrets, ...newSecrets];
-    const cappedSecrets = mergedSecrets.length > MemoryIntegrationService.MAX_DISCOVERED_SECRETS
-      ? mergedSecrets.slice(-MemoryIntegrationService.MAX_DISCOVERED_SECRETS)
-      : mergedSecrets;
+    const cappedSecrets =
+      mergedSecrets.length > MemoryIntegrationService.MAX_DISCOVERED_SECRETS
+        ? mergedSecrets.slice(-MemoryIntegrationService.MAX_DISCOVERED_SECRETS)
+        : mergedSecrets;
 
     // reputationNote: 해당 장소 NPC들의 평균 trust 기반 자동 생성
-    const reputationNote = this.generateReputationNote(runState, ctx, locationId);
+    const reputationNote = this.generateReputationNote(
+      runState,
+      ctx,
+      locationId,
+    );
 
     existing[locationId] = {
       visitCount: prev.visitCount + 1,
@@ -852,7 +965,7 @@ export class MemoryIntegrationService {
     ctx: VisitContextCache,
     locationId: string,
   ): string {
-    const npcStates = runState.npcStates as Record<string, NPCState> | undefined;
+    const npcStates = runState.npcStates;
     if (!npcStates) return '';
 
     // 이 장소에서 만난 NPC + 현재 장소에 배치된 NPC
@@ -890,10 +1003,21 @@ export class MemoryIntegrationService {
 
   private actionTypeKorean(actionType: string): string {
     const map: Record<string, string> = {
-      INVESTIGATE: '조사', PERSUADE: '설득', SNEAK: '잠입', BRIBE: '뇌물',
-      THREATEN: '위협', HELP: '도움', STEAL: '절도', FIGHT: '전투',
-      OBSERVE: '관찰', TRADE: '거래', TALK: '대화', SEARCH: '수색',
-      MOVE_LOCATION: '이동', REST: '휴식', SHOP: '상점',
+      INVESTIGATE: '조사',
+      PERSUADE: '설득',
+      SNEAK: '잠입',
+      BRIBE: '뇌물',
+      THREATEN: '위협',
+      HELP: '도움',
+      STEAL: '절도',
+      FIGHT: '전투',
+      OBSERVE: '관찰',
+      TRADE: '거래',
+      TALK: '대화',
+      SEARCH: '수색',
+      MOVE_LOCATION: '이동',
+      REST: '휴식',
+      SHOP: '상점',
     };
     return map[actionType] ?? actionType;
   }

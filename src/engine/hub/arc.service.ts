@@ -31,7 +31,8 @@ export class ArcService {
     return {
       ...arc,
       currentRoute: newRoute,
-      betrayalCount: arc.currentRoute !== null ? arc.betrayalCount + 1 : arc.betrayalCount,
+      betrayalCount:
+        arc.currentRoute !== null ? arc.betrayalCount + 1 : arc.betrayalCount,
       commitment: 0,
     };
   }

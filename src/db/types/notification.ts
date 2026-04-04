@@ -2,7 +2,12 @@
 
 // --- Notification Scope ---
 
-export const NOTIFICATION_SCOPE = ['LOCATION', 'TURN_RESULT', 'HUB', 'GLOBAL'] as const;
+export const NOTIFICATION_SCOPE = [
+  'LOCATION',
+  'TURN_RESULT',
+  'HUB',
+  'GLOBAL',
+] as const;
 export type NotificationScope = (typeof NOTIFICATION_SCOPE)[number];
 
 // --- Notification Kind ---
@@ -19,7 +24,12 @@ export type NotificationKind = (typeof NOTIFICATION_KIND)[number];
 
 // --- Notification Priority ---
 
-export const NOTIFICATION_PRIORITY = ['LOW', 'MID', 'HIGH', 'CRITICAL'] as const;
+export const NOTIFICATION_PRIORITY = [
+  'LOW',
+  'MID',
+  'HIGH',
+  'CRITICAL',
+] as const;
 export type NotificationPriority = (typeof NOTIFICATION_PRIORITY)[number];
 
 // --- Notification Presentation ---
@@ -30,7 +40,8 @@ export const NOTIFICATION_PRESENTATION = [
   'FEED_ITEM',
   'PINNED_CARD',
 ] as const;
-export type NotificationPresentation = (typeof NOTIFICATION_PRESENTATION)[number];
+export type NotificationPresentation =
+  (typeof NOTIFICATION_PRESENTATION)[number];
 
 // --- GameNotification ---
 

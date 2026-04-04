@@ -36,7 +36,9 @@ export class GeminiProvider implements LlmProvider {
 
     // system 메시지 분리
     const systemMessages = request.messages.filter((m) => m.role === 'system');
-    const nonSystemMessages = request.messages.filter((m) => m.role !== 'system');
+    const nonSystemMessages = request.messages.filter(
+      (m) => m.role !== 'system',
+    );
 
     // Gemini Content 형식으로 변환
     const contents = nonSystemMessages.map((m: LlmMessage) => ({
@@ -45,13 +47,16 @@ export class GeminiProvider implements LlmProvider {
     }));
 
     // systemInstruction 조합
-    const systemInstruction = systemMessages.length > 0
-      ? systemMessages.map((m) => m.content).join('\n\n')
-      : undefined;
+    const systemInstruction =
+      systemMessages.length > 0
+        ? systemMessages.map((m) => m.content).join('\n\n')
+        : undefined;
 
     // Gemini 2.5 thinking 모델만 output budget 확대, flash-lite 등은 요청값 그대로
     const isThinkingModel = /^gemini-2\.5-(pro|flash)$/.test(model);
-    const outputBudget = isThinkingModel ? Math.max(request.maxTokens, 8192) : request.maxTokens;
+    const outputBudget = isThinkingModel
+      ? Math.max(request.maxTokens, 8192)
+      : request.maxTokens;
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
     const response = await client.models.generateContent({
@@ -73,7 +78,9 @@ export class GeminiProvider implements LlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const finishReason = response.candidates?.[0]?.finishReason;
     if (finishReason && finishReason !== 'STOP') {
-      console.warn(`[GeminiProvider] finishReason: ${finishReason}, text length: ${text.length}`);
+      console.warn(
+        `[GeminiProvider] finishReason: ${finishReason}, text length: ${text.length}`,
+      );
     }
 
     return {

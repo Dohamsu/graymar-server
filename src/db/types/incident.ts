@@ -62,7 +62,10 @@ export type IncidentDef = {
     maxDay?: number;
     minHeat?: number;
     requiredFlags?: string[];
-    requiredReputation?: Record<string, { op: 'gt' | 'lt' | 'gte' | 'lte'; value: number }>;
+    requiredReputation?: Record<
+      string,
+      { op: 'gt' | 'lt' | 'gte' | 'lte'; value: number }
+    >;
   };
   stages: IncidentStageDef[];
   signalTemplates: SignalTemplate[];
@@ -94,10 +97,10 @@ export const FAIL_FORWARD_MODE = [
 export type FailForwardMode = (typeof FAIL_FORWARD_MODE)[number];
 
 export type IncidentVectorState = {
-  vector: string;           // ApproachVector와 동일 값
+  vector: string; // ApproachVector와 동일 값
   enabled: boolean;
   preferred: boolean;
-  friction: number;          // 0~3
+  friction: number; // 0~3
   effectivenessBase: number; // 0~1
   failForwardMode: FailForwardMode;
 };
@@ -116,12 +119,12 @@ export type IncidentRuntime = {
   outcome?: IncidentOutcome;
   historyLog: IncidentHistoryEntry[];
   // User-Driven System v3 확장 (모두 optional, 하위 호환)
-  suspicion?: number;                // 0~100, 플레이어 의심도
-  security?: number;                 // 0~100, 현장 경비 수준
-  playerProgress?: number;           // 0~100, 플레이어 진행도
-  rivalProgress?: number;            // 0~100, 경쟁 세력 진행도
-  vectors?: IncidentVectorState[];   // 접근 벡터별 상태
-  mutationFlags?: string[];          // 사건 변이 플래그
+  suspicion?: number; // 0~100, 플레이어 의심도
+  security?: number; // 0~100, 현장 경비 수준
+  playerProgress?: number; // 0~100, 플레이어 진행도
+  rivalProgress?: number; // 0~100, 경쟁 세력 진행도
+  vectors?: IncidentVectorState[]; // 접근 벡터별 상태
+  mutationFlags?: string[]; // 사건 변이 플래그
 };
 
 // --- Incident Impact Patch ---
@@ -139,7 +142,12 @@ export type IncidentImpactPatch = {
 
 export type IncidentHistoryEntry = {
   clock: number;
-  action: 'SPAWN' | 'STAGE_ADVANCE' | 'CONTROL_CHANGE' | 'PRESSURE_CHANGE' | 'RESOLVE';
+  action:
+    | 'SPAWN'
+    | 'STAGE_ADVANCE'
+    | 'CONTROL_CHANGE'
+    | 'PRESSURE_CHANGE'
+    | 'RESOLVE';
   detail: string;
   controlDelta?: number;
   pressureDelta?: number;

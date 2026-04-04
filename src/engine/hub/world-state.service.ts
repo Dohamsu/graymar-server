@@ -129,7 +129,11 @@ export class WorldStateService {
       npcGoals: ws.npcGoals ?? {},
       signalFeed: ws.signalFeed ?? [],
       narrativeMarks: ws.narrativeMarks ?? [],
-      mainArcClock: ws.mainArcClock ?? { startDay: 1, softDeadlineDay: 14, triggered: false },
+      mainArcClock: ws.mainArcClock ?? {
+        startDay: 1,
+        softDeadlineDay: 14,
+        triggered: false,
+      },
       operationSession: ws.operationSession ?? null,
     };
   }

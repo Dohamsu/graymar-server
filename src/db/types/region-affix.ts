@@ -18,9 +18,12 @@ export interface RegionAffixDef {
 }
 
 /** Rarity별 affix 부여 확률 테이블 */
-export const AFFIX_PROBABILITY: Record<string, { prefix: number; suffix: number }> = {
-  COMMON:    { prefix: 0.10, suffix: 0.05 },
-  RARE:      { prefix: 0.25, suffix: 0.15 },
-  UNIQUE:    { prefix: 0.35, suffix: 0.25 },
-  LEGENDARY: { prefix: 0,    suffix: 0    }, // quest-only, no random affix
+export const AFFIX_PROBABILITY: Record<
+  string,
+  { prefix: number; suffix: number }
+> = {
+  COMMON: { prefix: 0.1, suffix: 0.05 },
+  RARE: { prefix: 0.25, suffix: 0.15 },
+  UNIQUE: { prefix: 0.35, suffix: 0.25 },
+  LEGENDARY: { prefix: 0, suffix: 0 }, // quest-only, no random affix
 };

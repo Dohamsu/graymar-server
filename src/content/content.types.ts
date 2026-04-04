@@ -127,7 +127,10 @@ export type PresetDefinition = {
   startingGold: number;
   startingItems: Array<{ itemId: string; qty: number }>;
   /** 프리셋별 NPC 초기 posture/trust 오버라이드 (optional) */
-  npcPostureOverrides?: Record<string, { posture: string; trustDelta?: number }>;
+  npcPostureOverrides?: Record<
+    string,
+    { posture: string; trustDelta?: number }
+  >;
   /** 프리셋별 actionType 판정 보너스 (optional, +1 수준) */
   actionBonuses?: Record<string, number>;
 };
@@ -176,13 +179,13 @@ export type SuggestedChoice = {
 };
 
 export type NpcPersonality = {
-  core: string;           // 한 줄 캐릭터 본질
-  traits: string[];       // 2~3개 성격 특성
-  speechStyle: string;    // 말투/어조
-  innerConflict: string;  // 내면 갈등
-  softSpot: string;       // 약점/인간적 순간 트리거
-  signature: string[];                    // 시그니처 표현 2~3개
-  npcRelations?: Record<string, string>;  // 다른 NPC와의 관계 한 줄 요약
+  core: string; // 한 줄 캐릭터 본질
+  traits: string[]; // 2~3개 성격 특성
+  speechStyle: string; // 말투/어조
+  innerConflict: string; // 내면 갈등
+  softSpot: string; // 약점/인간적 순간 트리거
+  signature: string[]; // 시그니처 표현 2~3개
+  npcRelations?: Record<string, string>; // 다른 NPC와의 관계 한 줄 요약
 };
 
 /** NPC 계층: CORE(핵심), SUB(서브), BACKGROUND(배경) */
@@ -205,7 +208,7 @@ export type NpcDefinition = {
   agenda?: string;
   personality?: NpcPersonality;
   // Living World v2
-  tier?: NpcTier;              // 기본값: 'SUB'
+  tier?: NpcTier; // 기본값: 'SUB'
   schedule?: import('../db/types/npc-schedule.js').NpcSchedule;
   longTermAgenda?: import('../db/types/npc-schedule.js').NpcAgenda;
   /** NPC가 알고 있는 구체적 단서 — SUCCESS 판정 시 순서대로 점진 공개 */
@@ -220,8 +223,16 @@ export type SetDefinitionData = {
   regionId: string;
   type: 'COMBAT' | 'POLITICAL';
   pieces: string[];
-  bonus2: { description: string; statBonus?: Record<string, number>; specialEffect?: string };
-  bonus3: { description: string; statBonus?: Record<string, number>; specialEffect?: string };
+  bonus2: {
+    description: string;
+    statBonus?: Record<string, number>;
+    specialEffect?: string;
+  };
+  bonus3: {
+    description: string;
+    statBonus?: Record<string, number>;
+    specialEffect?: string;
+  };
 };
 
 export type ShopDefinition = {
@@ -251,9 +262,9 @@ export type EquipmentDropItem = {
 };
 
 export type EquipmentDropEntry = {
-  enemyId?: string;       // 적별 드랍 (일반 적)
-  encounterId?: string;   // 인카운터별 드랍 (보스전)
-  locationId?: string;    // 장소별 기본 드랍 (LOCATION 판정 보상)
+  enemyId?: string; // 적별 드랍 (일반 적)
+  encounterId?: string; // 인카운터별 드랍 (보스전)
+  locationId?: string; // 장소별 기본 드랍 (LOCATION 판정 보상)
   isBoss?: boolean;
   drops: EquipmentDropItem[];
 };

@@ -14,73 +14,268 @@ import { ContentLoaderService } from '../../content/content-loader.service.js';
 
 // --- LOCATION별 후속 선택지 (맥락 구체화) ---
 
-const LOCATION_FOLLOW_UPS: Record<string, Record<ResolveOutcome, ChoiceItem[]>> = {
+const LOCATION_FOLLOW_UPS: Record<
+  string,
+  Record<ResolveOutcome, ChoiceItem[]>
+> = {
   LOC_MARKET: {
     SUCCESS: [
-      { id: 'fu_mkt_s_dig', label: '상인들 사이에서 더 깊은 소문을 캔다', hint: '시장의 뒷거래 정보를 파고든다', action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } } },
-      { id: 'fu_mkt_s_use', label: '알아낸 정보로 다른 상인에게 접근한다', hint: '새로운 거래처나 단서를 찾는다', action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } } },
-      { id: 'fu_mkt_s_look', label: '노점 뒤쪽 골목을 살핀다', hint: '시장 이면의 움직임을 관찰한다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
+      {
+        id: 'fu_mkt_s_dig',
+        label: '상인들 사이에서 더 깊은 소문을 캔다',
+        hint: '시장의 뒷거래 정보를 파고든다',
+        action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } },
+      },
+      {
+        id: 'fu_mkt_s_use',
+        label: '알아낸 정보로 다른 상인에게 접근한다',
+        hint: '새로운 거래처나 단서를 찾는다',
+        action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+      },
+      {
+        id: 'fu_mkt_s_look',
+        label: '노점 뒤쪽 골목을 살핀다',
+        hint: '시장 이면의 움직임을 관찰한다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
     ],
     PARTIAL: [
-      { id: 'fu_mkt_p_retry', label: '다른 노점에서 같은 질문을 던진다', hint: '다른 상인이 더 알고 있을 수 있다', action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } } },
-      { id: 'fu_mkt_p_adapt', label: '일단 거리를 돌며 분위기를 살핀다', hint: '상황을 정리하고 다음을 도모한다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
-      { id: 'fu_mkt_p_push', label: '금화를 내밀며 입을 열게 한다', hint: '위험하지만 확실한 정보를 노린다', action: { type: 'CHOICE', payload: { affordance: 'BRIBE', riskLevel: 2 } } },
+      {
+        id: 'fu_mkt_p_retry',
+        label: '다른 노점에서 같은 질문을 던진다',
+        hint: '다른 상인이 더 알고 있을 수 있다',
+        action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } },
+      },
+      {
+        id: 'fu_mkt_p_adapt',
+        label: '일단 거리를 돌며 분위기를 살핀다',
+        hint: '상황을 정리하고 다음을 도모한다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
+      {
+        id: 'fu_mkt_p_push',
+        label: '금화를 내밀며 입을 열게 한다',
+        hint: '위험하지만 확실한 정보를 노린다',
+        action: {
+          type: 'CHOICE',
+          payload: { affordance: 'BRIBE', riskLevel: 2 },
+        },
+      },
     ],
     FAIL: [
-      { id: 'fu_mkt_f_back', label: '인파 속으로 섞여 들어간다', hint: '눈에 띄지 않게 자리를 옮긴다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
-      { id: 'fu_mkt_f_sneak', label: '좌판 뒤로 돌아가 다른 방법을 찾는다', hint: '우회로를 모색한다', action: { type: 'CHOICE', payload: { affordance: 'SNEAK' } } },
-      { id: 'fu_mkt_f_ask', label: '길가의 주민에게 넌지시 물어본다', hint: '다른 사람에게서 실마리를 찾는다', action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } } },
+      {
+        id: 'fu_mkt_f_back',
+        label: '인파 속으로 섞여 들어간다',
+        hint: '눈에 띄지 않게 자리를 옮긴다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
+      {
+        id: 'fu_mkt_f_sneak',
+        label: '좌판 뒤로 돌아가 다른 방법을 찾는다',
+        hint: '우회로를 모색한다',
+        action: { type: 'CHOICE', payload: { affordance: 'SNEAK' } },
+      },
+      {
+        id: 'fu_mkt_f_ask',
+        label: '길가의 주민에게 넌지시 물어본다',
+        hint: '다른 사람에게서 실마리를 찾는다',
+        action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+      },
     ],
   },
   LOC_GUARD: {
     SUCCESS: [
-      { id: 'fu_grd_s_dig', label: '경비대 내부 사정을 더 탐문한다', hint: '얻은 신뢰를 활용해 깊이 파고든다', action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } } },
-      { id: 'fu_grd_s_use', label: '순찰병에게 다가가 대화를 건다', hint: '경비대 동향을 직접 확인한다', action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } } },
-      { id: 'fu_grd_s_look', label: '병영 주변의 허점을 관찰한다', hint: '경비의 빈틈을 파악한다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
+      {
+        id: 'fu_grd_s_dig',
+        label: '경비대 내부 사정을 더 탐문한다',
+        hint: '얻은 신뢰를 활용해 깊이 파고든다',
+        action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } },
+      },
+      {
+        id: 'fu_grd_s_use',
+        label: '순찰병에게 다가가 대화를 건다',
+        hint: '경비대 동향을 직접 확인한다',
+        action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+      },
+      {
+        id: 'fu_grd_s_look',
+        label: '병영 주변의 허점을 관찰한다',
+        hint: '경비의 빈틈을 파악한다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
     ],
     PARTIAL: [
-      { id: 'fu_grd_p_retry', label: '다른 경비병을 찾아 말을 건다', hint: '다른 사람이 더 협조적일 수 있다', action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } } },
-      { id: 'fu_grd_p_adapt', label: '거리를 두고 순찰 패턴을 살핀다', hint: '안전하게 정보를 모은다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
-      { id: 'fu_grd_p_push', label: '위협적으로 정보를 요구한다', hint: '강경하지만 적을 만들 수 있다', action: { type: 'CHOICE', payload: { affordance: 'THREATEN', riskLevel: 2 } } },
+      {
+        id: 'fu_grd_p_retry',
+        label: '다른 경비병을 찾아 말을 건다',
+        hint: '다른 사람이 더 협조적일 수 있다',
+        action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+      },
+      {
+        id: 'fu_grd_p_adapt',
+        label: '거리를 두고 순찰 패턴을 살핀다',
+        hint: '안전하게 정보를 모은다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
+      {
+        id: 'fu_grd_p_push',
+        label: '위협적으로 정보를 요구한다',
+        hint: '강경하지만 적을 만들 수 있다',
+        action: {
+          type: 'CHOICE',
+          payload: { affordance: 'THREATEN', riskLevel: 2 },
+        },
+      },
     ],
     FAIL: [
-      { id: 'fu_grd_f_back', label: '경비대 시야에서 벗어난다', hint: '주목받기 전에 자리를 피한다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
-      { id: 'fu_grd_f_sneak', label: '감시 사각지대로 이동한다', hint: '들키지 않게 다른 경로를 탐색한다', action: { type: 'CHOICE', payload: { affordance: 'SNEAK' } } },
-      { id: 'fu_grd_f_ask', label: '근처 주민에게 경비대 소식을 묻는다', hint: '간접적으로 정보를 모은다', action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } } },
+      {
+        id: 'fu_grd_f_back',
+        label: '경비대 시야에서 벗어난다',
+        hint: '주목받기 전에 자리를 피한다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
+      {
+        id: 'fu_grd_f_sneak',
+        label: '감시 사각지대로 이동한다',
+        hint: '들키지 않게 다른 경로를 탐색한다',
+        action: { type: 'CHOICE', payload: { affordance: 'SNEAK' } },
+      },
+      {
+        id: 'fu_grd_f_ask',
+        label: '근처 주민에게 경비대 소식을 묻는다',
+        hint: '간접적으로 정보를 모은다',
+        action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+      },
     ],
   },
   LOC_HARBOR: {
     SUCCESS: [
-      { id: 'fu_hbr_s_dig', label: '다른 선원에게 접근해 이야기를 캔다', hint: '부두의 소문을 더 파고든다', action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } } },
-      { id: 'fu_hbr_s_use', label: '알아낸 것을 미끼로 다른 이에게 접근한다', hint: '정보의 가치를 활용한다', action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } } },
-      { id: 'fu_hbr_s_look', label: '창고 구역 쪽을 돌아본다', hint: '부두 이면의 움직임을 파악한다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
+      {
+        id: 'fu_hbr_s_dig',
+        label: '다른 선원에게 접근해 이야기를 캔다',
+        hint: '부두의 소문을 더 파고든다',
+        action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } },
+      },
+      {
+        id: 'fu_hbr_s_use',
+        label: '알아낸 것을 미끼로 다른 이에게 접근한다',
+        hint: '정보의 가치를 활용한다',
+        action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+      },
+      {
+        id: 'fu_hbr_s_look',
+        label: '창고 구역 쪽을 돌아본다',
+        hint: '부두 이면의 움직임을 파악한다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
     ],
     PARTIAL: [
-      { id: 'fu_hbr_p_retry', label: '선술집에서 다른 선원에게 말을 건다', hint: '다른 출처에서 빈틈을 채운다', action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } } },
-      { id: 'fu_hbr_p_adapt', label: '부두를 거닐며 하역 풍경을 살핀다', hint: '눈에 띄지 않게 상황을 파악한다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
-      { id: 'fu_hbr_p_push', label: '금화를 내밀며 입을 열게 한다', hint: '돈이면 부두에서는 대부분 통한다', action: { type: 'CHOICE', payload: { affordance: 'BRIBE', riskLevel: 2 } } },
+      {
+        id: 'fu_hbr_p_retry',
+        label: '선술집에서 다른 선원에게 말을 건다',
+        hint: '다른 출처에서 빈틈을 채운다',
+        action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } },
+      },
+      {
+        id: 'fu_hbr_p_adapt',
+        label: '부두를 거닐며 하역 풍경을 살핀다',
+        hint: '눈에 띄지 않게 상황을 파악한다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
+      {
+        id: 'fu_hbr_p_push',
+        label: '금화를 내밀며 입을 열게 한다',
+        hint: '돈이면 부두에서는 대부분 통한다',
+        action: {
+          type: 'CHOICE',
+          payload: { affordance: 'BRIBE', riskLevel: 2 },
+        },
+      },
     ],
     FAIL: [
-      { id: 'fu_hbr_f_back', label: '선술집 구석에서 술이나 마신다', hint: '주목받지 않고 상황을 정리한다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
-      { id: 'fu_hbr_f_sneak', label: '화물 사이로 은밀히 이동한다', hint: '다른 경로로 단서를 찾는다', action: { type: 'CHOICE', payload: { affordance: 'SNEAK' } } },
-      { id: 'fu_hbr_f_ask', label: '하역 인부에게 넌지시 물어본다', hint: '말단 일꾼이 더 잘 아는 법이다', action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } } },
+      {
+        id: 'fu_hbr_f_back',
+        label: '선술집 구석에서 술이나 마신다',
+        hint: '주목받지 않고 상황을 정리한다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
+      {
+        id: 'fu_hbr_f_sneak',
+        label: '화물 사이로 은밀히 이동한다',
+        hint: '다른 경로로 단서를 찾는다',
+        action: { type: 'CHOICE', payload: { affordance: 'SNEAK' } },
+      },
+      {
+        id: 'fu_hbr_f_ask',
+        label: '하역 인부에게 넌지시 물어본다',
+        hint: '말단 일꾼이 더 잘 아는 법이다',
+        action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+      },
     ],
   },
   LOC_SLUMS: {
     SUCCESS: [
-      { id: 'fu_slm_s_dig', label: '골목 깊숙이 들어가 더 알아본다', hint: '빈민가 안쪽의 정보를 파고든다', action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } } },
-      { id: 'fu_slm_s_use', label: '얻은 정보를 가지고 다른 인물에게 접근한다', hint: '빈민가의 인맥을 활용한다', action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } } },
-      { id: 'fu_slm_s_look', label: '주변 건물과 골목의 동향을 살핀다', hint: '이 구역의 세력 움직임을 관찰한다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
+      {
+        id: 'fu_slm_s_dig',
+        label: '골목 깊숙이 들어가 더 알아본다',
+        hint: '빈민가 안쪽의 정보를 파고든다',
+        action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } },
+      },
+      {
+        id: 'fu_slm_s_use',
+        label: '얻은 정보를 가지고 다른 인물에게 접근한다',
+        hint: '빈민가의 인맥을 활용한다',
+        action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+      },
+      {
+        id: 'fu_slm_s_look',
+        label: '주변 건물과 골목의 동향을 살핀다',
+        hint: '이 구역의 세력 움직임을 관찰한다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
     ],
     PARTIAL: [
-      { id: 'fu_slm_p_retry', label: '다른 골목 주민에게 접근한다', hint: '다른 출처에서 정보를 구한다', action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } } },
-      { id: 'fu_slm_p_adapt', label: '어둠 속에서 조용히 상황을 살핀다', hint: '눈에 띄지 않게 기회를 엿본다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
-      { id: 'fu_slm_p_push', label: '위협적으로 몰아붙인다', hint: '빈민가에서는 힘이 곧 말이다', action: { type: 'CHOICE', payload: { affordance: 'THREATEN', riskLevel: 2 } } },
+      {
+        id: 'fu_slm_p_retry',
+        label: '다른 골목 주민에게 접근한다',
+        hint: '다른 출처에서 정보를 구한다',
+        action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE' } },
+      },
+      {
+        id: 'fu_slm_p_adapt',
+        label: '어둠 속에서 조용히 상황을 살핀다',
+        hint: '눈에 띄지 않게 기회를 엿본다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
+      {
+        id: 'fu_slm_p_push',
+        label: '위협적으로 몰아붙인다',
+        hint: '빈민가에서는 힘이 곧 말이다',
+        action: {
+          type: 'CHOICE',
+          payload: { affordance: 'THREATEN', riskLevel: 2 },
+        },
+      },
     ],
     FAIL: [
-      { id: 'fu_slm_f_back', label: '좀 더 안전한 골목으로 빠진다', hint: '위험해지기 전에 자리를 옮긴다', action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } } },
-      { id: 'fu_slm_f_sneak', label: '그림자 속으로 사라진다', hint: '은밀히 다른 방법을 모색한다', action: { type: 'CHOICE', payload: { affordance: 'SNEAK' } } },
-      { id: 'fu_slm_f_ask', label: '길모퉁이의 노인에게 넌지시 물어본다', hint: '오래 산 이가 더 많이 알 수 있다', action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } } },
+      {
+        id: 'fu_slm_f_back',
+        label: '좀 더 안전한 골목으로 빠진다',
+        hint: '위험해지기 전에 자리를 옮긴다',
+        action: { type: 'CHOICE', payload: { affordance: 'OBSERVE' } },
+      },
+      {
+        id: 'fu_slm_f_sneak',
+        label: '그림자 속으로 사라진다',
+        hint: '은밀히 다른 방법을 모색한다',
+        action: { type: 'CHOICE', payload: { affordance: 'SNEAK' } },
+      },
+      {
+        id: 'fu_slm_f_ask',
+        label: '길모퉁이의 노인에게 넌지시 물어본다',
+        hint: '오래 산 이가 더 많이 알 수 있다',
+        action: { type: 'CHOICE', payload: { affordance: 'PERSUADE' } },
+      },
     ],
   },
 };
@@ -125,7 +320,10 @@ const FOLLOW_UP_CHOICES: Record<ResolveOutcome, ChoiceItem[]> = {
       id: 'followup_push',
       label: '밀어붙인다',
       hint: '위험하지만 더 확실한 결과를 노린다',
-      action: { type: 'CHOICE', payload: { affordance: 'THREATEN', riskLevel: 2 } },
+      action: {
+        type: 'CHOICE',
+        payload: { affordance: 'THREATEN', riskLevel: 2 },
+      },
     },
   ],
   FAIL: [
@@ -219,7 +417,10 @@ const OPPORTUNITY_FOLLOW_UPS: Record<ResolveOutcome, ChoiceItem[]> = {
       id: 'fu_opp_p_push',
       label: '좀 더 욕심을 부린다',
       hint: '위험하지만 더 확실한 이득을 추구한다',
-      action: { type: 'CHOICE', payload: { affordance: 'SNEAK', riskLevel: 2 } },
+      action: {
+        type: 'CHOICE',
+        payload: { affordance: 'SNEAK', riskLevel: 2 },
+      },
     },
     {
       id: 'fu_opp_p_settle',
@@ -245,7 +446,10 @@ const OPPORTUNITY_FOLLOW_UPS: Record<ResolveOutcome, ChoiceItem[]> = {
 };
 
 // --- eventType → 후속 선택지 풀 매핑 ---
-const EVENT_TYPE_FOLLOW_UPS: Record<string, Record<ResolveOutcome, ChoiceItem[]>> = {
+const EVENT_TYPE_FOLLOW_UPS: Record<
+  string,
+  Record<ResolveOutcome, ChoiceItem[]>
+> = {
   ENCOUNTER: ENCOUNTER_FOLLOW_UPS,
   OPPORTUNITY: OPPORTUNITY_FOLLOW_UPS,
 };
@@ -309,7 +513,10 @@ const DEFAULT_LOCATION_CHOICES: Record<string, ChoiceItem[]> = {
       id: 'guard_sneak',
       label: '감시를 피해 뒷골목을 탐색한다',
       hint: '위험하지만 숨겨진 정보를 얻을 수 있다',
-      action: { type: 'CHOICE', payload: { affordance: 'SNEAK', riskLevel: 2 } },
+      action: {
+        type: 'CHOICE',
+        payload: { affordance: 'SNEAK', riskLevel: 2 },
+      },
     },
   ],
   LOC_HARBOR: [
@@ -329,7 +536,10 @@ const DEFAULT_LOCATION_CHOICES: Record<string, ChoiceItem[]> = {
       id: 'harbor_investigate',
       label: '창고 구역을 조사한다',
       hint: '밀수품이나 단서가 숨겨져 있을 수 있다',
-      action: { type: 'CHOICE', payload: { affordance: 'INVESTIGATE', riskLevel: 2 } },
+      action: {
+        type: 'CHOICE',
+        payload: { affordance: 'INVESTIGATE', riskLevel: 2 },
+      },
     },
   ],
   LOC_SLUMS: [
@@ -349,7 +559,10 @@ const DEFAULT_LOCATION_CHOICES: Record<string, ChoiceItem[]> = {
       id: 'slums_sneak',
       label: '뒷골목 깊숙이 잠입한다',
       hint: '위험하지만 결정적 단서를 얻을 수 있다',
-      action: { type: 'CHOICE', payload: { affordance: 'SNEAK', riskLevel: 2 } },
+      action: {
+        type: 'CHOICE',
+        payload: { affordance: 'SNEAK', riskLevel: 2 },
+      },
     },
   ],
 };
@@ -442,8 +655,7 @@ export class SceneShellService {
       );
     } else if (eventType) {
       // 2순위: suggested_choices.json 템플릿
-      const templateChoices =
-        this.contentLoader.getSuggestedChoices(eventType);
+      const templateChoices = this.contentLoader.getSuggestedChoices(eventType);
       if (templateChoices) {
         choices.push(
           ...templateChoices.map((c: any) => ({
@@ -475,8 +687,11 @@ export class SceneShellService {
         choices = filtered;
       } else {
         // 현재 풀의 모든 선택지가 소진됨 → 다른 풀에서 보충
-        const fallbackPool = DEFAULT_LOCATION_CHOICES[locationId] ?? GENERIC_EXPLORE_CHOICES;
-        const fallbackFiltered = fallbackPool.filter((c) => !selected.has(c.id));
+        const fallbackPool =
+          DEFAULT_LOCATION_CHOICES[locationId] ?? GENERIC_EXPLORE_CHOICES;
+        const fallbackFiltered = fallbackPool.filter(
+          (c) => !selected.has(c.id),
+        );
         if (fallbackFiltered.length > 0) {
           choices = fallbackFiltered;
         }
@@ -542,15 +757,20 @@ export class SceneShellService {
 
     // 2. 부족하면 follow-up 풀(LOCATION + eventType + 기본)에서 보충
     if (choices.length < TARGET_COUNT) {
-      const locationPool = LOCATION_FOLLOW_UPS[locationId]?.[resolveOutcome] ?? [];
-      const basePool = locationPool.length > 0
-        ? locationPool
-        : (FOLLOW_UP_CHOICES[resolveOutcome] ?? FOLLOW_UP_CHOICES.PARTIAL);
-      const typePool = eventType && EVENT_TYPE_FOLLOW_UPS[eventType]
-        ? (EVENT_TYPE_FOLLOW_UPS[eventType][resolveOutcome] ?? [])
-        : [];
+      const locationPool =
+        LOCATION_FOLLOW_UPS[locationId]?.[resolveOutcome] ?? [];
+      const basePool =
+        locationPool.length > 0
+          ? locationPool
+          : (FOLLOW_UP_CHOICES[resolveOutcome] ?? FOLLOW_UP_CHOICES.PARTIAL);
+      const typePool =
+        eventType && EVENT_TYPE_FOLLOW_UPS[eventType]
+          ? (EVENT_TYPE_FOLLOW_UPS[eventType][resolveOutcome] ?? [])
+          : [];
       const combinedPool = [...basePool, ...typePool].filter(
-        (c) => !used.has(c.id) && !usedAffordances.has(c.action.payload.affordance as string),
+        (c) =>
+          !used.has(c.id) &&
+          !usedAffordances.has(c.action.payload.affordance as string),
       );
 
       const shuffled = this.deterministicShuffle(

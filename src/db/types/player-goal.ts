@@ -4,7 +4,7 @@
 export interface PlayerGoalMilestone {
   description: string;
   completed: boolean;
-  factRequired: string;      // 이 WorldFact id/tag가 생기면 달성
+  factRequired: string; // 이 WorldFact id/tag가 생기면 달성
 }
 
 export interface PlayerGoal {
@@ -13,13 +13,13 @@ export interface PlayerGoal {
   // EXPLICIT: NPC 의뢰, 발견한 단서 추적
   // IMPLICIT: 행동 패턴에서 추론
 
-  description: string;         // "밀수 조직의 배후를 밝혀라"
+  description: string; // "밀수 조직의 배후를 밝혀라"
   relatedNpcs: string[];
   relatedLocations: string[];
-  relatedFactTags: string[];   // 관련 fact 태그
+  relatedFactTags: string[]; // 관련 fact 태그
 
   // 진행도
-  progress: number;            // 0~100
+  progress: number; // 0~100
   milestones: PlayerGoalMilestone[];
 
   // 메타

@@ -72,7 +72,10 @@ export class WorldTickService {
 
       // deadline 체크 (tickAllIncidents에서 못 잡은 것)
       const finalIncidents = incidents.map((inc) => {
-        if (!inc.resolved && this.incidentMgmt.checkDeadline(inc, updated.globalClock)) {
+        if (
+          !inc.resolved &&
+          this.incidentMgmt.checkDeadline(inc, updated.globalClock)
+        ) {
           const def = incidentDefs.find((d) => d.incidentId === inc.incidentId);
           if (def) {
             allPatches.push(def.impactOnResolve.EXPIRED);
@@ -151,13 +154,19 @@ export class WorldTickService {
     // v1 호환: phaseV2 → timePhase 동기화
     updated = {
       ...updated,
-      timePhase: updated.phaseV2 === 'DAWN' || updated.phaseV2 === 'DAY' ? 'DAY' : 'NIGHT',
+      timePhase:
+        updated.phaseV2 === 'DAWN' || updated.phaseV2 === 'DAY'
+          ? 'DAY'
+          : 'NIGHT',
     };
 
     // 만료된 시그널 정리
     updated = {
       ...updated,
-      signalFeed: this.signalFeed.expireSignals(updated.signalFeed, updated.globalClock),
+      signalFeed: this.signalFeed.expireSignals(
+        updated.signalFeed,
+        updated.globalClock,
+      ),
     };
 
     // --- Living World v2 tick ---
@@ -193,7 +202,12 @@ export class WorldTickService {
     rng: Rng,
     timeCost: number = 1,
   ): WorldState {
-    const { ws: preWs, resolvedPatches } = this.preStepTick(ws, incidentDefs, rng, timeCost);
+    const { ws: preWs, resolvedPatches } = this.preStepTick(
+      ws,
+      incidentDefs,
+      rng,
+      timeCost,
+    );
     return this.postStepTick(preWs, resolvedPatches);
   }
 
@@ -234,14 +248,19 @@ export class WorldTickService {
     if (patch.tensionDelta) {
       updated = {
         ...updated,
-        tension: Math.max(0, Math.min(10, updated.tension + patch.tensionDelta)),
+        tension: Math.max(
+          0,
+          Math.min(10, updated.tension + patch.tensionDelta),
+        ),
       };
     }
 
     // reputation
     if (patch.reputationChanges) {
       const newRep = { ...updated.reputation };
-      for (const [factionId, delta] of Object.entries(patch.reputationChanges)) {
+      for (const [factionId, delta] of Object.entries(
+        patch.reputationChanges,
+      )) {
         newRep[factionId] = (newRep[factionId] ?? 0) + delta;
       }
       updated = { ...updated, reputation: newRep };

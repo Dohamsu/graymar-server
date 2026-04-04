@@ -66,8 +66,14 @@ export class ConsequenceProcessorService {
     if (locationEffect) {
       const state = ws.locationDynamicStates?.[input.locationId];
       if (state) {
-        state.security = Math.max(0, Math.min(100, state.security + locationEffect.securityDelta));
-        state.unrest = Math.max(0, Math.min(100, state.unrest + locationEffect.unrestDelta));
+        state.security = Math.max(
+          0,
+          Math.min(100, state.security + locationEffect.securityDelta),
+        );
+        state.unrest = Math.max(
+          0,
+          Math.min(100, state.unrest + locationEffect.unrestDelta),
+        );
         output.locationEffects.push(
           `${input.locationId}: security${locationEffect.securityDelta >= 0 ? '+' : ''}${locationEffect.securityDelta}, unrest${locationEffect.unrestDelta >= 0 ? '+' : ''}${locationEffect.unrestDelta}`,
         );
@@ -75,7 +81,8 @@ export class ConsequenceProcessorService {
     }
 
     // 3. 같은 장소에 있는 NPC가 사실을 목격 (WITNESSED)
-    const presentNpcs = ws.locationDynamicStates?.[input.locationId]?.presentNpcs ?? [];
+    const presentNpcs =
+      ws.locationDynamicStates?.[input.locationId]?.presentNpcs ?? [];
     for (const npcId of presentNpcs) {
       if (npcId === input.primaryNpcId) continue; // 당사자는 이미 관여
       // fact의 impact에 npcKnowledge 추가
@@ -96,8 +103,11 @@ export class ConsequenceProcessorService {
   }
 
   private buildFactText(input: ConsequenceInput): string {
-    const actionDesc = ACTION_DESCRIPTIONS[input.intent.actionType] ?? input.intent.actionType;
-    const outcomeDesc = OUTCOME_DESCRIPTIONS[input.resolveResult.outcome] ?? input.resolveResult.outcome;
+    const actionDesc =
+      ACTION_DESCRIPTIONS[input.intent.actionType] ?? input.intent.actionType;
+    const outcomeDesc =
+      OUTCOME_DESCRIPTIONS[input.resolveResult.outcome] ??
+      input.resolveResult.outcome;
     const locationDesc = input.locationId.replace('LOC_', '').toLowerCase();
 
     if (input.primaryNpcId) {
@@ -134,7 +144,10 @@ export class ConsequenceProcessorService {
     const permanentOutcomes = new Set(['SUCCESS']);
 
     // 중요 행동 + 성공이면 영구
-    if (permanentActions.has(input.intent.actionType) && permanentOutcomes.has(input.resolveResult.outcome)) {
+    if (
+      permanentActions.has(input.intent.actionType) &&
+      permanentOutcomes.has(input.resolveResult.outcome)
+    ) {
       return true;
     }
 
@@ -146,7 +159,9 @@ export class ConsequenceProcessorService {
     return false;
   }
 
-  private computeLocationEffect(input: ConsequenceInput): { securityDelta: number; unrestDelta: number } | null {
+  private computeLocationEffect(
+    input: ConsequenceInput,
+  ): { securityDelta: number; unrestDelta: number } | null {
     const { actionType } = input.intent;
     const { outcome } = input.resolveResult;
 
