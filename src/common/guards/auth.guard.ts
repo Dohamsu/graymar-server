@@ -41,8 +41,11 @@ export class AuthGuard implements CanActivate {
 
   private verifyToken(req: Request, token: string): boolean {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const payload = this.jwtService.verify(token);
-      (req as unknown as Record<string, unknown>)[USER_ID_KEY] = payload.sub;
+      (req as unknown as Record<string, unknown>)[USER_ID_KEY] = (
+        payload as { sub: string }
+      ).sub;
       return true;
     } catch {
       throw new UnauthorizedError(

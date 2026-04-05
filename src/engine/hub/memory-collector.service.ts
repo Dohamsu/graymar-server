@@ -169,8 +169,9 @@ export class MemoryCollectorService {
     if (data.npcEmotionalDelta) {
       const { npcId, delta } = data.npcEmotionalDelta;
       const existing = ctx.npcEmotionalDeltas[npcId] ?? {};
+      const existingRec = existing as Record<string, number>;
       for (const [axis, val] of Object.entries(delta)) {
-        (existing as any)[axis] = ((existing as any)[axis] ?? 0) + val;
+        existingRec[axis] = (existingRec[axis] ?? 0) + val;
       }
       ctx.npcEmotionalDeltas[npcId] = existing;
     }
@@ -198,7 +199,7 @@ export class MemoryCollectorService {
       data.primaryNpcId ??
       this.resolveNpcFromTags(data.eventTags);
     if (
-      knowledgeActionTypes.includes(data.actionType as any) &&
+      (knowledgeActionTypes as readonly string[]).includes(data.actionType) &&
       (data.outcome === 'SUCCESS' || data.outcome === 'PARTIAL') &&
       targetNpcId
     ) {

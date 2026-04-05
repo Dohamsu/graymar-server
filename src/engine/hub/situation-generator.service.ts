@@ -339,7 +339,10 @@ export class SituationGeneratorService {
   ): Situation | null {
     // 최근 PLAYER_ACTION fact 중 NPC가 현재 장소에 있고, 해당 NPC가 fact를 아는 경우
     // 이미 CONSEQUENCE로 사용된 fact는 제외 (같은 fact에서 반복 생성 방지)
-    const usedFactIds = new Set((ws as any)._consequenceUsedFacts ?? []);
+    const usedFactIds = new Set(
+      ((ws as unknown as Record<string, unknown>)
+        ._consequenceUsedFacts as string[]) ?? [],
+    );
     for (const fact of recentFacts.slice(-5)) {
       if (fact.category !== 'PLAYER_ACTION') continue;
       if (usedFactIds.has(fact.id)) continue; // 이미 사용된 fact 스킵
@@ -489,11 +492,11 @@ export class SituationGeneratorService {
     if (candidates.length === 0) return undefined;
     // 미발견 fact가 있는 이벤트 우선
     if (this._discoveredFacts) {
-      const factEvent = candidates.find(
-        (e) =>
-          (e as any).discoverableFact &&
-          !this._discoveredFacts!.has((e as any).discoverableFact),
-      );
+      const factEvent = candidates.find((e) => {
+        const df = (e as unknown as Record<string, unknown>)
+          .discoverableFact as string | undefined;
+        return df && !this._discoveredFacts!.has(df);
+      });
       if (factEvent) return factEvent;
     }
     return candidates[0];

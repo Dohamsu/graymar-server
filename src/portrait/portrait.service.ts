@@ -32,10 +32,23 @@ interface RateEntry {
   windowStart: number;
 }
 
+/** Gemini 이미지 생성 클라이언트 타입 */
+interface GeminiImageClient {
+  models: {
+    generateContent(params: Record<string, unknown>): Promise<{
+      candidates?: Array<{
+        content?: {
+          parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }>;
+        };
+      }>;
+    }>;
+  };
+}
+
 @Injectable()
 export class PortraitService {
   private readonly logger = new Logger(PortraitService.name);
-  private geminiClient: any = null;
+  private geminiClient: GeminiImageClient | null = null;
 
   /** IP -> rate entry */
   private readonly rateMap = new Map<string, RateEntry>();
@@ -142,15 +155,16 @@ export class PortraitService {
 
   // ── Gemini Client ───────────────────────────────────────────
 
-  private getGeminiClient(): any {
+  private getGeminiClient(): GeminiImageClient {
     if (!this.geminiClient) {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         throw new Error('GEMINI_API_KEY is not set');
       }
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { GoogleGenAI } = require('@google/genai');
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+      const { GoogleGenAI } = require('@google/genai') as {
+        GoogleGenAI: new (opts: { apiKey: string }) => GeminiImageClient;
+      };
       this.geminiClient = new GoogleGenAI({ apiKey });
     }
     return this.geminiClient;
@@ -159,7 +173,6 @@ export class PortraitService {
   private async callGeminiImageGeneration(prompt: string): Promise<Buffer> {
     const client = this.getGeminiClient();
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
     const response = await client.models.generateContent({
       model: IMAGE_MODEL,
       contents: prompt,
@@ -170,16 +183,13 @@ export class PortraitService {
       },
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const parts = response.candidates?.[0]?.content?.parts;
     if (!parts || !Array.isArray(parts)) {
       throw new Error('No image parts in Gemini response');
     }
 
     for (const part of parts) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (part.inlineData?.data) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
         return Buffer.from(part.inlineData.data, 'base64');
       }
     }

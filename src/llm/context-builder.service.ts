@@ -76,7 +76,7 @@ export interface LlmContext {
   // Narrative Engine v1
   incidentContext: string | null; // 활성 Incident 요약
   npcEmotionalContext: string | null; // NPC 감정 상태 요약 (deprecated — prompt-builder에서 직접 빌드)
-  npcStates: Record<string, any> | null; // NPC 상태 (prompt-builder에서 감정 블록 빌드용)
+  npcStates: Record<string, NPCState> | null; // NPC 상태 (prompt-builder에서 감정 블록 빌드용)
   npcDeltaHint: string | null; // 이번 턴 NPC 감정 변화 delta
   hubHeat: number; // HUB Heat 수치 (NPC 감정 블록 mood 계산용)
   hubSafety: string; // HUB 안전도 (NPC 감정 블록 mood 계산용)
@@ -318,10 +318,10 @@ export class ContextBuilderService {
       const ws = runState.worldState as Record<string, unknown> | undefined;
       if (ws) {
         const snapshotParts = [
-          `시간: ${ws.timePhase === 'NIGHT' ? '밤' : '낮'}, 경계도: ${ws.hubHeat}/100 (${ws.hubSafety}), 긴장도: ${ws.tension ?? 0}/10`,
+          `시간: ${ws.timePhase === 'NIGHT' ? '밤' : '낮'}, 경계도: ${String(ws.hubHeat)}/100 (${String(ws.hubSafety)}), 긴장도: ${String((ws.tension as number | undefined) ?? 0)}/10`,
         ];
         if (ws.currentLocationId) {
-          locationContext = `현재 위치: ${ws.currentLocationId}`;
+          locationContext = `현재 위치: ${ws.currentLocationId as string}`;
 
           // Living World v2: 장소에 있는 NPC 목록
           const locDynamic = ws.locationDynamicStates as
@@ -462,7 +462,8 @@ export class ContextBuilderService {
         | Record<string, NPCState>
         | undefined;
       if (npcStates) {
-        const lastDelta = (runState as any).lastNpcDelta as
+        const lastDelta = (runState as unknown as Record<string, unknown>)
+          .lastNpcDelta as
           | {
               npcId: string;
               delta: Record<string, number>;
@@ -1135,10 +1136,13 @@ export class ContextBuilderService {
       questDirectionHint: this.buildQuestDirectionHint(serverResult, runState),
       // 장소 기반 NPC 필터링
       currentLocationId:
-        (runState?.worldState as any)?.currentLocationId ?? null,
+        ((runState?.worldState as Record<string, unknown> | undefined)
+          ?.currentLocationId as string) ?? null,
       currentTimePhase:
-        (runState?.worldState as any)?.phaseV2 ??
-        (runState?.worldState as any)?.timePhase ??
+        ((runState?.worldState as Record<string, unknown> | undefined)
+          ?.phaseV2 as string) ??
+        ((runState?.worldState as Record<string, unknown> | undefined)
+          ?.timePhase as string) ??
         null,
     };
   }
@@ -1526,22 +1530,31 @@ export class ContextBuilderService {
   ): string | null {
     if (!serverResult || !runState) return null;
     // FREE 이벤트인 경우에만 (이벤트가 매칭된 턴은 이미 fact 경로가 작동)
-    const eventId = (serverResult as any)?.ui?.eventId as string | undefined;
+    const srUi = serverResult.ui as Record<string, unknown> | undefined;
+    const eventId = srUi?.eventId as string | undefined;
     if (!eventId || !eventId.startsWith('FREE_')) return null;
 
-    const locationId = (runState as any)?.worldState?.currentLocationId;
+    const wsObj = runState.worldState as Record<string, unknown> | undefined;
+    const locationId = wsObj?.currentLocationId as string | undefined;
     if (!locationId) return null;
 
-    const discovered = new Set((runState as any)?.discoveredQuestFacts ?? []);
+    const discovered = new Set(
+      (runState.discoveredQuestFacts as string[] | undefined) ?? [],
+    );
     const allEvents = this.content.getAllEventsV2?.() ?? [];
     const undiscoveredFacts = allEvents
-      .filter(
-        (e: any) =>
-          e.locationId === locationId &&
-          e.discoverableFact &&
-          !discovered.has(e.discoverableFact),
-      )
-      .map((e: any) => e.discoverableFact);
+      .filter((e) => {
+        const eRec = e as unknown as Record<string, unknown>;
+        return (
+          eRec.locationId === locationId &&
+          eRec.discoverableFact &&
+          !discovered.has(eRec.discoverableFact as string)
+        );
+      })
+      .map(
+        (e) =>
+          (e as unknown as Record<string, unknown>).discoverableFact as string,
+      );
 
     if (undiscoveredFacts.length === 0) return null;
 
@@ -1558,13 +1571,13 @@ export class ContextBuilderService {
   ): { hint: string; mode: string } | null {
     if (!serverResult || !runState) return null;
 
-    const pending = (runState as any)?.pendingQuestHint as
+    const pending = runState.pendingQuestHint as
       | { hint: string; setAtTurn: number; mode?: string }
       | null
       | undefined;
     if (!pending?.hint) return null;
 
-    const currentTurnNo = (serverResult as any)?.turnNo as number | undefined;
+    const currentTurnNo = serverResult.turnNo as number | undefined;
     if (currentTurnNo == null) return null;
 
     // 발견 턴(setAtTurn)이 아닌 다음 턴에서만 전달

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { MidSummaryService } from './mid-summary.service.js';
 import type { RecentTurnEntry } from './context-builder.service.js';
 

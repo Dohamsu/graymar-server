@@ -8,6 +8,7 @@ import type {
   ConditionCmp,
   Gate,
   IncidentRoutingResult,
+  Affordance,
 } from '../../db/types/index.js';
 import type { Rng } from '../rng/rng.service.js';
 
@@ -63,9 +64,9 @@ export class EventMatcherService {
     candidates = candidates.filter(
       (e) =>
         e.affordances.includes('ANY') ||
-        e.affordances.includes(intent.actionType as any) ||
+        e.affordances.includes(intent.actionType as Affordance) ||
         (intent.secondaryActionType &&
-          e.affordances.includes(intent.secondaryActionType as any)),
+          e.affordances.includes(intent.secondaryActionType as Affordance)),
     );
 
     if (candidates.length === 0) return null;
@@ -123,9 +124,10 @@ export class EventMatcherService {
       let penalty = 0;
 
       // A: 미발견 discoverableFact 이벤트에 weight 부스트 (+35)
+      const evtFact = (e as unknown as Record<string, unknown>)
+        .discoverableFact as string | undefined;
       const questFactBoost =
-        (e as any).discoverableFact &&
-        !_discoveredFacts.has((e as any).discoverableFact)
+        evtFact && !_discoveredFacts.has(evtFact)
           ? QUEST_BALANCE.UNDISCOVERED_FACT_WEIGHT_BOOST
           : 0;
 
@@ -229,9 +231,9 @@ export class EventMatcherService {
     candidates = candidates.filter(
       (e) =>
         e.affordances.includes('ANY') ||
-        e.affordances.includes(intent.actionType as any) ||
+        e.affordances.includes(intent.actionType as Affordance) ||
         (intent.secondaryActionType &&
-          e.affordances.includes(intent.secondaryActionType as any)),
+          e.affordances.includes(intent.secondaryActionType as Affordance)),
     );
 
     if (candidates.length === 0) return null;
@@ -287,9 +289,10 @@ export class EventMatcherService {
       let incidentBoost = 0;
 
       // A: 미발견 discoverableFact 이벤트에 weight 부스트 (+35)
+      const evtFact2 = (e as unknown as Record<string, unknown>)
+        .discoverableFact as string | undefined;
       const questFactBoost =
-        (e as any).discoverableFact &&
-        !_discoveredFacts2.has((e as any).discoverableFact)
+        evtFact2 && !_discoveredFacts2.has(evtFact2)
           ? QUEST_BALANCE.UNDISCOVERED_FACT_WEIGHT_BOOST
           : 0;
 
@@ -513,12 +516,15 @@ export class EventMatcherService {
     const resolved = aliasMap[field] ?? field;
 
     const parts = resolved.split('.');
-    let obj: any = { ...ws, arcState };
+    let obj: Record<string, unknown> = { ...ws, arcState } as Record<
+      string,
+      unknown
+    >;
     for (const part of parts) {
       if (obj == null) return undefined;
-      obj = obj[part];
+      obj = obj[part] as Record<string, unknown>;
     }
-    return obj;
+    return obj as unknown;
   }
 
   private evaluateGates(

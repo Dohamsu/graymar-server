@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
 // PR8: 전체 파이프라인 통합 테스트 (설계문서 18~20 통합 검증)
 
 import { TokenBudgetService, TOKEN_BUDGET } from './token-budget.service.js';

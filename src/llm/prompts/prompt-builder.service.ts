@@ -384,9 +384,7 @@ export class PromptBuilderService {
       const fullList = this.content.getAllNpcs();
 
       // ⓪ IntentParser가 파싱한 targetNpcId 최우선 사용
-      const intentTargetNpcId = (sr.ui?.actionContext as any)?.targetNpcId as
-        | string
-        | undefined;
+      const intentTargetNpcId = sr.ui?.actionContext?.targetNpcId;
       if (intentTargetNpcId) {
         targetNpcIds.add(intentTargetNpcId);
       }
@@ -419,8 +417,9 @@ export class PromptBuilderService {
 
       // ② 이벤트 primaryNpc (플레이어 지정이 없을 때만)
       if (targetNpcIds.size === 0) {
-        const eventPrimaryNpcId = (sr.ui?.actionContext as any)
-          ?.primaryNpcId as string | undefined;
+        const eventPrimaryNpcId = (
+          sr.ui?.actionContext as Record<string, unknown> | undefined
+        )?.primaryNpcId as string | undefined;
         if (eventPrimaryNpcId) targetNpcIds.add(eventPrimaryNpcId);
         if (ctx.npcInjection?.npcId) targetNpcIds.add(ctx.npcInjection.npcId);
       }
@@ -456,9 +455,11 @@ export class PromptBuilderService {
         const phase = ctx.currentTimePhase ?? 'DAY';
         if (locId) {
           allNpcs = fullList.filter((npc) => {
-            const schedule = (npc as any).schedule?.default;
-            if (!schedule) return false;
-            const phaseEntry = schedule[phase] ?? schedule['DAY'];
+            const scheduleDefault = npc.schedule?.default;
+            if (!scheduleDefault) return false;
+            const phaseEntry =
+              scheduleDefault[phase as keyof typeof scheduleDefault] ??
+              scheduleDefault['DAY' as keyof typeof scheduleDefault];
             return phaseEntry?.locationId === locId;
           });
         }
@@ -476,9 +477,11 @@ export class PromptBuilderService {
         const phase = ctx.currentTimePhase ?? 'DAY';
         if (locId) {
           allNpcs = fullList.filter((npc) => {
-            const schedule = (npc as any).schedule?.default;
-            if (!schedule) return false;
-            const phaseEntry = schedule[phase] ?? schedule['DAY'];
+            const scheduleDefault = npc.schedule?.default;
+            if (!scheduleDefault) return false;
+            const phaseEntry =
+              scheduleDefault[phase as keyof typeof scheduleDefault] ??
+              scheduleDefault['DAY' as keyof typeof scheduleDefault];
             return phaseEntry?.locationId === locId;
           });
         }
@@ -511,7 +514,7 @@ export class PromptBuilderService {
           const knowledgeEntries = (ctx.npcKnowledge ?? {})[npc.npcId];
           const knowledgePart =
             knowledgeEntries && knowledgeEntries.length > 0
-              ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k: any) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`
+              ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`
               : '';
           return `- ${npc.name}${title}: ${npc.role} [이미 소개됨, 대명사: ${pronoun}]${knowledgePart}`;
         } else {
@@ -1384,7 +1387,7 @@ export class PromptBuilderService {
           ? npcDef.name
           : npcDef.unknownAlias || '이번 턴 NPC';
         // 재등장 + llmSummary가 있으면 간소 말투, 첫 등장이면 풀 speechStyle
-        const npcState = ctx.npcStates?.[npcId] as NPCState | undefined;
+        const npcState = ctx.npcStates?.[npcId];
         const isReEncounter = (npcState?.encounterCount ?? 0) > 1;
         const speechGuide =
           isReEncounter && npcState?.llmSummary?.behaviorGuide
@@ -1511,7 +1514,7 @@ export class PromptBuilderService {
       // personality 기반 행동 힌트 (핵심: posture와 personality 조합)
       // 첫 등장 판정: encounterCount 기반 (이전의 narrative 텍스트 매칭 대신 정확한 카운터 사용)
       const isFirstEncounter = (npc.encounterCount ?? 0) <= 1;
-      const llmSummary = (npc as NPCState).llmSummary;
+      const llmSummary = npc.llmSummary;
 
       const behaviorParts: string[] = [];
 
@@ -1583,7 +1586,7 @@ export class PromptBuilderService {
         }
 
         // signature 카운터: lastSignatureTurn 기반 3턴 간격
-        const lastSigTurn = (npc as NPCState).lastSignatureTurn ?? 0;
+        const lastSigTurn = npc.lastSignatureTurn ?? 0;
         const currentTurnNo = llmSummary.updatedAtTurn;
         if (
           personality?.signature?.length &&
@@ -1685,7 +1688,7 @@ export class PromptBuilderService {
   private buildFilteredNpcRelations(
     npcRelations: Record<string, string>,
     ownerNpcId: string,
-    npcStates: Record<string, any>,
+    npcStates: Record<string, NPCState>,
     newlyIntroducedSet: Set<string>,
     sceneNpcIds: Set<string>,
   ): string[] {
@@ -1712,8 +1715,8 @@ export class PromptBuilderService {
         if (relNpcDef?.name) {
           const alias = relNpcDef.unknownAlias || '누군가';
           sanitizedDesc = sanitizedDesc.replaceAll(relNpcDef.name, alias);
-          for (const a of (relNpcDef as any).aliases ?? []) {
-            sanitizedDesc = sanitizedDesc.replaceAll(a as string, alias);
+          for (const a of relNpcDef.aliases ?? []) {
+            sanitizedDesc = sanitizedDesc.replaceAll(a, alias);
           }
         }
         // 다른 NPC 실명도 alias 치환
@@ -1725,9 +1728,9 @@ export class PromptBuilderService {
           if (sanitizedDesc.includes(otherDef.name)) {
             sanitizedDesc = sanitizedDesc.replaceAll(otherDef.name, otherAlias);
           }
-          for (const a of (otherDef as any).aliases ?? []) {
-            if (sanitizedDesc.includes(a as string)) {
-              sanitizedDesc = sanitizedDesc.replaceAll(a as string, otherAlias);
+          for (const a of otherDef.aliases ?? []) {
+            if (sanitizedDesc.includes(a)) {
+              sanitizedDesc = sanitizedDesc.replaceAll(a, otherAlias);
             }
           }
         }

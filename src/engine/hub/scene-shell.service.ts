@@ -658,7 +658,7 @@ export class SceneShellService {
       const templateChoices = this.contentLoader.getSuggestedChoices(eventType);
       if (templateChoices) {
         choices.push(
-          ...templateChoices.map((c: any) => ({
+          ...templateChoices.map((c) => ({
             id: c.id,
             label: c.label,
             hint: c.hint,

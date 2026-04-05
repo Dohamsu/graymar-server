@@ -506,7 +506,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       }
 
       // 5. AI Turn 로그 기록 (파이프라인 로그 포함)
-      const pipelineLog = (serverResult as any)?._pipelineLog ?? undefined;
+      const pipelineLog =
+        (serverResult as Record<string, unknown> | undefined)?._pipelineLog ??
+        undefined;
       await this.aiTurnLog.log({
         runId: pending.runId,
         turnNo: pending.turnNo,
@@ -556,7 +558,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         let thread: ThreadData = { entries: [] };
         if (existingNode?.narrativeThread) {
           try {
-            thread = JSON.parse(existingNode.narrativeThread);
+            thread = JSON.parse(existingNode.narrativeThread) as ThreadData;
           } catch {
             /* ignore */
           }
@@ -722,7 +724,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       parts.push(locMatch[1]);
     } else {
       const ws = uiAny?.worldState as Record<string, unknown> | undefined;
-      if (ws?.currentLocationId) parts.push(String(ws.currentLocationId));
+      if (ws?.currentLocationId) parts.push(ws.currentLocationId as string);
     }
 
     // 2. 플레이어 행동 + 결과

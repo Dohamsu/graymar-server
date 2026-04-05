@@ -9,6 +9,17 @@ import type {
 } from '../types/index.js';
 import type { LlmConfig } from '../types/index.js';
 
+/** Responses API 응답 타입 (필요 필드만 정의) */
+interface ResponsesApiResponse {
+  output_text?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
+  status?: string;
+  model?: string;
+}
+
 // GPT-5, o1, o3 등 reasoning 모델 판별 (nano는 reasoning 미지원 → Chat Completions 사용)
 const isReasoningModel = (model: string) =>
   /^(gpt-5|o[1-9])/.test(model) && !model.includes('nano');
@@ -21,15 +32,22 @@ export class OpenAIProvider implements LlmProvider {
 
   private getClient(): import('openai').default {
     if (!this.client) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-      const OpenAI = require('openai').default;
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+      /* eslint-disable @typescript-eslint/no-require-imports */
+      const OpenAI = (
+        require('openai') as {
+          default: new (opts: {
+            apiKey?: string;
+            timeout?: number;
+          }) => import('openai').default;
+        }
+      ).default;
+      /* eslint-enable @typescript-eslint/no-require-imports */
       this.client = new OpenAI({
         apiKey: this.config.openaiApiKey,
         timeout: this.config.timeoutMs,
       });
     }
-    return this.client!;
+    return this.client;
   }
 
   async generate(request: LlmProviderRequest): Promise<LlmProviderResponse> {
@@ -62,31 +80,26 @@ export class OpenAIProvider implements LlmProvider {
       4096,
     );
 
-    const response: any = await client.responses.create({
+    const response = (await client.responses.create({
       model,
       input,
       max_output_tokens: reasoningBudget,
       reasoning: { effort },
-    });
+    })) as unknown as ResponsesApiResponse;
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const text: string = response.output_text ?? '';
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const usage = response.usage ?? {};
 
     if (!text) {
       console.warn(
-        `[OpenAIProvider/Responses] Empty output_text. Status: ${response.status}, model: ${response.model}`,
+        `[OpenAIProvider/Responses] Empty output_text. Status: ${String(response.status)}, model: ${String(response.model)}`,
       );
     }
 
     return {
       text,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       model: response.model ?? model,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       promptTokens: usage.input_tokens ?? 0,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       completionTokens: usage.output_tokens ?? 0,
       cachedTokens: 0,
       cacheCreationTokens: 0,
@@ -119,15 +132,20 @@ export class OpenAIProvider implements LlmProvider {
     const choice = completion.choices[0];
     const text = choice?.message?.content ?? '';
 
+    const usageWithDetails = completion.usage as
+      | (typeof completion.usage & {
+          prompt_tokens_details?: { cached_tokens?: number };
+        })
+      | undefined;
     const cachedTokens =
-      (completion.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0;
+      usageWithDetails?.prompt_tokens_details?.cached_tokens ?? 0;
 
     return {
       text,
       model: completion.model,
       promptTokens: completion.usage?.prompt_tokens ?? 0,
       completionTokens: completion.usage?.completion_tokens ?? 0,
-      cachedTokens: cachedTokens as number,
+      cachedTokens,
       cacheCreationTokens: 0,
       latencyMs: Date.now() - start,
     };
