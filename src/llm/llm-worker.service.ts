@@ -250,7 +250,6 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             if (memRow) {
               const structured =
                 memRow.structuredMemory ??
-                null ??
                 createEmptyStructuredMemory();
               {
                 const knowledge = structured.npcKnowledge ?? {};
@@ -601,7 +600,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           });
           if (memRow) {
             const structured =
-              memRow.structuredMemory ?? null ?? createEmptyStructuredMemory();
+              memRow.structuredMemory ?? createEmptyStructuredMemory();
             {
               // NPC 자동 매칭: 텍스트에서 NPC 이름 탐지
               for (const fact of extractedFacts) {

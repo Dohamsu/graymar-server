@@ -72,13 +72,12 @@ export class PromptBuilderService {
     // L0 확장: 주인공 배경 — 내면 설정으로만 참조 (매 턴 직접 언급 금지)
     if (ctx.protagonistBackground) {
       memoryParts.push(
-        `[PROTAGONIST_BACKGROUND — 내부 참조용, 매 턴 언급 금지]\n${ctx.protagonistBackground}\n` +
-          '이 배경은 캐릭터의 내면에 깔린 설정입니다. 서술에 직접 언급하지 마세요.\n' +
-          '다음 상황에서만 은연중에 드러내세요:\n' +
-          '- NPC가 캐릭터의 과거를 알아볼 때 (첫 만남, 소문)\n' +
-          '- 캐릭터의 전문 분야 행동 시 (익숙한 동작, 본능적 반응)\n' +
-          '- 감정적으로 과거와 연결되는 순간 (트라우마, 향수)\n' +
-          '평상시에는 언급하지 말고, 5~8턴에 1회 정도만 자연스럽게 스며들게 하세요.',
+        `[주인공 배경]\n${ctx.protagonistBackground}\n` +
+          '주인공의 배경은 행동 묘사에 자연스럽게 녹여내세요:\n' +
+          '- 행동할 때: 배경에서 비롯된 몸짓, 습관, 본능적 반응을 묘사 (예: 전직 군인의 절도 있는 움직임, 밀수업자의 은밀한 눈빛)\n' +
+          '- 관찰할 때: 전문 분야의 관점으로 상황을 읽는 묘사 (예: 검투사가 상대의 자세를 평가, 약초상이 풀 냄새를 구분)\n' +
+          '- 대화할 때: 과거가 은연중 묻어나는 말투나 반응 (예: 귀족의 무의식적 격식, 부두 노동자의 거친 어투)\n' +
+          '배경을 직접 설명하거나 독백으로 회상하지 마세요. 행동과 묘사에 자연스럽게 스며들게 하세요.',
       );
     }
 
@@ -409,13 +408,14 @@ export class PromptBuilderService {
         const aliasMatch =
           npc.unknownAlias &&
           playerInput.includes(npc.unknownAlias.toLowerCase());
-        // 부분 키워드 매칭 (예: "과일장수" → "웃는 얼굴의 과일장수")
+        // 부분 키워드 매칭 — 3글자 이상 명사형 토큰만 매칭 (조사/접미사 제거)
+        // "날카로운 눈매의 회계사" → "날카로운", "눈매의", "회계사" 중 3글자 이상만
         const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
         const keywordMatch =
           aliasKeywords.length > 0 &&
           aliasKeywords.some(
             (kw: string) =>
-              kw.length >= 2 && playerInput.includes(kw.toLowerCase()),
+              kw.length >= 3 && playerInput.includes(kw.toLowerCase()),
           );
         if (nameMatch || aliasMatch || keywordMatch) {
           targetNpcIds.add(npc.npcId);
@@ -1639,13 +1639,26 @@ export class PromptBuilderService {
         }
       }
 
+      // encounterCount 기반 관계 깊이 단계 가이드
+      const encCount = npc.encounterCount ?? 0;
+      let depthGuide = '';
+      if (encCount <= 1) {
+        depthGuide = '\n    관계 깊이: 첫 만남 — 경계하며 최소한의 반응. 정보를 쉽게 주지 않음';
+      } else if (encCount <= 3) {
+        depthGuide = '\n    관계 깊이: 재회 — 얼굴을 기억함. 이전 대화를 언급하며, 조금 더 편하게 대화';
+      } else if (encCount <= 6) {
+        depthGuide = '\n    관계 깊이: 안면 — 자기 사정이나 고민을 슬쩍 내비침. 감정 변화가 드러남';
+      } else {
+        depthGuide = '\n    관계 깊이: 깊은 관계 — 비밀이나 제안을 직접적으로 전달. 솔직한 감정 표현';
+      }
+
       const hintText =
         hints.length > 0 ? `\n    감정: ${hints.join('. ')}` : '';
       const behaviorText =
         behaviorParts.length > 0 ? `\n    ${behaviorParts.join('\n    ')}` : '';
       const moodText = currentMood ? `\n    현재 상태: ${currentMood}` : '';
       emotionalLines.push(
-        `- ${displayName} [${posture}]${hintText}${behaviorText}${moodText}`,
+        `- ${displayName} [${posture}]${depthGuide}${hintText}${behaviorText}${moodText}`,
       );
     }
 
