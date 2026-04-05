@@ -13,17 +13,35 @@ import type {
 } from '../types/index.js';
 import type { LlmConfig } from '../types/index.js';
 
+/** Gemini API 응답 타입 (필요 필드만 정의) */
+interface GeminiResponse {
+  text?: string;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    cachedContentTokenCount?: number;
+  };
+  candidates?: Array<{ finishReason?: string }>;
+}
+
+interface GeminiClient {
+  models: {
+    generateContent(params: Record<string, unknown>): Promise<GeminiResponse>;
+  };
+}
+
 export class GeminiProvider implements LlmProvider {
   readonly name = 'gemini';
-  private client: any = null;
+  private client: GeminiClient | null = null;
 
   constructor(private readonly config: LlmConfig) {}
 
-  private getClient(): any {
+  private getClient(): GeminiClient {
     if (!this.client) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-      const { GoogleGenAI } = require('@google/genai');
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { GoogleGenAI } = require('@google/genai') as {
+        GoogleGenAI: new (opts: { apiKey?: string }) => GeminiClient;
+      };
       this.client = new GoogleGenAI({ apiKey: this.config.geminiApiKey });
     }
     return this.client;
@@ -58,7 +76,6 @@ export class GeminiProvider implements LlmProvider {
       ? Math.max(request.maxTokens, 8192)
       : request.maxTokens;
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
     const response = await client.models.generateContent({
       model,
       contents,
@@ -69,13 +86,10 @@ export class GeminiProvider implements LlmProvider {
       },
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const text: string = response.text ?? '';
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const usage = response.usageMetadata;
 
     // 디버깅: finish reason 로그
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const finishReason = response.candidates?.[0]?.finishReason;
     if (finishReason && finishReason !== 'STOP') {
       console.warn(
@@ -86,11 +100,8 @@ export class GeminiProvider implements LlmProvider {
     return {
       text,
       model,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       promptTokens: usage?.promptTokenCount ?? 0,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       completionTokens: usage?.candidatesTokenCount ?? 0,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       cachedTokens: usage?.cachedContentTokenCount ?? 0,
       cacheCreationTokens: 0,
       latencyMs: Date.now() - start,

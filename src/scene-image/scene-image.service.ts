@@ -14,10 +14,27 @@ const MAX_IMAGES = 100;
 const IMAGE_DIR = path.resolve(process.cwd(), 'public', 'scene-images');
 const IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
+/** Gemini 이미지/텍스트 클라이언트 타입 */
+interface GeminiImageClient {
+  models: {
+    generateContent(params: Record<string, unknown>): Promise<{
+      text?: string;
+      candidates?: Array<{
+        content?: {
+          parts?: Array<{
+            text?: string;
+            inlineData?: { data?: string; mimeType?: string };
+          }>;
+        };
+      }>;
+    }>;
+  };
+}
+
 @Injectable()
 export class SceneImageService {
   private readonly logger = new Logger(SceneImageService.name);
-  private geminiClient: any = null;
+  private geminiClient: GeminiImageClient | null = null;
 
   constructor(@Inject(DB) private readonly db: DrizzleDB) {
     // public/scene-images 디렉토리 보장
@@ -27,15 +44,16 @@ export class SceneImageService {
     }
   }
 
-  private getGeminiClient(): any {
+  private getGeminiClient(): GeminiImageClient {
     if (!this.geminiClient) {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         throw new Error('GEMINI_API_KEY is not set');
       }
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { GoogleGenAI } = require('@google/genai');
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+      const { GoogleGenAI } = require('@google/genai') as {
+        GoogleGenAI: new (opts: { apiKey: string }) => GeminiImageClient;
+      };
       this.geminiClient = new GoogleGenAI({ apiKey });
     }
     return this.geminiClient;
@@ -152,7 +170,6 @@ export class SceneImageService {
     const client = this.getGeminiClient();
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
       const response = await client.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: [
@@ -160,10 +177,7 @@ export class SceneImageService {
         ],
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const text = response.candidates?.[0]?.content?.parts?.[0]?.text as
-        | string
-        | undefined;
+      const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text && text.length > 10) {
         this.logger.debug(`[SceneImage] Translated: ${text.slice(0, 100)}...`);
         return text;
@@ -191,7 +205,6 @@ export class SceneImageService {
   private async callGeminiImageGeneration(prompt: string): Promise<Buffer> {
     const client = this.getGeminiClient();
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
     const response = await client.models.generateContent({
       model: IMAGE_MODEL,
       contents: prompt,
@@ -203,16 +216,13 @@ export class SceneImageService {
     });
 
     // 응답에서 이미지 파트 추출
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const parts = response.candidates?.[0]?.content?.parts;
     if (!parts || !Array.isArray(parts)) {
       throw new Error('No image parts in Gemini response');
     }
 
     for (const part of parts) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       if (part.inlineData?.data) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
         return Buffer.from(part.inlineData.data, 'base64');
       }
     }

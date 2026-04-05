@@ -170,9 +170,18 @@ export class ContentLoaderService implements OnModuleInit {
     for (const npc of npcsList) this.npcs.set(npc.npcId, npc);
 
     this.eventsV2 = JSON.parse(eventsV2Raw) as EventDefV2[];
-    this.sceneShells = JSON.parse(sceneShellsRaw);
-    this.suggestedChoices = JSON.parse(suggestedChoicesRaw);
-    this.arcEvents = JSON.parse(arcEventsRaw);
+    this.sceneShells = JSON.parse(sceneShellsRaw) as Record<
+      string,
+      Record<string, Record<string, string>>
+    >;
+    this.suggestedChoices = JSON.parse(suggestedChoicesRaw) as Record<
+      string,
+      SuggestedChoice[]
+    >;
+    this.arcEvents = JSON.parse(arcEventsRaw) as Record<
+      string,
+      ArcEventDefinition[]
+    >;
 
     // Phase 4: 세트/상점 로드
     const setsList = JSON.parse(setsRaw) as SetDefinitionData[];
@@ -208,18 +217,20 @@ export class ContentLoaderService implements OnModuleInit {
     this.validateNpcReferences();
 
     // Narrative Engine v1: Incidents/Endings/Narrative Marks 로드
-    const incidentsParsed = JSON.parse(incidentsRaw);
+    const incidentsParsed = JSON.parse(incidentsRaw) as {
+      incidents?: unknown[];
+    };
     this.incidentsData = incidentsParsed.incidents ?? [];
-    this.endingsData = JSON.parse(endingsRaw);
-    const marksParsed = JSON.parse(narrativeMarksRaw);
+    this.endingsData = JSON.parse(endingsRaw) as Record<string, unknown>;
+    const marksParsed = JSON.parse(narrativeMarksRaw) as { marks?: unknown[] };
     this.narrativeMarkConditions = marksParsed.marks ?? [];
 
     // Scenario meta 로드
-    const scenarioParsed = JSON.parse(scenarioMetaRaw);
-    this.scenarioMeta = scenarioParsed as ScenarioMeta | null;
+    const scenarioParsed = JSON.parse(scenarioMetaRaw) as ScenarioMeta | null;
+    this.scenarioMeta = scenarioParsed;
 
     // Quest data 로드
-    this.questData = JSON.parse(questRaw);
+    this.questData = JSON.parse(questRaw) as unknown;
 
     // Traits 로드
     const traitsList = JSON.parse(traitsRaw) as TraitDefinition[];

@@ -148,7 +148,8 @@ export class MemoryIntegrationService {
     for (const [npcId, npc] of Object.entries(runState.npcStates ?? {})) {
       if (
         npc.emotional &&
-        npc.emotional.trust !== (npc as any).initialTrust &&
+        npc.emotional.trust !==
+          (npc as unknown as Record<string, unknown>).initialTrust &&
         Math.abs(npc.emotional.trust) >= 5
       ) {
         npcIdsToProcess.add(npcId);

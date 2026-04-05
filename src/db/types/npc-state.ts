@@ -397,7 +397,7 @@ export function condenseSpeechStyle(
   const parts: string[] = [];
 
   // 어미 패턴 추출 (~하오, ~ㅂ니다 등)
-  const endingMatch = speechStyle.match(/[~\-][\w가-힣]+(?:체|투|조|말)/);
+  const endingMatch = speechStyle.match(/[~-][\w가-힣]+(?:체|투|조|말)/);
   if (endingMatch) parts.push(endingMatch[0]);
 
   // 주요 특성 키워드 추출 (쉼표/마침표 구분자로 split, 짧은 구문만)
@@ -562,10 +562,7 @@ export function buildTopicEntry(
   // keywords: 소스 텍스트에서 핵심 명사 추출
   const sourceText = factDetail ?? sceneFrame ?? rawInput;
   const words = sourceText
-    .replace(
-      /[.,!?~…'""\u201c\u201d\u2018\u2019()[\]{}<>:;\/\\|@#$%^&*+=]/g,
-      '',
-    )
+    .replace(/[.,!?~…'""\u201c\u201d\u2018\u2019()[\]{}<>:;/\\|@#$%^&*+=]/g, '')
     .split(/\s+/)
     .filter((w) => w.length >= 2 && w.length <= 8)
     .filter((w) => !TOPIC_STOPWORDS.has(w))

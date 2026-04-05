@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
 import { EventDirectorService } from './event-director.service.js';
 import { EventMatcherService } from './event-matcher.service.js';
 import type {

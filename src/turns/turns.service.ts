@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/restrict-template-expressions, @typescript-eslint/no-base-to-string, @typescript-eslint/no-require-imports */
 // 정본: specs/HUB_system.md — Action-First 턴 파이프라인
 
 /** NPC portrait URL mapping (only NPCs with dedicated portraits) */
@@ -1081,6 +1082,7 @@ export class TurnsService {
         const lastWasDynamic =
           lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
         const dynamicRoll = rng.range(0, 100);
+
         const { SITGEN_CHANCE } =
           require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
         if (
@@ -2505,6 +2507,7 @@ export class TurnsService {
         }
 
         // 경로 3: PARTIAL + 이벤트 discoverableFact — P2/P4: 확률은 config에서 관리
+
         const { PARTIAL_FACT_DISCOVERY_CHANCE } =
           require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
         if (resolveResult.outcome === 'PARTIAL' && event) {

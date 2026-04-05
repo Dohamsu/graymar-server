@@ -111,13 +111,23 @@ export class NarrativeMarkService {
       if (npcId === '*') {
         // 아무 NPC라도 조건 충족이면 통과
         const found = Object.values(ctx.npcEmotionals).some((emo) =>
-          this.compareValue((emo as any)[axis] ?? 0, op, value),
+          this.compareValue(
+            (emo as unknown as Record<string, number>)[axis] ?? 0,
+            op,
+            value,
+          ),
         );
         if (!found) return false;
       } else {
         const emo = ctx.npcEmotionals[npcId];
         if (!emo) return false;
-        if (!this.compareValue((emo as any)[axis] ?? 0, op, value))
+        if (
+          !this.compareValue(
+            (emo as unknown as Record<string, number>)[axis] ?? 0,
+            op,
+            value,
+          )
+        )
           return false;
       }
     }

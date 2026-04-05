@@ -29,6 +29,7 @@ export class TurnsController {
     @UserId() userId: string,
     @Body(new ZodValidationPipe(SubmitTurnBodySchema)) body: SubmitTurnBody,
   ) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return this.turnsService.submitTurn(runId, userId, body);
   }
 

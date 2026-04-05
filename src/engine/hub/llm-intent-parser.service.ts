@@ -224,12 +224,12 @@ export class LlmIntentParserService implements OnModuleInit {
     for (const candidate of candidates) {
       if (!candidate) continue;
       try {
-        const parsed = JSON.parse(candidate);
+        const parsed = JSON.parse(candidate) as Record<string, unknown>;
         if (this.validateParsed(parsed)) {
           const actionType = this.normalizeActionType(
             parsed.actionType as IntentActionType,
           );
-          const secondaryRaw = parsed.secondaryActionType;
+          const secondaryRaw = parsed.secondaryActionType as string | undefined;
           const secondaryActionType: IntentActionType | null =
             secondaryRaw &&
             (INTENT_ACTION_TYPE as readonly string[]).includes(secondaryRaw)

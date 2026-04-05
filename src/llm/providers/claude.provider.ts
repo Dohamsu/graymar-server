@@ -13,21 +13,44 @@ import type {
 } from '../types/index.js';
 import type { LlmConfig } from '../types/index.js';
 
+/** Anthropic API 응답 타입 (필요 필드만 정의) */
+interface AnthropicResponse {
+  content?: Array<{ type: string; text?: string }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+  stop_reason?: string;
+  model?: string;
+}
+
+interface AnthropicClient {
+  messages: {
+    create(params: Record<string, unknown>): Promise<AnthropicResponse>;
+  };
+}
+
 // Extended thinking 지원 모델 판별 (claude-3-7-sonnet, claude-4 계열 등)
 const _isExtendedThinkingModel = (model: string) =>
   /^claude-(3-7|4|sonnet-4|opus-4)/.test(model);
 
 export class ClaudeProvider implements LlmProvider {
   readonly name = 'claude';
-  private client: any = null;
+  private client: AnthropicClient | null = null;
 
   constructor(private readonly config: LlmConfig) {}
 
-  private getClient(): any {
+  private getClient(): AnthropicClient {
     if (!this.client) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-      const { default: Anthropic } = require('@anthropic-ai/sdk');
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { default: Anthropic } = require('@anthropic-ai/sdk') as {
+        default: new (opts: {
+          apiKey?: string;
+          timeout?: number;
+        }) => AnthropicClient;
+      };
       this.client = new Anthropic({
         apiKey: this.config.claudeApiKey,
         timeout: this.config.timeoutMs,
@@ -62,7 +85,6 @@ export class ClaudeProvider implements LlmProvider {
       content: m.content,
     }));
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
     const response = await client.messages.create({
       model,
       max_tokens: request.maxTokens,
@@ -71,30 +93,22 @@ export class ClaudeProvider implements LlmProvider {
       messages,
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const textBlock = response.content?.find((b: any) => b.type === 'text');
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const textBlock = response.content?.find((b) => b.type === 'text');
     const text: string = textBlock?.text ?? '';
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const usage = response.usage ?? {};
 
     if (!text) {
       console.warn(
-        `[ClaudeProvider] Empty text. stop_reason: ${response.stop_reason}, model: ${response.model}`,
+        `[ClaudeProvider] Empty text. stop_reason: ${String(response.stop_reason)}, model: ${String(response.model)}`,
       );
     }
 
     return {
       text,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       model: response.model ?? model,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       promptTokens: usage.input_tokens ?? 0,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       completionTokens: usage.output_tokens ?? 0,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       cachedTokens: usage.cache_read_input_tokens ?? 0,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
       latencyMs: Date.now() - start,
     };

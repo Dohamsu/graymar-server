@@ -8,6 +8,7 @@ import type {
   IncidentVectorState,
   WorldState,
   ResolveOutcome,
+  Affordance,
 } from '../../db/types/index.js';
 import type { Rng } from '../rng/rng.service.js';
 
@@ -278,9 +279,9 @@ export class IncidentManagementService {
     const affordanceMatch = candidates.find(({ def, incident }) => {
       const stageDef = def.stages[incident.stage];
       return (
-        stageDef?.affordances.includes(actionType as any) ||
+        stageDef?.affordances.includes(actionType as Affordance) ||
         (secondaryActionType &&
-          stageDef?.affordances.includes(secondaryActionType as any))
+          stageDef?.affordances.includes(secondaryActionType as Affordance))
       );
     });
 
