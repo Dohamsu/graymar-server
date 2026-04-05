@@ -767,6 +767,14 @@ export class PromptBuilderService {
         if (actionCtx?.parsedType) {
           parts.push(`엔진 해석: ${actionCtx.parsedType}`);
         }
+        // HUB 선택 시 프리셋 배경에 맞는 행동 톤 힌트
+        if (isHub && ctx.protagonistBackground) {
+          parts.push(
+            '⚠️ [주인공 배경]에 적힌 행동 특징을 이 장면에 반드시 반영하세요. ' +
+            '수락하는 태도, 몸짓, 주변을 살피는 방식이 직업과 과거에서 비롯된 것이어야 합니다. ' +
+            '예: 전직 군인은 짧고 단호하게, 밀수업자는 조건을 따지듯, 귀족은 품격을 유지하며.',
+          );
+        }
         factsParts.push(parts.join('\n'));
       }
     }
