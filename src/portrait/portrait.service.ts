@@ -114,6 +114,16 @@ export class PortraitService {
     appearanceDescription: string,
     ip: string,
   ): Promise<{ imageUrl: string; promptUsed: string }> {
+    // 이미지 생성 비활성화 — API 과금 방지 (재활성화: 아래 조건을 false로 변경)
+    const IMAGE_GENERATION_DISABLED = true;
+    if (IMAGE_GENERATION_DISABLED) {
+      this.logger.log('Portrait generation SKIPPED (disabled to prevent API billing)');
+      return {
+        imageUrl: `/${presetId.toLowerCase()}_${gender === 'female' ? 'f' : 'm'}.png`,
+        promptUsed: '[SKIPPED]',
+      };
+    }
+
     // Rate increment
     this.incrementRate(ip);
 
