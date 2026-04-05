@@ -7,7 +7,6 @@ import { nodeMemories } from '../../db/schema/index.js';
 import type {
   VisitContextCache,
   VisitAction,
-  StructuredMemory,
 } from '../../db/types/structured-memory.js';
 import {
   createEmptyVisitContext,

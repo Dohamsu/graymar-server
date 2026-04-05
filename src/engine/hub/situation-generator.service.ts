@@ -1,12 +1,10 @@
 // Living World v2: 3계층 상황 생성기
 // 세계 상태에서 상황을 생성한다. 기존 EventMatcher와 병렬 배치 (점진적 전환).
 
-import { Injectable, Inject, Optional } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import type {
   WorldState,
   EventDefV2,
-  EventPayload,
-  Affordance,
   ParsedIntentV2,
   IncidentDef,
   WorldFact,
@@ -190,7 +188,7 @@ export class SituationGeneratorService {
     intent: ParsedIntentV2,
     allEvents: EventDefV2[],
     recentPrimaryNpcIds?: string[],
-    discoveredFacts?: Set<string>,
+    _discoveredFacts?: Set<string>,
   ): Situation | null {
     const locState = ws.locationDynamicStates?.[locationId];
     const allPresentNpcs = locState?.presentNpcs ?? [];

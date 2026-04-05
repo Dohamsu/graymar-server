@@ -314,7 +314,7 @@ export class ResolveService {
   /** 비도전 행위 자동 SUCCESS: 주사위 소비 없음, 최소 열기, 전투 트리거 없음 */
   private buildAutoSuccess(
     event: EventDefV2,
-    intent: ParsedIntentV2,
+    _intent: ParsedIntentV2,
   ): ResolveResult {
     const tags = event.payload.tags;
 

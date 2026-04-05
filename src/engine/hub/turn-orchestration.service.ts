@@ -156,7 +156,7 @@ export class TurnOrchestrationService {
     // reputation 기반 NPC trust 자연 조정
     const ws = runState.worldState;
     if (ws?.reputation) {
-      for (const [npcId, state] of Object.entries(npcStates)) {
+      for (const [npcId, _state] of Object.entries(npcStates)) {
         const npcData = this.contentLoader.getNpc(npcId);
         const faction = npcData?.faction;
         if (faction && ws.reputation[faction] !== undefined) {
@@ -274,7 +274,7 @@ export class TurnOrchestrationService {
 
     // personality traits는 [NPC 대화 자세] 블록에서 첫 등장 시에만 전달
     // dialogueSeed에서는 제거하여 LLM의 personality 직접 인용 반복 방지
-    const npcDef = this.contentLoader.getNpc(state.npcId ?? '');
+    this.contentLoader.getNpc(state.npcId ?? '');
 
     if (state.currentGoal) {
       seed += `. 목적: ${state.currentGoal}`;
@@ -289,8 +289,8 @@ export class TurnOrchestrationService {
 
   private buildInjectionReason(
     state: NPCState,
-    posture: NpcPosture,
-    locationId: string,
+    _posture: NpcPosture,
+    _locationId: string,
   ): string {
     if (state.suspicion > 40) return '의심스러운 움직임을 감지하고 나타남';
     if (state.trustToPlayer > 30) return '협력 관계에 따라 도움을 주러 옴';

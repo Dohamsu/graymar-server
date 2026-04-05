@@ -15,7 +15,6 @@ import type {
   NpcDefinition,
   SetDefinitionData,
   ShopDefinition,
-  ScenarioMetaContent,
   EquipmentDropEntry,
   TraitDefinition,
 } from './content.types.js';

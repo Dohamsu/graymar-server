@@ -579,7 +579,7 @@ export class SceneShellService {
     return this.contentLoader.getSceneShell(locationId, timePhase, hubSafety);
   }
 
-  buildHubChoices(ws: WorldState, arcState: ArcState): ChoiceItem[] {
+  buildHubChoices(ws: WorldState, _arcState: ArcState): ChoiceItem[] {
     const choices: ChoiceItem[] = [
       {
         id: 'go_market',

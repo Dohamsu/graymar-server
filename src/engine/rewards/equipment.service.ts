@@ -4,10 +4,9 @@ import { Injectable } from '@nestjs/common';
 import type {
   EquipmentSlot,
   EquippedGear,
-  StatKey,
   ItemInstance,
 } from '../../db/types/equipment.js';
-import { EQUIPMENT_SLOTS, emptyEquipped } from '../../db/types/equipment.js';
+import { EQUIPMENT_SLOTS } from '../../db/types/equipment.js';
 import type { StatModifier } from '../stats/stats.service.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { AffixService } from './affix.service.js';

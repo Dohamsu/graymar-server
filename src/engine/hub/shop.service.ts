@@ -2,10 +2,7 @@
 
 import { Injectable } from '@nestjs/common';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
-import type {
-  ShopDefinition,
-  ItemDefinition,
-} from '../../content/content.types.js';
+import type { ShopDefinition } from '../../content/content.types.js';
 import type { ShopStock, StockItem } from '../../db/types/region-state.js';
 import { Rng } from '../rng/rng.service.js';
 

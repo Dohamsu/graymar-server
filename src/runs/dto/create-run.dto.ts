@@ -1,14 +1,5 @@
 import { z } from 'zod';
 
-const VALID_BONUS_STAT_KEYS = [
-  'str',
-  'dex',
-  'wit',
-  'con',
-  'per',
-  'cha',
-] as const;
-
 export const CreateRunBodySchema = z.object({
   presetId: z.string().min(1).max(50).optional(),
   gender: z.enum(['male', 'female']).optional().default('male'),

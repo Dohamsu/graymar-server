@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import type {
   OperationSession,
   OperationStep,
-  WorldState,
   ChoiceItem,
 } from '../../db/types/index.js';
 

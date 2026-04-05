@@ -3,7 +3,6 @@ import type {
   ParsedIntentV2,
   IntentActionType,
 } from '../../db/types/parsed-intent-v2.js';
-import type { ParsedIntentV3 } from '../../db/types/parsed-intent-v3.js';
 
 function makeV2(overrides: Partial<ParsedIntentV2> = {}): ParsedIntentV2 {
   return {

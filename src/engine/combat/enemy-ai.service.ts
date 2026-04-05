@@ -25,7 +25,7 @@ export class EnemyAiService {
    * 적 AI 행동 선택: personality 기반 v1 최소 구현
    * 반환: 적이 실행할 ActionUnit[] (최대 1개)
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   selectActions(ctx: EnemyContext, _rng: Rng): ActionUnit[] {
     switch (ctx.personality) {
       case 'AGGRESSIVE':

@@ -14,7 +14,7 @@ import type {
 import type { LlmConfig } from '../types/index.js';
 
 // Extended thinking 지원 모델 판별 (claude-3-7-sonnet, claude-4 계열 등)
-const isExtendedThinkingModel = (model: string) =>
+const _isExtendedThinkingModel = (model: string) =>
   /^claude-(3-7|4|sonnet-4|opus-4)/.test(model);
 
 export class ClaudeProvider implements LlmProvider {

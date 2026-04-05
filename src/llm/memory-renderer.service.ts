@@ -265,7 +265,7 @@ export class MemoryRendererService {
    */
   renderActiveClues(
     structured: StructuredMemory,
-    ws?: Record<string, unknown>,
+    _ws?: Record<string, unknown>,
   ): string {
     const clues: { text: string; importance: number }[] = [];
 

@@ -6,7 +6,6 @@ import type {
   WorldState,
   NpcAgenda,
   NpcAgendaStage,
-  WorldFact,
 } from '../../db/types/index.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { WorldFactService } from './world-fact.service.js';

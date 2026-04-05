@@ -242,7 +242,7 @@ export class ProceduralEventService {
 
   private deriveAffordances(
     action: ProceduralSeed,
-    outcome: ProceduralSeed,
+    _outcome: ProceduralSeed,
   ): Affordance[] {
     const affordances: Affordance[] = ['ANY'];
 

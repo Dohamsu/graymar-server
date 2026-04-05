@@ -3,12 +3,7 @@
 import { Injectable } from '@nestjs/common';
 import type { LlmContext } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
-import type {
-  NpcEmotionalState,
-  NpcLlmSummary,
-  NpcTopicEntry,
-  NPCState,
-} from '../../db/types/npc-state.js';
+import type { NpcEmotionalState, NPCState } from '../../db/types/npc-state.js';
 import {
   computeEffectivePosture,
   getNpcDisplayName,
@@ -196,14 +191,12 @@ export class PromptBuilderService {
     }
 
     // [장면 흐름] 블록 — narrative thread 캐시 (이번 방문 대화 위에 배치)
-    let hasNarrativeThread = false;
     if (ctx.narrativeThread) {
       try {
         const thread = JSON.parse(ctx.narrativeThread) as {
           entries: { turnNo: number; summary: string }[];
         };
         if (thread.entries.length > 0) {
-          hasNarrativeThread = true;
           const threadLines = thread.entries.map(
             (e) => `[턴 ${e.turnNo}] ${e.summary}`,
           );
@@ -771,8 +764,8 @@ export class PromptBuilderService {
         if (isHub && ctx.protagonistBackground) {
           parts.push(
             '⚠️ [주인공 배경]에 적힌 행동 특징을 이 장면에 반드시 반영하세요. ' +
-            '수락하는 태도, 몸짓, 주변을 살피는 방식이 직업과 과거에서 비롯된 것이어야 합니다. ' +
-            '예: 전직 군인은 짧고 단호하게, 밀수업자는 조건을 따지듯, 귀족은 품격을 유지하며.',
+              '수락하는 태도, 몸짓, 주변을 살피는 방식이 직업과 과거에서 비롯된 것이어야 합니다. ' +
+              '예: 전직 군인은 짧고 단호하게, 밀수업자는 조건을 따지듯, 귀족은 품격을 유지하며.',
           );
         }
         factsParts.push(parts.join('\n'));
@@ -1651,13 +1644,17 @@ export class PromptBuilderService {
       const encCount = npc.encounterCount ?? 0;
       let depthGuide = '';
       if (encCount <= 1) {
-        depthGuide = '\n    관계 깊이: 첫 만남 — 경계하며 최소한의 반응. 정보를 쉽게 주지 않음';
+        depthGuide =
+          '\n    관계 깊이: 첫 만남 — 경계하며 최소한의 반응. 정보를 쉽게 주지 않음';
       } else if (encCount <= 3) {
-        depthGuide = '\n    관계 깊이: 재회 — 얼굴을 기억함. 이전 대화를 언급하며, 조금 더 편하게 대화';
+        depthGuide =
+          '\n    관계 깊이: 재회 — 얼굴을 기억함. 이전 대화를 언급하며, 조금 더 편하게 대화';
       } else if (encCount <= 6) {
-        depthGuide = '\n    관계 깊이: 안면 — 자기 사정이나 고민을 슬쩍 내비침. 감정 변화가 드러남';
+        depthGuide =
+          '\n    관계 깊이: 안면 — 자기 사정이나 고민을 슬쩍 내비침. 감정 변화가 드러남';
       } else {
-        depthGuide = '\n    관계 깊이: 깊은 관계 — 비밀이나 제안을 직접적으로 전달. 솔직한 감정 표현';
+        depthGuide =
+          '\n    관계 깊이: 깊은 관계 — 비밀이나 제안을 직접적으로 전달. 솔직한 감정 표현';
       }
 
       const hintText =

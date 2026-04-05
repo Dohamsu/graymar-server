@@ -23,10 +23,8 @@ import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
-import { toDisplayText } from '../common/text-utils.js';
 import type { ServerResultV1, ChoiceItem } from '../db/types/index.js';
 import type {
-  StructuredMemory,
   LlmExtractedFact,
   LlmFactCategory,
 } from '../db/types/structured-memory.js';
@@ -249,8 +247,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             });
             if (memRow) {
               const structured =
-                memRow.structuredMemory ??
-                createEmptyStructuredMemory();
+                memRow.structuredMemory ?? createEmptyStructuredMemory();
               {
                 const knowledge = structured.npcKnowledge ?? {};
                 for (const km of npcKnowledgeMatches.slice(0, 3)) {
