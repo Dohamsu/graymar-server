@@ -2877,17 +2877,27 @@ export class TurnsService {
     }
 
     // === Speaking NPC: 대사 주체 정보 (클라이언트 DialogueBubble용) ===
-    // eventPrimaryNpc는 대화잠금/타겟매칭으로 보정된 실제 NPC ID (PROCEDURAL 이벤트 포함)
-    const primaryNpcIdForSpeaking =
-      eventPrimaryNpc ??
-      ((event.payload as Record<string, unknown>)?.primaryNpcId as
-        | string
-        | undefined);
+    // PROCEDURAL/SIT_ 이벤트에서 injectedNpc가 override한 경우 → 원래 이벤트의 primaryNpcId 사용
+    // injectedNpc는 프롬프트 컨텍스트용이지 대사 주체가 아님
+    const eventOriginalPrimaryNpc =
+      (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
+    const isProcedural = event.eventId.startsWith('PROC_') || event.eventId.startsWith('SIT_');
+    const primaryNpcIdForSpeaking = isProcedural
+      ? eventOriginalPrimaryNpc ?? null  // PROC/SIT: 원래 이벤트의 NPC만 (injected 무시)
+      : eventPrimaryNpc ?? eventOriginalPrimaryNpc ?? null;  // 고정 이벤트: 기존 로직
+
     if (primaryNpcIdForSpeaking && npcNames[primaryNpcIdForSpeaking]) {
       (result.ui as any).speakingNpc = {
         npcId: primaryNpcIdForSpeaking,
         displayName: npcNames[primaryNpcIdForSpeaking],
         imageUrl: NPC_PORTRAITS[primaryNpcIdForSpeaking] ?? undefined,
+      };
+    } else if (!primaryNpcIdForSpeaking) {
+      // NPC 미지정 이벤트 (일반 경비병, 행인 등) → 무명 인물 (실루엣 아이콘, imageUrl 없음)
+      (result.ui as any).speakingNpc = {
+        npcId: null,
+        displayName: '무명 인물',
+        imageUrl: undefined,
       };
     }
 
