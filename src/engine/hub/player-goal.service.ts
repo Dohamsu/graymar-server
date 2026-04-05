@@ -1,11 +1,7 @@
 // Living World v2: 플레이어 주도 목표 관리
 
 import { Injectable } from '@nestjs/common';
-import type {
-  WorldState,
-  PlayerGoal,
-  WorldFact,
-} from '../../db/types/index.js';
+import type { WorldState, PlayerGoal } from '../../db/types/index.js';
 import { MAX_ACTIVE_GOALS } from '../../db/types/player-goal.js';
 import { WorldFactService } from './world-fact.service.js';
 

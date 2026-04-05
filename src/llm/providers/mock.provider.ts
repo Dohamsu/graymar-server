@@ -10,7 +10,7 @@ import type {
 export class MockProvider implements LlmProvider {
   readonly name = 'mock';
 
-  generate(request: LlmProviderRequest): Promise<LlmProviderResponse> {
+  generate(_request: LlmProviderRequest): Promise<LlmProviderResponse> {
     const start = Date.now();
 
     // fallback 텍스트: "No narrative available" (LLM worker의 SceneShell fallback이 대체함)

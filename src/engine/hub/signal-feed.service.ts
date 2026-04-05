@@ -145,7 +145,7 @@ export class SignalFeedService {
     outcome: string,
     locationId: string,
     currentClock: number,
-    targetNpcId?: string | null,
+    _targetNpcId?: string | null,
   ): SignalFeedItem | null {
     const channelMap: Record<string, SignalChannel> = {
       FIGHT: 'SECURITY',

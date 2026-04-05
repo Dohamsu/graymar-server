@@ -25,7 +25,7 @@ export class PolicyService {
     intent: ParsedIntent,
     nodeType: NodeType,
     nodeState: 'NODE_ACTIVE' | 'NODE_ENDED',
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     _currentStamina: number,
   ): PolicyCheckResult {
     // 불변 규칙: NODE_ENDED에서 전투 계속 불가

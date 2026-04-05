@@ -19,10 +19,6 @@ import type {
   SignalFeedItem,
   NarrativeMark,
 } from '../db/types/index.js';
-import type {
-  NpcEmotionalState,
-  NpcPersonalMemory,
-} from '../db/types/npc-state.js';
 import {
   summarizeRelationship,
   computeEffectivePosture,
@@ -30,7 +26,6 @@ import {
   generateRelationSummary,
 } from '../db/types/npc-state.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
-import type { StructuredMemory } from '../db/types/structured-memory.js';
 import type { NpcKnowledgeLedger } from '../db/types/npc-knowledge.js';
 import { MemoryRendererService } from './memory-renderer.service.js';
 import { MidSummaryService } from './mid-summary.service.js';
@@ -869,12 +864,18 @@ export class ContextBuilderService {
         }
         // 프리셋별 행동 묘사 키워드 — LLM이 행동 서술에 자연스럽게 반영
         const PRESET_MANNERISMS: Record<string, string> = {
-          DOCKWORKER: '행동 특징: 거친 손, 무거운 것에 익숙한 어깨, 투박하지만 믿음직한 몸짓, 부두 노동자 특유의 직선적 화법',
-          DESERTER: '행동 특징: 군인 특유의 절도 있는 움직임, 본능적으로 퇴로를 확인하는 습관, 전장의 긴장감이 배어있는 자세',
-          SMUGGLER: '행동 특징: 어둠에 익숙한 눈, 은밀하고 재빠른 손놀림, 상대를 살피는 날카로운 시선, 뒷골목을 잘 아는 발걸음',
-          HERBALIST: '행동 특징: 풀과 약초 냄새가 배어있는 손, 식물을 다루듯 섬세한 손길, 관찰력 있는 시선, 차분하고 신중한 태도',
-          FALLEN_NOBLE: '행동 특징: 무의식적인 귀족 예법, 교양이 묻어나는 말투, 격식 있는 자세, 과거의 품격이 남아있는 행동거지',
-          GLADIATOR: '행동 특징: 투기장에서 단련된 본능, 위험을 두려워하지 않는 당당한 자세, 전투적 시선, 거칠고 직접적인 행동',
+          DOCKWORKER:
+            '행동 특징: 거친 손, 무거운 것에 익숙한 어깨, 투박하지만 믿음직한 몸짓, 부두 노동자 특유의 직선적 화법',
+          DESERTER:
+            '행동 특징: 군인 특유의 절도 있는 움직임, 본능적으로 퇴로를 확인하는 습관, 전장의 긴장감이 배어있는 자세',
+          SMUGGLER:
+            '행동 특징: 어둠에 익숙한 눈, 은밀하고 재빠른 손놀림, 상대를 살피는 날카로운 시선, 뒷골목을 잘 아는 발걸음',
+          HERBALIST:
+            '행동 특징: 풀과 약초 냄새가 배어있는 손, 식물을 다루듯 섬세한 손길, 관찰력 있는 시선, 차분하고 신중한 태도',
+          FALLEN_NOBLE:
+            '행동 특징: 무의식적인 귀족 예법, 교양이 묻어나는 말투, 격식 있는 자세, 과거의 품격이 남아있는 행동거지',
+          GLADIATOR:
+            '행동 특징: 투기장에서 단련된 본능, 위험을 두려워하지 않는 당당한 자세, 전투적 시선, 거칠고 직접적인 행동',
         };
         const mannerism = PRESET_MANNERISMS[presetId];
         if (mannerism) bgParts.push(mannerism);
@@ -959,7 +960,8 @@ export class ContextBuilderService {
           const npcDef = this.content.getNpc(factNpcId);
           if (npcDef?.knownFacts && npcDef.knownFacts.length > 0) {
             // 이미 공개된 factId 집합: discoveredQuestFacts 기준 (퀘스트 팩트 추적과 동기화)
-            const discoveredFacts = (runState?.discoveredQuestFacts as string[]) ?? [];
+            const discoveredFacts =
+              (runState?.discoveredQuestFacts as string[]) ?? [];
             const revealedFactIds = new Set(discoveredFacts);
 
             // 첫 번째 미공개 fact 선택 (순서대로 점진적 공개)

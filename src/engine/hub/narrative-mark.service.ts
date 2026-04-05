@@ -4,7 +4,6 @@ import type {
   NarrativeMarkType,
   NarrativeMarkCondition,
   NpcEmotionalState,
-  IncidentRuntime,
   WorldState,
 } from '../../db/types/index.js';
 

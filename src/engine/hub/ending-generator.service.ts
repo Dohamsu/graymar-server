@@ -3,13 +3,9 @@
 
 import { Injectable } from '@nestjs/common';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
-import type {
-  IncidentRuntime,
-  IncidentOutcome,
-} from '../../db/types/incident.js';
+import type { IncidentRuntime } from '../../db/types/incident.js';
 import type { NarrativeMark } from '../../db/types/narrative-mark.js';
 import type { NPCState } from '../../db/types/npc-state.js';
-import type { NpcEmotionalState } from '../../db/types/npc-state.js';
 import { computeEffectivePosture } from '../../db/types/npc-state.js';
 import type {
   MainArcClock,

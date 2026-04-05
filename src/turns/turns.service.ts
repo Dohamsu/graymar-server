@@ -47,7 +47,6 @@ import type {
   RunState,
   WorldState,
   ArcState,
-  PlayerAgenda,
   ChoiceItem,
 } from '../db/types/index.js';
 import { computePBP } from '../db/types/player-behavior.js';
@@ -79,10 +78,7 @@ import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js';
 import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
-import {
-  TurnOrchestrationService,
-  NPC_LOCATION_AFFINITY,
-} from '../engine/hub/turn-orchestration.service.js';
+import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
 // User-Driven System v3
 import { IntentV3BuilderService } from '../engine/hub/intent-v3-builder.service.js';
 import { IncidentRouterService } from '../engine/hub/incident-router.service.js';
@@ -115,12 +111,10 @@ import { ShopService } from '../engine/hub/shop.service.js';
 import { LegendaryRewardService } from '../engine/rewards/legendary-reward.service.js';
 import type { RegionEconomy } from '../db/types/region-state.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
-import type { ProceduralHistoryEntry } from '../db/types/procedural-event.js';
 import {
   initNPCState,
   getNpcDisplayName,
   shouldIntroduce,
-  computeEffectivePosture as computePosture,
   resolveNpcPlaceholders,
   recordNpcEncounter,
   addNpcKnownFact,
@@ -131,7 +125,6 @@ import {
 import type {
   IncidentDef,
   IncidentRuntime,
-  IncidentRoutingResult,
   NarrativeMarkCondition,
   NPCState,
   NpcEmotionalState,
@@ -361,7 +354,7 @@ export class TurnsService {
     turnNo: number,
     body: SubmitTurnBody,
     runState: RunState,
-    playerStats: PermanentStats,
+    _playerStats: PermanentStats,
   ) {
     if (body.input.type !== 'CHOICE' || !body.input.choiceId) {
       throw new InvalidInputError('HUB requires CHOICE input');
@@ -369,7 +362,7 @@ export class TurnsService {
 
     const ws = runState.worldState ?? this.worldStateService.initWorldState();
     const arcState = runState.arcState ?? this.arcService.initArcState();
-    const agenda = runState.agenda ?? this.agendaService.initAgenda();
+    const _agenda = runState.agenda ?? this.agendaService.initAgenda();
     const updatedRunState: RunState = { ...runState };
 
     const choiceId = body.input.choiceId;
@@ -493,7 +486,7 @@ export class TurnsService {
         ([, a], [, b]) => b - a,
       )[0];
       if (bestNpc) {
-        const { ws: newWs, reduction } = this.heatService.resolveByAlly(
+        const { ws: newWs } = this.heatService.resolveByAlly(
           ws,
           bestNpc[0],
           relations,
@@ -1026,7 +1019,7 @@ export class TurnsService {
       'THREATEN',
       'HELP',
     ]);
-    const isSocialAction = SOCIAL_ACTIONS.has(intent.actionType);
+    const _isSocialAction = SOCIAL_ACTIONS.has(intent.actionType);
 
     // Step 3: 이벤트 매칭 — 트리거 조건이 있을 때만 (플레이어 주도)
     // IncidentRouter: intentV3 기반으로 관련 incident 라우팅
@@ -2079,7 +2072,7 @@ export class TurnsService {
     ws = this.worldStateService.updateHubSafety(ws);
 
     // Deferred 체크
-    const { ws: wsAfterDeferred, triggered } =
+    const { ws: wsAfterDeferred } =
       this.worldStateService.processDeferredEffects(ws, turnNo);
     ws = wsAfterDeferred;
 
@@ -3739,7 +3732,7 @@ export class TurnsService {
     if (resolveResult.nodeOutcome === 'NODE_ENDED') {
       const ws =
         updatedRunState.worldState ?? this.worldStateService.initWorldState();
-      const arcState =
+      const _arcState =
         updatedRunState.arcState ?? this.arcService.initArcState();
 
       // 패배 시 RUN_ENDED + 엔딩 내러티브 생성
@@ -4625,7 +4618,7 @@ export class TurnsService {
   /** 자유 텍스트에서 목표 위치 추출 */
   private extractTargetLocation(
     input: string,
-    currentLocationId: string,
+    _currentLocationId: string,
   ): string | null {
     const normalized = input.toLowerCase();
     const locationKeywords: Array<{ keywords: string[]; locationId: string }> =

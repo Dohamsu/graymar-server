@@ -13,7 +13,7 @@ const SERVER_VERSION = (() => {
   }
 })();
 import { runSessions } from '../db/schema/index.js';
-import { NotFoundError, ForbiddenError } from '../common/errors/game-errors.js';
+import { NotFoundError } from '../common/errors/game-errors.js';
 import type {
   CreateBugReportBody,
   UpdateBugReportBody,

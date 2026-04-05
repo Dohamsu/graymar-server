@@ -3,8 +3,6 @@ import type {
   NpcEmotionalState,
   NPCState,
   NpcPosture,
-  NarrativeMarkType,
-  IntentActionType,
   ResolveOutcome,
 } from '../../db/types/index.js';
 import { computeEffectivePosture } from '../../db/types/npc-state.js';

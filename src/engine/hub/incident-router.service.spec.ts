@@ -4,7 +4,6 @@ import type {
   IncidentRuntime,
   IncidentDef,
   ParsedIntentV3,
-  IncidentVectorState,
 } from '../../db/types/index.js';
 
 function makeIntentV3(overrides: Partial<ParsedIntentV3> = {}): ParsedIntentV3 {

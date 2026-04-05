@@ -43,7 +43,7 @@ import { RunPlannerService } from '../engine/planner/run-planner.service.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import { ShopService } from '../engine/hub/shop.service.js';
 import { EquipmentService } from '../engine/rewards/equipment.service.js';
-import type { EquipmentSlot, ItemInstance } from '../db/types/equipment.js';
+import type { EquipmentSlot } from '../db/types/equipment.js';
 import type { RegionEconomy } from '../db/types/region-state.js';
 
 @Injectable()
@@ -212,7 +212,7 @@ export class RunsService {
     const npcRelations: Record<string, number> = {};
     // npcs.json이 있으면 기본 관계도 설정
     const locations = this.content.getAllLocations();
-    for (const loc of locations) {
+    for (const _loc of locations) {
       // 기본 NPC 관계 50 (중립)
     }
     npcRelations['NPC_RONEN'] = 30; // 의뢰인
@@ -392,7 +392,7 @@ export class RunsService {
       const consumableItems: Array<{ itemId: string; qty: number }> = [];
       const startEquipped: import('../db/types/equipment.js').EquippedGear = {};
       const startBag: import('../db/types/equipment.js').ItemInstance[] = [];
-      const equipRng = this.rngService.create(seed + '_start_eq', 0);
+      const _equipRng = this.rngService.create(seed + '_start_eq', 0);
 
       const startItemMemories: Record<
         string,
@@ -478,7 +478,7 @@ export class RunsService {
     };
 
     // 4. HUB 선택지 생성
-    const hubChoices = this.sceneShellService.buildHubChoices(
+    const _hubChoices = this.sceneShellService.buildHubChoices(
       worldState,
       arcState,
     );

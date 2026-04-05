@@ -63,7 +63,7 @@ export class NodeTransitionService {
     turnNo: number,
     locationId: string,
     ws: WorldState,
-    runState?: RunState,
+    _runState?: RunState,
   ): Promise<NodeTransitionResult> {
     const nextIndex = await this.getNextNodeIndex(runId);
     const location = this.content.getLocation(locationId);
@@ -579,7 +579,7 @@ export class NodeTransitionService {
 
     if (nodeType === 'COMBAT') {
       // 전투 노드: BattleState 초기화 필요
-      const encounterId = (plannedNode.nodeMeta?.eventId as string) ?? '';
+      const _encounterId = (plannedNode.nodeMeta?.eventId as string) ?? '';
       const battleState = await this.initBattleState(
         runId,
         newNode.id,
@@ -845,7 +845,7 @@ export class NodeTransitionService {
 
   private buildCombatChoices(
     battleState: BattleStateV1,
-    envTags: string[],
+    _envTags: string[],
   ): ServerResultV1['choices'] {
     const aliveEnemies = battleState.enemies.filter((e) => e.hp > 0);
     const choices: ServerResultV1['choices'] = [];
