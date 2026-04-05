@@ -958,12 +958,9 @@ export class ContextBuilderService {
         if (factNpcId) {
           const npcDef = this.content.getNpc(factNpcId);
           if (npcDef?.knownFacts && npcDef.knownFacts.length > 0) {
-            // 이미 공개된 factId 집합: npcKnowledge 레저에서 확인
-            const knowledgeEntries =
-              structured?.npcKnowledge?.[factNpcId] ?? [];
-            const revealedFactIds = new Set(
-              knowledgeEntries.map((e) => e.factId),
-            );
+            // 이미 공개된 factId 집합: discoveredQuestFacts 기준 (퀘스트 팩트 추적과 동기화)
+            const discoveredFacts = (runState?.discoveredQuestFacts as string[]) ?? [];
+            const revealedFactIds = new Set(discoveredFacts);
 
             // 첫 번째 미공개 fact 선택 (순서대로 점진적 공개)
             const unrevealed = npcDef.knownFacts.find(
