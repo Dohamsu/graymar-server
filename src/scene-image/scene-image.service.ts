@@ -91,6 +91,13 @@ export class SceneImageService {
     turnNo: number,
     userId: string,
   ): Promise<{ imageUrl: string; remainingCount: number; cached: boolean }> {
+    // 이미지 생성 비활성화 — API 과금 방지 (재활성화: 아래 조건을 false로 변경)
+    const IMAGE_GENERATION_DISABLED = true;
+    if (IMAGE_GENERATION_DISABLED) {
+      this.logger.log(`Scene image generation SKIPPED for run=${runId} turn=${turnNo} (disabled to prevent API billing)`);
+      return { imageUrl: '', remainingCount: 0, cached: false };
+    }
+
     // 1. RUN 소유자 확인
     const run = await this.db.query.runSessions.findFirst({
       where: eq(runSessions.id, runId),
