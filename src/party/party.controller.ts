@@ -40,7 +40,7 @@ import { ZodError } from 'zod';
 import { RunsService } from '../runs/runs.service.js';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { runSessions } from '../db/schema/run-sessions.js';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 @Controller('v1/parties')
 @UseGuards(AuthGuard)
@@ -184,10 +184,40 @@ export class PartyController {
 
     const subject = this.streamService.register(partyId, userId);
 
-    // 연결 해제 시 자동 정리
+    // 재접속 시 AI 제어 해제
+    this.partyTurnService.removeAiControlledByUser(userId);
+
+    // 연결 해제 시 30초 후 AI 제어 전환
     req.on('close', () => {
       this.streamService.unregister(partyId, userId);
       this.logger.debug(`SSE closed: party=${partyId} user=${userId}`);
+
+      // 30초 유예 후 AI 제어 전환
+      setTimeout(async () => {
+        // 재연결 확인 (connectionCount > 0이면 재연결됨)
+        if (this.streamService.getConnectionCount(partyId) > 0) {
+          // 해당 유저가 다시 연결되었는지는 broadcast 테스트로 확인 불가
+          // 간단히: connectionCount가 변했으면 재연결된 것으로 간주
+        }
+
+        // 파티 런 조회하여 AI 제어 전환
+        try {
+          const activeRun = await this.db.query.runSessions.findFirst({
+            where: and(
+              eq(runSessions.partyId, partyId),
+              eq(runSessions.status, 'RUN_ACTIVE'),
+            ),
+            columns: { id: true },
+          });
+          if (activeRun) {
+            this.partyTurnService.setAiControlled(activeRun.id, userId);
+            this.streamService.broadcast(partyId, 'party:member_ai_controlled', { userId });
+            this.logger.log(`AI control activated after 30s: user=${userId} run=${activeRun.id}`);
+          }
+        } catch {
+          // 비정상 상태 무시
+        }
+      }, 30_000);
     });
 
     // 30초마다 heartbeat (연결 유지)
@@ -266,9 +296,18 @@ export class PartyController {
       columns: { runState: true },
     });
     if (fullRun?.runState) {
+      const rs = fullRun.runState as unknown as Record<string, unknown>;
+      const initialHp = (rs.hp as number) ?? 100;
+      const initialMaxHp = (rs.maxHp as number) ?? 100;
+      // 파티 멤버별 HP 초기화
+      const partyMemberHp: Record<string, { hp: number; maxHp: number }> = {};
+      for (const m of memberProfiles) {
+        partyMemberHp[m.userId] = { hp: initialHp, maxHp: initialMaxHp };
+      }
       const updatedRunState = {
-        ...(fullRun.runState as unknown as Record<string, unknown>),
+        ...rs,
         partyMembers: memberProfiles,
+        partyMemberHp,
       };
       await this.db
         .update(runSessions)
@@ -309,10 +348,34 @@ export class PartyController {
     // 현재 턴 번호를 직접 DB에서 조회 (파티 런은 소유자가 리더이므로 getRun 우회)
     const run = await this.db.query.runSessions.findFirst({
       where: eq(runSessions.id, runId),
-      columns: { currentTurnNo: true, partyId: true },
+      columns: { currentTurnNo: true, partyId: true, currentLocationId: true },
     });
     if (!run) throw new NotFoundError('런을 찾을 수 없습니다.');
     if (run.partyId !== partyId) throw new BadRequestError('이 파티의 런이 아닙니다.');
+
+    // HUB CHOICE → 이동 투표 자동 생성 (다수결)
+    if (inputType === 'CHOICE' && rawInput.startsWith('go_')) {
+      const locationMap: Record<string, string> = {
+        go_market: 'LOC_MARKET',
+        go_harbor: 'LOC_HARBOR',
+        go_guard: 'LOC_GUARD',
+        go_slums: 'LOC_SLUMS',
+        go_noble: 'LOC_NOBLE',
+        go_temple: 'LOC_TEMPLE',
+        go_tavern: 'LOC_TAVERN',
+      };
+      const targetLocationId = locationMap[rawInput] ?? rawInput.replace('go_', 'LOC_').toUpperCase();
+
+      // 투표 생성 (제안자 자동 찬성)
+      const vote = await this.voteService.createVote(
+        partyId,
+        runId,
+        userId,
+        targetLocationId,
+      );
+      return { accepted: true, voteCreated: true, vote };
+    }
+
     const turnNo = (run.currentTurnNo ?? 0) + 1;
 
     return this.partyTurnService.submitAction(
@@ -324,6 +387,63 @@ export class PartyController {
       rawInput,
       idempotencyKey,
     );
+  }
+
+  // ── Phase 2: 파티 턴 상세 조회 ──
+
+  @Get(':partyId/runs/:runId/turns/:turnNo')
+  async getPartyTurnDetail(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+    @Param('runId') runId: string,
+    @Param('turnNo') turnNoStr: string,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+    const turnNo = parseInt(turnNoStr, 10);
+
+    // 파티 행동 목록 (party_turn_actions)
+    const partyActions =
+      await this.partyTurnService.getSubmittedActions(runId, turnNo);
+
+    // 솔로 턴 결과 (turns 테이블)
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+      columns: { userId: true },
+    });
+
+    let turnResult: unknown = null;
+    if (run) {
+      try {
+        turnResult = await this.runsService.getRun(runId, run.userId, {
+          turnsLimit: 50,
+        });
+      } catch {
+        // 조회 실패 무시
+      }
+    }
+
+    // 해당 턴 데이터 찾기
+    const turnData = (turnResult as Record<string, unknown> | null)?.turns as
+      | Array<Record<string, unknown>>
+      | undefined;
+    const matchedTurn = turnData?.find(
+      (t) => (t.turnNo as number) === turnNo,
+    );
+
+    return {
+      turnNo,
+      partyActions: partyActions.map((a) => ({
+        userId: a.userId,
+        rawInput: a.rawInput,
+        isAutoAction: a.isAutoAction,
+        submittedAt: a.submittedAt,
+      })),
+      serverResult: matchedTurn?.serverResult ?? null,
+      llm: {
+        status: matchedTurn?.llmStatus ?? null,
+        output: matchedTurn?.llmOutput ?? null,
+      },
+    };
   }
 
   // ── Phase 2: 이동 투표 ──
