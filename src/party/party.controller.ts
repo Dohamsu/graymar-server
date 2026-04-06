@@ -192,13 +192,10 @@ export class PartyController {
       this.streamService.unregister(partyId, userId);
       this.logger.debug(`SSE closed: party=${partyId} user=${userId}`);
 
-      // 30초 유예 후 AI 제어 전환
+      // 30초 유예 후 AI 제어 전환 (재연결 여부 확인)
       setTimeout(async () => {
-        // 재연결 확인 (connectionCount > 0이면 재연결됨)
-        if (this.streamService.getConnectionCount(partyId) > 0) {
-          // 해당 유저가 다시 연결되었는지는 broadcast 테스트로 확인 불가
-          // 간단히: connectionCount가 변했으면 재연결된 것으로 간주
-        }
+        // 해당 유저가 다시 연결되었는지 확인
+        if (this.streamService.isUserConnected(partyId, userId)) return;
 
         // 파티 런 조회하여 AI 제어 전환
         try {

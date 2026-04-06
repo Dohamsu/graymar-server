@@ -126,4 +126,25 @@ export class PartyStreamService {
   getConnectionCount(partyId: string): number {
     return this.connections.get(partyId)?.size ?? 0;
   }
+
+  /**
+   * 파티에 에러 이벤트를 브로드캐스트한다.
+   */
+  broadcastError(
+    partyId: string,
+    code: string,
+    message: string,
+  ): void {
+    this.broadcast(partyId, 'party:error', { code, message });
+  }
+
+  /**
+   * 특정 유저가 현재 연결되어 있는지 확인한다.
+   */
+  isUserConnected(partyId: string, userId: string): boolean {
+    const partyMap = this.connections.get(partyId);
+    if (!partyMap) return false;
+    const subject = partyMap.get(userId);
+    return !!subject && !subject.closed;
+  }
 }
