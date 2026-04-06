@@ -19,7 +19,13 @@ export class AuthGuard implements CanActivate {
       return this.verifyToken(req, authHeader.slice(7));
     }
 
-    // 2. httpOnly cookie 확인
+    // 2. Query param token (SSE EventSource용 — 커스텀 헤더 불가)
+    const queryToken = req.query?.token as string | undefined;
+    if (queryToken) {
+      return this.verifyToken(req, queryToken);
+    }
+
+    // 3. httpOnly cookie 확인
     const cookieToken = (req.cookies as Record<string, string> | undefined)?.[
       COOKIE_NAME
     ];
