@@ -38,8 +38,10 @@ import {
 } from '../common/errors/game-errors.js';
 import { ZodError } from 'zod';
 import { RunsService } from '../runs/runs.service.js';
+import { RunParticipantsService } from './run-participants.service.js';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { runSessions } from '../db/schema/run-sessions.js';
+import { partyMembers } from '../db/schema/party-members.js';
 import { eq, and } from 'drizzle-orm';
 
 @Controller('v1/parties')
@@ -55,6 +57,7 @@ export class PartyController {
     private readonly voteService: VoteService,
     private readonly partyTurnService: PartyTurnService,
     private readonly runsService: RunsService,
+    private readonly runParticipantsService: RunParticipantsService,
     @Inject(DB) private readonly db: DrizzleDB,
   ) {}
 
@@ -324,6 +327,46 @@ export class PartyController {
     });
 
     return { partyId, runId, memberUserIds };
+  }
+
+  // ── Phase 3: 내 세계에 초대 (런 통합) ──
+
+  @Post(':partyId/lobby/invite-run')
+  @HttpCode(HttpStatus.OK)
+  async inviteToRun(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+
+    // 전원 준비 확인
+    const lobbyState = await this.lobbyService.getLobbyState(partyId);
+    if (!lobbyState.canStart) {
+      throw new BadRequestError(
+        '전원 준비 완료 + 2명 이상이어야 시작할 수 있습니다.',
+      );
+    }
+
+    // 파티장의 솔로 런에 합류
+    const { runId, memberUserIds } =
+      await this.runParticipantsService.inviteToExistingRun(userId, partyId);
+
+    // 준비 상태 초기화
+    await this.db
+      .update(partyMembers)
+      .set({ isReady: 'false' })
+      .where(eq(partyMembers.partyId, partyId));
+
+    // SSE 브로드캐스트: 던전 시작 (파티장 세계 합류)
+    this.streamService.broadcast(partyId, 'lobby:dungeon_starting', {
+      partyId,
+      runId,
+      memberUserIds,
+      isRunIntegration: true, // 클라이언트가 "새 던전" vs "런 통합" 구분용
+      countdown: 3,
+    });
+
+    return { partyId, runId, memberUserIds, isRunIntegration: true };
   }
 
   // ── Phase 2: 던전 행동 제출 ──
