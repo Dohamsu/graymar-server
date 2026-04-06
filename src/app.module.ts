@@ -14,6 +14,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { CampaignsModule } from './campaigns/campaigns.module.js';
 import { SceneImageModule } from './scene-image/scene-image.module.js';
 import { PortraitModule } from './portrait/portrait.module.js';
+import { PartyModule } from './party/party.module.js';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { PortraitModule } from './portrait/portrait.module.js';
     CampaignsModule,
     SceneImageModule,
     PortraitModule,
+    PartyModule,
   ],
   controllers: [AppController],
   providers: [
