@@ -11,6 +11,10 @@ import { RUN_STATUS, RUN_TYPE } from '../types/index.js';
 import type { RunState } from '../types/index.js';
 import { users } from './users.js';
 import { campaigns } from './campaigns.js';
+import { parties } from './parties.js';
+
+export const RUN_MODE = ['SOLO', 'PARTY'] as const;
+export type RunMode = (typeof RUN_MODE)[number];
 
 export const runSessions = pgTable(
   'run_sessions',
@@ -39,6 +43,10 @@ export const runSessions = pgTable(
     campaignId: uuid('campaign_id').references(() => campaigns.id),
     scenarioId: text('scenario_id'),
     scenarioOrder: integer('scenario_order'),
+    partyId: uuid('party_id').references(() => parties.id), // null = 솔로 런
+    partyRunMode: text('party_run_mode', { enum: RUN_MODE })
+      .notNull()
+      .default('SOLO'),
     startedAt: timestamp('started_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

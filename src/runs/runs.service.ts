@@ -78,6 +78,7 @@ export class RunsService {
       bonusStats?: Record<string, number>;
       traitId?: string;
       portraitUrl?: string;
+      partyId?: string;
     },
   ) {
     const runMode = options?.mode ?? 'hub';
@@ -511,6 +512,8 @@ export class RunsService {
           campaignId: campaignId ?? null,
           scenarioId: scenarioId ?? null,
           scenarioOrder: campaignId ? scenarioOrder : null,
+          partyId: options?.partyId ?? null,
+          partyRunMode: options?.partyId ? 'PARTY' : 'SOLO',
         })
         .returning();
 
