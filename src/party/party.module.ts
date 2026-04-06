@@ -7,6 +7,7 @@ import { LobbyService } from './lobby.service.js';
 import { VoteService } from './vote.service.js';
 import { PartyTurnService } from './party-turn.service.js';
 import { PartyRewardService } from './party-reward.service.js';
+import { RunParticipantsService } from './run-participants.service.js';
 import { RunsModule } from '../runs/runs.module.js';
 import { TurnsModule } from '../turns/turns.module.js';
 
@@ -22,7 +23,8 @@ import { TurnsModule } from '../turns/turns.module.js';
     VoteService,
     PartyTurnService,
     PartyRewardService,
+    RunParticipantsService,
   ],
-  exports: [PartyService, PartyStreamService, PartyTurnService, LobbyService],
+  exports: [PartyService, PartyStreamService, PartyTurnService, LobbyService, RunParticipantsService],
 })
 export class PartyModule {}
