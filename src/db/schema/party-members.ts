@@ -25,6 +25,7 @@ export const partyMembers = pgTable(
       .notNull()
       .default('MEMBER'),
     isOnline: text('is_online').notNull().default('false'), // SSE 연결 상태
+    isReady: text('is_ready').notNull().default('false'), // 로비 준비 상태
     joinedAt: timestamp('joined_at').defaultNow().notNull(),
   },
   (table) => [

@@ -10,7 +10,10 @@ import {
   condenseSpeechStyle,
 } from '../../db/types/npc-state.js';
 import type { LlmMessage } from '../types/index.js';
-import { NARRATIVE_SYSTEM_PROMPT } from './system-prompts.js';
+import {
+  NARRATIVE_SYSTEM_PROMPT,
+  PARTY_NARRATIVE_SYSTEM_PROMPT,
+} from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { TokenBudgetService } from '../token-budget.service.js';
 
@@ -42,14 +45,39 @@ export class PromptBuilderService {
     const isHub = sr.node.type === 'HUB';
 
     // 1. System prompt + L0 theme 병합 (Tier 1: 런 전체 고정 → prefix 캐싱 대상)
+    const isPartyMode = ctx.partyActions && ctx.partyActions.length > 0;
+    const basePrompt = isPartyMode
+      ? PARTY_NARRATIVE_SYSTEM_PROMPT
+      : NARRATIVE_SYSTEM_PROMPT;
+
+    // 파티 모드: 파티원 소개 블록 추가 (프리셋 배경 포함)
+    let partyIntro = '';
+    if (isPartyMode && ctx.partyActions) {
+      const presetDescriptions: Record<string, string> = {
+        DOCKWORKER: '항구 노동자 출신. 거친 체격과 무뚝뚝한 성격.',
+        DESERTER: '탈영병. 전쟁의 상처를 간직한 숙련된 전사.',
+        SMUGGLER: '밀수업자. 뒷골목에 정통하고 말솜씨가 좋다.',
+        HERBALIST: '약초사. 치유와 독에 능한 지식인.',
+        FALLEN_NOBLE: '몰락 귀족. 고결한 태도와 인맥이 남아있다.',
+        GLADIATOR: '검투사. 관중 앞에서 단련된 전투의 달인.',
+      };
+      const memberLines = ctx.partyActions.map((a) => {
+        const desc = a.presetId
+          ? presetDescriptions[a.presetId] ?? ''
+          : '';
+        return `- **${a.nickname}**${desc ? `: ${desc}` : ''}${a.isAutoAction ? ' (이번 턴 자동 행동)' : ''}`;
+      });
+      partyIntro = `\n\n## 파티 구성원\n이번 파티의 모험가들:\n${memberLines.join('\n')}\n서술 시 반드시 각 파티원의 이름을 사용하세요. "당신" 대신 이름으로 지칭합니다.`;
+    }
+
     const genderHint =
-      ctx.gender === 'female'
+      !isPartyMode && ctx.gender === 'female'
         ? '\n\n## 주인공 성별\n주인공("당신")은 **여성**입니다. NPC의 호칭(아가씨, 자매, 부인 등), 외모 묘사, 주변 반응에 성별을 자연스럽게 반영하세요. 단, 과도한 성별 강조는 피하세요.'
         : '';
     const systemContent =
       ctx.theme.length > 0
-        ? `${NARRATIVE_SYSTEM_PROMPT}${genderHint}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}`
-        : `${NARRATIVE_SYSTEM_PROMPT}${genderHint}`;
+        ? `${basePrompt}${partyIntro}${genderHint}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}`
+        : `${basePrompt}${partyIntro}${genderHint}`;
     messages.push({
       role: 'system',
       content: systemContent,
@@ -689,6 +717,30 @@ export class PromptBuilderService {
 
     // 3. Facts block (user role — 이번 턴 정보)
     const factsParts: string[] = [];
+
+    // === Phase 2: 파티 모드 4인분 행동 통합 서술 ===
+    if (ctx.partyActions && ctx.partyActions.length > 0) {
+      const partyLines = ctx.partyActions.map((a) => {
+        const outcome = a.resolveOutcome
+          ? ` → [${a.resolveOutcome}]`
+          : '';
+        const auto = a.isAutoAction ? ' (자동 행동)' : '';
+        return `- ${a.nickname}: "${sanitizeUserInput(a.rawInput)}"${outcome}${auto}`;
+      });
+      factsParts.push(
+        [
+          '⚠️ [파티 행동 — 4인 통합 서술]',
+          '이번 턴에 파티원 전원이 동시에 행동했습니다. 아래 각 파티원의 행동을 하나의 장면으로 통합하여 서술하세요.',
+          '규칙:',
+          '- 각 파티원의 행동이 모두 드러나야 합니다. 한 명도 빠뜨리지 마세요.',
+          '- 각자의 행동과 그 결과를 자연스럽게 하나의 장면으로 엮으세요.',
+          '- 서술 시점은 3인칭 관찰자입니다. "당신"이 아닌 각 파티원의 이름으로 서술하세요.',
+          '- 자동 행동은 소극적으로 묘사하세요 (주변 관찰, 방어 자세 등).',
+          '',
+          ...partyLines,
+        ].join('\n'),
+      );
+    }
 
     // 플레이어 행동 (가장 중요 — 서술에 반드시 반영)
     if (rawInput && inputType !== 'SYSTEM') {

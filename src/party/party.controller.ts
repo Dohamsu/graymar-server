@@ -12,6 +12,7 @@ import {
   HttpStatus,
   Sse,
   Logger,
+  Inject,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { Observable, finalize, map, interval, merge } from 'rxjs';
@@ -20,10 +21,26 @@ import { UserId } from '../common/decorators/user-id.decorator.js';
 import { PartyService } from './party.service.js';
 import { ChatService } from './chat.service.js';
 import { PartyStreamService } from './party-stream.service.js';
+import { LobbyService } from './lobby.service.js';
+import { VoteService } from './vote.service.js';
+import { PartyTurnService } from './party-turn.service.js';
 import { CreatePartyBodySchema } from './dto/create-party.dto.js';
 import { SendMessageBodySchema } from './dto/send-message.dto.js';
-import { BadRequestError } from '../common/errors/game-errors.js';
+import { ToggleReadyBodySchema } from './dto/lobby.dto.js';
+import { SubmitActionBodySchema } from './dto/submit-action.dto.js';
+import {
+  CreateVoteBodySchema,
+  CastVoteBodySchema,
+} from './dto/cast-vote.dto.js';
+import {
+  BadRequestError,
+  NotFoundError,
+} from '../common/errors/game-errors.js';
 import { ZodError } from 'zod';
+import { RunsService } from '../runs/runs.service.js';
+import { DB, type DrizzleDB } from '../db/drizzle.module.js';
+import { runSessions } from '../db/schema/run-sessions.js';
+import { eq } from 'drizzle-orm';
 
 @Controller('v1/parties')
 @UseGuards(AuthGuard)
@@ -34,6 +51,11 @@ export class PartyController {
     private readonly partyService: PartyService,
     private readonly chatService: ChatService,
     private readonly streamService: PartyStreamService,
+    private readonly lobbyService: LobbyService,
+    private readonly voteService: VoteService,
+    private readonly partyTurnService: PartyTurnService,
+    private readonly runsService: RunsService,
+    @Inject(DB) private readonly db: DrizzleDB,
   ) {}
 
   // ── 파티 CRUD ──
@@ -192,6 +214,153 @@ export class PartyController {
         });
       }),
     );
+  }
+
+  // ── Phase 2: 로비 ──
+
+  @Get(':partyId/lobby')
+  async getLobbyState(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+    return this.lobbyService.getLobbyState(partyId);
+  }
+
+  @Post(':partyId/lobby/ready')
+  @HttpCode(HttpStatus.OK)
+  async toggleReady(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+    const { ready } = this.safeParse(ToggleReadyBodySchema, body);
+    return this.lobbyService.toggleReady(userId, partyId, ready);
+  }
+
+  @Post(':partyId/lobby/start')
+  @HttpCode(HttpStatus.OK)
+  async startDungeon(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+    const { memberUserIds, memberProfiles } =
+      await this.lobbyService.initiateDungeonStart(userId, partyId);
+
+    // 리더의 프리셋/성별로 런 생성
+    const leader = memberProfiles.find((m) => m.isLeader) ?? memberProfiles[0];
+    const run = await this.runsService.createRun(
+      userId,
+      leader.presetId,
+      leader.gender,
+      { partyId },
+    );
+
+    const runId = run.run.id;
+
+    // runState에 파티 멤버 프로필 저장 (4인 판정/서술용)
+    const fullRun = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+      columns: { runState: true },
+    });
+    if (fullRun?.runState) {
+      const updatedRunState = {
+        ...(fullRun.runState as unknown as Record<string, unknown>),
+        partyMembers: memberProfiles,
+      };
+      await this.db
+        .update(runSessions)
+        .set({
+          runState: updatedRunState as unknown as import('../db/types/index.js').RunState,
+        })
+        .where(eq(runSessions.id, runId));
+    }
+
+    // 카운트다운 SSE 브로드캐스트
+    this.streamService.broadcast(partyId, 'lobby:dungeon_starting', {
+      partyId,
+      runId,
+      memberUserIds,
+      memberProfiles,
+      countdown: 3,
+    });
+
+    return { partyId, runId, memberUserIds };
+  }
+
+  // ── Phase 2: 던전 행동 제출 ──
+
+  @Post(':partyId/runs/:runId/turns')
+  @HttpCode(HttpStatus.OK)
+  async submitPartyAction(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+    @Param('runId') runId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+    const { inputType, rawInput, idempotencyKey } = this.safeParse(
+      SubmitActionBodySchema,
+      body,
+    );
+
+    // 현재 턴 번호를 직접 DB에서 조회 (파티 런은 소유자가 리더이므로 getRun 우회)
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+      columns: { currentTurnNo: true, partyId: true },
+    });
+    if (!run) throw new NotFoundError('런을 찾을 수 없습니다.');
+    if (run.partyId !== partyId) throw new BadRequestError('이 파티의 런이 아닙니다.');
+    const turnNo = (run.currentTurnNo ?? 0) + 1;
+
+    return this.partyTurnService.submitAction(
+      runId,
+      turnNo,
+      userId,
+      partyId,
+      inputType,
+      rawInput,
+      idempotencyKey,
+    );
+  }
+
+  // ── Phase 2: 이동 투표 ──
+
+  @Post(':partyId/votes')
+  @HttpCode(HttpStatus.CREATED)
+  async createVote(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+    const { targetLocationId } = this.safeParse(CreateVoteBodySchema, body);
+
+    // 파티의 현재 활성 런 조회
+    const activeRun = await this.runsService.getActiveRun(userId);
+    const runId = activeRun?.runId ?? '';
+
+    return this.voteService.createVote(
+      partyId,
+      runId,
+      userId,
+      targetLocationId,
+    );
+  }
+
+  @Post(':partyId/votes/:voteId/cast')
+  @HttpCode(HttpStatus.OK)
+  async castVote(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+    @Param('voteId') voteId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+    const { choice } = this.safeParse(CastVoteBodySchema, body);
+    return this.voteService.castVote(voteId, userId, partyId, choice);
   }
 
   // ── Helpers ──

@@ -256,6 +256,12 @@ export class PartyService {
         partyId,
         `${nickname}님이 파티를 떠났습니다. ${newLeaderUser?.nickname ?? '알 수 없는 용병'}님이 새 리더가 되었습니다.`,
       );
+
+      // 리더 변경 SSE 이벤트
+      this.streamService.broadcast(partyId, 'party:leader_changed', {
+        newLeaderId: newLeader.userId,
+        nickname: newLeaderUser?.nickname ?? '알 수 없는 용병',
+      });
     } else {
       await this.chatService.saveSystemMessage(
         partyId,

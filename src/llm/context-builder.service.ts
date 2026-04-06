@@ -135,6 +135,15 @@ export interface LlmContext {
   // 장소 기반 NPC 필터링용
   currentLocationId: string | null;
   currentTimePhase: string | null;
+  // Phase 2: 파티 모드 — 4인분 행동 통합
+  partyActions: {
+    userId: string;
+    nickname: string;
+    presetId?: string;
+    rawInput: string;
+    isAutoAction: boolean;
+    resolveOutcome?: string;
+  }[] | null;
 }
 
 @Injectable()
@@ -1144,6 +1153,7 @@ export class ContextBuilderService {
         ((runState?.worldState as Record<string, unknown> | undefined)
           ?.timePhase as string) ??
         null,
+      partyActions: null, // 파티 모드 시 PartyTurnService에서 주입
     };
   }
 

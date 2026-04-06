@@ -13,9 +13,11 @@ export const TOKEN_BUDGET = {
   STRUCTURED_MEMORY: 450,
   BUFFER: 250,
   TOTAL: 2500,
+  /** 파티 모드 (4인분 행동 서술): 토큰 예산 증가 */
+  PARTY_TOTAL: 4000,
 } as const;
 
-export type BudgetBlock = keyof Omit<typeof TOKEN_BUDGET, 'TOTAL'>;
+export type BudgetBlock = keyof Omit<typeof TOKEN_BUDGET, 'TOTAL' | 'PARTY_TOTAL'>;
 
 /** 블록 우선순위 — 높을수록 보호됨 */
 export enum BlockPriority {

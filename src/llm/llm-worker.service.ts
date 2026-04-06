@@ -138,7 +138,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       // RunState 조회 (HUB WorldState 컨텍스트용)
       const runSession = await this.db.query.runSessions.findFirst({
         where: eq(runSessions.id, pending.runId),
-        columns: { runState: true, gender: true, presetId: true },
+        columns: { runState: true, gender: true, presetId: true, partyRunMode: true },
       });
 
       // 1. LLM 컨텍스트 구축
@@ -150,6 +150,18 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         runSession?.gender as 'male' | 'female' | undefined,
         runSession?.presetId,
       );
+
+      // 1.5. 파티 모드: partyActions 주입 (actionPlan에 저장된 데이터)
+      if (
+        runSession?.partyRunMode === 'PARTY' &&
+        pending.actionPlan &&
+        typeof pending.actionPlan === 'object'
+      ) {
+        const ap = pending.actionPlan as unknown as Record<string, unknown>;
+        if (ap.partyActions && Array.isArray(ap.partyActions)) {
+          llmContext.partyActions = ap.partyActions as typeof llmContext.partyActions;
+        }
+      }
 
       // 2. 이전 턴의 LLM 선택지 라벨 조회 (반복 방지용)
       let previousChoiceLabels: string[] | undefined;
