@@ -45,6 +45,7 @@ export interface LlmConfig {
   provider: string;
   openaiApiKey: string;
   openaiModel: string;
+  openaiBaseUrl: string;
   claudeApiKey: string;
   claudeModel: string;
   geminiApiKey: string;

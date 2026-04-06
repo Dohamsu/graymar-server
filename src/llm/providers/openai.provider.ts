@@ -37,6 +37,7 @@ export class OpenAIProvider implements LlmProvider {
         require('openai') as {
           default: new (opts: {
             apiKey?: string;
+            baseURL?: string;
             timeout?: number;
           }) => import('openai').default;
         }
@@ -44,6 +45,7 @@ export class OpenAIProvider implements LlmProvider {
       /* eslint-enable @typescript-eslint/no-require-imports */
       this.client = new OpenAI({
         apiKey: this.config.openaiApiKey,
+        ...(this.config.openaiBaseUrl ? { baseURL: this.config.openaiBaseUrl } : {}),
         timeout: this.config.timeoutMs,
       });
     }

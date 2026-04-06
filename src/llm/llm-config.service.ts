@@ -46,6 +46,7 @@ export class LlmConfigService {
       provider: process.env.LLM_PROVIDER ?? 'mock',
       openaiApiKey: process.env.OPENAI_API_KEY ?? '',
       openaiModel: process.env.OPENAI_MODEL ?? 'gpt-4o',
+      openaiBaseUrl: process.env.OPENAI_BASE_URL ?? '',
       claudeApiKey: process.env.CLAUDE_API_KEY ?? '',
       claudeModel: process.env.CLAUDE_MODEL ?? 'claude-sonnet-4-5-20250929',
       geminiApiKey: process.env.GEMINI_API_KEY ?? '',
