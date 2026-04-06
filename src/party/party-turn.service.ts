@@ -103,6 +103,50 @@ export class PartyTurnService {
   }
 
   /**
+   * AI 제어 중인 멤버들의 행동을 자동 제출한다.
+   * 다른 멤버가 행동 제출할 때 호출되어, 이탈 멤버의 행동을 미리 삽입.
+   */
+  private async autoSubmitForAiMembers(
+    runId: string,
+    turnNo: number,
+    partyId: string,
+  ): Promise<void> {
+    const aiSet = this.aiControlled.get(runId);
+    if (!aiSet || aiSet.size === 0) return;
+
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+      columns: { runState: true },
+    });
+
+    for (const aiUserId of aiSet) {
+      // 이미 제출했는지 확인
+      const existing = await this.db.query.partyTurnActions.findFirst({
+        where: and(
+          eq(partyTurnActions.runId, runId),
+          eq(partyTurnActions.turnNo, turnNo),
+          eq(partyTurnActions.userId, aiUserId),
+        ),
+      });
+      if (existing) continue;
+
+      const autoAction = this.getAutoAction(run?.runState);
+      await this.db.insert(partyTurnActions).values({
+        runId,
+        turnNo,
+        userId: aiUserId,
+        inputType: 'ACTION',
+        rawInput: autoAction,
+        isAutoAction: true,
+      });
+
+      this.logger.log(
+        `AI auto-submit: run=${runId} turn=${turnNo} user=${aiUserId} action="${autoAction}"`,
+      );
+    }
+  }
+
+  /**
    * 개별 멤버의 행동을 제출한다.
    */
   async submitAction(
@@ -118,6 +162,9 @@ export class PartyTurnService {
     allSubmitted: boolean;
     actions?: Awaited<ReturnType<typeof this.getSubmittedActions>>;
   }> {
+    // AI 제어 멤버 자동 제출 (이탈자 매턴 자동행동)
+    await this.autoSubmitForAiMembers(runId, turnNo, partyId);
+
     // 멱등성 체크
     const existing = await this.db.query.partyTurnActions.findFirst({
       where: and(
@@ -355,6 +402,15 @@ export class PartyTurnService {
   }
 
   /**
+   * 특정 유저의 AI 제어를 모든 런에서 해제한다 (재접속 시 runId 모를 때).
+   */
+  removeAiControlledByUser(userId: string): void {
+    for (const [, aiSet] of this.aiControlled) {
+      aiSet.delete(userId);
+    }
+  }
+
+  /**
    * 해당 유저가 AI 제어 중인지 확인한다.
    */
   isAiControlled(runId: string, userId: string): boolean {
@@ -471,23 +527,31 @@ export class PartyTurnService {
         `턴 ${turnNo} — ${actionSummary}`,
       );
 
-      // 8.5. PartyHUD HP 동기화 — 턴 결과의 HP 정보를 SSE 전송
-      const srObj = turnResult.serverResult as Record<string, unknown> | undefined;
-      const hpDiff = srObj?.diff as Record<string, unknown> | undefined;
-      if (hpDiff) {
-        const hp = hpDiff.hp as number | undefined;
-        const maxHp = hpDiff.maxHp as number | undefined;
-        if (hp !== undefined || maxHp !== undefined) {
-          // 리더의 HP 변동을 전체에 브로드캐스트 (파티 공유 HP)
-          this.streamService.broadcast(partyId, 'party:member_hp_update', {
-            members: partyActionsData.map((a) => ({
+      // 8.5. PartyHUD HP 동기화 — 런의 현재 HP를 파티 멤버별로 SSE 전송
+      // 파티 런 runState에서 최신 HP 조회
+      const updatedRun = await this.db.query.runSessions.findFirst({
+        where: eq(runSessions.id, runId),
+        columns: { runState: true },
+      });
+      if (updatedRun?.runState) {
+        const urs = updatedRun.runState as unknown as Record<string, unknown>;
+        const currentHp = (urs.hp as number) ?? 0;
+        const currentMaxHp = (urs.maxHp as number) ?? 100;
+
+        // 개별 HP 상태 (partyMemberHp가 있으면 사용, 없으면 공유 HP)
+        const memberHpMap = (urs.partyMemberHp as Record<string, { hp: number; maxHp: number }>) ?? {};
+
+        this.streamService.broadcast(partyId, 'party:member_hp_update', {
+          members: partyActionsData.map((a) => {
+            const individual = memberHpMap[a.userId];
+            return {
               userId: a.userId,
               nickname: a.nickname,
-              hp: hp ?? 0,
-              maxHp: maxHp ?? 100,
-            })),
-          });
-        }
+              hp: individual?.hp ?? currentHp,
+              maxHp: individual?.maxHp ?? currentMaxHp,
+            };
+          }),
+        });
       }
 
       // 9. 전투 종료(VICTORY) 시 보상 분배
@@ -541,13 +605,36 @@ export class PartyTurnService {
       if (nodeOutcome === 'RUN_ENDED') {
         const runCheck = await this.db.query.runSessions.findFirst({
           where: eq(runSessions.id, runId),
-          columns: { partyId: true },
+          columns: { partyId: true, runState: true },
         });
         if (runCheck?.partyId) {
+          // 보상 솔로 동기화
+          const rs = runCheck.runState as unknown as Record<string, unknown>;
+          const memberGold = new Map<string, number>();
+          const memberItems = new Map<string, Array<{ itemId: string; qty: number }>>();
+          const totalGold = (rs?.gold as number) ?? 0;
+          const totalInv = (rs?.inventory as Array<{ itemId: string; qty: number }>) ?? [];
+          const memberIds = actions.map((a) => a.userId);
+          // 골드 균등 분배
+          const perMember = Math.floor(totalGold / memberIds.length);
+          for (const id of memberIds) {
+            memberGold.set(id, perMember);
+          }
+          // 아이템은 이미 distributeLoot에서 분배됨 — 여기서는 런 전체 인벤토리를 리더에게
+          if (memberIds.length > 0) {
+            memberItems.set(memberIds[0], totalInv);
+          }
+          await this.rewardService.syncToSoloRuns(
+            runCheck.partyId,
+            runId,
+            memberGold,
+            memberItems,
+          );
+
           await this.lobbyService.endDungeon(runCheck.partyId);
           await this.chatService.saveSystemMessage(
             partyId,
-            '던전이 종료되었습니다. 로비로 돌아갑니다.',
+            '던전이 종료되었습니다. 보상이 각 캐릭터에 반영되었습니다.',
           );
         }
       }

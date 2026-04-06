@@ -1,10 +1,12 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { partyMembers } from '../db/schema/party-members.js';
 import { parties } from '../db/schema/parties.js';
+import { runSessions } from '../db/schema/run-sessions.js';
 import { users } from '../db/schema/users.js';
+import type { RunState } from '../db/types/index.js';
 import { PartyStreamService } from './party-stream.service.js';
 import { ChatService } from './chat.service.js';
 
@@ -139,6 +141,72 @@ export class PartyRewardService {
     );
 
     return results;
+  }
+
+  /**
+   * 파티 런 종료 시 각 멤버의 보상을 솔로 캐릭터에 동기화한다.
+   * 파티 런의 runState에서 gold/inventory를 읽어 각 멤버의 최근 솔로 런에 합산.
+   */
+  async syncToSoloRuns(
+    partyId: string,
+    partyRunId: string,
+    memberGold: Map<string, number>,
+    memberItems: Map<string, Array<{ itemId: string; qty: number }>>,
+  ): Promise<void> {
+    const members = await this.db
+      .select({ userId: partyMembers.userId })
+      .from(partyMembers)
+      .where(eq(partyMembers.partyId, partyId));
+
+    for (const member of members) {
+      const gold = memberGold.get(member.userId) ?? 0;
+      const items = memberItems.get(member.userId) ?? [];
+      if (gold === 0 && items.length === 0) continue;
+
+      // 해당 멤버의 가장 최근 솔로 런 조회
+      const soloRun = await this.db.query.runSessions.findFirst({
+        where: and(
+          eq(runSessions.userId, member.userId),
+          eq(runSessions.partyRunMode, 'SOLO'),
+        ),
+        columns: { id: true, runState: true },
+        orderBy: desc(runSessions.startedAt),
+      });
+
+      if (!soloRun?.runState) continue;
+
+      const rs = soloRun.runState as unknown as Record<string, unknown>;
+      const updatedGold = ((rs.gold as number) ?? 0) + gold;
+      const existingInv = (rs.inventory as Array<{ itemId: string; qty: number }>) ?? [];
+
+      // 아이템 합산
+      const invMap = new Map<string, number>();
+      for (const item of existingInv) {
+        invMap.set(item.itemId, (invMap.get(item.itemId) ?? 0) + item.qty);
+      }
+      for (const item of items) {
+        invMap.set(item.itemId, (invMap.get(item.itemId) ?? 0) + item.qty);
+      }
+      const mergedInv = Array.from(invMap.entries()).map(([itemId, qty]) => ({
+        itemId,
+        qty,
+      }));
+
+      await this.db
+        .update(runSessions)
+        .set({
+          runState: {
+            ...rs,
+            gold: updatedGold,
+            inventory: mergedInv,
+          } as unknown as RunState,
+        })
+        .where(eq(runSessions.id, soloRun.id));
+
+      this.logger.log(
+        `Solo sync: user=${member.userId.slice(0, 8)} +${gold}G +${items.length} items`,
+      );
+    }
   }
 
   // ── Private helpers ──
