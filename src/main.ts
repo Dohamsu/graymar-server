@@ -38,6 +38,15 @@ async function bootstrap() {
   );
   app.useStaticAssets(portraitsDir, { prefix: '/portraits/generated/' });
 
+  // 정적 파일 서빙 — uploaded portraits
+  const uploadedDir = path.resolve(
+    process.cwd(),
+    'public',
+    'portraits',
+    'uploaded',
+  );
+  app.useStaticAssets(uploadedDir, { prefix: '/portraits/uploaded/' });
+
   await app.listen(process.env.PORT ?? 3000);
 }
 void bootstrap();
