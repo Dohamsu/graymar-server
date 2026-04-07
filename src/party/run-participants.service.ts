@@ -194,6 +194,106 @@ export class RunParticipantsService {
   }
 
   /**
+   * 던전 진행 중 새 멤버를 합류시킨다.
+   * run_participants INSERT + runState.partyMembers/partyMemberHp 갱신.
+   * 현재 턴 이후부터 행동 가능.
+   */
+  async addMidJoinMember(
+    runId: string,
+    userId: string,
+    partyId: string,
+  ): Promise<void> {
+    // 이미 참가 중인지 확인
+    const existing = await this.db.query.runParticipants.findFirst({
+      where: and(
+        eq(runParticipants.runId, runId),
+        eq(runParticipants.userId, userId),
+        isNull(runParticipants.leftAt),
+      ),
+    });
+    if (existing) return; // 이미 참가 중
+
+    // 멤버 정보 조회
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: { nickname: true },
+    });
+    const nickname = user?.nickname ?? '용병';
+
+    // 멤버의 최근 프리셋 조회
+    const memberRun = await this.db.query.runSessions.findFirst({
+      where: and(
+        eq(runSessions.userId, userId),
+        eq(runSessions.partyRunMode, 'SOLO'),
+      ),
+      columns: { presetId: true, gender: true },
+      orderBy: (rs, { desc }) => [desc(rs.startedAt)],
+    });
+
+    const presetId = memberRun?.presetId ?? 'DOCKWORKER';
+    const gender = (memberRun?.gender ?? 'male') as 'male' | 'female';
+
+    // 런의 현재 HP 조회
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+      columns: { runState: true },
+    });
+    const rs = run?.runState as unknown as Record<string, unknown> | null;
+    const currentHp = (rs?.hp as number) ?? 100;
+    const currentMaxHp = (rs?.maxHp as number) ?? 100;
+
+    // run_participants INSERT
+    await this.db.insert(runParticipants).values({
+      runId,
+      userId,
+      role: 'GUEST',
+      presetId,
+      gender,
+      nickname,
+      participantState: {
+        hp: currentHp,
+        maxHp: currentMaxHp,
+        inventory: [],
+        gold: 0,
+        equipped: {},
+      },
+    });
+
+    // runState.partyMembers에 추가
+    if (rs) {
+      const members = (rs.partyMembers as Array<Record<string, unknown>>) ?? [];
+      const memberHp = (rs.partyMemberHp as Record<string, unknown>) ?? {};
+
+      members.push({
+        userId,
+        nickname,
+        presetId,
+        gender,
+        isLeader: false,
+      });
+      (memberHp as Record<string, { hp: number; maxHp: number }>)[userId] = {
+        hp: currentHp,
+        maxHp: currentMaxHp,
+      };
+
+      await this.db
+        .update(runSessions)
+        .set({
+          runState: {
+            ...rs,
+            partyMembers: members,
+            partyMemberHp: memberHp,
+          } as unknown as RunState,
+        })
+        .where(eq(runSessions.id, runId));
+    }
+
+    this.logger.log(
+      `Mid-join: run=${runId} user=${userId} preset=${presetId}`,
+    );
+  }
+
+  /**
    * 런의 현재 참가자 목록을 조회한다.
    */
   async getParticipants(runId: string) {
@@ -215,9 +315,56 @@ export class RunParticipantsService {
   }
 
   /**
-   * 참가자를 런에서 이탈시킨다 (보상 정산 후).
+   * 참가자를 런에서 이탈시킨다.
+   * 1. participantState의 gold/items를 솔로 런에 동기화
+   * 2. run_participants.leftAt 설정
+   * 3. runState.partyMembers/partyMemberHp에서 제거
+   * 4. AI 제어 전환 + SSE/시스템 메시지
    */
-  async leaveRun(runId: string, userId: string): Promise<void> {
+  async leaveDungeon(
+    runId: string,
+    userId: string,
+    partyId: string,
+  ): Promise<void> {
+    // 1. 참가자 조회
+    const participant = await this.db.query.runParticipants.findFirst({
+      where: and(
+        eq(runParticipants.runId, runId),
+        eq(runParticipants.userId, userId),
+        isNull(runParticipants.leftAt),
+      ),
+    });
+    if (!participant) return;
+
+    // 2. 보상 정산 — participantState의 gold/items를 멤버의 최근 솔로 런에 합산
+    const ps = participant.participantState;
+    if (ps && ((ps.gold ?? 0) > 0 || (ps.inventory ?? []).length > 0)) {
+      const soloRun = await this.db.query.runSessions.findFirst({
+        where: and(
+          eq(runSessions.userId, userId),
+          eq(runSessions.partyRunMode, 'SOLO'),
+        ),
+        columns: { id: true, runState: true },
+        orderBy: (rs, { desc }) => [desc(rs.startedAt)],
+      });
+      if (soloRun?.runState) {
+        const rs = soloRun.runState as unknown as Record<string, unknown>;
+        const newGold = ((rs.gold as number) ?? 0) + (ps.gold ?? 0);
+        const existingInv = (rs.inventory as Array<{ itemId: string; qty: number }>) ?? [];
+        const mergedInv = [...existingInv, ...(ps.inventory ?? [])];
+        await this.db
+          .update(runSessions)
+          .set({
+            runState: { ...rs, gold: newGold, inventory: mergedInv } as unknown as RunState,
+          })
+          .where(eq(runSessions.id, soloRun.id));
+        this.logger.log(
+          `Leave reward sync: user=${userId.slice(0, 8)} +${ps.gold ?? 0}G +${(ps.inventory ?? []).length} items`,
+        );
+      }
+    }
+
+    // 3. run_participants.leftAt 설정
     await this.db
       .update(runParticipants)
       .set({ leftAt: new Date() })
@@ -227,6 +374,51 @@ export class RunParticipantsService {
           eq(runParticipants.userId, userId),
         ),
       );
-    this.logger.log(`Participant left: run=${runId} user=${userId}`);
+
+    // 4. runState.partyMembers / partyMemberHp에서 제거
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+      columns: { runState: true },
+    });
+    if (run?.runState) {
+      const rs = run.runState as unknown as Record<string, unknown>;
+      const members = (rs.partyMembers as Array<{ userId: string }>) ?? [];
+      const memberHp = (rs.partyMemberHp as Record<string, unknown>) ?? {};
+      const updatedMembers = members.filter((m) => m.userId !== userId);
+      const { [userId]: _, ...updatedHp } = memberHp;
+      await this.db
+        .update(runSessions)
+        .set({
+          runState: {
+            ...rs,
+            partyMembers: updatedMembers,
+            partyMemberHp: updatedHp,
+          } as unknown as RunState,
+        })
+        .where(eq(runSessions.id, runId));
+    }
+
+    // 5. 닉네임 조회
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: { nickname: true },
+    });
+    const nickname = user?.nickname ?? '알 수 없는 용병';
+
+    // 6. SSE 브로드캐스트
+    this.streamService.broadcast(partyId, 'party:member_left_dungeon', {
+      userId,
+      nickname,
+    });
+
+    // 7. 시스템 메시지
+    await this.chatService.saveSystemMessage(
+      partyId,
+      `${nickname}님이 던전에서 이탈했습니다. AI가 대신 행동합니다.`,
+    );
+
+    this.logger.log(
+      `Participant left dungeon: run=${runId} user=${userId} party=${partyId}`,
+    );
   }
 }

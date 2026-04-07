@@ -141,9 +141,8 @@ export class PartyService {
     if (party.status === 'FULL') {
       throw new BadRequestError('파티가 이미 가득 찼습니다.');
     }
-    if (party.status === 'IN_DUNGEON') {
-      throw new BadRequestError('던전 진행 중인 파티에는 가입할 수 없습니다.');
-    }
+    // IN_DUNGEON 중에도 가입 허용 (중간 합류)
+    const isDungeonActive = party.status === 'IN_DUNGEON';
 
     // 현재 멤버 수 확인
     const [{ count }] = await this.db
@@ -183,22 +182,28 @@ export class PartyService {
     const nickname = user?.nickname ?? '알 수 없는 용병';
 
     // 시스템 메시지 + SSE 브로드캐스트
-    await this.chatService.saveSystemMessage(
-      party.id,
-      `${nickname}님이 파티에 참가했습니다.`,
-    );
+    const joinMsg = isDungeonActive
+      ? `${nickname}님이 던전에 합류했습니다!`
+      : `${nickname}님이 파티에 참가했습니다.`;
+    await this.chatService.saveSystemMessage(party.id, joinMsg);
     this.streamService.broadcast(party.id, 'party:member_joined', {
       userId,
       nickname,
+      midJoin: isDungeonActive,
     });
 
-    this.logger.log(`User ${userId} joined party ${party.id}`);
+    this.logger.log(
+      `User ${userId} joined party ${party.id}${isDungeonActive ? ' (mid-dungeon)' : ''}`,
+    );
 
     const members = await this.getPartyMembers(party.id);
     const updatedParty = await this.db.query.parties.findFirst({
       where: eq(parties.id, party.id),
     });
-    return this.formatPartyResponse(updatedParty!, members);
+
+    // 반환에 midJoin 플래그 포함 (클라이언트에서 중간 합류 처리용)
+    const response = this.formatPartyResponse(updatedParty!, members);
+    return { ...response, isDungeonActive };
   }
 
   /**
