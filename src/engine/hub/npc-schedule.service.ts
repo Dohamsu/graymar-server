@@ -26,6 +26,7 @@ export class NpcScheduleService {
     timePhase: TimePhaseV2,
     ws: WorldState,
   ): NpcScheduleEntry | null {
+    if (!timePhase) return null; // phaseV2 undefined 방어
     const npcDef = this.content.getNpc(npcId);
     if (!npcDef) return null;
 
@@ -72,7 +73,7 @@ export class NpcScheduleService {
    * ws.npcLocations와 각 LocationDynamicState.presentNpcs를 갱신
    */
   updateAllNpcLocations(ws: WorldState): void {
-    const timePhase = ws.phaseV2;
+    const timePhase = ws.phaseV2 ?? (ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY') as TimePhaseV2;
     const allNpcs = this.content.getAllNpcs().map((n) => n.npcId);
 
     // npcLocations 초기화
