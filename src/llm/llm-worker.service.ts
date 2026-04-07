@@ -530,12 +530,28 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         pipelineLog,
       });
 
-      // 5.5. NPC 실명 세이프가드 — 소개 전/소개 턴 NPC 실명을 alias로 치환
+      // 5.5. @NPC_ID 마커 → @표시이름 변환 + NPC 실명 세이프가드
       if (runSession?.runState) {
         const rs = runSession.runState as unknown as Record<string, unknown>;
         const npcStates = rs.npcStates as Record<string, import('../db/types/npc-state.js').NPCState> | undefined;
         if (npcStates) {
-          const { sanitizeNpcNamesForTurn } = await import('../db/types/npc-state.js');
+          const { sanitizeNpcNamesForTurn, getNpcDisplayName } = await import('../db/types/npc-state.js');
+
+          // @NPC_ID → @[표시이름] 변환 (클라이언트에서 파싱하여 NPC별 말풍선 렌더링)
+          narrative = narrative.replace(
+            /@([A-Z_]+)\s*(?=[""\u201C])/g,
+            (_match, npcId: string) => {
+              const npcDef = this.content.getNpc(npcId);
+              const npcState = npcStates[npcId];
+              if (!npcDef) return ''; // 알 수 없는 NPC → 마커 제거
+              const displayName = npcState
+                ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
+                : (npcDef.unknownAlias || npcDef.name);
+              return `@[${displayName}] `;
+            },
+          );
+
+          // 실명 세이프가드 (마커 변환 후 남은 실명도 치환)
           narrative = sanitizeNpcNamesForTurn(
             narrative,
             npcStates,
