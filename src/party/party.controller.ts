@@ -75,7 +75,9 @@ export class PartyController {
 
   @Get('my')
   async getMyParty(@UserId() userId: string) {
-    return this.partyService.getMyParty(userId);
+    const result = await this.partyService.getMyParty(userId);
+    // null이면 빈 JSON 반환 (res.json() 파싱 에러 방지)
+    return result ?? { id: null };
   }
 
   @Get('search')
