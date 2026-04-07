@@ -530,6 +530,21 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         pipelineLog,
       });
 
+      // 5.5. NPC 실명 세이프가드 — 소개 전/소개 턴 NPC 실명을 alias로 치환
+      if (runSession?.runState) {
+        const rs = runSession.runState as unknown as Record<string, unknown>;
+        const npcStates = rs.npcStates as Record<string, import('../db/types/npc-state.js').NPCState> | undefined;
+        if (npcStates) {
+          const { sanitizeNpcNamesForTurn } = await import('../db/types/npc-state.js');
+          narrative = sanitizeNpcNamesForTurn(
+            narrative,
+            npcStates,
+            (npcId) => this.content.getNpc(npcId) as { name: string; unknownAlias?: string; aliases?: string[] } | undefined,
+            pending.turnNo,
+          );
+        }
+      }
+
       // 6. DONE 저장 (토큰 통계 + 프롬프트 포함)
       await this.db
         .update(turns)
