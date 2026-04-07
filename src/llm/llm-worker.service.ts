@@ -538,7 +538,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           const { sanitizeNpcNamesForTurn, getNpcDisplayName } = await import('../db/types/npc-state.js');
 
           // Step A: nano로 대사에 @NPC_ID 마커 삽입 (큰따옴표 대사가 있을 때만)
-          const hasDialogue = /[""\u201C]/.test(narrative);
+          const hasDialogue = /["\u201C\u201D]/.test(narrative);
+          this.logger.debug(`[NanoMarker] turn=${pending.turnNo} hasDialogue=${hasDialogue} len=${narrative.length}`);
           if (hasDialogue) {
             try {
               // 현재 등장 가능한 NPC 목록 생성
@@ -557,23 +558,22 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 messages: [
                   {
                     role: 'system',
-                    content: `텍스트에서 NPC 대사(큰따옴표)를 찾아 직전에 @NPC_ID 마커를 삽입하세요.
+                    content: `큰따옴표 대사 직전에 @마커를 삽입하라.
 
-⚠️ 핵심 규칙:
-- 마커는 반드시 NPC_로 시작하는 ID 또는 UNKNOWN만 사용
-- 올바른 예: @NPC_TOBREN "대사" / @UNKNOWN "대사"
-- 금지: @[이름] / @한글이름 / @토브렌 — 이런 형태 절대 금지
+형식: @NPC_ID "대사" 또는 @UNKNOWN "대사"
+마커는 영문 대문자+언더스코어만. 한글/소문자/괄호 금지.
 
-절차:
-1. 큰따옴표("") 대사를 찾는다
-2. 대사 직전 문맥에서 누가 말했는지 파악한다
-3. NPC 목록에 있는 인물이면 → 해당 NPC_ID를 사용 (예: @NPC_TOBREN "대사")
-4. NPC 목록에 없는 인물이면 → @UNKNOWN "대사"
-5. 서술 텍스트는 한 글자도 수정하지 않는다. @마커만 추가한다.
-6. 모든 큰따옴표 대사에 반드시 마커를 붙인다.
+예시 입출력:
+입력: 노파가 입을 열었다. "조심하시오."
+출력: 노파가 입을 열었다. @NPC_BG_HERB_CRONE "조심하시오."
+
+입력: 지나가던 사내가 말했다. "비켜라."
+출력: 지나가던 사내가 말했다. @UNKNOWN "비켜라."
 
 NPC 목록:
-${npcList || '(NPC 없음 — 모든 대사에 @UNKNOWN 사용)'}`,
+${npcList || 'UNKNOWN'}
+
+모든 큰따옴표 대사에 마커를 붙여라. 서술 텍스트는 수정하지 마라.`,
                   },
                   {
                     role: 'user',
@@ -587,8 +587,10 @@ ${npcList || '(NPC 없음 — 모든 대사에 @UNKNOWN 사용)'}`,
 
               if (nanoResult.response?.text) {
                 const tagged = nanoResult.response.text.trim();
+                const hasMarker = /@[A-Z_]+\s*["\u201C\u201D]/.test(tagged);
+                this.logger.debug(`[NanoMarker] turn=${pending.turnNo} nanoLen=${tagged.length} hasMarker=${hasMarker} sample="${tagged.slice(0,80)}"`);
                 // nano가 @마커를 1개 이상 삽입했으면 채택 (@UNKNOWN 포함)
-                if (tagged.length > 0 && /@[A-Z_]+\s*[""\u201C]/.test(tagged)) {
+                if (tagged.length > 0 && hasMarker) {
                   narrative = tagged;
                 }
               }
@@ -615,11 +617,11 @@ ${npcList || '(NPC 없음 — 모든 대사에 @UNKNOWN 사용)'}`,
             },
           );
 
-          // Step B-2: 비표준 @마커 안전망 — @[표시이름] 변환에서 처리 안 된 잔여 마커 제거
-          // nano가 @NPC_ID 대신 @한글이름이나 @[긴 텍스트]를 넣었을 경우 제거
-          narrative = narrative.replace(/@[A-Za-z가-힣\s]+\s*(?=[""\u201C])/g, '');
-          // @[...] 형태가 아직 남아있으면 (비표준) 제거
-          narrative = narrative.replace(/@\[[^\]]*\]\s*(?![""\u201C])/g, '');
+          // Step B-2: 비표준 @마커 안전망
+          // nano가 @한글이름 "대사" 형태로 넣은 경우만 제거 (정상 @[표시이름] "대사"는 보존)
+          // @[...] "대사" → 정상 (보존)
+          // @한글이름 "대사" → 비표준 (제거)
+          narrative = narrative.replace(/@[가-힣\s]+\s*(?=["\u201C\u201D])/g, '');
 
           // Step C: 실명 세이프가드
           narrative = sanitizeNpcNamesForTurn(
