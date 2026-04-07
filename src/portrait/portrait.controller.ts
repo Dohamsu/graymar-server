@@ -57,7 +57,7 @@ export class PortraitController {
   @Post('upload')
   @UseInterceptors(
     FileInterceptor('file', {
-      limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+      limits: { fileSize: 20 * 1024 * 1024 }, // 20MB (sharp가 자동 압축)
     }),
   )
   async upload(
@@ -68,6 +68,14 @@ export class PortraitController {
     if (!file?.buffer) {
       throw new HttpException(
         '이미지 파일을 선택해주세요.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // 20MB 초과 방어 (multer 이후 한번 더 체크)
+    if (file.buffer.length > 20 * 1024 * 1024) {
+      throw new HttpException(
+        '파일 크기가 너무 큽니다. 최대 20MB까지 허용됩니다.',
         HttpStatus.BAD_REQUEST,
       );
     }
@@ -88,8 +96,17 @@ export class PortraitController {
         ip,
       );
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : '이미지 처리에 실패했습니다.';
+      let msg = '이미지 처리에 실패했습니다.';
+      if (err instanceof Error) {
+        // multer/sharp 영어 에러를 한국어로 변환
+        if (err.message.includes('File too large') || err.message.includes('too large')) {
+          msg = '파일 크기가 너무 큽니다. 최대 20MB까지 허용됩니다.';
+        } else if (err.message.includes('Unsupported') || err.message.includes('unsupported')) {
+          msg = '지원하지 않는 이미지 형식입니다.';
+        } else {
+          msg = err.message;
+        }
+      }
       throw new HttpException(msg, HttpStatus.BAD_REQUEST);
     }
   }

@@ -221,25 +221,31 @@ export class PortraitService {
     height: number;
     sizeBytes: number;
   }> {
-    // 1. 크기 검증
-    if (fileBuffer.length > MAX_UPLOAD_BYTES) {
+    // 1. 이미지 메타데이터 확인 (sharp가 자동 압축하므로 큰 파일도 처리)
+    let metadata: sharp.Metadata;
+    try {
+      metadata = await sharp(fileBuffer).metadata();
+    } catch {
       throw new Error(
-        `파일 크기가 너무 큽니다. 최대 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB까지 허용됩니다.`,
+        '이미지 파일을 읽을 수 없습니다. 손상된 파일이 아닌지 확인해주세요.',
       );
     }
 
-    // 2. 이미지 메타데이터 확인
-    const metadata = await sharp(fileBuffer).metadata();
     if (
       !metadata.format ||
-      !['jpeg', 'png', 'webp', 'jpg'].includes(metadata.format)
+      !['jpeg', 'png', 'webp', 'jpg', 'gif', 'heif', 'heic', 'avif'].includes(metadata.format)
     ) {
       throw new Error(
-        '지원하지 않는 이미지 형식입니다. JPEG, PNG, WebP만 허용됩니다.',
+        '지원하지 않는 이미지 형식입니다. JPEG, PNG, WebP, GIF, HEIC 파일을 사용해주세요.',
       );
     }
     if (!metadata.width || !metadata.height) {
       throw new Error('이미지 크기를 확인할 수 없습니다.');
+    }
+    if (metadata.width < 100 || metadata.height < 100) {
+      throw new Error(
+        '이미지가 너무 작습니다. 최소 100×100 이상의 이미지를 사용해주세요.',
+      );
     }
 
     const uuid = crypto.randomUUID();
