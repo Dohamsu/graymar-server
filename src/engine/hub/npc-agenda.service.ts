@@ -40,7 +40,7 @@ export class NpcAgendaService {
 
     for (const npcDef of allNpcs) {
       const agenda = this.getAgendaFromContent(npcDef.npcId);
-      if (!agenda || agenda.completed) continue;
+      if (!agenda || agenda.completed || !agenda.stages) continue;
 
       // 런타임 상태 확인 (npcGoals에서)
       const runtimeState = ws.npcGoals?.[npcDef.npcId];
