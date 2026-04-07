@@ -602,9 +602,11 @@ ${npcList || 'UNKNOWN'}
             }
           }
 
-          // Step B: @NPC_ID → @[표시이름] 변환 (@UNKNOWN → @[무명 인물])
+          // Step B: @NPC_ID → @[표시이름|초상화URL] 변환 (@UNKNOWN → @[무명 인물])
+          const { NPC_PORTRAITS: portraits } = await import('../db/types/npc-portraits.js');
+          const { isNameRevealed } = await import('../db/types/npc-state.js');
           narrative = narrative.replace(
-            /@([A-Z_]+)\s*(?=[""\u201C])/g,
+            /@([A-Z_]+)\s*(?=["\u201C\u201D])/g,
             (_match, npcId: string) => {
               if (npcId === 'UNKNOWN') return '@[무명 인물] ';
               const npcDef = this.content.getNpc(npcId);
@@ -613,7 +615,14 @@ ${npcList || 'UNKNOWN'}
               const displayName = npcState
                 ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
                 : (npcDef.unknownAlias || npcDef.name);
-              return `@[${displayName}] `;
+              // 소개된 NPC만 초상화 포함
+              const revealed = npcState
+                ? isNameRevealed(npcState, pending.turnNo)
+                : false;
+              const portrait = revealed ? (portraits[npcId] ?? '') : '';
+              return portrait
+                ? `@[${displayName}|${portrait}] `
+                : `@[${displayName}] `;
             },
           );
 
