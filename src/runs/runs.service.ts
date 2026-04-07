@@ -752,6 +752,12 @@ export class RunsService {
           ],
           flags: { bonusSlot: false, downed: false, battleEnded: false },
         };
+        // 프롤로그 말풍선: 로넨
+        (enterResult.ui as any).speakingNpc = {
+          npcId: 'NPC_RONEN',
+          displayName: '로넨',
+          imageUrl: '/npc-portraits/ronen.png',
+        };
       }
 
       const firstNodeType =
