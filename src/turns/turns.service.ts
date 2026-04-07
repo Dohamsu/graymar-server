@@ -115,6 +115,7 @@ import { CampaignsService } from '../campaigns/campaigns.service.js';
 import {
   initNPCState,
   getNpcDisplayName,
+  isNameRevealed,
   shouldIntroduce,
   resolveNpcPlaceholders,
   recordNpcEncounter,
@@ -2890,10 +2891,17 @@ export class TurnsService {
       : eventPrimaryNpc ?? eventOriginalPrimaryNpc ?? null;  // 고정 이벤트: 기존 로직
 
     if (primaryNpcIdForSpeaking && npcNames[primaryNpcIdForSpeaking]) {
+      // 미소개 NPC는 초상화도 숨김 (이름 alias인데 얼굴이 보이면 스포일러)
+      const npcStateForSpeaking = npcStates[primaryNpcIdForSpeaking];
+      const showPortrait = npcStateForSpeaking
+        ? isNameRevealed(npcStateForSpeaking, turnNo)
+        : true;
       (result.ui as any).speakingNpc = {
         npcId: primaryNpcIdForSpeaking,
         displayName: npcNames[primaryNpcIdForSpeaking],
-        imageUrl: NPC_PORTRAITS[primaryNpcIdForSpeaking] ?? undefined,
+        imageUrl: showPortrait
+          ? (NPC_PORTRAITS[primaryNpcIdForSpeaking] ?? undefined)
+          : undefined,
       };
     } else if (!primaryNpcIdForSpeaking) {
       // NPC 미지정 이벤트 (일반 경비병, 행인 등) → 무명 인물 (실루엣 아이콘, imageUrl 없음)
