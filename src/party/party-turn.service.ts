@@ -209,7 +209,14 @@ export class PartyTurnService {
       this.clearTimer(runId);
 
       // 비동기로 통합 판정 (응답은 먼저 반환)
-      void this.resolveTurn(runId, turnNo, partyId);
+      this.resolveTurn(runId, turnNo, partyId).catch((err) => {
+        this.logger.error(
+          `resolveTurn FAILED: run=${runId} turn=${turnNo} error=${err instanceof Error ? err.message : err}`,
+        );
+        if (err instanceof Error && err.stack) {
+          this.logger.error(err.stack);
+        }
+      });
 
       return {
         accepted: true,
@@ -427,12 +434,15 @@ export class PartyTurnService {
     turnNo: number,
     partyId: string,
   ): Promise<{ success: boolean; turnResult?: unknown }> {
+    this.logger.log(`[resolveTurn] START run=${runId} turn=${turnNo} party=${partyId}`);
+
     // 1. 전체 행동 조회
     const actions = await this.getSubmittedActions(runId, turnNo);
     if (actions.length === 0) {
-      this.logger.warn(`No actions to resolve: run=${runId} turn=${turnNo}`);
+      this.logger.warn(`[resolveTurn] No actions: run=${runId} turn=${turnNo}`);
       return { success: false };
     }
+    this.logger.log(`[resolveTurn] actions=${actions.length} users=${actions.map(a => a.userId.slice(0,8)).join(',')}`);
 
     // 2. 닉네임 조회
     const nicknames = new Map<string, string>();
@@ -483,6 +493,7 @@ export class PartyTurnService {
     });
 
     // 5. 리더 계정으로 기존 엔진에 턴 제출
+    this.logger.log(`[resolveTurn] submitting: leader=${leaderId.slice(0,8)} turnNo=${turnNo} input="${combinedInput.slice(0,60)}"`);
     try {
       const turnResult = await this.turnsService.submitTurn(
         runId,

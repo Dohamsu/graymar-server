@@ -37,14 +37,14 @@ export class NpcScheduleService {
     if (schedule.overrides) {
       for (const override of schedule.overrides) {
         if (this.evaluateCondition(override.condition, ws)) {
-          const entry = override.schedule[timePhase];
+          const entry = override.schedule?.[timePhase];
           if (entry) return entry;
         }
       }
     }
 
     // 기본 일정
-    return schedule.default[timePhase] ?? null;
+    return schedule.default?.[timePhase] ?? null;
   }
 
   /**
@@ -73,7 +73,8 @@ export class NpcScheduleService {
    * ws.npcLocations와 각 LocationDynamicState.presentNpcs를 갱신
    */
   updateAllNpcLocations(ws: WorldState): void {
-    const timePhase = ws.phaseV2 ?? (ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY') as TimePhaseV2;
+    const timePhase = (ws.phaseV2 ?? (ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY')) as TimePhaseV2;
+    if (!timePhase) return; // 방어
     const allNpcs = this.content.getAllNpcs().map((n) => n.npcId);
 
     // npcLocations 초기화
