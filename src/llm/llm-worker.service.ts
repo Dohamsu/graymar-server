@@ -560,18 +560,19 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                     role: 'system',
                     content: `큰따옴표 대사 직전에 @마커를 삽입하라.
 
-형식: @NPC_ID "대사" 또는 @UNKNOWN "대사"
-마커는 영문 대문자+언더스코어만. 한글/소문자/괄호 금지.
+규칙:
+1. NPC 목록에 있는 인물 → @NPC_ID "대사" (영문 대문자+언더스코어)
+2. NPC 목록에 없는 인물 → @[서술속호칭] "대사" (대사 직전 문맥의 호칭을 대괄호 안에)
 
-예시 입출력:
-입력: 노파가 입을 열었다. "조심하시오."
-출력: 노파가 입을 열었다. @NPC_BG_HERB_CRONE "조심하시오."
+예시:
+입력: 노파가 입을 열었다. "조심하시오." 옆에서 과일장수가 끼어들었다. "이리 오시오."
+출력: 노파가 입을 열었다. @NPC_BG_HERB_CRONE "조심하시오." 옆에서 과일장수가 끼어들었다. @[과일장수] "이리 오시오."
 
-입력: 지나가던 사내가 말했다. "비켜라."
-출력: 지나가던 사내가 말했다. @UNKNOWN "비켜라."
+입력: 날카로운 눈매의 회계사가 말했다. "수상하오." 지나가던 경비병이 말했다. "무슨 소란이오?"
+출력: 날카로운 눈매의 회계사가 말했다. @NPC_EDRIC_VEIL "수상하오." 지나가던 경비병이 말했다. @[경비병] "무슨 소란이오?"
 
 NPC 목록:
-${npcList || 'UNKNOWN'}
+${npcList || '(없음)'}
 
 모든 큰따옴표 대사에 마커를 붙여라. 서술 텍스트는 수정하지 마라.`,
                   },
@@ -587,9 +588,10 @@ ${npcList || 'UNKNOWN'}
 
               if (nanoResult.response?.text) {
                 const tagged = nanoResult.response.text.trim();
-                const hasMarker = /@[A-Z_]+\s*["\u201C\u201D]/.test(tagged);
+                // @NPC_ID "대사" 또는 @[호칭] "대사" 패턴 감지
+                const hasMarker = /@(?:[A-Z_]+|\[[^\]]+\])\s*["\u201C\u201D]/.test(tagged);
                 this.logger.debug(`[NanoMarker] turn=${pending.turnNo} nanoLen=${tagged.length} hasMarker=${hasMarker} sample="${tagged.slice(0,80)}"`);
-                // nano가 @마커를 1개 이상 삽입했으면 채택 (@UNKNOWN 포함)
+                // nano가 @마커를 1개 이상 삽입했으면 채택
                 if (tagged.length > 0 && hasMarker) {
                   narrative = tagged;
                 }
@@ -602,16 +604,17 @@ ${npcList || 'UNKNOWN'}
             }
           }
 
-          // Step B: @NPC_ID → @[표시이름|초상화URL] 변환 (@UNKNOWN → @[무명 인물])
+          // Step B: @NPC_ID → @[표시이름|초상화URL] 변환
+          // nano가 넣은 @[호칭] 형태는 이미 대괄호이므로 그대로 통과
           const { NPC_PORTRAITS: portraits } = await import('../db/types/npc-portraits.js');
           const { isNameRevealed } = await import('../db/types/npc-state.js');
           narrative = narrative.replace(
-            /@([A-Z_]+)\s*(?=["\u201C\u201D])/g,
+            /@([A-Z][A-Z_0-9]+)\s*(?=["\u201C\u201D])/g,
             (_match, npcId: string) => {
               if (npcId === 'UNKNOWN') return '@[무명 인물] ';
               const npcDef = this.content.getNpc(npcId);
               const npcState = npcStates[npcId];
-              if (!npcDef) return '@[무명 인물] ';
+              if (!npcDef) return `@[${npcId}] `; // 알 수 없는 ID → ID 그대로
               const displayName = npcState
                 ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
                 : (npcDef.unknownAlias || npcDef.name);
@@ -627,10 +630,9 @@ ${npcList || 'UNKNOWN'}
           );
 
           // Step B-2: 비표준 @마커 안전망
-          // nano가 @한글이름 "대사" 형태로 넣은 경우만 제거 (정상 @[표시이름] "대사"는 보존)
           // @[...] "대사" → 정상 (보존)
-          // @한글이름 "대사" → 비표준 (제거)
-          narrative = narrative.replace(/@[가-힣\s]+\s*(?=["\u201C\u201D])/g, '');
+          // @한글이름 "대사" (대괄호 없음) → 비표준 (제거)
+          narrative = narrative.replace(/@(?!\[)[가-힣\s]+\s*(?=["\u201C\u201D])/g, '');
 
           // Step C: 실명 세이프가드
           narrative = sanitizeNpcNamesForTurn(
