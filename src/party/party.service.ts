@@ -14,8 +14,8 @@ import { ChatService } from './chat.service.js';
 import { PartyStreamService } from './party-stream.service.js';
 
 function generateInviteCode(): string {
-  // 6자리 영숫자 (대문자)
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  // 6자리 영숫자 (대문자) — 혼동 문자 제외 (0/O, 1/I/L)
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   const bytes = randomBytes(6);
   let code = '';
   for (let i = 0; i < 6; i++) {
