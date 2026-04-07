@@ -47,6 +47,10 @@ async function bootstrap() {
   );
   app.useStaticAssets(uploadedDir, { prefix: '/portraits/uploaded/' });
 
+  // 정적 파일 서빙 — NPC portraits
+  const npcPortraitsDir = path.resolve(process.cwd(), 'public', 'npc-portraits');
+  app.useStaticAssets(npcPortraitsDir, { prefix: '/npc-portraits/' });
+
   await app.listen(process.env.PORT ?? 3000);
 }
 void bootstrap();
