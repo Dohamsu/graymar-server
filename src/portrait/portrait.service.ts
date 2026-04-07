@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import sharp from 'sharp';
 
 const IMAGE_DIR = path.resolve(
   process.cwd(),
@@ -9,7 +10,24 @@ const IMAGE_DIR = path.resolve(
   'portraits',
   'generated',
 );
+const UPLOAD_DIR = path.resolve(
+  process.cwd(),
+  'public',
+  'portraits',
+  'uploaded',
+);
 const IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
+
+/** 정제 후 메인 이미지 크기 (4:5 비율) */
+const PORTRAIT_WIDTH = 512;
+const PORTRAIT_HEIGHT = 640;
+/** 썸네일 크기 (4:5 비율) */
+const THUMB_WIDTH = 128;
+const THUMB_HEIGHT = 160;
+/** WebP 품질 */
+const WEBP_QUALITY = 85;
+/** 최대 업로드 크기 (5MB) */
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 /** Rate-limit: 세션(IP)당 최대 생성 횟수 (임시 해제: 100) */
 const MAX_PER_IP = 100;
@@ -54,9 +72,11 @@ export class PortraitService {
   private readonly rateMap = new Map<string, RateEntry>();
 
   constructor() {
-    if (!fs.existsSync(IMAGE_DIR)) {
-      fs.mkdirSync(IMAGE_DIR, { recursive: true });
-      this.logger.log(`Created portrait directory: ${IMAGE_DIR}`);
+    for (const dir of [IMAGE_DIR, UPLOAD_DIR]) {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+        this.logger.log(`Created portrait directory: ${dir}`);
+      }
     }
   }
 
@@ -179,6 +199,95 @@ export class PortraitService {
     }
     return this.geminiClient;
   }
+
+  // ── Upload + Process ────────────────────────────────────────
+
+  /**
+   * 업로드된 이미지를 정제하여 초상화로 변환한다.
+   * 1. 포맷/크기 검증
+   * 2. 중앙 크롭 (4:5 비율)
+   * 3. 리사이즈 (512x640)
+   * 4. WebP 변환 (품질 85%)
+   * 5. 썸네일 생성 (128x160)
+   */
+  async processUpload(
+    fileBuffer: Buffer,
+    originalName: string,
+    ip: string,
+  ): Promise<{
+    imageUrl: string;
+    thumbUrl: string;
+    width: number;
+    height: number;
+    sizeBytes: number;
+  }> {
+    // 1. 크기 검증
+    if (fileBuffer.length > MAX_UPLOAD_BYTES) {
+      throw new Error(
+        `파일 크기가 너무 큽니다. 최대 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB까지 허용됩니다.`,
+      );
+    }
+
+    // 2. 이미지 메타데이터 확인
+    const metadata = await sharp(fileBuffer).metadata();
+    if (
+      !metadata.format ||
+      !['jpeg', 'png', 'webp', 'jpg'].includes(metadata.format)
+    ) {
+      throw new Error(
+        '지원하지 않는 이미지 형식입니다. JPEG, PNG, WebP만 허용됩니다.',
+      );
+    }
+    if (!metadata.width || !metadata.height) {
+      throw new Error('이미지 크기를 확인할 수 없습니다.');
+    }
+
+    const uuid = crypto.randomUUID();
+
+    // 3. 중앙 크롭 (4:5 비율) + 리사이즈 + WebP 변환
+    const mainBuffer = await sharp(fileBuffer)
+      .resize(PORTRAIT_WIDTH, PORTRAIT_HEIGHT, {
+        fit: 'cover', // 중앙 크롭
+        position: 'top', // 얼굴이 보통 상단에 있으므로 top 기준
+      })
+      .webp({ quality: WEBP_QUALITY })
+      .toBuffer();
+
+    // 4. 썸네일 생성
+    const thumbBuffer = await sharp(fileBuffer)
+      .resize(THUMB_WIDTH, THUMB_HEIGHT, {
+        fit: 'cover',
+        position: 'top',
+      })
+      .webp({ quality: WEBP_QUALITY })
+      .toBuffer();
+
+    // 5. 파일 저장
+    const mainPath = path.join(UPLOAD_DIR, `${uuid}.webp`);
+    const thumbPath = path.join(UPLOAD_DIR, `${uuid}_thumb.webp`);
+    fs.writeFileSync(mainPath, mainBuffer);
+    fs.writeFileSync(thumbPath, thumbBuffer);
+
+    const imageUrl = `/portraits/uploaded/${uuid}.webp`;
+    const thumbUrl = `/portraits/uploaded/${uuid}_thumb.webp`;
+
+    this.logger.log(
+      `Portrait uploaded: ${imageUrl} (${mainBuffer.length} bytes, from ${metadata.width}x${metadata.height} ${metadata.format})`,
+    );
+
+    // Rate increment
+    this.incrementRate(ip);
+
+    return {
+      imageUrl,
+      thumbUrl,
+      width: PORTRAIT_WIDTH,
+      height: PORTRAIT_HEIGHT,
+      sizeBytes: mainBuffer.length,
+    };
+  }
+
+  // ── Gemini Client ───────────────────────────────────────────
 
   private async callGeminiImageGeneration(prompt: string): Promise<Buffer> {
     const client = this.getGeminiClient();
