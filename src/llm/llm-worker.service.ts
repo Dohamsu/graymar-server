@@ -604,21 +604,24 @@ ${npcList || '(없음)'}
             }
           }
 
-          // Step B: @NPC_ID → @[표시이름|초상화URL] 변환
-          // nano가 넣은 @[호칭] 형태는 이미 대괄호이므로 그대로 통과
+          // Step B: @NPC_ID / @[NPC_ID] / @[RONEN] → @[표시이름|초상화URL] 변환
           const { NPC_PORTRAITS: portraits } = await import('../db/types/npc-portraits.js');
           const { isNameRevealed } = await import('../db/types/npc-state.js');
+
+          // B-0: nano가 넣은 "@마커" 잔여 텍스트 제거
+          narrative = narrative.replace(/@마커/g, '');
+
+          // B-1: @NPC_ID "대사" → @[표시이름|초상화URL] "대사"
           narrative = narrative.replace(
             /@([A-Z][A-Z_0-9]+)\s*(?=["\u201C\u201D])/g,
             (_match, npcId: string) => {
               if (npcId === 'UNKNOWN') return '@[무명 인물] ';
               const npcDef = this.content.getNpc(npcId);
               const npcState = npcStates[npcId];
-              if (!npcDef) return `@[${npcId}] `; // 알 수 없는 ID → ID 그대로
+              if (!npcDef) return `@[${npcId}] `;
               const displayName = npcState
                 ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
                 : (npcDef.unknownAlias || npcDef.name);
-              // 소개된 NPC만 초상화 포함
               const revealed = npcState
                 ? isNameRevealed(npcState, pending.turnNo)
                 : false;
@@ -629,9 +632,33 @@ ${npcList || '(없음)'}
             },
           );
 
-          // Step B-2: 비표준 @마커 안전망
-          // @[...] "대사" → 정상 (보존)
-          // @한글이름 "대사" (대괄호 없음) → 비표준 (제거)
+          // B-2: @[NPC_ID] "대사" 또는 @[RONEN] "대사" → @[표시이름|초상화URL] "대사"
+          // nano가 대괄호 안에 ID를 넣는 경우 처리
+          narrative = narrative.replace(
+            /@\[([A-Z][A-Z_0-9]*)\]\s*(?=["\u201C\u201D])/g,
+            (_match, idOrName: string) => {
+              // NPC_ID 형태 (NPC_RONEN) 또는 단순 영문 이름 (RONEN) 시도
+              const npcIdCandidates = [idOrName, `NPC_${idOrName}`];
+              for (const npcId of npcIdCandidates) {
+                const npcDef = this.content.getNpc(npcId);
+                if (!npcDef) continue;
+                const npcState = npcStates[npcId];
+                const displayName = npcState
+                  ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
+                  : (npcDef.unknownAlias || npcDef.name);
+                const revealed = npcState
+                  ? isNameRevealed(npcState, pending.turnNo)
+                  : false;
+                const portrait = revealed ? (portraits[npcId] ?? '') : '';
+                return portrait
+                  ? `@[${displayName}|${portrait}] `
+                  : `@[${displayName}] `;
+              }
+              return `@[${idOrName}] `; // 매칭 안되면 그대로
+            },
+          );
+
+          // B-3: 비표준 @마커 안전망 — @한글이름 "대사" (대괄호 없음) → 제거
           narrative = narrative.replace(/@(?!\[)[가-힣\s]+\s*(?=["\u201C\u201D])/g, '');
 
           // Step C: 실명 세이프가드
