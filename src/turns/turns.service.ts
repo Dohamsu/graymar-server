@@ -1683,6 +1683,10 @@ export class TurnsService {
     }
 
     // === Narrative Engine v1: postStepTick (impact patches, safety, signal expire) ===
+    // phaseV2가 없는 기존 런 방어 (NpcSchedule DAWN 크래시 방지)
+    if (!ws.phaseV2) {
+      ws.phaseV2 = (ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY') as import('../db/types/world-state.js').TimePhaseV2;
+    }
     ws = this.worldTick.postStepTick(ws, resolvedPatches);
 
     // diff용 장비 추가 수집기 (클라이언트 즉시 반영)
