@@ -2890,21 +2890,29 @@ export class TurnsService {
       ? eventOriginalPrimaryNpc ?? null  // PROC/SIT: 원래 이벤트의 NPC만 (injected 무시)
       : eventPrimaryNpc ?? eventOriginalPrimaryNpc ?? null;  // 고정 이벤트: 기존 로직
 
-    if (primaryNpcIdForSpeaking && npcNames[primaryNpcIdForSpeaking]) {
-      // 미소개 NPC는 초상화도 숨김 (이름 alias인데 얼굴이 보이면 스포일러)
+    if (primaryNpcIdForSpeaking) {
+      // NPC 지정 이벤트 — displayName/imageUrl 결정
       const npcStateForSpeaking = npcStates[primaryNpcIdForSpeaking];
       const showPortrait = npcStateForSpeaking
         ? isNameRevealed(npcStateForSpeaking, turnNo)
         : true;
+      // npcNames에 없으면 content에서 직접 조회 (fallback)
+      let displayName = npcNames[primaryNpcIdForSpeaking];
+      if (!displayName) {
+        const npcDef = this.content.getNpc(primaryNpcIdForSpeaking);
+        displayName = npcDef
+          ? (npcDef.unknownAlias || npcDef.name || '낯선 인물')
+          : '낯선 인물';
+      }
       (result.ui as any).speakingNpc = {
         npcId: primaryNpcIdForSpeaking,
-        displayName: npcNames[primaryNpcIdForSpeaking],
+        displayName,
         imageUrl: showPortrait
           ? (NPC_PORTRAITS[primaryNpcIdForSpeaking] ?? undefined)
           : undefined,
       };
-    } else if (!primaryNpcIdForSpeaking) {
-      // NPC 미지정 이벤트 (일반 경비병, 행인 등) → 무명 인물 (실루엣 아이콘, imageUrl 없음)
+    } else {
+      // NPC 미지정 이벤트 (일반 경비병, 행인 등) → 무명 인물 (실루엣 아이콘)
       (result.ui as any).speakingNpc = {
         npcId: null,
         displayName: '무명 인물',
