@@ -58,6 +58,7 @@ export interface NpcPersonalMemory {
 export interface NPCState {
   npcId: string;
   introduced: boolean;
+  introducedAtTurn?: number; // 소개가 발생한 턴 번호 (다음 턴부터 실명 표시)
   encounterCount: number;
   agenda: string;
   currentGoal: string;
@@ -210,14 +211,27 @@ export function summarizeRelationship(
 
 /**
  * NPC의 소개 상태에 따라 표시 이름을 반환.
- * introduced === true → 실명, 아니면 unknownAlias 또는 '낯선 인물'.
+ * introduced === true && 소개 턴이 현재 턴보다 이전 → 실명.
+ * 소개 턴(같은 턴) → alias 유지 (LLM이 서술에서 먼저 이름을 밝히도록).
+ * 미소개 → unknownAlias 또는 '낯선 인물'.
  */
 export function getNpcDisplayName(
   npcState: NPCState,
   npcDef: { name: string; unknownAlias?: string } | undefined,
+  currentTurnNo?: number,
 ): string {
   if (!npcDef) return npcState.npcId;
-  if (npcState.introduced) return npcDef.name;
+  if (npcState.introduced) {
+    // 소개 턴에서는 아직 alias 유지 (다음 턴부터 실명)
+    if (
+      currentTurnNo !== undefined &&
+      npcState.introducedAtTurn !== undefined &&
+      currentTurnNo <= npcState.introducedAtTurn
+    ) {
+      return npcDef.unknownAlias || '낯선 인물';
+    }
+    return npcDef.name;
+  }
   return npcDef.unknownAlias || '낯선 인물';
 }
 
@@ -245,12 +259,17 @@ export function resolveNpcPlaceholders(
  * - FRIENDLY/FEARFUL → 1회 (첫 만남에서 자기소개)
  * - CAUTIOUS → 2회 (신뢰 구축 후)
  * - CALCULATING/HOSTILE → 3회 (다른 경로로 알게 됨)
+ * - BACKGROUND 티어 → 소개하지 않음 (영원히 별칭)
  */
 export function shouldIntroduce(
   npcState: NPCState,
   posture: NpcPosture,
+  npcTier?: string,
 ): boolean {
   if (npcState.introduced) return false;
+
+  // BACKGROUND 티어 NPC는 소개하지 않음 (배경 인물은 별칭 유지)
+  if (npcTier === 'BACKGROUND') return false;
 
   const count = npcState.encounterCount ?? 0;
   switch (posture) {
