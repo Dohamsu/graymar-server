@@ -81,8 +81,16 @@ export class PartyController {
   }
 
   @Get('search')
-  async searchParties(@Query('q') query?: string) {
-    return this.partyService.searchParties(query ?? '');
+  async searchParties(
+    @Query('q') query?: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.partyService.searchParties(
+      query ?? '',
+      cursor,
+      limit ? parseInt(limit, 10) : 20,
+    );
   }
 
   @Post('join')

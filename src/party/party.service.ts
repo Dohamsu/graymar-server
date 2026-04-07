@@ -92,22 +92,39 @@ export class PartyService {
   /**
    * 파티를 검색한다 (OPEN 상태만).
    */
-  async searchParties(query: string) {
+  async searchParties(
+    query: string,
+    cursor?: string,
+    limit = 20,
+  ) {
+    const conditions = [
+      sql`${parties.status} IN ('OPEN', 'FULL', 'IN_DUNGEON')`,
+    ];
+    if (query.trim()) {
+      conditions.push(ilike(parties.name, `%${query}%`));
+    }
+    if (cursor) {
+      conditions.push(sql`${parties.createdAt} < ${cursor}`);
+    }
+
     const rows = await this.db
       .select()
       .from(parties)
-      .where(
-        and(eq(parties.status, 'OPEN'), ilike(parties.name, `%${query}%`)),
-      )
-      .limit(20);
+      .where(and(...conditions))
+      .orderBy(sql`${parties.createdAt} DESC`)
+      .limit(limit + 1); // 다음 페이지 존재 확인용
+
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
 
     const results: {
       id: string;
       name: string;
       memberCount: number;
       maxMembers: number;
+      status: string;
     }[] = [];
-    for (const party of rows) {
+    for (const party of items) {
       const memberCount = await this.db
         .select({ count: sql<number>`count(*)::int` })
         .from(partyMembers)
@@ -117,9 +134,15 @@ export class PartyService {
         name: party.name,
         memberCount: memberCount[0]?.count ?? 0,
         maxMembers: party.maxMembers,
+        status: party.status,
       });
     }
-    return results;
+
+    const nextCursor = hasMore
+      ? items[items.length - 1].createdAt.toISOString()
+      : null;
+
+    return { items: results, nextCursor };
   }
 
   /**
