@@ -1903,8 +1903,11 @@ export class TurnsService {
 
       // 성격 기반 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
       const introPosture = npcStates[npcId].posture;
-      if (shouldIntroduce(npcStates[npcId], introPosture)) {
+      const npcDefForIntro = this.content.getNpc(npcId);
+      const npcTier = (npcDefForIntro as Record<string, unknown>)?.tier as string | undefined;
+      if (shouldIntroduce(npcStates[npcId], introPosture, npcTier)) {
         npcStates[npcId].introduced = true;
+        npcStates[npcId].introducedAtTurn = turnNo; // 2턴 분리: 이번 턴은 alias, 다음 턴부터 실명
         newlyIntroducedNpcIds.push(npcId);
       }
 
@@ -2038,7 +2041,7 @@ export class TurnsService {
     const npcNames: Record<string, string> = {};
     for (const [npcId] of Object.entries(npcStates)) {
       const npcDef = this.content.getNpc(npcId);
-      npcNames[npcId] = getNpcDisplayName(npcStates[npcId], npcDef);
+      npcNames[npcId] = getNpcDisplayName(npcStates[npcId], npcDef, turnNo);
     }
     // resolve outcome 횟수 집계
     const resolveOutcomeCounts: Record<string, number> = {};
