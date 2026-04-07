@@ -93,7 +93,27 @@ export class PartyController {
     if (!inviteCode || typeof inviteCode !== 'string') {
       throw new BadRequestError('초대 코드를 입력해주세요.');
     }
-    return this.partyService.joinParty(userId, inviteCode);
+    const result = await this.partyService.joinParty(userId, inviteCode);
+
+    // 던전 진행 중이면 중간 합류 처리
+    if (result.isDungeonActive && result.id) {
+      const activeRun = await this.db.query.runSessions.findFirst({
+        where: and(
+          eq(runSessions.partyId, result.id),
+          eq(runSessions.status, 'RUN_ACTIVE'),
+        ),
+        columns: { id: true },
+      });
+      if (activeRun) {
+        await this.runParticipantsService.addMidJoinMember(
+          activeRun.id,
+          userId,
+          result.id,
+        );
+      }
+    }
+
+    return result;
   }
 
   @Post(':partyId/leave')
@@ -484,6 +504,26 @@ export class PartyController {
         output: matchedTurn?.llmOutput ?? null,
       },
     };
+  }
+
+  // ── Phase 3: 던전 이탈 ──
+
+  @Post(':partyId/runs/:runId/leave')
+  @HttpCode(HttpStatus.OK)
+  async leaveDungeon(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+    @Param('runId') runId: string,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+
+    // 보상 정산 + 런 상태 갱신 + SSE
+    await this.runParticipantsService.leaveDungeon(runId, userId, partyId);
+
+    // AI 제어 전환
+    this.partyTurnService.setAiControlled(runId, userId);
+
+    return { ok: true };
   }
 
   // ── Phase 2: 이동 투표 ──
