@@ -361,7 +361,8 @@ export class SituationGeneratorService {
           ]);
           if (!template) continue;
 
-          const sceneFrame = `${npcDef.name}이(가) 근처에 있다. 그의 태도에서 무언가 달라진 기색이 감지된다.`;
+          const npcLabel = npcDef.unknownAlias || npcDef.name;
+          const sceneFrame = `${npcLabel}이(가) 근처에 있다. 그의 태도에서 무언가 달라진 기색이 감지된다.`;
 
           return {
             trigger: 'CONSEQUENCE',
@@ -460,7 +461,8 @@ export class SituationGeneratorService {
       bgDescription = ` 주변에서 ${bgNames.join('과(와) ')}이(가) 각자의 일에 몰두하고 있다.`;
     }
 
-    const sceneFrame = `${npcDef.name}이(가) ${currentActivity}.${bgDescription}`;
+    const npcLabel = npcDef.unknownAlias || npcDef.name;
+    const sceneFrame = `${npcLabel}이(가) ${currentActivity}.${bgDescription}`;
 
     const npcFacts = this.worldFact.findByNpc(ws, npcId);
 

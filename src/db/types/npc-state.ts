@@ -236,6 +236,61 @@ export function getNpcDisplayName(
 }
 
 /**
+ * 게이트키퍼: NPC의 실명을 현재 턴에서 플레이어에게 노출해도 되는지 판단.
+ * - introduced=false → 불가 (alias)
+ * - introduced=true && introducedAtTurn >= currentTurnNo → 불가 (소개 턴, LLM이 먼저 서술)
+ * - introduced=true && introducedAtTurn < currentTurnNo → 허용 (다음 턴 이후)
+ */
+export function isNameRevealed(
+  npcState: NPCState,
+  currentTurnNo: number,
+): boolean {
+  if (!npcState.introduced) return false;
+  if (
+    npcState.introducedAtTurn !== undefined &&
+    currentTurnNo <= npcState.introducedAtTurn
+  ) {
+    return false; // 소개 턴에서는 아직 비공개
+  }
+  return true;
+}
+
+/**
+ * 텍스트에 포함된 NPC 실명을 현재 턴 기준으로 alias로 치환.
+ * 모든 LLM 프롬프트/출력에 적용할 수 있는 범용 세이프가드.
+ */
+export function sanitizeNpcNamesForTurn(
+  text: string,
+  npcStates: Record<string, NPCState>,
+  getNpcDef: (
+    npcId: string,
+  ) => { name: string; unknownAlias?: string; aliases?: string[] } | undefined,
+  currentTurnNo: number,
+): string {
+  if (!text) return text;
+  let result = text;
+  for (const [npcId, state] of Object.entries(npcStates)) {
+    if (isNameRevealed(state, currentTurnNo)) continue; // 이미 공개됨 → 치환 불필요
+    const npcDef = getNpcDef(npcId);
+    if (!npcDef?.name) continue;
+    const alias = npcDef.unknownAlias || '낯선 인물';
+    // 실명 치환
+    if (result.includes(npcDef.name)) {
+      result = result.replaceAll(npcDef.name, alias);
+    }
+    // aliases 배열도 치환
+    if (npcDef.aliases) {
+      for (const a of npcDef.aliases) {
+        if (result.includes(a)) {
+          result = result.replaceAll(a, alias);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/**
  * 텍스트 내 {npc:NPC_ID} 플레이스홀더를 introduced 상태에 따라 실명/별칭으로 치환
  */
 export function resolveNpcPlaceholders(
@@ -244,11 +299,17 @@ export function resolveNpcPlaceholders(
   getNpcDef: (
     npcId: string,
   ) => { name: string; unknownAlias?: string } | undefined,
+  currentTurnNo?: number,
 ): string {
   return text.replace(/\{npc:([A-Z_]+)\}/g, (_match, npcId: string) => {
     const state = npcStates[npcId];
     const def = getNpcDef(npcId);
     if (!def) return _match;
+    if (state && currentTurnNo !== undefined) {
+      return isNameRevealed(state, currentTurnNo)
+        ? def.name
+        : def.unknownAlias || '낯선 인물';
+    }
     if (state?.introduced) return def.name;
     return def.unknownAlias || '낯선 인물';
   });
