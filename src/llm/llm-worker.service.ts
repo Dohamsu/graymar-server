@@ -530,20 +530,79 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         pipelineLog,
       });
 
-      // 5.5. @NPC_ID 마커 → @표시이름 변환 + NPC 실명 세이프가드
+      // 5.5. nano 후처리: 대사 @NPC_ID 마커 삽입 → 표시이름 변환 → 실명 세이프가드
       if (runSession?.runState) {
         const rs = runSession.runState as unknown as Record<string, unknown>;
         const npcStates = rs.npcStates as Record<string, import('../db/types/npc-state.js').NPCState> | undefined;
         if (npcStates) {
           const { sanitizeNpcNamesForTurn, getNpcDisplayName } = await import('../db/types/npc-state.js');
 
-          // @NPC_ID → @[표시이름] 변환 (클라이언트에서 파싱하여 NPC별 말풍선 렌더링)
+          // Step A: nano로 대사에 @NPC_ID 마커 삽입 (큰따옴표 대사가 있을 때만)
+          const hasDialogue = /[""\u201C]/.test(narrative);
+          if (hasDialogue) {
+            try {
+              // 현재 등장 가능한 NPC 목록 생성
+              const npcList = Object.entries(npcStates)
+                .filter(([, s]) => s.encounterCount > 0)
+                .slice(0, 5)
+                .map(([id, s]) => {
+                  const def = this.content.getNpc(id);
+                  return def ? `${id}: ${def.unknownAlias || def.name}` : null;
+                })
+                .filter(Boolean)
+                .join('\n');
+
+              const lightConfig = this.configService.getLightModelConfig();
+              const nanoResult = await this.llmCaller.call({
+                messages: [
+                  {
+                    role: 'system',
+                    content: `텍스트 RPG 서술에서 NPC 대사(큰따옴표)를 찾아 직전에 @NPC_ID 마커를 삽입하세요.
+
+규칙:
+1. 큰따옴표("") 대사를 찾는다
+2. 대사 직전 문맥에서 누가 말했는지 파악한다
+3. NPC 목록에 있는 인물이면 → @NPC_ID "대사" 형태로 마커 삽입
+4. NPC 목록에 없는 인물(경비병, 상인, 행인 등)이면 → @UNKNOWN "대사" 로 마커 삽입
+5. 서술(나레이션) 텍스트는 한 글자도 수정하지 않는다. 마커만 추가한다.
+6. 모든 큰따옴표 대사에 반드시 마커를 붙인다. 마커 없는 대사가 없어야 한다.
+
+NPC 목록:
+${npcList || '(NPC 없음 — 모든 대사에 @UNKNOWN 사용)'}`,
+                  },
+                  {
+                    role: 'user',
+                    content: narrative,
+                  },
+                ],
+                maxTokens: 800,
+                temperature: 0,
+                model: lightConfig.model,
+              });
+
+              if (nanoResult.response?.text) {
+                const tagged = nanoResult.response.text.trim();
+                // nano가 @마커를 1개 이상 삽입했으면 채택 (@UNKNOWN 포함)
+                if (tagged.length > 0 && /@[A-Z_]+\s*[""\u201C]/.test(tagged)) {
+                  narrative = tagged;
+                }
+              }
+            } catch (err) {
+              // nano 실패 시 원본 유지 (graceful degradation)
+              this.logger.warn(
+                `Nano marker pass failed: ${err instanceof Error ? err.message : err}`,
+              );
+            }
+          }
+
+          // Step B: @NPC_ID → @[표시이름] 변환 (@UNKNOWN → @[무명 인물])
           narrative = narrative.replace(
             /@([A-Z_]+)\s*(?=[""\u201C])/g,
             (_match, npcId: string) => {
+              if (npcId === 'UNKNOWN') return '@[무명 인물] ';
               const npcDef = this.content.getNpc(npcId);
               const npcState = npcStates[npcId];
-              if (!npcDef) return ''; // 알 수 없는 NPC → 마커 제거
+              if (!npcDef) return '@[무명 인물] ';
               const displayName = npcState
                 ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
                 : (npcDef.unknownAlias || npcDef.name);
@@ -551,7 +610,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             },
           );
 
-          // 실명 세이프가드 (마커 변환 후 남은 실명도 치환)
+          // Step C: 실명 세이프가드
           narrative = sanitizeNpcNamesForTurn(
             narrative,
             npcStates,
