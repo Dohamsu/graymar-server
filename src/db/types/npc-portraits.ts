@@ -19,4 +19,6 @@ export const NPC_PORTRAITS: Record<string, string> = {
   NPC_SERA_DOCKS: '/npc-portraits/sera.png',
   NPC_DAME_ISOLDE: '/npc-portraits/dame_isolde.png',
   NPC_GUARD_FELIX: '/npc-portraits/felix.png',
+  // 퀘스트 NPC
+  NPC_RONEN: '/npc-portraits/ronen.png',
 };
