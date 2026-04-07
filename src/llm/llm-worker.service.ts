@@ -557,15 +557,20 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 messages: [
                   {
                     role: 'system',
-                    content: `텍스트 RPG 서술에서 NPC 대사(큰따옴표)를 찾아 직전에 @NPC_ID 마커를 삽입하세요.
+                    content: `텍스트에서 NPC 대사(큰따옴표)를 찾아 직전에 @NPC_ID 마커를 삽입하세요.
 
-규칙:
+⚠️ 핵심 규칙:
+- 마커는 반드시 NPC_로 시작하는 ID 또는 UNKNOWN만 사용
+- 올바른 예: @NPC_TOBREN "대사" / @UNKNOWN "대사"
+- 금지: @[이름] / @한글이름 / @토브렌 — 이런 형태 절대 금지
+
+절차:
 1. 큰따옴표("") 대사를 찾는다
 2. 대사 직전 문맥에서 누가 말했는지 파악한다
-3. NPC 목록에 있는 인물이면 → @NPC_ID "대사" 형태로 마커 삽입
-4. NPC 목록에 없는 인물(경비병, 상인, 행인 등)이면 → @UNKNOWN "대사" 로 마커 삽입
-5. 서술(나레이션) 텍스트는 한 글자도 수정하지 않는다. 마커만 추가한다.
-6. 모든 큰따옴표 대사에 반드시 마커를 붙인다. 마커 없는 대사가 없어야 한다.
+3. NPC 목록에 있는 인물이면 → 해당 NPC_ID를 사용 (예: @NPC_TOBREN "대사")
+4. NPC 목록에 없는 인물이면 → @UNKNOWN "대사"
+5. 서술 텍스트는 한 글자도 수정하지 않는다. @마커만 추가한다.
+6. 모든 큰따옴표 대사에 반드시 마커를 붙인다.
 
 NPC 목록:
 ${npcList || '(NPC 없음 — 모든 대사에 @UNKNOWN 사용)'}`,
@@ -609,6 +614,12 @@ ${npcList || '(NPC 없음 — 모든 대사에 @UNKNOWN 사용)'}`,
               return `@[${displayName}] `;
             },
           );
+
+          // Step B-2: 비표준 @마커 안전망 — @[표시이름] 변환에서 처리 안 된 잔여 마커 제거
+          // nano가 @NPC_ID 대신 @한글이름이나 @[긴 텍스트]를 넣었을 경우 제거
+          narrative = narrative.replace(/@[A-Za-z가-힣\s]+\s*(?=[""\u201C])/g, '');
+          // @[...] 형태가 아직 남아있으면 (비표준) 제거
+          narrative = narrative.replace(/@\[[^\]]*\]\s*(?![""\u201C])/g, '');
 
           // Step C: 실명 세이프가드
           narrative = sanitizeNpcNamesForTurn(
