@@ -285,6 +285,12 @@ export class RunsService {
       if (carryNpc?.introduced) {
         npcStates[npcDef.npcId].introduced = true;
       }
+
+      // 프롤로그 NPC (로넨) — 프롤로그에서 자기소개하므로 처음부터 소개 완료
+      if (npcDef.npcId === 'NPC_RONEN') {
+        npcStates[npcDef.npcId].introduced = true;
+        npcStates[npcDef.npcId].introducedAtTurn = -1; // 턴0 이전에 소개됨
+      }
     }
 
     // 프리셋별 NPC posture/trust 오버라이드 적용
