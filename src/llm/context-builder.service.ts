@@ -132,6 +132,11 @@ export interface LlmContext {
   questFactHint: string | null;
   // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
   questDirectionHint: { hint: string; mode: string } | null;
+  // 대화 잠금 상태 (연속 대화 턴 정보)
+  conversationLock: {
+    npcDisplayName: string;
+    consecutiveTurns: number; // 연속 대화 턴 수
+  } | null;
   // 장소 기반 NPC 필터링용
   currentLocationId: string | null;
   currentTimePhase: string | null;
@@ -1144,6 +1149,8 @@ export class ContextBuilderService {
       questFactHint: this.buildQuestFactHint(serverResult, runState),
       // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
       questDirectionHint: this.buildQuestDirectionHint(serverResult, runState),
+      // 대화 잠금 상태
+      conversationLock: this.buildConversationLock(runState),
       // 장소 기반 NPC 필터링
       currentLocationId:
         ((runState?.worldState as Record<string, unknown> | undefined)
@@ -1597,5 +1604,49 @@ export class ContextBuilderService {
     // sanitizeNpcNames 적용 (미소개 NPC 실명 제거)
     const sanitizedHint = this.sanitizeNpcNames(pending.hint, runState);
     return { hint: sanitizedHint, mode: pending.mode ?? 'OVERHEARD' };
+  }
+
+  /**
+   * actionHistory에서 연속 대화 턴 수 계산
+   * 같은 NPC와 대화 행동이 연속된 횟수를 추출
+   */
+  private buildConversationLock(
+    runState: Record<string, unknown> | null | undefined,
+  ): { npcDisplayName: string; consecutiveTurns: number } | null {
+    if (!runState) return null;
+    const actionHistory = runState.actionHistory as
+      | Array<{ actionType: string; primaryNpcId?: string }>
+      | undefined;
+    if (!actionHistory || actionHistory.length === 0) return null;
+
+    const SOCIAL_ACTIONS = new Set([
+      'TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP', 'INVESTIGATE', 'OBSERVE', 'TRADE',
+    ]);
+
+    // 마지막부터 역순으로 같은 NPC + 대화 행동 연속 카운트
+    const last = actionHistory[actionHistory.length - 1];
+    if (!last.primaryNpcId || !SOCIAL_ACTIONS.has(last.actionType)) return null;
+
+    const targetNpcId = last.primaryNpcId;
+    let count = 0;
+    for (let i = actionHistory.length - 1; i >= 0; i--) {
+      const entry = actionHistory[i];
+      if (entry.primaryNpcId === targetNpcId && SOCIAL_ACTIONS.has(entry.actionType)) {
+        count++;
+      } else {
+        break;
+      }
+    }
+
+    if (count < 2) return null; // 2턴 이상 연속이어야 잠금 상태
+
+    const npcStates = runState.npcStates as Record<string, NPCState> | undefined;
+    const npcState = npcStates?.[targetNpcId];
+    const npcDef = this.content.getNpc(targetNpcId);
+    const displayName = npcState && npcDef
+      ? getNpcDisplayName(npcState, npcDef)
+      : (npcDef?.unknownAlias ?? '상대');
+
+    return { npcDisplayName: displayName, consecutiveTurns: count };
   }
 }

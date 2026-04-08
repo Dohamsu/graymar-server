@@ -740,6 +740,19 @@ export class PromptBuilderService {
       factsParts.push(dirParts.join('\n'));
     }
 
+    // 대화 잠금 상태: 같은 NPC와 연속 대화 중임을 LLM에 전달
+    if (ctx.conversationLock) {
+      const { npcDisplayName, consecutiveTurns } = ctx.conversationLock;
+      const depth = consecutiveTurns >= 4 ? '깊은 신뢰' : consecutiveTurns >= 3 ? '점차 마음을 여는' : '경계를 낮추는';
+      factsParts.push(
+        `[대화 연속 상태]\n` +
+        `${npcDisplayName}와(과) ${consecutiveTurns}턴째 연속 대화 중입니다.\n` +
+        `⚠️ 이 NPC는 처음 만난 것처럼 행동하면 안 됩니다. ${depth} 단계의 대화를 이어가세요.\n` +
+        `- 이전 대화에서 나온 내용을 참조하며 더 깊은 정보/감정을 드러내세요.\n` +
+        `- "다가와서 경고한다" 같은 첫 만남 패턴 금지. 이미 옆에 서서 대화하는 중입니다.`,
+      );
+    }
+
     // === Phase 2: 파티 모드 4인분 행동 통합 서술 ===
     if (ctx.partyActions && ctx.partyActions.length > 0) {
       const partyLines = ctx.partyActions.map((a) => {
@@ -963,13 +976,25 @@ export class PromptBuilderService {
         COMBAT_ACTIONS.has(actionType) ||
         (rawInput && /싸움|공격|던져|때려|기습/.test(rawInput));
 
+      // NPC trust 확인 (높은 trust NPC는 비대화 행동에서도 끼어들 수 있음)
+      const npcTrust = npc.npcId
+        ? (ctx.npcStates as Record<string, { trustToPlayer?: number }> | null)?.[npc.npcId]?.trustToPlayer ?? 0
+        : 0;
+      const npcCanInterrupt = npcTrust >= 25 || (ctx.npcStates as Record<string, { suspicion?: number }> | null)?.[npc.npcId ?? '']?.suspicion as number >= 50;
+
       let npcBehaviorInstruction: string;
-      if (isNonDialogueAction) {
+      if (isNonDialogueAction && !npcCanInterrupt) {
         npcBehaviorInstruction = [
           '⚠️ 이번 턴은 비대화 행동(관찰/조사/잠입/탐색)입니다.',
           'NPC 대사를 쓰지 마세요. NPC는 배경에 존재하지만 플레이어에게 말을 걸지 않습니다.',
           '서술은 플레이어의 행동 과정과 환경 묘사에 집중하세요.',
           'NPC는 행동/동작/표정으로만 묘사 (예: "그가 곁에서 주변을 경계한다", "그의 시선이 어둠을 훑는다").',
+        ].join('\n');
+      } else if (isNonDialogueAction && npcCanInterrupt) {
+        npcBehaviorInstruction = [
+          '⚠️ 이번 턴은 비대화 행동이지만, 이 NPC는 신뢰/의심이 높아 먼저 끼어듭니다.',
+          'NPC가 플레이어의 행동을 중간에 가로채며 짧게 말을 건다 (1~2문장).',
+          '플레이어 행동 묘사가 주(70%)이고, NPC 개입은 짧은 삽입(30%)으로 자연스럽게.',
         ].join('\n');
       } else if (isCombatAction) {
         npcBehaviorInstruction = [
@@ -987,7 +1012,7 @@ export class PromptBuilderService {
           `[NPC 등장] ${npcDisplayName}이(가) 이 장면에 나타납니다.`,
           `이유: ${npc.reason}`,
           `자세: ${npc.posture}`,
-          ...(isNonDialogueAction || isCombatAction
+          ...((isNonDialogueAction && !npcCanInterrupt) || isCombatAction
             ? []
             : [`대화 시드: ${npc.dialogueSeed}`]),
           npcBehaviorInstruction,
