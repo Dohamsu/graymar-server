@@ -1489,6 +1489,29 @@ export class PromptBuilderService {
 
     messages.push({ role: 'user', content: factsParts.join('\n\n') });
 
+    // 최종 안전망: 모든 user 메시지에서 미소개 NPC 실명을 alias로 선제 교체
+    const npcStates = ctx.npcStates as Record<string, NPCState> | undefined;
+    if (npcStates) {
+      for (const msg of messages) {
+        if (msg.role !== 'user') continue;
+        for (const [npcId, state] of Object.entries(npcStates)) {
+          if (state.introduced) continue;
+          const npcDef = this.content.getNpc(npcId);
+          if (!npcDef?.name) continue;
+          const alias = npcDef.unknownAlias || '누군가';
+          if (msg.content.includes(npcDef.name)) {
+            msg.content = msg.content.replaceAll(npcDef.name, alias);
+          }
+          for (const a of npcDef.aliases ?? []) {
+            if (a.length < 2) continue;
+            if (msg.content.includes(a)) {
+              msg.content = msg.content.replaceAll(a, alias);
+            }
+          }
+        }
+      }
+    }
+
     return messages;
   }
 

@@ -22,17 +22,20 @@ interface NpcCandidate {
   role?: string;
 }
 
+// 발화동사 공통 패턴 (모든 매칭에서 사용)
+const SPEECH_VERBS = '말|입|목소리|낮게|속삭|외치|읊조|내뱉|덧붙|끼어들|중얼|소리|한마디|물었|대답|되물|답했|불렀|으르렁|경고|지시|명령|부탁|제안|설명|알려|나지막|조용히|걸걸|울려|차갑게|부드럽게|날카롭게|쏘아|투덜|비꼬|빈정|꾸짖|질책|타이르|달래|위로|협박|윽박|재촉|독촉|거들|끼어|망설|더듬|고함|호통|선언|단언|읊|뇌까|곁눈질|눈짓|턱짓|손짓|고개|몸을';
+
 // 대명사 패턴
-const PRONOUN_MALE = /(?:그[가는의]|그 사내[가는]?|그 남자[가는]?)\s{0,2}(?:말|입|목소리|낮|속삭|외치|중얼|물|대답|답|내뱉|한마디|조용히|걸걸|으르렁|차갑게|나지막)/;
-const PRONOUN_FEMALE = /(?:그녀[가는의]?|그 여인[이가는]?|그 여자[가는]?)\s{0,2}(?:말|입|목소리|낮|속삭|외치|중얼|물|대답|답|내뱉|한마디|조용히|부드럽게|나지막)/;
-const PRONOUN_NEUTRAL = /(?:그[가는])\s{0,2}(?:말|입|목소리|낮|속삭|외치|중얼|물|대답|답|내뱉|한마디|조용히|나지막)/;
+const PRONOUN_MALE = new RegExp(`(?:그[가는의]|그 사내[가는]?|그 남자[가는]?)\\s{0,2}(?:${SPEECH_VERBS})`);
+const PRONOUN_FEMALE = new RegExp(`(?:그녀[가는의]?|그 여인[이가는]?|그 여자[가는]?)\\s{0,2}(?:${SPEECH_VERBS})`);
+const PRONOUN_NEUTRAL = new RegExp(`(?:그[가는])\\s{0,2}(?:${SPEECH_VERBS})`);
 
 // 일반명사 → 성별 매핑
 const NOUN_GENDER_MAP: Record<string, 'male' | 'female' | 'any'> = {
   '사내': 'male', '남자': 'male', '청년': 'male', '노인': 'any', '장정': 'male',
-  '거구': 'male', '소년': 'male', '놈': 'male',
-  '여인': 'female', '여자': 'female', '소녀': 'female', '노파': 'female',
-  '아이': 'any', '인물': 'any', '누군가': 'any',
+  '거구': 'male', '소년': 'male', '놈': 'male', '자': 'male',
+  '여인': 'female', '여자': 'female', '소녀': 'female', '노파': 'female', '할미': 'female',
+  '아이': 'any', '인물': 'any', '누군가': 'any', '이': 'any',
 };
 
 // 직업명 → role 매칭 후보
@@ -40,7 +43,9 @@ const JOB_KEYWORDS = [
   '상인', '경비병', '장수', '실무자', '회계사', '병사', '전령', '주인', '하인',
   '선원', '어부', '대장', '부관', '감독관', '점원', '약사', '치료사', '행인',
   '악사', '음유시인', '주모', '순찰병', '파수꾼', '서기', '문지기', '부랑자',
-  '거지', '도둑', '밀수꾼', '무사', '기사', '구경꾼',
+  '거지', '도둑', '밀수꾼', '무사', '기사', '구경꾼', '인부', '노동자', '장교',
+  '책임자', '담당관', '관리인', '집사', '하녀', '요리사', '대장장이', '무기상',
+  '여관주인', '선장', '조타수', '갑판원', '창고지기', '세관원', '검시관',
 ];
 
 @Injectable()
@@ -352,19 +357,28 @@ export class NpcDialogueMarkerService {
     candidates: NpcCandidate[],
   ): { npcId: string } | null {
     let bestMatch: { npcId: string; distance: number } | null = null;
+    const speechVerb = new RegExp(`(?:${SPEECH_VERBS})`);
 
     for (const candidate of candidates) {
       for (const name of candidate.names) {
         if (name.length < 2) continue;
         const beforeIdx = before.lastIndexOf(name);
         if (beforeIdx >= 0) {
-          const distance = before.length - beforeIdx - name.length;
+          let distance = before.length - beforeIdx - name.length;
+          // 거리 40자 초과면 매칭 제외 (기존 80자 → 40자로 축소)
+          if (distance > 40) continue;
+          // 이름 뒤에 발화동사가 있으면 거리 보너스 (높은 신뢰도)
+          const afterName = before.slice(beforeIdx + name.length);
+          if (speechVerb.test(afterName)) {
+            distance = Math.max(0, distance - 20);
+          }
           if (!bestMatch || distance < bestMatch.distance) {
             bestMatch = { npcId: candidate.npcId, distance };
           }
         }
         const afterIdx = after.indexOf(name);
-        if (afterIdx >= 0) {
+        if (afterIdx >= 0 && afterIdx < 30) {
+          // 대사 뒤 30자 이내에서만 매칭 (기존 무제한)
           const distance = afterIdx + 100;
           if (!bestMatch || distance < bestMatch.distance) {
             bestMatch = { npcId: candidate.npcId, distance };
@@ -376,21 +390,21 @@ export class NpcDialogueMarkerService {
   }
 
   private extractSpeakerAlias(before: string, after: string): string | null {
-    // 발화자→대사 패턴
+    // 발화자→대사 패턴: "XX가/이/은/는 + 발화동사"
     const beforeMatch = before.match(
-      /([가-힣]{2,6})[이가은는]\s*(?:말|입|목소리|낮게|속삭|외치|읊조|내뱉|덧붙|끼어들|고개|중얼|소리|한마디|물었|대답|되물|답했|불렀|으르렁|경고|지시|명령|부탁|제안|설명|알려|나지막|조용히|걸걸|야릇|울려|차갑게|부드럽게|날카롭게)\S{0,10}/,
+      new RegExp(`([가-힣]{2,6})[이가은는]\\s*(?:${SPEECH_VERBS})\\S{0,10}`),
     );
     if (beforeMatch) return beforeMatch[1];
 
-    // 대사→발화자 패턴
+    // 대사→발화자 패턴: 대사 뒤에 "XX가 말했다"
     const afterMatch = after.match(
-      /^[,.]\s*([가-힣]{2,6})[이가은는]\s*(?:말|입|고개|몸|답)/,
+      new RegExp(`^[,.]\\s*([가-힣]{2,6})[이가은는]\\s*(?:${SPEECH_VERBS})`),
     );
     if (afterMatch) return afterMatch[1];
 
     // 수식어+명사 패턴
     const descriptiveMatch = before.match(
-      /(?:한|낯선|젊은|늙은|나이 든|거친|날카로운|무뚝뚝한|두건\s?쓴|망토\s?걸친)\s*([가-힣]{2,6})[이가은는]\s*$/,
+      /(?:한|낯선|젊은|늙은|나이 든|거친|날카로운|무뚝뚝한|두건\s?쓴|망토\s?걸친|수상한|키\s?큰|마른|덩치\s?큰|눈매의|얼굴의|제복의|갑옷의)\s*([가-힣]{2,6})[이가은는]\s*$/,
     );
     if (descriptiveMatch) return descriptiveMatch[1];
 
