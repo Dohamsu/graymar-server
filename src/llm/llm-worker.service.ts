@@ -24,7 +24,7 @@ import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
-import { NanoDirectorService, type DirectorHint } from './nano-director.service.js';
+import { NanoDirectorService, type DirectorHint, type SenseCategory } from './nano-director.service.js';
 import type { ServerResultV1, ChoiceItem } from '../db/types/index.js';
 import type {
   LlmExtractedFact,
@@ -186,46 +186,47 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // 3. NanoDirector: LOCATION + NPC 이벤트 시 연출 지시서 생성
+      // 3. NanoDirector: LOCATION 턴에서 연출 지시서 생성 (NPC 유무와 무관)
       let directorHint: DirectorHint | null = null;
       if (pending.nodeType === 'LOCATION' && pending.inputType !== 'SYSTEM') {
-        // 이벤트에 NPC가 있는지 확인
-        const hasNpcEvent = serverResult.events?.some(
-          (e) => e.kind === 'NPC' || (e.data as Record<string, unknown>)?.npcId,
-        ) ?? false;
-        // NPC 이벤트가 있거나, llmContext에 등장 NPC가 있으면 호출
-        const eventNpcName = llmContext.npcEmotionalContext ? '있음' : null;
-        if (hasNpcEvent || eventNpcName) {
-          // 직전 2턴 서술 조회
-          const recentDone = await this.db.query.turns.findMany({
-            where: and(
-              eq(turns.nodeInstanceId, pending.nodeInstanceId),
-              eq(turns.llmStatus, 'DONE'),
-              lt(turns.turnNo, pending.turnNo),
-            ),
-            orderBy: desc(turns.turnNo),
-            limit: 2,
-            columns: { llmOutput: true },
-          });
-          const recentNarratives = recentDone
-            .map((t) => t.llmOutput as string | null)
-            .filter((n): n is string => !!n)
-            .reverse();
+        // 직전 2턴 서술 조회
+        const recentDone = await this.db.query.turns.findMany({
+          where: and(
+            eq(turns.nodeInstanceId, pending.nodeInstanceId),
+            eq(turns.llmStatus, 'DONE'),
+            lt(turns.turnNo, pending.turnNo),
+          ),
+          orderBy: desc(turns.turnNo),
+          limit: 2,
+          columns: { llmOutput: true },
+        });
+        const recentNarratives = recentDone
+          .map((t) => t.llmOutput as string | null)
+          .filter((n): n is string => !!n)
+          .reverse();
 
-          // 등장 NPC 표시명
-          const npcEvt = serverResult.events?.find(
-            (e) => (e.data as Record<string, unknown>)?.npcId,
-          );
-          const npcId = (npcEvt?.data as Record<string, unknown>)?.npcId as string | undefined;
-          const npcDef = npcId ? this.content.getNpc(npcId) : null;
-          const npcName = npcDef?.unknownAlias ?? npcDef?.name ?? null;
-
-          directorHint = await this.nanoDirector.generate(
-            recentNarratives,
-            serverResult,
-            npcName,
+        // 직전 opening 감각 카테고리 추출
+        let previousSenseCategory: SenseCategory | undefined;
+        if (recentNarratives.length > 0) {
+          previousSenseCategory = this.nanoDirector.detectSenseCategory(
+            recentNarratives[recentNarratives.length - 1],
           );
         }
+
+        // 등장 NPC 표시명
+        const npcEvt = serverResult.events?.find(
+          (e) => (e.data as Record<string, unknown>)?.npcId,
+        );
+        const npcId = (npcEvt?.data as Record<string, unknown>)?.npcId as string | undefined;
+        const npcDef = npcId ? this.content.getNpc(npcId) : null;
+        const npcName = npcDef?.unknownAlias ?? npcDef?.name ?? null;
+
+        directorHint = await this.nanoDirector.generate(
+          recentNarratives,
+          serverResult,
+          npcName,
+          previousSenseCategory,
+        );
       }
 
       // 3.5. 프롬프트 메시지 조립
@@ -520,6 +521,25 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           if (fixCount > 0) {
             narrative = parts.join('');
             violations.push(`AUTO_FIX: NARR_HONORIFIC(${fixCount}건 치환)`);
+          }
+        }
+
+        // P6. "당신은/당신이" 시작 보정 — NanoDirector opening으로 교체
+        {
+          const trimmedStart = narrative.trimStart();
+          if (trimmedStart.startsWith('당신은 ') || trimmedStart.startsWith('당신이 ')) {
+            if (directorHint?.opening) {
+              // NanoDirector opening으로 첫 문장 교체
+              const firstSentenceEnd = trimmedStart.search(/[.!?。]\s/);
+              if (firstSentenceEnd > 0) {
+                narrative = directorHint.opening + ' ' + trimmedStart.slice(firstSentenceEnd + 2).trimStart();
+                violations.push('AUTO_FIX: OPENING_REPLACE(director)');
+              }
+            } else {
+              // Fallback: "당신은 " / "당신이 " 접두사만 제거
+              narrative = trimmedStart.replace(/^당신은\s+/, '').replace(/^당신이\s+/, '');
+              violations.push('AUTO_FIX: OPENING_STRIP(당신은/당신이)');
+            }
           }
         }
 
