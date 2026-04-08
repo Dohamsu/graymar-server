@@ -40,6 +40,7 @@ export class PromptBuilderService {
     rawInput: string = '',
     inputType: string = 'SYSTEM',
     previousChoiceLabels?: string[],
+    directorHint?: import('../nano-director.service.js').DirectorHint | null,
   ): LlmMessage[] {
     const messages: LlmMessage[] = [];
     const isHub = sr.node.type === 'HUB';
@@ -1485,6 +1486,27 @@ export class PromptBuilderService {
           ].join('\n'),
         );
       }
+    }
+
+    // NanoDirector 연출 지시 삽입
+    if (directorHint) {
+      const dirParts: string[] = ['[연출 지시 — 반드시 따르세요]'];
+      if (directorHint.opening) {
+        dirParts.push(`[첫 문장] 아래 문장으로 서술을 시작하세요:\n"${directorHint.opening}"`);
+      }
+      if (directorHint.npcEntrance) {
+        dirParts.push(`[NPC 등장] 아래 묘사를 참고하여 NPC를 등장시키세요:\n${directorHint.npcEntrance}`);
+      }
+      if (directorHint.npcGesture) {
+        dirParts.push(`[NPC 행동] NPC의 대사 전후에 아래 행동을 사용하세요:\n${directorHint.npcGesture}`);
+      }
+      if (directorHint.avoid.length > 0) {
+        dirParts.push(`[반복 금지] 아래 표현은 이번 턴에서 절대 사용하지 마세요:\n${directorHint.avoid.join(', ')}`);
+      }
+      if (directorHint.mood) {
+        dirParts.push(`[분위기] ${directorHint.mood}`);
+      }
+      factsParts.push(dirParts.join('\n'));
     }
 
     messages.push({ role: 'user', content: factsParts.join('\n\n') });
