@@ -262,19 +262,30 @@ export class TurnOrchestrationService {
     posture: NpcPosture,
     resolveOutcome: string,
   ): string {
-    const toneMap: Record<NpcPosture, string> = {
-      FRIENDLY: '친근하게 다가와 말을 건다',
-      CAUTIOUS: '경계하며 조심스럽게 접근한다',
-      HOSTILE: '적대적인 눈빛으로 가로막는다',
-      FEARFUL: '불안한 표정으로 주위를 살피며 다가온다',
-      CALCULATING: '무표정하게 관찰하다가 입을 연다',
-    };
+    const trust = state.trustToPlayer ?? 0;
+    const suspicion = state.suspicion ?? 0;
 
-    let seed = toneMap[posture] ?? '다가온다';
-
-    // personality traits는 [NPC 대화 자세] 블록에서 첫 등장 시에만 전달
-    // dialogueSeed에서는 제거하여 LLM의 personality 직접 인용 반복 방지
-    this.contentLoader.getNpc(state.npcId ?? '');
+    // trust 기반 NPC 주도 행동 단계 (posture보다 우선)
+    let seed: string;
+    if (trust >= 40) {
+      seed = 'NPC가 먼저 다가와 은밀히 중요한 정보를 귓속말한다. 주변을 살피며 목소리를 극도로 낮춘다';
+    } else if (trust >= 20) {
+      seed = 'NPC가 자연스럽게 대화를 시작한다. 마치 우연히 마주친 듯하지만 할 말이 있는 기색이다';
+    } else if (trust <= -30) {
+      seed = 'NPC가 길을 막아서며 경고한다. 적대감을 숨기지 않는다';
+    } else if (suspicion >= 50) {
+      seed = 'NPC가 의심스러운 눈초리로 플레이어를 붙잡는다. 추궁하듯 질문을 던진다';
+    } else {
+      // 기존 posture 기반 톤 (trust가 중립적일 때)
+      const toneMap: Record<NpcPosture, string> = {
+        FRIENDLY: '친근하게 다가와 말을 건다',
+        CAUTIOUS: '경계하며 조심스럽게 접근한다',
+        HOSTILE: '적대적인 눈빛으로 가로막는다',
+        FEARFUL: '불안한 표정으로 주위를 살피며 다가온다',
+        CALCULATING: '무표정하게 관찰하다가 입을 연다',
+      };
+      seed = toneMap[posture] ?? '다가온다';
+    }
 
     if (state.currentGoal) {
       seed += `. 목적: ${state.currentGoal}`;
@@ -292,9 +303,14 @@ export class TurnOrchestrationService {
     _posture: NpcPosture,
     _locationId: string,
   ): string {
-    if (state.suspicion > 40) return '의심스러운 움직임을 감지하고 나타남';
-    if (state.trustToPlayer > 30) return '협력 관계에 따라 도움을 주러 옴';
-    if (state.trustToPlayer < -30) return '적대 관계로 인해 방해하러 옴';
+    const trust = state.trustToPlayer ?? 0;
+    const suspicion = state.suspicion ?? 0;
+
+    if (suspicion > 40) return '의심스러운 움직임을 감지하고 직접 찾아옴';
+    if (trust > 30) return '신뢰 관계에 따라 먼저 찾아와 정보를 건넴';
+    if (trust > 15) return '호감을 가지고 자연스럽게 접근함';
+    if (trust < -30) return '적대 관계로 인해 직접 가로막으러 옴';
+    if (trust < -10) return '경계하며 감시하러 나타남';
     if (state.currentGoal) return `${state.currentGoal} 관련으로 이 장소에 옴`;
     return '우연히 마주침';
   }
