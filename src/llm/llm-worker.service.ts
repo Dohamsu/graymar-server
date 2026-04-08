@@ -729,8 +729,9 @@ ${npcList || '(없음)'}`,
             },
           );
 
-          // B-3: 비표준 @마커 안전망 — @한글이름 or @한글_한글 "대사" (대괄호 없음) → 제거
-          narrative = narrative.replace(/@(?!\[)[가-힣_\s]+\s*(?=["\u201C\u201D])/g, '');
+          // B-3: 비표준 @마커 안전망 — @한글이름 or @한글_한글 (대괄호 없음) → 제거
+          // 뒤에 따옴표, @[마커], 또는 줄 끝이 오는 경우 모두 처리
+          narrative = narrative.replace(/@(?!\[)[가-힣_\s]+\s*(?=["\u201C\u201D@])/g, '');
 
           // Step C: 실명 세이프가드
           narrative = sanitizeNpcNamesForTurn(
