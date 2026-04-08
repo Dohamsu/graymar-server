@@ -1838,6 +1838,7 @@ export class PromptBuilderService {
           const alias = relNpcDef.unknownAlias || '누군가';
           sanitizedDesc = sanitizedDesc.replaceAll(relNpcDef.name, alias);
           for (const a of relNpcDef.aliases ?? []) {
+            if (a.length < 2) continue;
             sanitizedDesc = sanitizedDesc.replaceAll(a, alias);
           }
         }
