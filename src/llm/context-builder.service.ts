@@ -1590,8 +1590,8 @@ export class ContextBuilderService {
     const currentTurnNo = serverResult.turnNo as number | undefined;
     if (currentTurnNo == null) return null;
 
-    // 발견 턴(setAtTurn)이 아닌 다음 턴에서만 전달
-    if (pending.setAtTurn >= currentTurnNo) return null;
+    // 발견 턴 바로 다음 턴(setAtTurn + 1)에서만 전달 (1회만)
+    if (pending.setAtTurn + 1 !== currentTurnNo) return null;
 
     // sanitizeNpcNames 적용 (미소개 NPC 실명 제거)
     const sanitizedHint = this.sanitizeNpcNames(pending.hint, runState);

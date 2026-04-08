@@ -1,0 +1,399 @@
+// NPC 대사 @마커 서버 regex 매칭 서비스
+// 큰따옴표 대사 주변 문맥에서 NPC DB를 탐색하여 발화자 특정
+// A: 대명사(그/그녀) → 직전 NPC 역추적
+// B: 일반명사(사내/노인) → gender/role 교차 매칭
+
+import { Injectable, Logger } from '@nestjs/common';
+import { ContentLoaderService } from '../content/content-loader.service.js';
+import type { NPCState } from '../db/types/npc-state.js';
+
+interface DialogueMatch {
+  start: number;
+  end: number;
+  dialogue: string;
+  npcId: string | null;
+  contextAlias: string | null;
+}
+
+interface NpcCandidate {
+  npcId: string;
+  names: string[];
+  gender?: string;
+  role?: string;
+}
+
+// 대명사 패턴
+const PRONOUN_MALE = /(?:그[가는의]|그 사내[가는]?|그 남자[가는]?)\s{0,2}(?:말|입|목소리|낮|속삭|외치|중얼|물|대답|답|내뱉|한마디|조용히|걸걸|으르렁|차갑게|나지막)/;
+const PRONOUN_FEMALE = /(?:그녀[가는의]?|그 여인[이가는]?|그 여자[가는]?)\s{0,2}(?:말|입|목소리|낮|속삭|외치|중얼|물|대답|답|내뱉|한마디|조용히|부드럽게|나지막)/;
+const PRONOUN_NEUTRAL = /(?:그[가는])\s{0,2}(?:말|입|목소리|낮|속삭|외치|중얼|물|대답|답|내뱉|한마디|조용히|나지막)/;
+
+// 일반명사 → 성별 매핑
+const NOUN_GENDER_MAP: Record<string, 'male' | 'female' | 'any'> = {
+  '사내': 'male', '남자': 'male', '청년': 'male', '노인': 'any', '장정': 'male',
+  '거구': 'male', '소년': 'male', '놈': 'male',
+  '여인': 'female', '여자': 'female', '소녀': 'female', '노파': 'female',
+  '아이': 'any', '인물': 'any', '누군가': 'any',
+};
+
+// 직업명 → role 매칭 후보
+const JOB_KEYWORDS = [
+  '상인', '경비병', '장수', '실무자', '회계사', '병사', '전령', '주인', '하인',
+  '선원', '어부', '대장', '부관', '감독관', '점원', '약사', '치료사', '행인',
+  '악사', '음유시인', '주모', '순찰병', '파수꾼', '서기', '문지기', '부랑자',
+  '거지', '도둑', '밀수꾼', '무사', '기사', '구경꾼',
+];
+
+@Injectable()
+export class NpcDialogueMarkerService {
+  private readonly logger = new Logger(NpcDialogueMarkerService.name);
+
+  constructor(private readonly content: ContentLoaderService) {}
+
+  insertMarkers(
+    narrative: string,
+    npcStates: Record<string, NPCState>,
+    fallbackNpcId?: string,
+    eventNpcIds?: string[],
+  ): { text: string; unmatchedCount: number } {
+    const candidateNpcs = this.buildCandidateList(npcStates, eventNpcIds);
+    if (candidateNpcs.length === 0) {
+      return { text: narrative, unmatchedCount: 0 };
+    }
+
+    const dialogues = this.extractDialogues(narrative);
+    if (dialogues.length === 0) {
+      return { text: narrative, unmatchedCount: 0 };
+    }
+
+    // 순차 처리: 이전 대사의 매칭 NPC를 기억 (대명사 역추적용)
+    let lastMatchedNpcId: string | null = null;
+
+    // 직전 @마커 대사에서 NPC ID를 추출 (연속 대사 전파용)
+    const preMarkerMatch = narrative.match(/@([A-Z][A-Z_0-9]+)\s*["\u201C]/);
+    const preMarkerNpcId = preMarkerMatch ? preMarkerMatch[1] : null;
+    // @[표시이름|URL] 형태에서도 추출
+    const preMarkerBracket = narrative.match(/@\[([^\]|]+)(?:\|[^\]]+)?\]\s*["\u201C]/);
+    if (preMarkerNpcId) lastMatchedNpcId = preMarkerNpcId;
+
+    for (const d of dialogues) {
+      // 연속 대사: 직전 @마커 대사와 가까우면 같은 NPC 귀속
+      if ((d as { _consecutive?: boolean })._consecutive && lastMatchedNpcId) {
+        d.npcId = lastMatchedNpcId;
+        continue;
+      }
+
+      const before = narrative.slice(Math.max(0, d.start - 100), d.start);
+      const after = narrative.slice(d.end, Math.min(narrative.length, d.end + 50));
+
+      // 1단계: NPC DB 이름 직접 매칭 (name, unknownAlias, aliases, role)
+      const directMatch = this.matchNpcFromContext(before, after, candidateNpcs);
+      if (directMatch) {
+        d.npcId = directMatch.npcId;
+        lastMatchedNpcId = directMatch.npcId;
+        continue;
+      }
+
+      // 2단계: 대명사 역추적 (그/그녀 → 직전 매칭 NPC)
+      const pronounMatch = this.matchPronoun(before, after, lastMatchedNpcId, candidateNpcs);
+      if (pronounMatch) {
+        d.npcId = pronounMatch;
+        // lastMatchedNpcId는 유지 (같은 NPC 연속)
+        continue;
+      }
+
+      // 3단계: 일반명사 교차매칭 (사내→남성NPC, 여인→여성NPC)
+      const nounMatch = this.matchByNoun(before, after, candidateNpcs);
+      if (nounMatch) {
+        d.npcId = nounMatch.npcId;
+        lastMatchedNpcId = nounMatch.npcId;
+        continue;
+      }
+
+      // 4단계: 직업명 교차매칭 (경비병→NPC role에 "경비" 포함)
+      const jobMatch = this.matchByJob(before, after, candidateNpcs);
+      if (jobMatch) {
+        d.npcId = jobMatch.npcId;
+        lastMatchedNpcId = jobMatch.npcId;
+        continue;
+      }
+
+      // 5단계: 문맥 호칭 추출 (DB 미매칭이면 텍스트 호칭 사용)
+      const alias = this.extractSpeakerAlias(before, after);
+      if (alias) {
+        d.contextAlias = alias;
+        continue;
+      }
+
+      // 6단계: fallback NPC 귀속
+      // (마커 삽입 단계에서 처리)
+    }
+
+    // 뒤에서부터 마커 삽입
+    let result = narrative;
+    let unmatchedCount = 0;
+    for (let i = dialogues.length - 1; i >= 0; i--) {
+      const d = dialogues[i];
+      let marker: string;
+      if (d.npcId) {
+        marker = `@${d.npcId} `;
+      } else if (d.contextAlias) {
+        marker = `@[${d.contextAlias}] `;
+      } else if (fallbackNpcId) {
+        d.npcId = fallbackNpcId;
+        marker = `@${fallbackNpcId} `;
+      } else {
+        unmatchedCount++;
+        marker = '@[UNMATCHED] ';
+      }
+      result = result.slice(0, d.start) + marker + result.slice(d.start);
+    }
+
+    this.logger.debug(
+      `[ServerMarker] dialogues=${dialogues.length} matched=${dialogues.length - unmatchedCount} unmatched=${unmatchedCount}`,
+    );
+
+    return { text: result, unmatchedCount };
+  }
+
+  /** A: 대명사 → 직전 NPC 역추적 */
+  private matchPronoun(
+    before: string,
+    after: string,
+    lastNpcId: string | null,
+    candidates: NpcCandidate[],
+  ): string | null {
+    const ctx = before + ' ' + after;
+
+    // 강한 매칭: 대명사 + 발화동사 (높은 신뢰도)
+    if (PRONOUN_FEMALE.test(ctx)) {
+      if (lastNpcId) {
+        const lastDef = this.content.getNpc(lastNpcId);
+        if (lastDef?.gender === 'female') return lastNpcId;
+      }
+      const females = candidates.filter((c) => c.gender === 'female');
+      if (females.length === 1) return females[0].npcId;
+      return lastNpcId;
+    }
+
+    if (PRONOUN_MALE.test(ctx)) {
+      if (lastNpcId) {
+        const lastDef = this.content.getNpc(lastNpcId);
+        if (lastDef?.gender === 'male' || !lastDef?.gender) return lastNpcId;
+      }
+      const males = candidates.filter((c) => c.gender === 'male' || !c.gender);
+      if (males.length === 1) return males[0].npcId;
+      return lastNpcId;
+    }
+
+    if (PRONOUN_NEUTRAL.test(ctx)) {
+      return lastNpcId;
+    }
+
+    // 약한 매칭: 대사 직전 40자 내에 대명사만 있어도 직전 NPC 귀속
+    // "그는 ~하더니," + 대사 패턴 (발화동사 없음)
+    if (lastNpcId) {
+      const nearBefore = before.slice(-40);
+      if (/(?:그[가는의]|그녀[가는의]?)\s/.test(nearBefore)) {
+        return lastNpcId;
+      }
+    }
+
+    return null;
+  }
+
+  /** B: 일반명사 → 성별 기반 NPC 교차매칭 */
+  private matchByNoun(
+    before: string,
+    after: string,
+    candidates: NpcCandidate[],
+  ): { npcId: string } | null {
+    const ctx = before + ' ' + after;
+
+    for (const [noun, gender] of Object.entries(NOUN_GENDER_MAP)) {
+      const pattern = new RegExp(`${noun}[이가은는]?\\s{0,2}(?:말|입|목|속삭|외|중얼|물|답|고개|낮|내뱉|한마디)`);
+      if (!pattern.test(ctx)) continue;
+
+      // 성별 필터링
+      const filtered = gender === 'any'
+        ? candidates
+        : candidates.filter((c) => c.gender === gender || !c.gender);
+
+      if (filtered.length === 1) {
+        return { npcId: filtered[0].npcId };
+      }
+      // 복수 후보 시 직전 문맥에 가장 가까운 NPC
+      if (filtered.length > 1) {
+        const nearest = this.findNearestInContext(before, filtered);
+        if (nearest) return { npcId: nearest };
+      }
+    }
+    return null;
+  }
+
+  /** B: 직업명 → NPC role/unknownAlias 교차매칭 */
+  private matchByJob(
+    before: string,
+    after: string,
+    candidates: NpcCandidate[],
+  ): { npcId: string } | null {
+    const ctx = before + ' ' + after;
+
+    for (const job of JOB_KEYWORDS) {
+      if (!ctx.includes(job)) continue;
+
+      // role이나 unknownAlias에 직업명이 포함된 NPC 찾기
+      const matches = candidates.filter((c) => {
+        const def = this.content.getNpc(c.npcId);
+        if (!def) return false;
+        return (
+          def.role?.includes(job) ||
+          def.unknownAlias?.includes(job) ||
+          c.names.some((n) => n.includes(job))
+        );
+      });
+
+      if (matches.length === 1) return { npcId: matches[0].npcId };
+      if (matches.length > 1) {
+        const nearest = this.findNearestInContext(before, matches);
+        if (nearest) return { npcId: nearest };
+      }
+    }
+    return null;
+  }
+
+  /** 문맥에서 가장 가까이 등장한 NPC 찾기 */
+  private findNearestInContext(
+    before: string,
+    candidates: NpcCandidate[],
+  ): string | null {
+    let best: { npcId: string; dist: number } | null = null;
+    for (const c of candidates) {
+      for (const name of c.names) {
+        if (name.length < 2) continue;
+        const idx = before.lastIndexOf(name);
+        if (idx >= 0) {
+          const dist = before.length - idx - name.length;
+          if (!best || dist < best.dist) {
+            best = { npcId: c.npcId, dist };
+          }
+        }
+      }
+    }
+    return best?.npcId ?? null;
+  }
+
+  private buildCandidateList(
+    npcStates: Record<string, NPCState>,
+    eventNpcIds?: string[],
+  ): NpcCandidate[] {
+    const eventNpcSet = new Set(eventNpcIds ?? []);
+    const candidates: NpcCandidate[] = [];
+    for (const [npcId, state] of Object.entries(npcStates)) {
+      // npcStates에 있는 모든 NPC를 후보에 포함 (enc=0이어도 문맥 매칭 가능)
+      const def = this.content.getNpc(npcId);
+      if (!def) continue;
+
+      const names: string[] = [];
+      if (def.name) names.push(def.name);
+      if (def.unknownAlias) {
+        names.push(def.unknownAlias);
+        const parts = def.unknownAlias.split(/\s+/);
+        if (parts.length > 1) {
+          const lastPart = parts[parts.length - 1];
+          if (lastPart.length >= 2) names.push(lastPart);
+        }
+      }
+      if (def.aliases) names.push(...def.aliases);
+      if (def.role && def.role.length >= 2) names.push(def.role);
+
+      candidates.push({
+        npcId,
+        names,
+        gender: def.gender,
+        role: def.role,
+      });
+    }
+    return candidates;
+  }
+
+  private extractDialogues(text: string): DialogueMatch[] {
+    const dialogues: DialogueMatch[] = [];
+    const regex = /(["\u201C])([^"\u201D]{3,}?)(["\u201D])/g;
+    let m: RegExpExecArray | null;
+    let lastPreMarkedEnd = -1; // 직전 @마커 대사의 끝 위치
+    while ((m = regex.exec(text)) !== null) {
+      const beforeChar = text.slice(Math.max(0, m.index - 30), m.index);
+      if (/@(?:[A-Z_]+|\[[^\]]*\])\s*$/.test(beforeChar)) {
+        // @마커가 이미 있는 대사: skip하되 끝 위치 기억
+        lastPreMarkedEnd = m.index + m[0].length;
+        continue;
+      }
+
+      // 연속 대사 감지: 직전 @마커 대사 끝과 현재 대사 시작 사이에
+      // 다른 NPC 언급이 없고 50자 이내면 → 연속 대사로 표시
+      const isConsecutive = lastPreMarkedEnd > 0
+        && (m.index - lastPreMarkedEnd) < 50;
+
+      dialogues.push({
+        start: m.index,
+        end: m.index + m[0].length,
+        dialogue: m[0],
+        npcId: null,
+        contextAlias: null,
+        _consecutive: isConsecutive,
+      } as DialogueMatch);
+    }
+    return dialogues;
+  }
+
+  private matchNpcFromContext(
+    before: string,
+    after: string,
+    candidates: NpcCandidate[],
+  ): { npcId: string } | null {
+    let bestMatch: { npcId: string; distance: number } | null = null;
+
+    for (const candidate of candidates) {
+      for (const name of candidate.names) {
+        if (name.length < 2) continue;
+        const beforeIdx = before.lastIndexOf(name);
+        if (beforeIdx >= 0) {
+          const distance = before.length - beforeIdx - name.length;
+          if (!bestMatch || distance < bestMatch.distance) {
+            bestMatch = { npcId: candidate.npcId, distance };
+          }
+        }
+        const afterIdx = after.indexOf(name);
+        if (afterIdx >= 0) {
+          const distance = afterIdx + 100;
+          if (!bestMatch || distance < bestMatch.distance) {
+            bestMatch = { npcId: candidate.npcId, distance };
+          }
+        }
+      }
+    }
+    return bestMatch;
+  }
+
+  private extractSpeakerAlias(before: string, after: string): string | null {
+    // 발화자→대사 패턴
+    const beforeMatch = before.match(
+      /([가-힣]{2,6})[이가은는]\s*(?:말|입|목소리|낮게|속삭|외치|읊조|내뱉|덧붙|끼어들|고개|중얼|소리|한마디|물었|대답|되물|답했|불렀|으르렁|경고|지시|명령|부탁|제안|설명|알려|나지막|조용히|걸걸|야릇|울려|차갑게|부드럽게|날카롭게)\S{0,10}/,
+    );
+    if (beforeMatch) return beforeMatch[1];
+
+    // 대사→발화자 패턴
+    const afterMatch = after.match(
+      /^[,.]\s*([가-힣]{2,6})[이가은는]\s*(?:말|입|고개|몸|답)/,
+    );
+    if (afterMatch) return afterMatch[1];
+
+    // 수식어+명사 패턴
+    const descriptiveMatch = before.match(
+      /(?:한|낯선|젊은|늙은|나이 든|거친|날카로운|무뚝뚝한|두건\s?쓴|망토\s?걸친)\s*([가-힣]{2,6})[이가은는]\s*$/,
+    );
+    if (descriptiveMatch) return descriptiveMatch[1];
+
+    return null;
+  }
+}

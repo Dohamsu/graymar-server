@@ -346,6 +346,14 @@ export class TurnsService {
     const _agenda = runState.agenda ?? this.agendaService.initAgenda();
     const updatedRunState: RunState = { ...runState };
 
+    // pendingQuestHint 만료 정리 (HUB 턴에서도 실행): 발견 다음 턴 1회만 전달
+    if (
+      updatedRunState.pendingQuestHint &&
+      updatedRunState.pendingQuestHint.setAtTurn < turnNo
+    ) {
+      updatedRunState.pendingQuestHint = null;
+    }
+
     const choiceId = body.input.choiceId;
 
     // LOCATION 이동
@@ -2364,10 +2372,10 @@ export class TurnsService {
     // PBP 집계 (최근 행동 이력 기반)
     updatedRunState.pbp = computePBP(newHistory);
 
-    // === pendingQuestHint 만료 정리: setAtTurn < turnNo-1 이면 이미 소비됨 → 삭제 ===
+    // === pendingQuestHint 만료 정리: 발견 다음 턴 1회만 전달, 이후 삭제 ===
     if (
       updatedRunState.pendingQuestHint &&
-      updatedRunState.pendingQuestHint.setAtTurn < turnNo - 1
+      updatedRunState.pendingQuestHint.setAtTurn < turnNo
     ) {
       updatedRunState.pendingQuestHint = null;
     }
