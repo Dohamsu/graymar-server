@@ -675,11 +675,34 @@ ${npcList || '(없음)'}`,
                   });
 
                   if (nanoResult.response?.text) {
-                    const answer = nanoResult.response.text.trim().split(/\s/)[0];
+                    let answer = nanoResult.response.text.trim().split(/[\s\n]/)[0];
+                    // 호칭 검증: NPC DB에서 unknownAlias/name 매칭 시도
+                    if (!/^NPC_[A-Z_0-9]+$/.test(answer) && answer.length >= 2) {
+                      const allNpcs = this.content.getAllNpcs();
+                      const dbMatch = allNpcs.find(
+                        (n) => n.unknownAlias === answer || n.name === answer
+                          || n.unknownAlias?.includes(answer) || answer.includes(n.unknownAlias ?? ''),
+                      );
+                      if (dbMatch) answer = dbMatch.npcId; // DB 매칭 → NPC_ID로 승격
+                    }
+                    // 중복 문자열 제거 ("넉넉한 체구의 선넉넉한 체구의 선술집 주인" → 정리)
+                    if (answer.length > 15) {
+                      const half = Math.floor(answer.length / 2);
+                      for (let dup = 3; dup <= half; dup++) {
+                        const prefix = answer.slice(0, dup);
+                        if (answer.slice(dup).startsWith(prefix)) {
+                          answer = answer.slice(dup); break;
+                        }
+                      }
+                    }
+                    // 10자 초과 호칭은 자르기
+                    if (!/^NPC_/.test(answer) && answer.length > 12) {
+                      answer = answer.slice(0, 12);
+                    }
                     // NPC_ID 형태면 @NPC_ID, 한글이면 @[호칭]
                     if (/^NPC_[A-Z_0-9]+$/.test(answer)) {
                       replacements.push({ full: um[0], replacement: `@${answer} ${um[1]}` });
-                    } else if (answer.length >= 2 && answer.length <= 10) {
+                    } else if (answer.length >= 2 && answer.length <= 12) {
                       replacements.push({ full: um[0], replacement: `@[${answer}] ${um[1]}` });
                     }
                     this.logger.debug(`[NanoSpeaker] turn=${pending.turnNo} "${dialogue.slice(0,20)}..." → ${answer}`);
@@ -726,6 +749,13 @@ ${npcList || '(없음)'}`,
             },
           );
 
+          // 초상화 표시 판정 헬퍼: 이름 공개 OR (BACKGROUND + 1회 이상 만남)
+          const shouldShowPortrait = (npcId: string, npcState: import('../db/types/npc-state.js').NPCState | undefined): boolean => {
+            if (npcState && isNameRevealed(npcState, pending.turnNo)) return true;
+            const def = this.content.getNpc(npcId);
+            return def?.tier === 'BACKGROUND' && (npcState?.encounterCount ?? 0) >= 1;
+          };
+
           // B-1: @NPC_ID "대사" → @[표시이름|초상화URL] "대사"
           narrative = narrative.replace(
             /@([A-Z][A-Z_0-9]+)\s*(?=["\u201C\u201D])/g,
@@ -737,10 +767,7 @@ ${npcList || '(없음)'}`,
               const displayName = npcState
                 ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
                 : (npcDef.unknownAlias || npcDef.name);
-              const revealed = npcState
-                ? isNameRevealed(npcState, pending.turnNo)
-                : false;
-              const portrait = revealed ? (portraits[npcId] ?? '') : '';
+              const portrait = shouldShowPortrait(npcId, npcState) ? (portraits[npcId] ?? '') : '';
               return portrait
                 ? `@[${displayName}|${portrait}] `
                 : `@[${displayName}] `;
@@ -761,10 +788,7 @@ ${npcList || '(없음)'}`,
                 const displayName = npcState
                   ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
                   : (npcDef.unknownAlias || npcDef.name);
-                const revealed = npcState
-                  ? isNameRevealed(npcState, pending.turnNo)
-                  : false;
-                const portrait = revealed ? (portraits[npcId] ?? '') : '';
+                const portrait = shouldShowPortrait(npcId, npcState) ? (portraits[npcId] ?? '') : '';
                 return portrait
                   ? `@[${displayName}|${portrait}] `
                   : `@[${displayName}] `;
@@ -780,10 +804,7 @@ ${npcList || '(없음)'}`,
                   const displayName = npcState
                     ? getNpcDisplayName(npcState, partialMatch, pending.turnNo)
                     : (partialMatch.unknownAlias || partialMatch.name);
-                  const revealed = npcState
-                    ? isNameRevealed(npcState, pending.turnNo)
-                    : false;
-                  const portrait = revealed ? (portraits[partialMatch.npcId] ?? '') : '';
+                  const portrait = shouldShowPortrait(partialMatch.npcId, npcState) ? (portraits[partialMatch.npcId] ?? '') : '';
                   return portrait
                     ? `@[${displayName}|${portrait}] `
                     : `@[${displayName}] `;
@@ -805,6 +826,29 @@ ${npcList || '(없음)'}`,
             (npcId) => this.content.getNpc(npcId) as { name: string; unknownAlias?: string; aliases?: string[] } | undefined,
             pending.turnNo,
           );
+        }
+      }
+
+      // 5.9 초상화/speakingNpc를 LLM 출력 기반으로 재결정
+      // 서술에서 실제 등장한 @[이름|URL] 마커의 첫 번째 NPC로 speakingNpc 갱신
+      {
+        const markerMatch = narrative.match(/@\[([^\]|]+)(?:\|([^\]]+))?\]/);
+        if (markerMatch) {
+          const actualName = markerMatch[1];
+          const actualImg = markerMatch[2] || undefined;
+          const updatedSr = { ...serverResult } as Record<string, unknown>;
+          const ui = { ...(updatedSr.ui as Record<string, unknown> ?? {}) };
+          ui.speakingNpc = {
+            npcId: null,
+            displayName: actualName,
+            imageUrl: actualImg,
+          };
+          updatedSr.ui = ui;
+          // serverResult 컬럼 갱신 (speakingNpc 재결정)
+          await this.db
+            .update(turns)
+            .set({ serverResult: updatedSr as any })
+            .where(eq(turns.id, pending.id));
         }
       }
 

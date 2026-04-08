@@ -2884,8 +2884,12 @@ export class TurnsService {
     if (primaryNpcIdForSpeaking) {
       // NPC 지정 이벤트 — displayName/imageUrl 결정
       const npcStateForSpeaking = npcStates[primaryNpcIdForSpeaking];
+      const npcDefForSpeaking = this.content.getNpc(primaryNpcIdForSpeaking);
+      // 초상화 표시 조건: 이름 공개됨 OR (BACKGROUND NPC + 1회 이상 만남)
+      const isBackgroundMet = npcDefForSpeaking?.tier === 'BACKGROUND'
+        && (npcStateForSpeaking?.encounterCount ?? 0) >= 1;
       const showPortrait = npcStateForSpeaking
-        ? isNameRevealed(npcStateForSpeaking, turnNo)
+        ? (isNameRevealed(npcStateForSpeaking, turnNo) || isBackgroundMet)
         : true;
       // npcNames에 없으면 content에서 직접 조회 (fallback)
       let displayName = npcNames[primaryNpcIdForSpeaking];
