@@ -362,12 +362,12 @@ export class NpcDialogueMarkerService {
     for (const candidate of candidates) {
       for (const name of candidate.names) {
         if (name.length < 2) continue;
+
+        // 1차: 정확한 문자열 매칭
         const beforeIdx = before.lastIndexOf(name);
         if (beforeIdx >= 0) {
           let distance = before.length - beforeIdx - name.length;
-          // 거리 40자 초과면 매칭 제외 (기존 80자 → 40자로 축소)
-          if (distance > 40) continue;
-          // 이름 뒤에 발화동사가 있으면 거리 보너스 (높은 신뢰도)
+          if (distance > 60) continue;
           const afterName = before.slice(beforeIdx + name.length);
           if (speechVerb.test(afterName)) {
             distance = Math.max(0, distance - 20);
@@ -376,9 +376,30 @@ export class NpcDialogueMarkerService {
             bestMatch = { npcId: candidate.npcId, distance };
           }
         }
+
+        // 2차: 이름 변형 부분 매칭 (3글자 이상 이름만)
+        // "마이렐 단 경" 속에서 "마이렐" 찾기, "하를런 보스" 속에서 "하를런" 찾기
+        if (name.length >= 3 && beforeIdx < 0) {
+          // before에서 이 이름을 포함하는 더 긴 문자열 찾기
+          const fuzzyRegex = new RegExp(`[가-힣\\s]{0,6}${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[가-힣\\s]{0,6}`);
+          const fuzzyMatch = before.match(fuzzyRegex);
+          if (fuzzyMatch && fuzzyMatch.index != null) {
+            let distance = before.length - fuzzyMatch.index - fuzzyMatch[0].length;
+            if (distance > 60) continue;
+            distance += 10; // 부분 매칭이므로 정확 매칭보다 낮은 우선순위
+            const afterName = before.slice(fuzzyMatch.index + fuzzyMatch[0].length);
+            if (speechVerb.test(afterName)) {
+              distance = Math.max(0, distance - 20);
+            }
+            if (!bestMatch || distance < bestMatch.distance) {
+              bestMatch = { npcId: candidate.npcId, distance };
+            }
+          }
+        }
+
+        // after 매칭
         const afterIdx = after.indexOf(name);
         if (afterIdx >= 0 && afterIdx < 30) {
-          // 대사 뒤 30자 이내에서만 매칭 (기존 무제한)
           const distance = afterIdx + 100;
           if (!bestMatch || distance < bestMatch.distance) {
             bestMatch = { npcId: candidate.npcId, distance };
