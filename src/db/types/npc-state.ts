@@ -278,9 +278,10 @@ export function sanitizeNpcNamesForTurn(
     if (result.includes(npcDef.name)) {
       result = result.replaceAll(npcDef.name, alias);
     }
-    // aliases 배열도 치환
+    // aliases 배열도 치환 (2글자 이상만 — 1글자는 동사/조사에 오탐)
     if (npcDef.aliases) {
       for (const a of npcDef.aliases) {
+        if (a.length < 2) continue;
         if (result.includes(a)) {
           result = result.replaceAll(a, alias);
         }
