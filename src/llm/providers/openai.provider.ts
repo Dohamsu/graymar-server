@@ -119,6 +119,16 @@ export class OpenAIProvider implements LlmProvider {
 
     // GPT-5 계열은 max_completion_tokens, 이전 모델은 max_tokens
     const isGpt5 = /^gpt-5/.test(model);
+    // OpenRouter 라우팅 최적화: provider 고정 + 레이턴시 우선 정렬
+    const isOpenRouter = !!this.config.openaiBaseUrl?.includes('openrouter');
+    const openRouterParams = isOpenRouter
+      ? {
+          provider: {
+            sort: 'latency' as const,        // 가장 빠른 provider 우선
+            allow_fallbacks: true,            // fallback 허용 (안정성)
+          },
+        }
+      : {};
     const completion = await client.chat.completions.create({
       model,
       messages: request.messages.map((m) => ({
@@ -129,7 +139,8 @@ export class OpenAIProvider implements LlmProvider {
         ? { max_completion_tokens: request.maxTokens }
         : { max_tokens: request.maxTokens }),
       temperature: request.temperature,
-    });
+      ...openRouterParams,
+    } as any);
 
     const choice = completion.choices[0];
     const text = choice?.message?.content ?? '';
