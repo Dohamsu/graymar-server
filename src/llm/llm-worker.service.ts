@@ -749,11 +749,9 @@ ${npcList || '(없음)'}`,
             },
           );
 
-          // 초상화 표시 판정 헬퍼: 이름 공개 OR (BACKGROUND + 1회 이상 만남)
-          const shouldShowPortrait = (npcId: string, npcState: import('../db/types/npc-state.js').NPCState | undefined): boolean => {
-            if (npcState && isNameRevealed(npcState, pending.turnNo)) return true;
-            const def = this.content.getNpc(npcId);
-            return def?.tier === 'BACKGROUND' && (npcState?.encounterCount ?? 0) >= 1;
+          // 초상화 표시 판정: 첫 만남 이후 무조건 (enc >= 1), 이름은 별도 조건
+          const shouldShowPortrait = (_npcId: string, npcState: import('../db/types/npc-state.js').NPCState | undefined): boolean => {
+            return (npcState?.encounterCount ?? 0) >= 1;
           };
 
           // B-1: @NPC_ID "대사" → @[표시이름|초상화URL] "대사"
