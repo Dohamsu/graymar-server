@@ -124,9 +124,11 @@ export class OpenAIProvider implements LlmProvider {
     const openRouterParams = isOpenRouter
       ? {
           provider: {
-            sort: 'latency' as const,        // 가장 빠른 provider 우선
-            allow_fallbacks: true,            // fallback 허용 (안정성)
+            sort: 'latency' as const,
+            allow_fallbacks: true,
           },
+          // Gemini 2.5 Flash: thinking(reasoning) 비활성화 옵션
+          ...(model.includes('gemini') ? { reasoning: { effort: process.env.GEMINI_REASONING_EFFORT || 'low' } } : {}),
         }
       : {};
     const completion = await client.chat.completions.create({
