@@ -548,6 +548,21 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             `[NarrativeFilter] turn=${pending.turnNo} violations: ${violations.join(' | ')}`,
           );
         }
+
+        // P6. 첫 문장 중복 제거 (NanoDirector opening이 2번 삽입된 경우)
+        {
+          const sentences = narrative.split(/(?<=[.!?。])\s+/);
+          if (sentences.length >= 3 && sentences[0] === sentences[1]) {
+            narrative = sentences.slice(1).join(' ');
+          } else if (sentences.length >= 3) {
+            // 부분 중복: 첫 문장이 두 번째 문장에 포함
+            const first = sentences[0].trim();
+            const second = sentences[1].trim();
+            if (first.length > 10 && second.includes(first)) {
+              narrative = sentences.slice(1).join(' ');
+            }
+          }
+        }
       } else {
         // LLM 호출 실패 → FAILED로 마킹하여 클라이언트에 알림
         const errorMsg = callResult.error ?? 'LLM provider call failed';
@@ -749,9 +764,10 @@ ${npcList || '(없음)'}`,
             },
           );
 
-          // 초상화 표시 판정: 첫 만남 이후 무조건 (enc >= 1), 이름은 별도 조건
+          // 초상화 표시 판정: 첫 만남(enc>=1) 또는 소개완료(introduced) → 무조건 표시
           const shouldShowPortrait = (_npcId: string, npcState: import('../db/types/npc-state.js').NPCState | undefined): boolean => {
-            return (npcState?.encounterCount ?? 0) >= 1;
+            if (!npcState) return false;
+            return (npcState.encounterCount ?? 0) >= 1 || !!npcState.introduced;
           };
 
           // B-1: @NPC_ID "대사" → @[표시이름|초상화URL] "대사"
