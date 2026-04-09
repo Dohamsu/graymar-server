@@ -59,13 +59,14 @@ export class NpcDialogueMarkerService {
     npcStates: Record<string, NPCState>,
     fallbackNpcId?: string,
     eventNpcIds?: string[],
+    rawInput?: string,
   ): { text: string; unmatchedCount: number } {
     const candidateNpcs = this.buildCandidateList(npcStates, eventNpcIds);
     if (candidateNpcs.length === 0) {
       return { text: narrative, unmatchedCount: 0 };
     }
 
-    const dialogues = this.extractDialogues(narrative);
+    const dialogues = this.extractDialogues(narrative, rawInput);
     if (dialogues.length === 0) {
       return { text: narrative, unmatchedCount: 0 };
     }
@@ -235,16 +236,23 @@ export class NpcDialogueMarkerService {
     return null;
   }
 
-  /** B: 직업명 → NPC role/unknownAlias 교차매칭 */
+  /** B: 직업명 → NPC role/unknownAlias 교차매칭 (발화 동사 근접 필수) */
   private matchByJob(
     before: string,
     after: string,
     candidates: NpcCandidate[],
   ): { npcId: string } | null {
-    const ctx = before + ' ' + after;
+    const speechVerbRegex = new RegExp(`(?:${SPEECH_VERBS})`);
 
     for (const job of JOB_KEYWORDS) {
-      if (!ctx.includes(job)) continue;
+      // before 마지막 60자에서 직업명 + 발화동사 근접 확인
+      const nearBefore = before.slice(-60);
+      const jobIdx = nearBefore.lastIndexOf(job);
+      if (jobIdx < 0) continue;
+
+      // 직업명 뒤에 발화동사가 있어야 매칭 (단순 언급 제외)
+      const afterJob = nearBefore.slice(jobIdx + job.length);
+      if (!speechVerbRegex.test(afterJob)) continue;
 
       // role이나 unknownAlias에 직업명이 포함된 NPC 찾기
       const matches = candidates.filter((c) => {
@@ -309,7 +317,7 @@ export class NpcDialogueMarkerService {
         }
       }
       if (def.aliases) names.push(...def.aliases);
-      if (def.role && def.role.length >= 2) names.push(def.role);
+      // role은 names에 포함하지 않음 — matchByJob에서 발화동사 근접 조건으로만 매칭
 
       candidates.push({
         npcId,
@@ -321,21 +329,33 @@ export class NpcDialogueMarkerService {
     return candidates;
   }
 
-  private extractDialogues(text: string): DialogueMatch[] {
+  private extractDialogues(text: string, rawInput?: string): DialogueMatch[] {
     const dialogues: DialogueMatch[] = [];
     const regex = /(["\u201C])([^"\u201D]{3,}?)(["\u201D])/g;
     let m: RegExpExecArray | null;
-    let lastPreMarkedEnd = -1; // 직전 @마커 대사의 끝 위치
+    let lastPreMarkedEnd = -1;
     while ((m = regex.exec(text)) !== null) {
       const beforeChar = text.slice(Math.max(0, m.index - 30), m.index);
       if (/@(?:[A-Z_]+|\[[^\]]*\])\s*$/.test(beforeChar)) {
-        // @마커가 이미 있는 대사: skip하되 끝 위치 기억
         lastPreMarkedEnd = m.index + m[0].length;
         continue;
       }
 
-      // 연속 대사 감지: 직전 @마커 대사 끝과 현재 대사 시작 사이에
-      // 다른 NPC 언급이 없고 50자 이내면 → 연속 대사로 표시
+      const quoteContent = m[2]; // 따옴표 안 텍스트
+
+      // 필터 A: rawInput 유사도 — 플레이어 행동 텍스트 인용이면 skip
+      if (rawInput && rawInput.length >= 4) {
+        // rawInput이 대사에 80%+ 포함되어 있으면 플레이어 행동 인용
+        const overlap = rawInput.length <= quoteContent.length
+          ? quoteContent.includes(rawInput)
+          : rawInput.includes(quoteContent);
+        if (overlap) continue;
+      }
+
+      // 필터 C: 인용 조사 — 대사 뒤에 "라는/라고/란/이라는" 있으면 인용문
+      const afterQuote = text.slice(m.index + m[0].length, m.index + m[0].length + 6);
+      if (/^(?:라는|라고|란|이라는|이라고|라며|라면서)/.test(afterQuote)) continue;
+
       const isConsecutive = lastPreMarkedEnd > 0
         && (m.index - lastPreMarkedEnd) < 50;
 

@@ -639,7 +639,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             }
 
             // A-1: 서버 regex로 NPC DB 기반 발화자 매칭
-            const serverResult2 = this.dialogueMarker.insertMarkers(narrative, npcStates, fallbackNpcId, eventNpcIds);
+            const serverResult2 = this.dialogueMarker.insertMarkers(narrative, npcStates, fallbackNpcId, eventNpcIds, pending.rawInput ?? undefined);
             narrative = serverResult2.text;
 
             // A-2: 미매칭 대사(@[UNMATCHED])가 있으면 nano로 개별 판단
@@ -736,6 +736,15 @@ ${npcList || '(없음)'}`,
             // A-3: 남은 @[UNMATCHED] 제거
             narrative = narrative.replace(/@\[UNMATCHED\]\s*/g, '');
           }
+
+          // A-4: 불완전 @마커 정리 (@[ 시작했지만 ] 닫히지 않은 패턴)
+          // "@[입이 가벼운 술꾼" → "]" 자동 삽입 (뒤에 큰따옴표가 오면)
+          narrative = narrative.replace(
+            /@\[([^\]\n]{2,30})(?=["\u201C])/g,
+            '@[$1] ',
+          );
+          // 그래도 닫히지 않은 불완전 @[ → 제거
+          narrative = narrative.replace(/@\[[^\]]{31,}/g, '');
 
           // Step B: @NPC_ID / @[NPC_ID] / @[RONEN] → @[표시이름|초상화URL] 변환
           const { NPC_PORTRAITS: portraits } = await import('../db/types/npc-portraits.js');
@@ -898,25 +907,27 @@ ${npcList || '(없음)'}`,
       }
 
       // 5.9 초상화/speakingNpc를 LLM 출력 기반으로 재결정
-      // 서술에서 실제 등장한 @[이름|URL] 마커의 첫 번째 NPC로 speakingNpc 갱신
-      {
+      // Gemini Flash Lite는 불완전 마커를 생성하므로 비활성화
+      const isGeminiModel = modelUsed?.includes('gemini') ?? false;
+      if (!isGeminiModel) {
         const markerMatch = narrative.match(/@\[([^\]|]+)(?:\|([^\]]+))?\]/);
         if (markerMatch) {
-          const actualName = markerMatch[1];
-          const actualImg = markerMatch[2] || undefined;
-          const updatedSr = { ...serverResult } as Record<string, unknown>;
-          const ui = { ...(updatedSr.ui as Record<string, unknown> ?? {}) };
-          ui.speakingNpc = {
-            npcId: null,
-            displayName: actualName,
-            imageUrl: actualImg,
-          };
-          updatedSr.ui = ui;
-          // serverResult 컬럼 갱신 (speakingNpc 재결정)
-          await this.db
-            .update(turns)
-            .set({ serverResult: updatedSr as any })
-            .where(eq(turns.id, pending.id));
+          const actualName = markerMatch[1].trim();
+          const actualImg = markerMatch[2]?.trim() || undefined;
+          if (actualName.length > 0 && actualName.length <= 20 && !actualName.includes('"')) {
+            const updatedSr = { ...serverResult } as Record<string, unknown>;
+            const ui = { ...(updatedSr.ui as Record<string, unknown> ?? {}) };
+            ui.speakingNpc = {
+              npcId: null,
+              displayName: actualName,
+              imageUrl: actualImg && actualImg.startsWith('/') ? actualImg : undefined,
+            };
+            updatedSr.ui = ui;
+            await this.db
+              .update(turns)
+              .set({ serverResult: updatedSr as any })
+              .where(eq(turns.id, pending.id));
+          }
         }
       }
 
