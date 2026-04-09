@@ -826,6 +826,60 @@ ${npcList || '(없음)'}`,
             (npcId) => this.content.getNpc(npcId) as { name: string; unknownAlias?: string; aliases?: string[] } | undefined,
             pending.turnNo,
           );
+
+          // Step D: 발화 도입 문장 트리밍
+          // @마커 직전의 "XX가 입을 열었다." 같은 단순 발화 도입 문장 제거
+          // 규칙: 연속 대사(같은 NPC 2번째+) → 항상 제거, 첫 대사 → NPC호칭 제외 15자 이하면 제거
+          {
+            const markerPositions = [...narrative.matchAll(/@\[([^\]]+)\]\s*["\u201C]/g)];
+            let lastMarkerNpc: string | null = null;
+
+            // 뒤에서부터 처리 (위치가 안 밀리도록)
+            for (let mi = markerPositions.length - 1; mi >= 0; mi--) {
+              const mp = markerPositions[mi];
+              const markerStart = mp.index!;
+              const markerNpc = mp[1].split('|')[0].trim();
+
+              // @마커 직전 문장 추출 (마침표/줄바꿈부터 @마커까지)
+              const beforeMarker = narrative.slice(0, markerStart);
+              const lastSentenceMatch = beforeMarker.match(/([^.!?。\n]*[.!?。]?\s*)$/);
+              if (!lastSentenceMatch) { lastMarkerNpc = markerNpc; continue; }
+
+              const sentence = lastSentenceMatch[1].trim();
+              if (!sentence) { lastMarkerNpc = markerNpc; continue; }
+
+              // 발화 동사 패턴 감지
+              const hasSpeechVerb = /(?:입을\s*열|말했|덧붙|읊조|속삭|외치|내뱉|중얼|대답|되물|답했|쏘아붙|한마디|불렀|으르렁)/.test(sentence);
+              if (!hasSpeechVerb) { lastMarkerNpc = markerNpc; continue; }
+
+              // NPC 호칭 제외한 순수 서술 길이 계산
+              let pureSentence = sentence;
+              // @[이름] 마커 제거
+              pureSentence = pureSentence.replace(/@\[[^\]]+\]\s*/g, '');
+              // NPC 호칭/이름 제거 (unknownAlias, name)
+              for (const [, state] of Object.entries(npcStates)) {
+                const npcDef = this.content.getNpc(state.npcId ?? '');
+                if (npcDef?.unknownAlias) pureSentence = pureSentence.replace(npcDef.unknownAlias, '');
+                if (npcDef?.name) pureSentence = pureSentence.replace(npcDef.name, '');
+              }
+              // 조사/공백 제거 후 순수 길이
+              const pureLen = pureSentence.replace(/[이가은는의을를에게서도와과]\s*/g, '').trim().length;
+
+              // 연속 대사 (같은 NPC): 항상 제거
+              const isConsecutive = lastMarkerNpc === markerNpc;
+              // 첫 대사: NPC호칭 제외 15자 이하 (순수 발화 도입만)이면 제거
+              const shouldRemove = isConsecutive || pureLen <= 15;
+
+              if (shouldRemove) {
+                const sentenceStart = markerStart - lastSentenceMatch[1].length;
+                if (sentenceStart >= 0) {
+                  narrative = narrative.slice(0, sentenceStart) + narrative.slice(markerStart);
+                }
+              }
+
+              lastMarkerNpc = markerNpc;
+            }
+          }
         }
       }
 
