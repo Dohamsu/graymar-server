@@ -46,6 +46,7 @@ export interface NanoEventContext {
   questState: string;
   previousOpening: string | null; // 직전 감각 카테고리 회피용
   activeConditions: Array<{ id: string; effects: { blockedActions?: string[]; boostedActions?: string[] } }>;
+  npcReactions: Array<{ npcId: string; npcName: string; type: string; text: string }>;
 }
 
 const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
@@ -176,6 +177,12 @@ export class NanoEventDirectorService {
 
     if (ctx.previousOpening) {
       parts.push(``, `[직전 opening] "${ctx.previousOpening}" → 다른 감각 사용`);
+    }
+
+    // NPC 반응 (목격자 행동)
+    if (ctx.npcReactions.length > 0) {
+      const reactionLines = ctx.npcReactions.map((r) => `- ${r.npcName}: ${r.text}`);
+      parts.push(``, `[NPC 반응 — 이전 행동을 목격한 NPC들의 반응을 반영하세요]`, ...reactionLines);
     }
 
     // NPC 선택 시그널

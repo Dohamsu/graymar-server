@@ -749,6 +749,18 @@ export class PromptBuilderService {
       factsParts.push(conceptParts.join('\n'));
     }
 
+    // NPC 반응 블록 (목격자의 능동 반응)
+    const npcReactions = (sr.ui as Record<string, unknown>)?.npcReactions as
+      | Array<{ npcName: string; type: string; text: string }>
+      | undefined;
+    if (npcReactions && npcReactions.length > 0) {
+      const reactionParts = ['[NPC 반응 — 이전 행동을 목격한 NPC의 반응을 서술에 자연스럽게 포함하세요]'];
+      for (const r of npcReactions) {
+        reactionParts.push(`- ${r.text}`);
+      }
+      factsParts.push(reactionParts.join('\n'));
+    }
+
     // NanoDirector 연출 지시 삽입 (NanoEventDirector가 없을 때만 — 레거시 호환)
     if (directorHint && !nanoEventHint) {
       const dirParts: string[] = ['[연출 지시 — 이번 턴의 서술 방향]'];

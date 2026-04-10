@@ -1483,6 +1483,7 @@ export class TurnsService {
           questState: runState.questState ?? 'S0_ARRIVE',
           previousOpening: null,
           activeConditions: (locDynamic?.[locationId] as any)?.activeConditions ?? [],
+          npcReactions: [], // 이번 턴 반응은 nano 호출 후 계산됨 — LLM 프롬프트에서 직접 주입
         };
 
         nanoEventResult = await this.nanoEventDirector.generate(nanoCtx);
@@ -1553,6 +1554,76 @@ export class TurnsService {
         }
       } catch (err) {
         this.logger.warn(`[ConsequenceProcessor] error (non-fatal): ${err}`);
+      }
+    }
+
+    // === Layer 3: NPC 능동 반응 — WITNESSED NPC가 trust/posture에 따라 반응 ===
+    const npcReactions: Array<{ npcId: string; npcName: string; type: 'warn' | 'inform' | 'avoid' | 'hostile'; text: string; heatDelta: number }> = [];
+    {
+      // 최근 WorldFacts에서 WITNESSED 기록 조회
+      const worldFacts = (ws.worldFacts ?? []) as Array<{
+        turnCreated: number;
+        category: string;
+        tags: string[];
+        impact?: { npcKnowledge?: Record<string, string> };
+      }>;
+      // 이번 턴 + 직전 턴의 PLAYER_ACTION fact에서 목격자 수집
+      const recentWitnesses = new Map<string, string[]>(); // npcId → witnessed action tags
+      for (const fact of worldFacts) {
+        if (fact.category !== 'PLAYER_ACTION') continue;
+        if (fact.turnCreated < turnNo - 1) continue; // 최근 2턴만
+        const witnesses = fact.impact?.npcKnowledge ?? {};
+        for (const [npcId, status] of Object.entries(witnesses)) {
+          if (status === 'WITNESSED') {
+            const existing = recentWitnesses.get(npcId) ?? [];
+            existing.push(...fact.tags);
+            recentWitnesses.set(npcId, existing);
+          }
+        }
+      }
+
+      // 각 목격 NPC의 trust/posture에 따라 반응 결정
+      const DANGEROUS_TAGS = new Set(['fight', 'steal', 'threaten', 'success']);
+      const existingNpcStatesForReaction = (runState.npcStates ?? {}) as Record<string, NPCState>;
+
+      for (const [npcId, tags] of recentWitnesses) {
+        const npcState = existingNpcStatesForReaction[npcId];
+        if (!npcState) continue;
+        const npcDef = this.content.getNpc(npcId);
+        const npcName = getNpcDisplayName(npcState, npcDef);
+        const trust = npcState.emotional?.trust ?? npcState.trustToPlayer ?? 0;
+        const hasDangerousAction = tags.some((t) => DANGEROUS_TAGS.has(t));
+
+        if (!hasDangerousAction) continue; // 위험한 행동 목격만 반응
+
+        let reaction: { type: 'warn' | 'inform' | 'avoid' | 'hostile'; text: string; heatDelta: number };
+
+        if (trust >= 20) {
+          // 우호적 NPC → 경고 (Heat 변동 없음)
+          reaction = { type: 'warn', text: `${npcName}이(가) 조심하라고 경고한다`, heatDelta: 0 };
+        } else if (trust >= -10) {
+          // 중립 NPC → 회피 (관계 소폭 악화)
+          reaction = { type: 'avoid', text: `${npcName}이(가) 눈을 피하며 거리를 둔다`, heatDelta: 0 };
+        } else if (trust >= -30) {
+          // 적대적 NPC → 밀고 (Heat 증가)
+          reaction = { type: 'inform', text: `${npcName}이(가) 경비대에 밀고했다`, heatDelta: 5 };
+        } else {
+          // 매우 적대적 → 적극 대응
+          reaction = { type: 'hostile', text: `${npcName}이(가) 경비대를 불러왔다`, heatDelta: 8 };
+        }
+
+        npcReactions.push({ npcId, npcName, ...reaction });
+
+        // Heat 변동 적용
+        if (reaction.heatDelta > 0) {
+          ws = { ...ws, hubHeat: Math.min(100, ws.hubHeat + reaction.heatDelta) };
+        }
+      }
+
+      if (npcReactions.length > 0) {
+        this.logger.log(
+          `[NpcReaction] ${npcReactions.map((r) => `${r.npcName}:${r.type}(heat+${r.heatDelta})`).join(', ')}`,
+        );
       }
     }
 
@@ -3055,6 +3126,20 @@ export class TurnsService {
     // NanoEventDirector 결과를 ui에 추가 (LLM 프롬프트 주입용)
     if (nanoEventResult) {
       (result.ui as any).nanoEventHint = nanoEventResult;
+    }
+
+    // NPC 반응을 ui에 추가 (LLM 프롬프트 + 클라이언트 알림)
+    if (npcReactions.length > 0) {
+      (result.ui as any).npcReactions = npcReactions;
+      // 반응 이벤트 추가
+      for (const r of npcReactions) {
+        result.events.push({
+          id: `npc_reaction_${r.npcId}_${turnNo}`,
+          kind: 'NPC' as any,
+          text: r.text,
+          tags: ['npc_reaction', r.type],
+        });
+      }
     }
 
     // Orchestration 결과를 ui에 추가 (LLM context 전달용)
