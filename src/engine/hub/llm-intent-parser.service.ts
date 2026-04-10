@@ -409,10 +409,10 @@ export class LlmIntentParserService implements OnModuleInit {
     // secondary가 primary와 같으면 제거
     if (secondaryActionType === actionType) secondaryActionType = undefined;
 
-    // targetNpcId: LLM 결과 우선, 없으면 키워드 파서 결과 사용
-    // LLM이 이름/별칭을 반환할 수 있으므로 NPC ID로 리졸브
+    // targetNpcId: KW가 감지한 경우 우선 (플레이어 명시적 지목), 없으면 LLM 사용
     let targetNpcId = keywordResult.targetNpcId ?? null;
-    if (llmResult.targetNpc && npcsAtLocation?.length) {
+    if (!targetNpcId && llmResult.targetNpc && npcsAtLocation?.length) {
+      // KW 미감지 시에만 LLM 결과 사용
       const llmVal = llmResult.targetNpc.toLowerCase();
       const match = npcsAtLocation.find(
         (n) =>
@@ -423,8 +423,8 @@ export class LlmIntentParserService implements OnModuleInit {
           (n.unknownAlias && n.unknownAlias.toLowerCase().includes(llmVal)),
       );
       if (match) targetNpcId = match.npcId;
-      else if (!targetNpcId) targetNpcId = llmResult.targetNpc; // fallback: 원본 유지
-    } else if (llmResult.targetNpc && !targetNpcId) {
+      else targetNpcId = llmResult.targetNpc; // fallback: 원본 유지
+    } else if (!targetNpcId && llmResult.targetNpc) {
       targetNpcId = llmResult.targetNpc;
     }
 
