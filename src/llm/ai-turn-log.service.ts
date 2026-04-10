@@ -31,6 +31,9 @@ export class AiTurnLogService {
         promptTokens: entry.response?.promptTokens ?? null,
         completionTokens: entry.response?.completionTokens ?? null,
         latencyMs: entry.response?.latencyMs ?? null,
+        costUsd: entry.response?.costUsd
+          ? String(entry.response.costUsd)
+          : null,
         rawPrompt: entry.messages ? JSON.stringify(entry.messages) : null,
         rawCompletion: entry.response?.text ?? null,
         error: entry.error ? { error: entry.error } : null,

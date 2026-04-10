@@ -94,7 +94,8 @@ export class LlmCallerService {
 
     // Fallback 시도
     const fallback = this.registry.getFallback();
-    if (fallback.name === primary.name) {
+    const fallbackModel = config.fallbackModel;
+    if (fallback.name === primary.name && !fallbackModel) {
       return {
         success: false,
         error: `Primary "${primary.name}" failed after ${attempts} attempts, no distinct fallback`,
@@ -103,10 +104,15 @@ export class LlmCallerService {
       };
     }
 
+    // fallbackModel이 설정되어 있으면 모델 오버라이드
+    const fallbackRequest = fallbackModel
+      ? { ...request, model: fallbackModel }
+      : request;
+
     attempts++;
     try {
       await this.rateLimiter.acquire();
-      const response = await fallback.generate(request);
+      const response = await fallback.generate(fallbackRequest);
       this.logger.log(`Fallback "${fallback.name}" succeeded`);
       return { success: true, response, providerUsed: fallback.name, attempts };
     } catch (fallbackErr) {

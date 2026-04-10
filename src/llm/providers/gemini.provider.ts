@@ -105,6 +105,7 @@ export class GeminiProvider implements LlmProvider {
       cachedTokens: usage?.cachedContentTokenCount ?? 0,
       cacheCreationTokens: 0,
       latencyMs: Date.now() - start,
+      costUsd: 0,
     };
   }
 

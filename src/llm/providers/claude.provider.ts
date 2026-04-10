@@ -111,6 +111,7 @@ export class ClaudeProvider implements LlmProvider {
       cachedTokens: usage.cache_read_input_tokens ?? 0,
       cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
       latencyMs: Date.now() - start,
+      costUsd: 0,
     };
   }
 

@@ -1,6 +1,7 @@
 import {
   integer,
   jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
@@ -65,6 +66,7 @@ export const aiTurnLogs = pgTable('ai_turn_logs', {
   promptTokens: integer('prompt_tokens'),
   completionTokens: integer('completion_tokens'),
   latencyMs: integer('latency_ms'),
+  costUsd: numeric('cost_usd', { precision: 10, scale: 6 }),
   rawPrompt: text('raw_prompt'),
   rawCompletion: text('raw_completion'),
   error: jsonb('error').$type<Record<string, unknown>>(),
