@@ -8,6 +8,7 @@ import type {
   ParsedIntentV2,
   EventDefV2,
   WorldFact,
+  LocationDynamicState,
 } from '../../db/types/index.js';
 import { WorldFactService } from './world-fact.service.js';
 import { LocationStateService } from './location-state.service.js';
@@ -26,6 +27,7 @@ export interface ConsequenceOutput {
   factsCreated: WorldFact[];
   locationEffects: string[];
   npcWitnesses: string[];
+  triggeredConditions: string[];   // 임계값 돌파로 발동된 조건 ID
 }
 
 @Injectable()
@@ -45,6 +47,7 @@ export class ConsequenceProcessorService {
       factsCreated: [],
       locationEffects: [],
       npcWitnesses: [],
+      triggeredConditions: [],
     };
 
     // 1. 판정 결과 → WorldFact 생성
@@ -77,6 +80,12 @@ export class ConsequenceProcessorService {
         output.locationEffects.push(
           `${input.locationId}: security${locationEffect.securityDelta >= 0 ? '+' : ''}${locationEffect.securityDelta}, unrest${locationEffect.unrestDelta >= 0 ? '+' : ''}${locationEffect.unrestDelta}`,
         );
+
+        // === 임계값 트리거: 장소 수치 → 조건 자동 발동 ===
+        const triggered = this.checkThresholdTriggers(
+          ws, input.locationId, state, input.turnNo,
+        );
+        output.triggeredConditions.push(...triggered);
       }
     }
 
@@ -157,6 +166,92 @@ export class ConsequenceProcessorService {
     }
 
     return false;
+  }
+
+  /** 장소 수치 임계값을 확인하고 조건을 자동 발동/해제 */
+  private checkThresholdTriggers(
+    ws: WorldState,
+    locationId: string,
+    state: LocationDynamicState,
+    turnNo: number,
+  ): string[] {
+    const triggered: string[] = [];
+    const activeIds = new Set(state.activeConditions.map((c) => c.id));
+
+    // 치안 임계값 → 경비 강화 / 봉쇄
+    if (state.security < 15 && !activeIds.has('LOCKDOWN')) {
+      // LOCKDOWN이 더 강하므로 INCREASED_PATROLS 제거
+      this.locationState.removeCondition(ws, locationId, 'INCREASED_PATROLS');
+      this.locationState.addCondition(ws, locationId, {
+        id: 'LOCKDOWN',
+        source: 'threshold:security<15',
+        duration: 8, // 8턴 지속
+        effects: {
+          securityMod: 10, prosperityMod: -5, unrestMod: 5,
+          blockedActions: ['STEAL', 'SNEAK'],
+          boostedActions: ['OBSERVE', 'TALK'],
+        },
+      }, turnNo);
+      triggered.push('LOCKDOWN');
+    } else if (state.security < 30 && !activeIds.has('INCREASED_PATROLS') && !activeIds.has('LOCKDOWN')) {
+      this.locationState.addCondition(ws, locationId, {
+        id: 'INCREASED_PATROLS',
+        source: 'threshold:security<30',
+        duration: 6, // 6턴 지속
+        effects: {
+          securityMod: 5, prosperityMod: 0, unrestMod: 2,
+          blockedActions: [],
+          boostedActions: ['OBSERVE'],
+        },
+      }, turnNo);
+      triggered.push('INCREASED_PATROLS');
+    }
+
+    // 치안 회복 → 조건 해제
+    if (state.security >= 35 && activeIds.has('INCREASED_PATROLS')) {
+      this.locationState.removeCondition(ws, locationId, 'INCREASED_PATROLS');
+    }
+    if (state.security >= 20 && activeIds.has('LOCKDOWN')) {
+      this.locationState.removeCondition(ws, locationId, 'LOCKDOWN');
+    }
+
+    // 불안 임계값 → 소문 / 폭동
+    if (state.unrest > 80 && !activeIds.has('RIOT')) {
+      this.locationState.removeCondition(ws, locationId, 'UNREST_RUMORS');
+      this.locationState.addCondition(ws, locationId, {
+        id: 'RIOT',
+        source: 'threshold:unrest>80',
+        duration: 5,
+        effects: {
+          securityMod: -10, prosperityMod: -10, unrestMod: 0,
+          blockedActions: ['TRADE', 'SHOP'],
+          boostedActions: ['FIGHT', 'STEAL'],
+        },
+      }, turnNo);
+      triggered.push('RIOT');
+    } else if (state.unrest > 60 && !activeIds.has('UNREST_RUMORS') && !activeIds.has('RIOT')) {
+      this.locationState.addCondition(ws, locationId, {
+        id: 'UNREST_RUMORS',
+        source: 'threshold:unrest>60',
+        duration: 8,
+        effects: {
+          securityMod: -2, prosperityMod: -3, unrestMod: 0,
+          blockedActions: [],
+          boostedActions: ['INVESTIGATE', 'PERSUADE'],
+        },
+      }, turnNo);
+      triggered.push('UNREST_RUMORS');
+    }
+
+    // 불안 안정 → 해제
+    if (state.unrest <= 55 && activeIds.has('UNREST_RUMORS')) {
+      this.locationState.removeCondition(ws, locationId, 'UNREST_RUMORS');
+    }
+    if (state.unrest <= 70 && activeIds.has('RIOT')) {
+      this.locationState.removeCondition(ws, locationId, 'RIOT');
+    }
+
+    return triggered;
   }
 
   private computeLocationEffect(

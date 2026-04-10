@@ -1482,6 +1482,7 @@ export class TurnsService {
           availableFacts,
           questState: runState.questState ?? 'S0_ARRIVE',
           previousOpening: null,
+          activeConditions: (locDynamic?.[locationId] as any)?.activeConditions ?? [],
         };
 
         nanoEventResult = await this.nanoEventDirector.generate(nanoCtx);
@@ -1517,6 +1518,38 @@ export class TurnsService {
           this.logger.debug(
             `[ConsequenceProcessor] facts=${consequenceOutput.factsCreated.length} locEffects=${consequenceOutput.locationEffects.length} witnesses=${consequenceOutput.npcWitnesses.length}`,
           );
+        }
+        // 임계값 트리거 로깅 + 시그널 이벤트 생성
+        if (consequenceOutput.triggeredConditions.length > 0) {
+          this.logger.log(
+            `[ThresholdTrigger] ${consequenceOutput.triggeredConditions.join(', ')} at ${locationId}`,
+          );
+          // NanoEventDirector에 전달할 nanoEventResult에 반영 (이미 ui에 저장됨)
+          // 시그널 피드에 세계 변화 알림 추가
+          const CONDITION_SIGNALS: Record<string, string> = {
+            INCREASED_PATROLS: '🛡️ 경비대가 순찰을 강화했다',
+            LOCKDOWN: '🔒 경비대가 지역을 봉쇄했다',
+            UNREST_RUMORS: '💬 불안한 소문이 돌고 있다',
+            RIOT: '🔥 폭동이 발생했다!',
+          };
+          // 시그널 피드에 직접 추가
+          const signalFeed = (ws.signalFeed ?? []) as Array<Record<string, unknown>>;
+          for (const condId of consequenceOutput.triggeredConditions) {
+            const signalText = CONDITION_SIGNALS[condId];
+            if (signalText) {
+              signalFeed.push({
+                id: `cond_${condId}_${turnNo}`,
+                channel: 'SECURITY',
+                severity: condId === 'RIOT' || condId === 'LOCKDOWN' ? 3 : 2,
+                locationId,
+                text: signalText,
+                sourceIncidentId: null,
+                createdAtClock: ws.globalClock ?? turnNo,
+                expiresAtClock: (ws.globalClock ?? turnNo) + 12,
+              });
+            }
+          }
+          ws = { ...ws, signalFeed } as WorldState;
         }
       } catch (err) {
         this.logger.warn(`[ConsequenceProcessor] error (non-fatal): ${err}`);

@@ -112,6 +112,21 @@ export class ResolveService {
       baseMod += presetActionBonuses[intent.actionType];
     }
 
+    // Living World: 장소 활성 조건(activeConditions)에 의한 판정 보정
+    const locState = ws.locationDynamicStates?.[ws.currentLocationId as string] as
+      | { activeConditions?: Array<{ effects: { blockedActions?: string[]; boostedActions?: string[] } }> }
+      | undefined;
+    if (locState?.activeConditions) {
+      for (const cond of locState.activeConditions) {
+        if (cond.effects.blockedActions?.includes(intent.actionType)) {
+          baseMod -= 2; // 차단된 행동 → 심각한 패널티
+        }
+        if (cond.effects.boostedActions?.includes(intent.actionType)) {
+          baseMod += 1; // 유리한 행동 → 소폭 보너스
+        }
+      }
+    }
+
     // Phase 4 특성 런타임 효과: BLOOD_OATH lowHpBonus + NIGHT_CHILD time bonus
     const traitEffects: TraitEffects | undefined = runState?.traitEffects;
     let traitBonus = 0;
