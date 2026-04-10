@@ -155,13 +155,41 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      // RunState 조회 (HUB WorldState 컨텍스트용)
-      const runSession = await this.db.query.runSessions.findFirst({
-        where: eq(runSessions.id, pending.runId),
-        columns: { runState: true, gender: true, presetId: true, partyRunMode: true },
-      });
+      // 1. DB 쿼리 병렬 실행 (runSession + 이전 선택지 + 최근 서술 동시 조회)
+      const [runSession, prevTurn, recentDone] = await Promise.all([
+        // RunState 조회
+        this.db.query.runSessions.findFirst({
+          where: eq(runSessions.id, pending.runId),
+          columns: { runState: true, gender: true, presetId: true, partyRunMode: true },
+        }),
+        // 이전 턴 LLM 선택지 (반복 방지용)
+        pending.nodeType === 'LOCATION' && pending.nodeInstanceId
+          ? this.db.query.turns.findFirst({
+              where: and(
+                eq(turns.nodeInstanceId, pending.nodeInstanceId),
+                eq(turns.llmStatus, 'DONE'),
+                lt(turns.turnNo, pending.turnNo),
+              ),
+              orderBy: desc(turns.turnNo),
+              columns: { llmChoices: true },
+            })
+          : Promise.resolve(null),
+        // 최근 서술 (NanoDirector fallback용)
+        pending.nodeType === 'LOCATION' && pending.inputType !== 'SYSTEM' && pending.nodeInstanceId
+          ? this.db.query.turns.findMany({
+              where: and(
+                eq(turns.nodeInstanceId, pending.nodeInstanceId),
+                eq(turns.llmStatus, 'DONE'),
+                lt(turns.turnNo, pending.turnNo),
+              ),
+              orderBy: desc(turns.turnNo),
+              limit: 2,
+              columns: { llmOutput: true },
+            })
+          : Promise.resolve([]),
+      ]);
 
-      // 1. LLM 컨텍스트 구축
+      // 1.1. LLM 컨텍스트 구축
       const llmContext = await this.contextBuilder.build(
         pending.runId,
         pending.nodeInstanceId,
@@ -171,7 +199,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         runSession?.presetId,
       );
 
-      // 1.5. 파티 모드: partyActions 주입 (actionPlan에 저장된 데이터)
+      // 1.5. 파티 모드: partyActions 주입
       if (
         runSession?.partyRunMode === 'PARTY' &&
         pending.actionPlan &&
@@ -183,23 +211,12 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // 2. 이전 턴의 LLM 선택지 라벨 조회 (반복 방지용)
+      // 2. 이전 선택지 라벨
       let previousChoiceLabels: string[] | undefined;
-      if (pending.nodeType === 'LOCATION' && pending.nodeInstanceId) {
-        const prevTurn = await this.db.query.turns.findFirst({
-          where: and(
-            eq(turns.nodeInstanceId, pending.nodeInstanceId),
-            eq(turns.llmStatus, 'DONE'),
-            lt(turns.turnNo, pending.turnNo),
-          ),
-          orderBy: desc(turns.turnNo),
-          columns: { llmChoices: true },
-        });
-        if (prevTurn?.llmChoices && Array.isArray(prevTurn.llmChoices)) {
-          previousChoiceLabels = prevTurn.llmChoices
-            .filter((c) => c.id !== 'go_hub')
-            .map((c) => c.label);
-        }
+      if (prevTurn?.llmChoices && Array.isArray(prevTurn.llmChoices)) {
+        previousChoiceLabels = prevTurn.llmChoices
+          .filter((c) => c.id !== 'go_hub')
+          .map((c) => c.label);
       }
 
       // 3. NanoDirector / NanoEventDirector: LOCATION 턴에서 연출 지시서 생성
@@ -220,17 +237,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             mood: nanoEventHint.tone,
           };
         } else {
-          // Fallback: 기존 NanoDirector 사용
-          const recentDone = await this.db.query.turns.findMany({
-            where: and(
-              eq(turns.nodeInstanceId, pending.nodeInstanceId),
-              eq(turns.llmStatus, 'DONE'),
-              lt(turns.turnNo, pending.turnNo),
-            ),
-            orderBy: desc(turns.turnNo),
-            limit: 2,
-            columns: { llmOutput: true },
-          });
+          // Fallback: 기존 NanoDirector 사용 (recentDone은 위에서 병렬 조회 완료)
           const recentNarratives = recentDone
             .map((t) => t.llmOutput as string | null)
             .filter((n): n is string => !!n)
