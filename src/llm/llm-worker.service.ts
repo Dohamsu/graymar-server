@@ -186,47 +186,61 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // 3. NanoDirector: LOCATION 턴에서 연출 지시서 생성 (NPC 유무와 무관)
+      // 3. NanoDirector / NanoEventDirector: LOCATION 턴에서 연출 지시서 생성
       let directorHint: DirectorHint | null = null;
-      if (pending.nodeType === 'LOCATION' && pending.inputType !== 'SYSTEM') {
-        // 직전 2턴 서술 조회
-        const recentDone = await this.db.query.turns.findMany({
-          where: and(
-            eq(turns.nodeInstanceId, pending.nodeInstanceId),
-            eq(turns.llmStatus, 'DONE'),
-            lt(turns.turnNo, pending.turnNo),
-          ),
-          orderBy: desc(turns.turnNo),
-          limit: 2,
-          columns: { llmOutput: true },
-        });
-        const recentNarratives = recentDone
-          .map((t) => t.llmOutput as string | null)
-          .filter((n): n is string => !!n)
-          .reverse();
+      const nanoEventHint = (serverResult.ui as Record<string, unknown>)?.nanoEventHint as
+        | import('./nano-event-director.service.js').NanoEventResult
+        | undefined;
 
-        // 직전 opening 감각 카테고리 추출
-        let previousSenseCategory: SenseCategory | undefined;
-        if (recentNarratives.length > 0) {
-          previousSenseCategory = this.nanoDirector.detectSenseCategory(
-            recentNarratives[recentNarratives.length - 1],
+      if (pending.nodeType === 'LOCATION' && pending.inputType !== 'SYSTEM') {
+        if (nanoEventHint) {
+          // NanoEventDirector 결과 → DirectorHint 변환 (기존 NanoDirector 대체)
+          directorHint = {
+            opening: nanoEventHint.opening,
+            senseCategory: '시각' as SenseCategory, // nano가 감각을 직접 결정
+            npcEntrance: '', // concept에 포함
+            npcGesture: nanoEventHint.npcGesture,
+            avoid: nanoEventHint.avoid,
+            mood: nanoEventHint.tone,
+          };
+        } else {
+          // Fallback: 기존 NanoDirector 사용
+          const recentDone = await this.db.query.turns.findMany({
+            where: and(
+              eq(turns.nodeInstanceId, pending.nodeInstanceId),
+              eq(turns.llmStatus, 'DONE'),
+              lt(turns.turnNo, pending.turnNo),
+            ),
+            orderBy: desc(turns.turnNo),
+            limit: 2,
+            columns: { llmOutput: true },
+          });
+          const recentNarratives = recentDone
+            .map((t) => t.llmOutput as string | null)
+            .filter((n): n is string => !!n)
+            .reverse();
+
+          let previousSenseCategory: SenseCategory | undefined;
+          if (recentNarratives.length > 0) {
+            previousSenseCategory = this.nanoDirector.detectSenseCategory(
+              recentNarratives[recentNarratives.length - 1],
+            );
+          }
+
+          const npcEvt = serverResult.events?.find(
+            (e) => (e.data as Record<string, unknown>)?.npcId,
+          );
+          const npcId = (npcEvt?.data as Record<string, unknown>)?.npcId as string | undefined;
+          const npcDef = npcId ? this.content.getNpc(npcId) : null;
+          const npcName = npcDef?.unknownAlias ?? npcDef?.name ?? null;
+
+          directorHint = await this.nanoDirector.generate(
+            recentNarratives,
+            serverResult,
+            npcName,
+            previousSenseCategory,
           );
         }
-
-        // 등장 NPC 표시명
-        const npcEvt = serverResult.events?.find(
-          (e) => (e.data as Record<string, unknown>)?.npcId,
-        );
-        const npcId = (npcEvt?.data as Record<string, unknown>)?.npcId as string | undefined;
-        const npcDef = npcId ? this.content.getNpc(npcId) : null;
-        const npcName = npcDef?.unknownAlias ?? npcDef?.name ?? null;
-
-        directorHint = await this.nanoDirector.generate(
-          recentNarratives,
-          serverResult,
-          npcName,
-          previousSenseCategory,
-        );
       }
 
       // 3.5. 프롬프트 메시지 조립
@@ -238,6 +252,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         (pending.inputType as string) ?? 'SYSTEM',
         previousChoiceLabels,
         directorHint,
+        nanoEventHint ?? null,
       );
 
       // 4. LLM 호출 (재시도/fallback 포함)

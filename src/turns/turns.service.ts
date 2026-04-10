@@ -89,6 +89,7 @@ import { PlayerGoalService } from '../engine/hub/player-goal.service.js';
 import { QuestProgressionService } from '../engine/hub/quest-progression.service.js';
 import { ShopService } from '../engine/hub/shop.service.js';
 import { LegendaryRewardService } from '../engine/rewards/legendary-reward.service.js';
+import { NanoEventDirectorService, type NanoEventResult, type NanoEventContext } from '../llm/nano-event-director.service.js';
 import type { RegionEconomy } from '../db/types/region-state.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import {
@@ -188,6 +189,7 @@ export class TurnsService {
     private readonly consequenceProcessor?: ConsequenceProcessorService,
     @Optional() private readonly playerGoalService?: PlayerGoalService,
     @Optional() private readonly questProgression?: QuestProgressionService,
+    @Optional() private readonly nanoEventDirector?: NanoEventDirectorService,
   ) {}
 
   /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
@@ -1367,6 +1369,138 @@ export class TurnsService {
       `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${event.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}${resolveResult.traitBonus ? ` traitBonus=${resolveResult.traitBonus > 0 ? '+' : ''}${resolveResult.traitBonus}` : ''}${resolveResult.gamblerLuckTriggered ? ' GAMBLER_LUCK!' : ''}`,
     );
 
+    // === NanoEventDirector: nano LLM 기반 동적 이벤트 컨셉 생성 ===
+    let nanoEventResult: NanoEventResult | null = null;
+    if (this.nanoEventDirector) {
+      try {
+        // 장소에 있는 NPC 목록
+        const locDynamic = ws.locationDynamicStates as
+          | Record<string, { presentNpcs?: string[] }>
+          | undefined;
+        const presentNpcIds =
+          locDynamic?.[locationId]?.presentNpcs ?? [];
+        const existingNpcStates = (runState.npcStates ?? {}) as Record<string, NPCState>;
+        // NPC별 연속 대화 턴 수 계산
+        const npcConsecutiveMap: Record<string, number> = {};
+        for (let i = actionHistory.length - 1; i >= 0; i--) {
+          const hNpc = (actionHistory[i] as Record<string, unknown>).primaryNpcId as string | undefined;
+          if (!hNpc) break;
+          npcConsecutiveMap[hNpc] = (npcConsecutiveMap[hNpc] ?? 0) + 1;
+          if (i > 0 && (actionHistory[i - 1] as Record<string, unknown>).primaryNpcId !== hNpc) break;
+        }
+        const presentNpcs = presentNpcIds.map((id: string) => {
+          const npcDef = this.content.getNpc(id);
+          const npcState = existingNpcStates[id];
+          const met = actionHistory.some((h) => (h as Record<string, unknown>).primaryNpcId === id);
+          return {
+            npcId: id,
+            displayName: getNpcDisplayName(npcState, npcDef),
+            posture: npcState?.posture ?? npcDef?.basePosture ?? 'CAUTIOUS',
+            trust: npcState?.emotional?.trust ?? 0,
+            consecutiveTurns: npcConsecutiveMap[id] ?? 0,
+            met,
+          };
+        });
+
+        // 발견 가능 fact 목록
+        const discoveredFactsSet = new Set(runState.discoveredQuestFacts ?? []);
+        const availableFacts = this.questProgression
+          ? this.content.getAllEventsV2()
+              .filter(
+                (e: any) =>
+                  e.locationId === locationId &&
+                  e.discoverableFact &&
+                  !discoveredFactsSet.has(e.discoverableFact),
+              )
+              .map((e: any) => {
+                const factDetail = this.questProgression!.getFactDetail(e.discoverableFact);
+                return {
+                  factId: e.discoverableFact as string,
+                  description: factDetail ?? e.discoverableFact,
+                  rate: resolveResult.outcome === 'SUCCESS' ? 1.0
+                    : resolveResult.outcome === 'PARTIAL' ? 0.5
+                    : 0,
+                };
+              })
+          : [];
+
+        // 직전 2턴 요약
+        const recentSummaryParts = actionHistory.slice(-2).map((h, i) => {
+          const ah = h as Record<string, unknown>;
+          const t = actionHistory.length - 2 + i + 1;
+          return `T${turnNo - (actionHistory.length - (actionHistory.length - 2 + i))}: ${ah.eventId ?? '자유행동'} (${ah.actionType})`;
+        });
+
+        // 직전 NPC
+        const lastEntry = actionHistory[actionHistory.length - 1] as
+          | Record<string, unknown>
+          | undefined;
+        const lastNpcId = (lastEntry?.primaryNpcId as string) ?? null;
+        const lastNpcDef = lastNpcId ? this.content.getNpc(lastNpcId) : null;
+
+        // sourceNpcId from choice payload (NPC 연속성)
+        const choiceSourceNpcId = (choicePayload?.sourceNpcId as string) ?? null;
+        const effectiveLastNpcId = choiceSourceNpcId ?? lastNpcId;
+
+        // targetNpcId: IntentV3에서 감지된 대상 NPC
+        const nanoTargetNpcId = intentV3.targetNpcId ?? null;
+
+        // wantNewNpc: "다른/아무나/새로운" 키워드 감지
+        const WANT_NEW_KEYWORDS = ['다른 사람', '아무나', '아무한테', '새로운', '다른 누구', '다른사람'];
+        const wantNewNpc = WANT_NEW_KEYWORDS.some((kw) => rawInput.includes(kw));
+
+        // 같은 NPC 연속 턴 수
+        let npcConsecutiveTurns = 0;
+        if (effectiveLastNpcId) {
+          for (let i = actionHistory.length - 1; i >= 0; i--) {
+            if ((actionHistory[i] as Record<string, unknown>).primaryNpcId === effectiveLastNpcId) {
+              npcConsecutiveTurns++;
+            } else {
+              break;
+            }
+          }
+        }
+
+        const nanoCtx: NanoEventContext = {
+          locationId,
+          locationName: this.content.getLocation(locationId)?.name ?? locationId,
+          timePhase: (ws.phaseV2 ?? ws.timePhase) as string,
+          hubHeat: ws.hubHeat,
+          hubSafety: ws.hubSafety as string,
+          rawInput,
+          actionType: intent.actionType,
+          resolveOutcome: resolveResult.outcome as 'SUCCESS' | 'PARTIAL' | 'FAIL',
+          lastNpcId: effectiveLastNpcId,
+          lastNpcName: effectiveLastNpcId
+            ? (getNpcDisplayName(existingNpcStates[effectiveLastNpcId], this.content.getNpc(effectiveLastNpcId)))
+            : null,
+          targetNpcId: nanoTargetNpcId,
+          wantNewNpc,
+          npcConsecutiveTurns,
+          presentNpcs,
+          recentSummary: recentSummaryParts.join('\n'),
+          availableFacts,
+          questState: runState.questState ?? 'S0_ARRIVE',
+          previousOpening: null,
+        };
+
+        nanoEventResult = await this.nanoEventDirector.generate(nanoCtx);
+        if (nanoEventResult) {
+          this.logger.log(
+            `[NanoEventDirector] npc=${nanoEventResult.npc} concept="${nanoEventResult.concept.slice(0, 40)}" fact=${nanoEventResult.fact ?? 'none'} choices=${nanoEventResult.choices.length}`,
+          );
+
+          // nano가 추천한 NPC를 이벤트 primaryNpcId에 반영
+          if (nanoEventResult.npcId && event.eventId.startsWith('FREE_')) {
+            (event.payload as Record<string, unknown>).primaryNpcId = nanoEventResult.npcId;
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`[NanoEventDirector] error (non-fatal, fallback to legacy): ${err}`);
+        nanoEventResult = null;
+      }
+    }
+
     // Living World v2: 판정 결과 → WorldFact 생성 + LocationState 변경 + NPC 목격
     if (this.consequenceProcessor) {
       try {
@@ -2521,6 +2655,33 @@ export class TurnsService {
           }
         }
 
+        // 경로 4: NanoEventDirector 추천 fact — 서버 RNG로 최종 확정
+        if (nanoEventResult?.fact && nanoEventResult.factRevealed) {
+          const nanoFact = nanoEventResult.fact;
+          if (!existing.includes(nanoFact)) {
+            // nano가 추천한 fact가 유효한지 확인 (발견 가능 목록에 있는지)
+            const isValidFact = this.content.getAllEventsV2().some(
+              (e: any) => e.discoverableFact === nanoFact,
+            );
+            if (isValidFact) {
+              // 서버 RNG로 최종 확정 (SUCCESS=100%, PARTIAL=50%)
+              const factRoll = rng.range(0, 100);
+              const threshold = resolveResult.outcome === 'SUCCESS' ? 100
+                : resolveResult.outcome === 'PARTIAL' ? 50 : 0;
+              if (factRoll < threshold) {
+                addFact(nanoFact, `nano:${nanoEventResult.npcId ?? 'none'}`);
+              } else {
+                // RNG 실패 → fact 미발견, LLM 프롬프트에도 반영 안 함
+                nanoEventResult.factRevealed = false;
+                this.logger.debug(`[NanoEventDirector] fact ${nanoFact} RNG failed (roll=${factRoll}, threshold=${threshold})`);
+              }
+            } else {
+              nanoEventResult.factRevealed = false;
+              this.logger.debug(`[NanoEventDirector] fact ${nanoFact} not in valid fact list`);
+            }
+          }
+        }
+
         // 전체 발견 팩트 수집 + 단계 전환 체크
         const discoveredFacts =
           this.questProgression.collectDiscoveredFacts(updatedRunState);
@@ -2708,6 +2869,27 @@ export class TurnsService {
         event.eventId,
       );
     }
+    // === NanoEventDirector 선택지 오버라이드 ===
+    if (nanoEventResult && nanoEventResult.choices.length >= 3) {
+      choices = nanoEventResult.choices.map((nc, idx) => ({
+        id: `nano_${turnNo}_${idx}`,
+        label: nc.label,
+        action: {
+          type: 'CHOICE' as import('../db/types/index.js').InputType,
+          payload: {
+            affordance: nc.affordance,
+            sourceNpcId: nc.npcId ?? nanoEventResult!.npcId,
+          },
+        },
+      }));
+      // go_hub 선택지는 항상 마지막에 추가
+      choices.push({
+        id: 'go_hub',
+        label: '다른 장소로 이동한다',
+        action: { type: 'CHOICE' as import('../db/types/index.js').InputType, payload: { affordance: 'MOVE_LOCATION' } },
+      });
+    }
+
     // === 선택지별 예상 보정치(modifier) 부착 ===
     {
       const pBonuses = presetActionBonuses ?? {};
@@ -2835,6 +3017,11 @@ export class TurnsService {
     // Phase 4b: 상점 액션 이벤트 추가
     for (const shopEvt of shopActionEvents) {
       result.events.push(shopEvt);
+    }
+
+    // NanoEventDirector 결과를 ui에 추가 (LLM 프롬프트 주입용)
+    if (nanoEventResult) {
+      (result.ui as any).nanoEventHint = nanoEventResult;
     }
 
     // Orchestration 결과를 ui에 추가 (LLM context 전달용)

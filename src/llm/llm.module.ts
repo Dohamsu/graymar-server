@@ -16,6 +16,7 @@ import { ClaudeProvider } from './providers/claude.provider.js';
 import { GeminiProvider } from './providers/gemini.provider.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
 import { NanoDirectorService } from './nano-director.service.js';
+import { NanoEventDirectorService } from './nano-event-director.service.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
 import { ContentModule } from '../content/content.module.js';
 
@@ -35,12 +36,14 @@ import { ContentModule } from '../content/content.module.js';
     LlmProviderRegistryService,
     NpcDialogueMarkerService,
     NanoDirectorService,
+    NanoEventDirectorService,
   ],
   exports: [
     ContextBuilderService,
     LlmConfigService,
     LlmCallerService,
     LlmProviderRegistryService,
+    NanoEventDirectorService,
   ],
 })
 export class LlmModule implements OnModuleInit {
