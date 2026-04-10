@@ -351,6 +351,26 @@ export class ContextBuilderService {
             });
             locationContext += ` (이 장소에 있는 인물: ${npcNames.join(', ')})`;
           }
+
+          // Living World v2: 장소 활성 조건
+          const locFullState = locDynamic?.[ws.currentLocationId as string] as
+            | { activeConditions?: Array<{ id: string }> ; security?: number; unrest?: number }
+            | undefined;
+          if (locFullState?.activeConditions && locFullState.activeConditions.length > 0) {
+            const condDescs: Record<string, string> = {
+              INCREASED_PATROLS: '경비 순찰 강화 중',
+              LOCKDOWN: '지역 봉쇄 중',
+              UNREST_RUMORS: '불안한 소문이 돌고 있다',
+              RIOT: '폭동 발생 중',
+              CURFEW: '야간 통금 중',
+              FESTIVAL: '축제 진행 중',
+            };
+            const condTexts = locFullState.activeConditions.map((c: { id: string }) => condDescs[c.id] ?? c.id);
+            locationContext += ` [${condTexts.join(', ')}]`;
+          }
+          if (locFullState?.security != null) {
+            snapshotParts.push(`장소 치안: ${locFullState.security}/100, 불안: ${locFullState.unrest ?? 0}/100`);
+          }
         }
 
         // Living World v2: 최근 WorldFacts 요약

@@ -45,6 +45,7 @@ export interface NanoEventContext {
   availableFacts: Array<{ factId: string; description: string; rate: number }>;
   questState: string;
   previousOpening: string | null; // 직전 감각 카테고리 회피용
+  activeConditions: Array<{ id: string; effects: { blockedActions?: string[]; boostedActions?: string[] } }>;
 }
 
 const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
@@ -71,6 +72,17 @@ const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
 6. avoid: 직전 서술에서 반복된 표현 2~3개.
 7. affordance: INVESTIGATE, PERSUADE, SNEAK, BRIBE, THREATEN, HELP, STEAL, FIGHT, OBSERVE, TRADE, TALK, SEARCH 중 선택.
 8. tone: 직전 톤과 다른 분위기 사용. 다양하게.`;
+
+const CONDITION_DESCRIPTIONS: Record<string, string> = {
+  INCREASED_PATROLS: '경비 순찰 강화 — 경비가 삼엄하고 은밀 행동이 어렵다',
+  LOCKDOWN: '지역 봉쇄 — 경비대가 출입을 통제하고 절도/잠입이 극히 어렵다',
+  UNREST_RUMORS: '불안한 소문 — 주민들이 수군거리고 정보를 캐내기 쉽다',
+  RIOT: '폭동 — 혼란 속에 거래가 불가능하지만 전투/절도 기회가 열린다',
+  CURFEW: '야간 통금 — 밤에 돌아다니면 경비에 걸린다',
+  FESTIVAL: '축제 — 활기차고 거래가 활발하다',
+  BLACK_MARKET: '암시장 개설 — 비합법 거래 가능',
+  RAID_AFTERMATH: '습격 직후 — 혼란스럽고 치안 불안',
+};
 
 @Injectable()
 export class NanoEventDirectorService {
@@ -152,6 +164,15 @@ export class NanoEventDirectorService {
       ``,
       `[퀘스트] ${ctx.questState}`,
     ];
+
+    // 활성 장소 조건
+    if (ctx.activeConditions.length > 0) {
+      const condLines = ctx.activeConditions.map((c) => {
+        const desc = CONDITION_DESCRIPTIONS[c.id] ?? c.id;
+        return `- ${desc}`;
+      });
+      parts.push(``, `[장소 조건 — 이 상황을 반영하세요]`, ...condLines);
+    }
 
     if (ctx.previousOpening) {
       parts.push(``, `[직전 opening] "${ctx.previousOpening}" → 다른 감각 사용`);
