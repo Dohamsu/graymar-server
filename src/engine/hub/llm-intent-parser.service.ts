@@ -358,9 +358,19 @@ export class LlmIntentParserService implements OnModuleInit {
       actionType = llmResult.actionType;
       mergeSource = 'AGREE';
     } else {
-      // 불일치 → LLM 우선 (맥락 이해 우수)
-      actionType = llmResult.actionType;
-      mergeSource = 'LLM';
+      // 불일치 시: 고위험 행동 키워드는 KW 우선 (명확한 의도)
+      const HIGH_RISK_KW_PRIORITY = new Set<IntentActionType>([
+        'FIGHT', 'STEAL', 'THREATEN', 'BRIBE',
+      ]);
+      if (HIGH_RISK_KW_PRIORITY.has(keywordResult.actionType) && keywordResult.confidence >= 1) {
+        // "때리다/훔치다/위협하다/뇌물" 등은 키워드가 매우 명확 → KW 우선
+        actionType = keywordResult.actionType;
+        mergeSource = 'KW_OVERRIDE';
+      } else {
+        // 기타 불일치 → LLM 우선 (맥락 이해 우수)
+        actionType = llmResult.actionType;
+        mergeSource = 'LLM';
+      }
     }
 
     // secondary 결정: LLM의 secondary 우선, 없으면 불일치 시 KW 결과를 secondary로 보존
