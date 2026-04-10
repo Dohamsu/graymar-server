@@ -35,8 +35,9 @@ import {
   createEmptyStructuredMemory,
 } from '../db/types/structured-memory.js';
 
-const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_MS = 1000;
 const LOCK_TIMEOUT_S = 60;
+const MAX_CONCURRENT_TURNS = 3; // 동시 처리 턴 수
 const WORKER_ID = `worker_${process.pid}_${Date.now()}`;
 
 const VALID_CHOICE_AFFORDANCES = new Set([
@@ -107,8 +108,16 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         ),
       );
 
-    // PENDING 작업 선택 + 락 획득 (FOR UPDATE SKIP LOCKED 시뮬레이션)
-    const pending = await this.db.query.turns.findFirst({
+    // 현재 이 Worker가 처리 중인 턴 수 확인
+    const runningCount = await this.db.$count(
+      turns,
+      and(eq(turns.llmStatus, 'RUNNING'), eq(turns.llmLockOwner, WORKER_ID)),
+    );
+    const slotsAvailable = MAX_CONCURRENT_TURNS - runningCount;
+    if (slotsAvailable <= 0) return;
+
+    // PENDING 작업 다수 선택 (동시 처리)
+    const pendingTurns = await this.db.query.turns.findMany({
       where: and(
         eq(turns.llmStatus, 'PENDING'),
         or(
@@ -117,10 +126,17 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         ),
       ),
       orderBy: turns.createdAt,
+      limit: slotsAvailable,
     });
 
-    if (!pending) return;
+    if (pendingTurns.length === 0) return;
 
+    // 동시 처리
+    const promises = pendingTurns.map((pending) => this.processTurn(pending));
+    await Promise.allSettled(promises);
+  }
+
+  private async processTurn(pending: typeof turns.$inferSelect): Promise<void> {
     // 락 획득
     await this.db
       .update(turns)
