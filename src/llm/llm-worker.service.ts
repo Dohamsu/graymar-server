@@ -37,7 +37,7 @@ import {
 
 const POLL_INTERVAL_MS = 1000;
 const LOCK_TIMEOUT_S = 60;
-const MAX_CONCURRENT_TURNS = 3; // 동시 처리 턴 수
+const MAX_CONCURRENT_TURNS = 5; // 동시 처리 턴 수 (10명 동시접속 목표)
 const WORKER_ID = `worker_${process.pid}_${Date.now()}`;
 
 const VALID_CHOICE_AFFORDANCES = new Set([

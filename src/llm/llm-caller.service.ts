@@ -9,9 +9,46 @@ import type {
   ErrorCategory,
 } from './types/index.js';
 
+// 토큰 버킷 레이트 리미터 — OpenRouter 초당 요청 제한
+class RateLimiter {
+  private tokens: number;
+  private lastRefill: number;
+  private readonly maxTokens: number;
+  private readonly refillRate: number; // tokens per second
+
+  constructor(maxTokens: number, refillRate: number) {
+    this.maxTokens = maxTokens;
+    this.tokens = maxTokens;
+    this.refillRate = refillRate;
+    this.lastRefill = Date.now();
+  }
+
+  async acquire(): Promise<void> {
+    this.refill();
+    if (this.tokens >= 1) {
+      this.tokens -= 1;
+      return;
+    }
+    // 토큰 부족 → 대기
+    const waitMs = ((1 - this.tokens) / this.refillRate) * 1000;
+    await new Promise((resolve) => setTimeout(resolve, Math.ceil(waitMs)));
+    this.refill();
+    this.tokens -= 1;
+  }
+
+  private refill(): void {
+    const now = Date.now();
+    const elapsed = (now - this.lastRefill) / 1000;
+    this.tokens = Math.min(this.maxTokens, this.tokens + elapsed * this.refillRate);
+    this.lastRefill = now;
+  }
+}
+
 @Injectable()
 export class LlmCallerService {
   private readonly logger = new Logger(LlmCallerService.name);
+  // 초당 3 요청, 버스트 10 — OpenRouter paid tier (200 req/min) 안전 마진
+  private readonly rateLimiter = new RateLimiter(10, 3);
 
   constructor(
     private readonly registry: LlmProviderRegistryService,
@@ -23,9 +60,10 @@ export class LlmCallerService {
     const primary = this.registry.getPrimary();
     let attempts = 0;
 
-    // 1차 시도: Primary
+    // 1차 시도: Primary (레이트 리밋 적용)
     attempts++;
     try {
+      await this.rateLimiter.acquire();
       const response = await primary.generate(request);
       return { success: true, response, providerUsed: primary.name, attempts };
     } catch (err) {
@@ -38,6 +76,7 @@ export class LlmCallerService {
       if (category === 'RETRYABLE' && attempts < config.maxRetries) {
         attempts++;
         try {
+          await this.rateLimiter.acquire();
           const response = await primary.generate(request);
           return {
             success: true,
@@ -66,6 +105,7 @@ export class LlmCallerService {
 
     attempts++;
     try {
+      await this.rateLimiter.acquire();
       const response = await fallback.generate(request);
       this.logger.log(`Fallback "${fallback.name}" succeeded`);
       return { success: true, response, providerUsed: fallback.name, attempts };
@@ -107,12 +147,14 @@ export class LlmCallerService {
     };
 
     try {
+      await this.rateLimiter.acquire();
       const response = await provider.generate(request);
       return response.text;
     } catch (err) {
       this.logger.debug(`Light LLM call failed: ${String(err)}`);
       // 1회 재시도
       try {
+        await this.rateLimiter.acquire();
         const response = await provider.generate(request);
         return response.text;
       } catch {
