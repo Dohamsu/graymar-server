@@ -285,6 +285,16 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         ? this.configService.getLightModelConfig()
         : null;
       const reasoningEffort = this.determineReasoningEffort(llmContext);
+
+      // 모델 교차: 턴 번호 기반으로 메인/서브 모델 번갈아 사용 (어휘 편향 상쇄)
+      // 환경변수 LLM_ALTERNATE_MODEL이 설정된 경우에만 활성화
+      let alternateModel: string | undefined;
+      const altModel = process.env.LLM_ALTERNATE_MODEL;
+      if (!isCombat && altModel && pending.turnNo % 2 === 0) {
+        alternateModel = altModel;
+        this.logger.debug(`[ModelAlternate] turn=${pending.turnNo} → alternate model: ${altModel}`);
+      }
+
       const callResult = await this.llmCaller.call({
         messages,
         maxTokens: isCombat
@@ -293,6 +303,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         temperature: config.temperature,
         reasoningEffort,
         ...(lightConfig ? { model: lightConfig.model } : {}),
+        ...(alternateModel ? { model: alternateModel } : {}),
       });
 
       // 5. 내러티브 결정 — 실패 또는 mock fallback 시 SceneShell로 graceful degradation

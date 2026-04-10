@@ -276,6 +276,17 @@ export class PromptBuilderService {
       memoryParts.push(`[중간 요약]\n${ctx.midSummary}`);
     }
 
+    // THREAD 요약 파싱 — 이전 턴 원문 대신 사용 (어휘 피드백 루프 차단)
+    const threadEntries = new Map<number, string>();
+    if (ctx.narrativeThread) {
+      try {
+        const parsed = JSON.parse(ctx.narrativeThread) as { entries?: { turnNo: number; summary: string }[] };
+        for (const e of parsed.entries ?? []) {
+          threadEntries.set(e.turnNo, e.summary);
+        }
+      } catch { /* 파싱 실패 시 fallback */ }
+    }
+
     // L3: 현재 LOCATION 방문 전체 대화 (단기 기억 — 우선 사용) — HUB에서는 생략
     if (
       !isHub &&
@@ -283,6 +294,7 @@ export class PromptBuilderService {
       ctx.locationSessionTurns.length > 0
     ) {
       const totalTurns = ctx.locationSessionTurns.length;
+
       const sessionLines = ctx.locationSessionTurns.map((t, idx) => {
         const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
         const outcomeLabel =
@@ -296,29 +308,26 @@ export class PromptBuilderService {
         const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
         const distFromEnd = totalTurns - 1 - idx; // 0 = 직전, 1 = 그 이전, ...
         let narrativePart = '';
-        if (t.narrative) {
-          if (distFromEnd === 0) {
-            // 직전 턴: 마지막 300자 표시 (500→300 축소: 소품 반복 억제)
+
+        if (distFromEnd === 0 && t.narrative) {
+          // 직전 턴만: 원문 마지막 300자 (이어쓰기 앵커)
+          const trimmed =
+            t.narrative.length > 300
+              ? '...' + t.narrative.slice(-300)
+              : t.narrative;
+          narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
+        } else {
+          // 2번째 이전부터: THREAD 요약 사용 (원문 제거 → 어휘 반복 차단)
+          const threadSummary = threadEntries.get(t.turnNo);
+          if (threadSummary) {
+            narrativePart = `\n상황: ${threadSummary}`;
+          } else if (t.narrative) {
+            // THREAD 없으면 원문 100자 fallback
             const trimmed =
-              t.narrative.length > 300
-                ? '...' + t.narrative.slice(-300)
+              t.narrative.length > 100
+                ? '...' + t.narrative.slice(-100)
                 : t.narrative;
-            narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
-          } else if (distFromEnd <= 2) {
-            // 2~3번째 이전 턴: 300/200자
-            const maxLen = distFromEnd === 1 ? 300 : 200;
-            const trimmed =
-              t.narrative.length > maxLen
-                ? '...' + t.narrative.slice(-maxLen)
-                : t.narrative;
-            narrativePart = `\n서술(맥락 참고 — 복사 금지): ${trimmed}`;
-          } else {
-            // 4번째 이전부터: 핵심 맥락 유지를 위해 NPC 대사와 핵심 정보 150자 포함
-            const trimmed =
-              t.narrative.length > 150
-                ? '...' + t.narrative.slice(-150)
-                : t.narrative;
-            narrativePart = `\n서술(요약 참고): ${trimmed}`;
+            narrativePart = `\n상황(요약): ${trimmed}`;
           }
         }
         return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
@@ -363,8 +372,11 @@ export class PromptBuilderService {
         keyInfoLines.push(
           `- ${actionLabel}: "${sanitizeUserInput(lastTurn.rawInput)}"${outcomePart}`,
         );
-        // 직전 턴 서술 스니펫 제거 — 2중 주입(500+150)이 소품 반복의 주원인.
-        // 행동+판정 메타데이터만 유지하여 연속성 확보, 서술 패턴 복사 방지.
+        // THREAD 요약으로 직전 장면 보강 (원문 대신)
+        const lastThread = threadEntries.get(lastTurn.turnNo);
+        if (lastThread) {
+          keyInfoLines.push(`- 직전 장면 요약: ${lastThread}`);
+        }
         // NPC delta 정보 (context에 포함된 경우)
         if (ctx.npcDeltaHint) {
           const deltaMatch = ctx.npcDeltaHint.match(/⚡ 이번 턴 변화: (.+)/);
@@ -379,6 +391,7 @@ export class PromptBuilderService {
       }
     } else if (ctx.recentTurns && ctx.recentTurns.length > 0) {
       // LOCATION 세션 없으면 글로벌 최근 이력 사용
+      // 원문 제거 — THREAD 요약 또는 행동+판정만 전달 (어휘 피드백 루프 차단)
       const turnLines = ctx.recentTurns.map((t) => {
         const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
         const outcomeLabel =
@@ -390,8 +403,10 @@ export class PromptBuilderService {
                 ? '실패'
                 : '';
         const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
-        const narrativePart = t.narrative
-          ? `\n서술: ${t.narrative.slice(0, 200)}${t.narrative.length > 200 ? '...' : ''}`
+        // THREAD 요약 사용 (원문 제거)
+        const threadSummary = threadEntries.get(t.turnNo);
+        const narrativePart = threadSummary
+          ? `\n상황: ${threadSummary}`
           : '';
         return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
       });
@@ -936,18 +951,63 @@ export class PromptBuilderService {
     // summary.short
     factsParts.push(`[상황 요약]\n${sr.summary.short}`);
 
-    // 판정 결과 독립 리마인더 — SUCCESS/PARTIAL/FAIL 서술 차별화 강화
+    // 판정 결과 — 해당 턴의 판정+행동 조합만 동적 주입 (system에서 전체 매트릭스 제거)
     if (sr.ui?.resolveOutcome) {
-      const resolveLabel =
-        sr.ui.resolveOutcome === 'SUCCESS'
-          ? '성공 — 자신감 있고 역동적으로. NPC가 정보를 주거나 협력한다.'
-          : sr.ui.resolveOutcome === 'PARTIAL'
-            ? '부분 성공 — "성공했다" 금지. 반드시 구체적 대가 1개를 서술하라.'
-            : sr.ui.resolveOutcome === 'FAIL'
-              ? '실패 — 정보 획득 없음. NPC는 침묵/거부/적대. "거의 성공할 뻔했다" 금지.'
-              : '';
-      if (resolveLabel) {
-        factsParts.push(`⚠️ [이번 턴 판정: ${resolveLabel}]`);
+      const actionType = (sr.ui as Record<string, unknown>)?.actionContext
+        ? ((sr.ui as Record<string, unknown>).actionContext as Record<string, unknown>)?.intentActionType as string
+        : '';
+      const outcome = sr.ui.resolveOutcome as string;
+
+      // 행동별 판정 결과 매트릭스 (해당 조합만 전달)
+      const MATRIX: Record<string, Record<string, string>> = {
+        SUCCESS: {
+          TALK: 'NPC가 충분한 정보를 제공하거나 협조한다. 자신감 있고 역동적으로.',
+          PERSUADE: 'NPC가 충분한 정보를 제공하거나 협조한다. 자신감 있고 역동적으로.',
+          BRIBE: 'NPC가 완전히 협조한다.',
+          THREATEN: 'NPC가 굴복한다. 시선을 피하고, 짧고 끊긴 문장으로 복종.',
+          SNEAK: '완벽한 은신 성공.',
+          STEAL: '성공적 탈취.',
+          FIGHT: '제압 성공.',
+          INVESTIGATE: '핵심 단서 발견.',
+          OBSERVE: '핵심 정보 포착.',
+          SEARCH: '핵심 단서 발견.',
+          HELP: 'NPC가 감사하며 신뢰를 보인다.',
+          _DEFAULT: '자신감 있고 역동적. NPC는 행동으로 반응한다.',
+        },
+        PARTIAL: {
+          TALK: '일부 정보만 얻고 핵심은 숨겨짐. ⚠️ "성공했다" 금지. 반드시 불이익 1개: NPC가 입을 다물거나, 목격자가 생기거나, 단서를 놓침.',
+          PERSUADE: '일부 정보만 얻고 핵심은 숨겨짐. ⚠️ "성공했다" 금지. 반드시 불이익 1개.',
+          BRIBE: '돈은 받았으나 의심하며 일부만 알려줌. 불이익: 뇌물 사실이 알려질 위험.',
+          THREATEN: 'NPC가 두려워하며 일부만 흘림. 완전한 복종은 아님.',
+          SNEAK: '간신히 숨었으나 흔적을 남김.',
+          STEAL: '일부만 탈취하거나 목격자가 생김.',
+          FIGHT: '상처를 입혔으나 제압 실패.',
+          INVESTIGATE: '모호한 단서만. 핵심은 놓침.',
+          OBSERVE: '일부만 포착. 핵심은 놓침.',
+          SEARCH: '모호한 단서만.',
+          HELP: '도움은 됐으나 불충분.',
+          _DEFAULT: '⚠️ "성공했다" 금지. ① 행동 시도 → ② 부분 성과 → ③ 명확한 불이익 1가지.',
+        },
+        FAIL: {
+          TALK: 'NPC가 침묵하거나 거부한다. 정보 0.',
+          PERSUADE: 'NPC가 침묵하거나 거부한다. 정보 0.',
+          BRIBE: '돈을 거절하고 의심한다.',
+          THREATEN: 'NPC가 무시하거나 적대적으로 대항한다.',
+          SNEAK: '발각됨.',
+          STEAL: '현장에서 잡힘.',
+          FIGHT: '반격당함.',
+          INVESTIGATE: '아무것도 못 찾음.',
+          OBSERVE: '아무것도 포착 못함.',
+          SEARCH: '아무것도 못 찾음.',
+          HELP: '상황이 악화되거나 거부당함.',
+          _DEFAULT: '⚠️ 실패. NPC가 정보를 주지 않는다. 경고/암시/힌트도 금지. "거의 성공할 뻔했다" 금지.',
+        },
+      };
+
+      const outcomeMap = MATRIX[outcome];
+      if (outcomeMap) {
+        const specific = outcomeMap[actionType] ?? outcomeMap._DEFAULT ?? '';
+        factsParts.push(`⚠️ [이번 턴 판정: ${outcome}]\n${specific}`);
       }
     }
 
@@ -960,6 +1020,8 @@ export class PromptBuilderService {
 
     // toneHint
     factsParts.push(`[분위기] ${sr.ui.toneHint}`);
+
+    // 감각 순환 시스템 폐기됨 — NanoDirector가 avoid로 반복 억제
 
     // Phase 3: NPC 주입 (Step 5) — 소개 상태 반영
     if (ctx.npcInjection) {
@@ -1158,9 +1220,24 @@ export class PromptBuilderService {
               parts.push(`    성격 특성: ${personality.traits.join(' / ')}`);
             }
             if (personality.speechStyle) {
-              parts.push(
-                `    말투 (이 어조로 새 대사를 만들 것): ${personality.speechStyle}`,
-              );
+              // 턴마다 speechStyle의 다른 측면을 강조 — 고정 예시에 의한 반복 방지
+              const speechParts = personality.speechStyle
+                .split(/[.。,，]\s*/)
+                .filter((s: string) => s.trim().length > 3);
+              if (speechParts.length > 1) {
+                const turnNo = ctx.locationSessionTurns?.length ?? 0;
+                const rotateIdx = turnNo % speechParts.length;
+                // 기본 1줄 + 회전하는 강조 1줄
+                const base = speechParts[0].trim();
+                const emphasis = speechParts[rotateIdx].trim();
+                parts.push(
+                  `    말투: ${base}. ⚠️ 이번 턴 강조: ${emphasis}`,
+                );
+              } else {
+                parts.push(
+                  `    말투 (이 어조로 새 대사를 만들 것): ${personality.speechStyle}`,
+                );
+              }
             }
             return parts.join('\n');
           }
@@ -1174,7 +1251,7 @@ export class PromptBuilderService {
           '⚠️ NPC의 agenda는 배경 동기입니다. 매 대사에서 agenda를 직접 언급하지 마세요. 대화 3번 중 1번 정도만 동기와 관련된 말을 하고, 나머지는 상황 반응, 개인적 감상, 또는 플레이어 평가를 보여주세요.',
           '⚠️ NPC 대사 다양성: 같은 NPC가 연속 턴에서 비슷한 말("조심하시오", "위험하오" 등)을 반복하면 안 됩니다. 턴마다 다른 화제를 꺼내세요: 자기 사정, 주변 상황 관찰, 과거 경험, 플레이어 행동에 대한 평가, 질문, 침묵과 행동 등. 사람은 같은 말만 반복하지 않습니다.',
           '⚠️ NPC별 호칭을 구분하세요. "그대"는 마이렐 단 경만의 고유 호칭입니다. 다른 NPC는 "당신", "이보게", "자네", "손님" 등 각자의 말투에 맞는 호칭을 사용하세요.',
-          '⚠️ 각 NPC의 "말투" 항목을 반드시 적용하세요. 더듬기, 비유, 횡설수설, 한숨 등 말투 특성이 대사에 드러나야 합니다. 말투 예시가 있다면 그 톤을 참고하세요.',
+          '⚠️ 각 NPC의 "말투" 항목을 반드시 적용하세요. 더듬기, 비유, 횡설수설, 한숨 등 말투 특성이 대사에 드러나야 합니다.',
           '',
           postureLines.join('\n'),
         ].join('\n'),
