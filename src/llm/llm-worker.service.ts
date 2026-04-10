@@ -450,6 +450,18 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           .replace(/\[\/?(?:MEMORY|THREAD|CHOICES)[^\]]*\]/g, '')
           .trim();
 
+        // 4-a-2b. 플레이어 대사 큰따옴표 방어 — LLM이 플레이어 대사를 큰따옴표로 쓰면 홑따옴표로 치환
+        // 패턴: "당신은/당신이 + ~라/~고/~며 + 물/말/외/중얼 + 큰따옴표 대사"
+        narrative = narrative.replace(
+          /당신[은이가]\s[^"]*?(?:라고|라며|라|고)\s*(?:물었|말했|외쳤|중얼|되물|답했|내뱉)\S{0,5}\s*"([^"]+)"/g,
+          (match, dialogue) => match.replace(`"${dialogue}"`, `'${dialogue}'`),
+        );
+        // 패턴2: "당신은 "대사"" (직접 큰따옴표)
+        narrative = narrative.replace(
+          /당신[은이가]\s*"([^"]{3,30})"/g,
+          (match, dialogue) => match.replace(`"${dialogue}"`, `'${dialogue}'`),
+        );
+
         // 4-a-3. 서술 품질 후처리 필터: 위반 패턴 감지 및 자동 수정
         const violations: string[] = [];
 
