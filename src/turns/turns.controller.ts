@@ -7,6 +7,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '../common/guards/auth.guard.js';
 import { UserId } from '../common/decorators/user-id.decorator.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
@@ -20,6 +21,7 @@ import {
 
 @Controller('v1/runs/:runId/turns')
 @UseGuards(AuthGuard)
+@Throttle({ short: { ttl: 1000, limit: 15 }, medium: { ttl: 60000, limit: 200 } }) // 인증된 게임 API: 초당 15, 분당 200
 export class TurnsController {
   constructor(private readonly turnsService: TurnsService) {}
 
