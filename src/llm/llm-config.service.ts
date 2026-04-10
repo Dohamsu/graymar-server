@@ -16,6 +16,7 @@ export type LlmConfigPatch = Partial<
     | 'maxTokens'
     | 'temperature'
     | 'fallbackProvider'
+    | 'fallbackModel'
   >
 >;
 
@@ -33,6 +34,7 @@ export interface LlmConfigPublic {
   maxTokens: number;
   temperature: number;
   fallbackProvider: string;
+  fallbackModel: string;
   availableProviders: string[];
 }
 
@@ -56,6 +58,7 @@ export class LlmConfigService {
       maxTokens: parseInt(process.env.LLM_MAX_TOKENS ?? '1024', 10),
       temperature: parseFloat(process.env.LLM_TEMPERATURE ?? '0.8'),
       fallbackProvider: process.env.LLM_FALLBACK_PROVIDER ?? 'mock',
+      fallbackModel: process.env.LLM_FALLBACK_MODEL ?? '',
     };
   }
 
@@ -85,6 +88,7 @@ export class LlmConfigService {
       maxTokens: this.config.maxTokens,
       temperature: this.config.temperature,
       fallbackProvider: this.config.fallbackProvider,
+      fallbackModel: this.config.fallbackModel,
       availableProviders: this.getAvailableProviders(),
     };
   }

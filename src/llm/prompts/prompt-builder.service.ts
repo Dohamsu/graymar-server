@@ -298,10 +298,10 @@ export class PromptBuilderService {
         let narrativePart = '';
         if (t.narrative) {
           if (distFromEnd === 0) {
-            // 직전 턴: 마지막 500자 표시 (핵심 발견/대화 유실 방지)
+            // 직전 턴: 마지막 300자 표시 (500→300 축소: 소품 반복 억제)
             const trimmed =
-              t.narrative.length > 500
-                ? '...' + t.narrative.slice(-500)
+              t.narrative.length > 300
+                ? '...' + t.narrative.slice(-300)
                 : t.narrative;
             narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
           } else if (distFromEnd <= 2) {
@@ -339,6 +339,7 @@ export class PromptBuilderService {
           '8. ⚠️ NPC 퇴장 존중: 직전 턴 서술에서 NPC가 "떠났다", "사라졌다", "자리를 피했다", "골목으로 빠졌다" 등 퇴장을 묘사했다면, 이번 턴에서 그 NPC가 아무 이유 없이 다시 같은 장소에 나타나면 안 됩니다. 재등장시키려면 "다시 나타났다", "돌아왔다" 등 명확한 이유가 필요합니다.',
           '9. ⚠️ 대화 연속 시 퇴장 금지: 플레이어가 NPC와 대화 중(TALK, PERSUADE, BRIBE, THREATEN, HELP)이면 그 NPC가 떠나려 하거나 자리를 뜨는 묘사를 하지 마세요. "멀어지려는", "등을 돌리는", "가려는" 등의 이탈 암시도 피하세요. NPC의 마지막 대사나 표정/몸짓 반응으로 마무리하되, 물리적으로 그 자리에 남아있어야 합니다.',
           '10. ⚠️ 대화 주제 반복 금지: [NPC 감정 상태] 블록에 "이미 다룬 주제"와 "반복 금지 키워드"가 있으면, 해당 키워드와 주제를 이번 턴에서 다시 사용하지 마세요. 같은 정보를 다른 단어로 바꿔 전달하는 것도 반복입니다. 완전히 새로운 화제, 구체적 증거, 감정 반응으로 대화를 전진시키세요.',
+          '11. ⚠️ 메타 서술 금지: "이전 턴에", "지난번에", "방금 전", "앞서", "직전 턴의" 등 게임 턴 구조를 드러내는 표현을 서술에 사용하지 마세요. "플레이어가 X를 시도했으나", "X골드가 지출되었고", "성공적으로 완수했다" 같은 시스템 메타 표현도 금지. 시간 경과는 "잠시 후", "얼마 지나지 않아" 같은 서사적 표현으로 대체하세요.',
           '',
           sessionLines.join('\n---\n'),
         ].join('\n'),
@@ -362,14 +363,8 @@ export class PromptBuilderService {
         keyInfoLines.push(
           `- ${actionLabel}: "${sanitizeUserInput(lastTurn.rawInput)}"${outcomePart}`,
         );
-        // narrative에서 핵심 정보 추출 (마지막 150자 — 대화/발견 집중)
-        if (lastTurn.narrative) {
-          const snippet =
-            lastTurn.narrative.length > 150
-              ? lastTurn.narrative.slice(-150)
-              : lastTurn.narrative;
-          keyInfoLines.push(`- 직전 장면: ...${snippet}`);
-        }
+        // 직전 턴 서술 스니펫 제거 — 2중 주입(500+150)이 소품 반복의 주원인.
+        // 행동+판정 메타데이터만 유지하여 연속성 확보, 서술 패턴 복사 방지.
         // NPC delta 정보 (context에 포함된 경우)
         if (ctx.npcDeltaHint) {
           const deltaMatch = ctx.npcDeltaHint.match(/⚡ 이번 턴 변화: (.+)/);
@@ -622,6 +617,23 @@ export class PromptBuilderService {
         memoryParts.push(
           `[NPC 감정 상태]\n${npcEmotionalBlock}\n⚠️ NPC의 현재 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요. 위 행동 힌트를 반드시 반영하세요.`,
         );
+      }
+
+      // NPC 대사 호칭 매핑 — 마커 정확도 향상을 위해 구체적 호칭 목록 제공
+      if (sceneNpcIds.size > 0) {
+        const aliasLines: string[] = [];
+        for (const npcId of sceneNpcIds) {
+          const def = this.content.getNpc(npcId);
+          if (def) {
+            const alias = def.unknownAlias || def.name;
+            aliasLines.push(`- ${alias}`);
+          }
+        }
+        if (aliasLines.length > 0) {
+          memoryParts.push(
+            `[NPC 대사 호칭] ⚠️ 아래 NPC가 대사를 할 때, 대사 직전에 반드시 이 호칭을 사용하세요:\n${aliasLines.join('\n')}`,
+          );
+        }
       }
     }
     // 서사 표식: 구조화 메모리 유무와 무관하게 항상 포함
@@ -923,6 +935,21 @@ export class PromptBuilderService {
 
     // summary.short
     factsParts.push(`[상황 요약]\n${sr.summary.short}`);
+
+    // 판정 결과 독립 리마인더 — SUCCESS/PARTIAL/FAIL 서술 차별화 강화
+    if (sr.ui?.resolveOutcome) {
+      const resolveLabel =
+        sr.ui.resolveOutcome === 'SUCCESS'
+          ? '성공 — 자신감 있고 역동적으로. NPC가 정보를 주거나 협력한다.'
+          : sr.ui.resolveOutcome === 'PARTIAL'
+            ? '부분 성공 — "성공했다" 금지. 반드시 구체적 대가 1개를 서술하라.'
+            : sr.ui.resolveOutcome === 'FAIL'
+              ? '실패 — 정보 획득 없음. NPC는 침묵/거부/적대. "거의 성공할 뻔했다" 금지.'
+              : '';
+      if (resolveLabel) {
+        factsParts.push(`⚠️ [이번 턴 판정: ${resolveLabel}]`);
+      }
+    }
 
     // events (UI kind는 필터링 — 정본: CLAUDE.md Event kind UI 필터링 대상)
     const filteredEvents = sr.events.filter((e) => e.kind !== 'UI');

@@ -81,14 +81,18 @@ export class NpcDialogueMarkerService {
     const preMarkerBracket = narrative.match(/@\[([^\]|]+)(?:\|[^\]]+)?\]\s*["\u201C]/);
     if (preMarkerNpcId) lastMatchedNpcId = preMarkerNpcId;
 
-    for (const d of dialogues) {
+    for (let i = 0; i < dialogues.length; i++) {
+      const d = dialogues[i];
       // 연속 대사: 직전 @마커 대사와 가까우면 같은 NPC 귀속
       if ((d as { _consecutive?: boolean })._consecutive && lastMatchedNpcId) {
         d.npcId = lastMatchedNpcId;
         continue;
       }
 
-      const before = narrative.slice(Math.max(0, d.start - 100), d.start);
+      // 이전 대사 끝~현재 대사 시작 범위로 제한 (최대 300자). 다른 NPC 대사 영역 침범 방지.
+      const prevDialogueEnd = i > 0 ? dialogues[i - 1].end : 0;
+      const windowStart = Math.max(prevDialogueEnd, d.start - 300);
+      const before = narrative.slice(windowStart, d.start);
       const after = narrative.slice(d.end, Math.min(narrative.length, d.end + 50));
 
       // 1단계: NPC DB 이름 직접 매칭 (name, unknownAlias, aliases, role)
@@ -430,24 +434,29 @@ export class NpcDialogueMarkerService {
     return bestMatch;
   }
 
+  // 플레이어 지칭은 NPC 마커 대상이 아님
+  private static readonly PLAYER_ALIASES = new Set([
+    '당신', '그대', '플레이어', '용병', '주인공',
+  ]);
+
   private extractSpeakerAlias(before: string, after: string): string | null {
     // 발화자→대사 패턴: "XX가/이/은/는 + 발화동사"
     const beforeMatch = before.match(
       new RegExp(`([가-힣]{2,6})[이가은는]\\s*(?:${SPEECH_VERBS})\\S{0,10}`),
     );
-    if (beforeMatch) return beforeMatch[1];
+    if (beforeMatch && !NpcDialogueMarkerService.PLAYER_ALIASES.has(beforeMatch[1])) return beforeMatch[1];
 
     // 대사→발화자 패턴: 대사 뒤에 "XX가 말했다"
     const afterMatch = after.match(
       new RegExp(`^[,.]\\s*([가-힣]{2,6})[이가은는]\\s*(?:${SPEECH_VERBS})`),
     );
-    if (afterMatch) return afterMatch[1];
+    if (afterMatch && !NpcDialogueMarkerService.PLAYER_ALIASES.has(afterMatch[1])) return afterMatch[1];
 
     // 수식어+명사 패턴
     const descriptiveMatch = before.match(
       /(?:한|낯선|젊은|늙은|나이 든|거친|날카로운|무뚝뚝한|두건\s?쓴|망토\s?걸친|수상한|키\s?큰|마른|덩치\s?큰|눈매의|얼굴의|제복의|갑옷의)\s*([가-힣]{2,6})[이가은는]\s*$/,
     );
-    if (descriptiveMatch) return descriptiveMatch[1];
+    if (descriptiveMatch && !NpcDialogueMarkerService.PLAYER_ALIASES.has(descriptiveMatch[1])) return descriptiveMatch[1];
 
     return null;
   }

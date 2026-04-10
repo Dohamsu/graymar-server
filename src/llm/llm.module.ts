@@ -56,7 +56,7 @@ export class LlmModule implements OnModuleInit {
     const config = this.configService.get();
 
     this.registry.register(new MockProvider());
-    this.registry.register(new OpenAIProvider(config));
+    this.registry.register(new OpenAIProvider(config, () => this.configService.get()));
     this.registry.register(new ClaudeProvider(config));
     this.registry.register(new GeminiProvider(config));
   }

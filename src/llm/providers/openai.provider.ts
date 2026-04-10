@@ -28,7 +28,15 @@ export class OpenAIProvider implements LlmProvider {
   readonly name = 'openai';
   private client: import('openai').default | null = null;
 
-  constructor(private readonly config: LlmConfig) {}
+  constructor(
+    private readonly config: LlmConfig,
+    private readonly configGetter?: () => LlmConfig,
+  ) {}
+
+  /** 런타임 최신 config 반환 (configGetter가 있으면 live, 없으면 초기 스냅샷) */
+  private liveConfig(): LlmConfig {
+    return this.configGetter ? this.configGetter() : this.config;
+  }
 
   private getClient(): import('openai').default {
     if (!this.client) {
@@ -53,7 +61,7 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   async generate(request: LlmProviderRequest): Promise<LlmProviderResponse> {
-    const model = request.model ?? this.config.openaiModel;
+    const model = request.model ?? this.liveConfig().openaiModel;
 
     if (isReasoningModel(model)) {
       return this.generateWithResponses(request, model);
@@ -106,6 +114,7 @@ export class OpenAIProvider implements LlmProvider {
       cachedTokens: 0,
       cacheCreationTokens: 0,
       latencyMs: Date.now() - start,
+      costUsd: 0,
     };
   }
 
@@ -127,8 +136,8 @@ export class OpenAIProvider implements LlmProvider {
             sort: 'latency' as const,
             allow_fallbacks: true,
           },
-          // Gemini 2.5 Flash: thinking(reasoning) 비활성화 옵션
-          ...(model.includes('gemini') ? { reasoning: { effort: process.env.GEMINI_REASONING_EFFORT || 'low' } } : {}),
+          // Gemini 2.5 Flash: thinking(reasoning) 비활성화 — OpenRouter는 max_tokens: 0으로 제어
+          ...(model.includes('gemini') ? { reasoning: { max_tokens: parseInt(process.env.GEMINI_REASONING_MAX_TOKENS ?? '0', 10) } } : {}),
         }
       : {};
     const completion = await client.chat.completions.create({
@@ -150,10 +159,14 @@ export class OpenAIProvider implements LlmProvider {
     const usageWithDetails = completion.usage as
       | (typeof completion.usage & {
           prompt_tokens_details?: { cached_tokens?: number };
+          cost?: number;
         })
       | undefined;
     const cachedTokens =
       usageWithDetails?.prompt_tokens_details?.cached_tokens ?? 0;
+
+    // OpenRouter: usage.cost 필드에서 USD 비용 추출
+    const costUsd = usageWithDetails?.cost ?? 0;
 
     return {
       text,
@@ -163,6 +176,7 @@ export class OpenAIProvider implements LlmProvider {
       cachedTokens,
       cacheCreationTokens: 0,
       latencyMs: Date.now() - start,
+      costUsd,
     };
   }
 

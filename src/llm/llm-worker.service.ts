@@ -435,6 +435,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           .replace(/\n*\[선택지\][\s\S]*$/g, '')
           .replace(/\n*\[CHOICES\][\s\S]*?\[\/CHOICES\]/g, '')
           .replace(/\n*\[CHOICES\][\s\S]*$/g, '')
+          // 방어적 최종 패스: 닫는 태그 없이 남은 고아 태그 강제 제거
+          .replace(/\[\/?(?:MEMORY|THREAD|CHOICES)[^\]]*\]/g, '')
           .trim();
 
         // 4-a-3. 서술 품질 후처리 필터: 위반 패턴 감지 및 자동 수정
@@ -660,7 +662,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         if (npcStates) {
           const { sanitizeNpcNamesForTurn, getNpcDisplayName } = await import('../db/types/npc-state.js');
 
-          // Step A: 서버 regex 1차 매칭 + nano 2차 보완 (하이브리드)
+          // Step A: nano LLM 1차 발화자 판단 + 서버 regex fallback
           const hasDialogue = /["\u201C\u201D]/.test(narrative);
           this.logger.debug(`[DialogueMarker] turn=${pending.turnNo} hasDialogue=${hasDialogue} len=${narrative.length}`);
           if (hasDialogue) {
@@ -676,103 +678,162 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               }
             }
 
-            // A-1: 서버 regex로 NPC DB 기반 발화자 매칭
-            const serverResult2 = this.dialogueMarker.insertMarkers(narrative, npcStates, fallbackNpcId, eventNpcIds, pending.rawInput ?? undefined);
-            narrative = serverResult2.text;
+            // NPC 목록 구성 (nano LLM + regex 공통)
+            const npcList = Object.entries(npcStates)
+              .filter(([, s]) => s.encounterCount > 0)
+              .concat(eventNpcIds.filter(id => !npcStates[id] || npcStates[id].encounterCount <= 0).map(id => [id, {} as never]))
+              .slice(0, 10)
+              .map(([id]) => {
+                const def = this.content.getNpc(id as string);
+                return def ? `${id}: ${def.unknownAlias || def.name} (${def.role || '?'})` : null;
+              })
+              .filter(Boolean)
+              .join('\n');
 
-            // A-2: 미매칭 대사(@[UNMATCHED])가 있으면 nano로 개별 판단
-            if (serverResult2.unmatchedCount > 0) {
-              const npcList = Object.entries(npcStates)
-                .filter(([, s]) => s.encounterCount > 0)
-                .concat(eventNpcIds.filter(id => !npcStates[id] || npcStates[id].encounterCount <= 0).map(id => [id, {} as never]))
-                .slice(0, 8)
-                .map(([id]) => {
-                  const def = this.content.getNpc(id as string);
-                  return def ? `${id}: ${def.unknownAlias || def.name} (${def.role || '?'})` : null;
-                })
-                .filter(Boolean)
-                .join('\n');
+            // 대사 추출 (마커 없는 큰따옴표 대사)
+            const dialogueRegex = /["\u201C]([^"\u201D]{4,}?)["\u201D]/g;
+            const dialogueEntries: Array<{ index: number; full: string; text: string; before: string; after: string }> = [];
+            let dm: RegExpExecArray | null;
+            while ((dm = dialogueRegex.exec(narrative)) !== null) {
+              // 이미 @마커가 붙은 대사는 skip
+              const beforeCheck = narrative.slice(Math.max(0, dm.index - 30), dm.index);
+              if (/@(?:[A-Z_]+|\[[^\]]*\])\s*$/.test(beforeCheck)) continue;
+              // 인용 조사 필터 (라는/라고 등)
+              const afterCheck = narrative.slice(dm.index + dm[0].length, dm.index + dm[0].length + 6);
+              if (/^(?:라는|라고|란|이라는|이라고|라며|라면서)/.test(afterCheck)) continue;
+              // rawInput 유사도 필터
+              if (pending.rawInput && pending.rawInput.length >= 4) {
+                const overlap = pending.rawInput.length <= dm[1].length
+                  ? dm[1].includes(pending.rawInput) : pending.rawInput.includes(dm[1]);
+                if (overlap) continue;
+              }
 
-              // @[UNMATCHED] 위치별로 전후 문맥을 추출하여 개별 판단
-              const unmatchedRegex = /@\[UNMATCHED\]\s*(["\u201C](?:[^"\u201D]{4,}?)["\u201D])/g;
-              const replacements: Array<{ full: string; replacement: string }> = [];
-              let um: RegExpExecArray | null;
+              dialogueEntries.push({
+                index: dm.index,
+                full: dm[0],
+                text: dm[1].slice(0, 50),
+                before: narrative.slice(Math.max(0, dm.index - 120), dm.index).trim(),
+                after: narrative.slice(dm.index + dm[0].length, Math.min(narrative.length, dm.index + dm[0].length + 60)).trim(),
+              });
+            }
 
-              while ((um = unmatchedRegex.exec(narrative)) !== null) {
-                const matchStart = um.index;
-                const dialogue = um[1].slice(0, 40);
-                // 전후 1~2문장 추출 (마커 포함 전체 매칭 제외)
-                const ctxBefore = narrative.slice(Math.max(0, matchStart - 150), matchStart).trim();
-                const ctxAfter = narrative.slice(matchStart + um[0].length, Math.min(narrative.length, matchStart + um[0].length + 80)).trim();
+            let nanoSuccess = false;
 
-                try {
-                  const lightConfig = this.configService.getLightModelConfig();
-                  const nanoResult = await this.llmCaller.call({
-                    messages: [
-                      {
-                        role: 'system',
-                        content: `아래 문맥에서 대사의 발화자를 판단하라. NPC 목록에서 찾으면 NPC_ID를, 없으면 문맥속 호칭을 답하라.
-한 단어만 답하라. 예: NPC_EDRIC_VEIL 또는 경비병 또는 회계사
+            // A-1: nano LLM으로 모든 대사 발화자 일괄 판단 (주 파이프라인)
+            if (dialogueEntries.length > 0 && npcList) {
+              try {
+                const lightConfig = this.configService.getLightModelConfig();
+                const dialoguePrompt = dialogueEntries.map((d, idx) =>
+                  `[${idx + 1}] 앞: ${d.before.slice(-120)}\n    대사: "${d.text}"\n    뒤: ${d.after.slice(0, 40)}`,
+                ).join('\n\n');
+
+                const nanoResult = await this.llmCaller.call({
+                  messages: [
+                    {
+                      role: 'system',
+                      content: `아래 서술의 각 대사에 대해 발화자를 판단하라.
+NPC 목록에서 찾으면 NPC_ID를, 없으면 문맥 속 호칭(2~10자)을 답하라.
+
+형식: 번호=발화자 (한 줄에 하나씩)
+예:
+1=NPC_EDRIC_VEIL
+2=경비병
+3=NPC_RONEN
 
 NPC 목록:
-${npcList || '(없음)'}`,
-                      },
-                      {
-                        role: 'user',
-                        content: `앞 문맥: ${ctxBefore.slice(-100)}\n대사: ${dialogue}\n뒤 문맥: ${ctxAfter.slice(0, 60)}`,
-                      },
-                    ],
-                    maxTokens: 30,
-                    temperature: 0,
-                    model: lightConfig.model,
-                  });
+${npcList}`,
+                    },
+                    {
+                      role: 'user',
+                      content: dialoguePrompt,
+                    },
+                  ],
+                  maxTokens: Math.max(dialogueEntries.length * 25, 60),
+                  temperature: 0,
+                  model: lightConfig.model,
+                });
 
-                  if (nanoResult.response?.text) {
-                    let answer = nanoResult.response.text.trim().split(/[\s\n]/)[0];
-                    // 호칭 검증: NPC DB에서 unknownAlias/name 매칭 시도
-                    if (!/^NPC_[A-Z_0-9]+$/.test(answer) && answer.length >= 2) {
-                      const allNpcs = this.content.getAllNpcs();
-                      const dbMatch = allNpcs.find(
-                        (n) => n.unknownAlias === answer || n.name === answer
-                          || n.unknownAlias?.includes(answer) || answer.includes(n.unknownAlias ?? ''),
-                      );
-                      if (dbMatch) answer = dbMatch.npcId; // DB 매칭 → NPC_ID로 승격
-                    }
-                    // 중복 문자열 제거 ("넉넉한 체구의 선넉넉한 체구의 선술집 주인" → 정리)
-                    if (answer.length > 15) {
-                      const half = Math.floor(answer.length / 2);
-                      for (let dup = 3; dup <= half; dup++) {
-                        const prefix = answer.slice(0, dup);
-                        if (answer.slice(dup).startsWith(prefix)) {
-                          answer = answer.slice(dup); break;
+                if (nanoResult.success && nanoResult.response?.text) {
+                  const lines = nanoResult.response.text.trim().split('\n');
+                  const assignments = new Map<number, string>();
+
+                  for (const line of lines) {
+                    const match = line.match(/^(\d+)\s*[=:]\s*(.+)/);
+                    if (match) {
+                      const idx = parseInt(match[1], 10) - 1;
+                      let answer = match[2].trim().split(/[\s,]/)[0];
+
+                      // NPC DB 매칭
+                      if (!/^NPC_[A-Z_0-9]+$/.test(answer) && answer.length >= 2) {
+                        const allNpcs = this.content.getAllNpcs();
+                        const dbMatch = allNpcs.find(
+                          (n) => n.unknownAlias === answer || n.name === answer
+                            || n.unknownAlias?.includes(answer) || answer.includes(n.unknownAlias ?? ''),
+                        );
+                        if (dbMatch) answer = dbMatch.npcId;
+                      }
+                      // 중복 문자열 제거
+                      if (answer.length > 15) {
+                        const half = Math.floor(answer.length / 2);
+                        for (let dup = 3; dup <= half; dup++) {
+                          const prefix = answer.slice(0, dup);
+                          if (answer.slice(dup).startsWith(prefix)) {
+                            answer = answer.slice(dup); break;
+                          }
+                        }
+                      }
+                      if (!/^NPC_/.test(answer) && answer.length > 12) {
+                        answer = answer.slice(0, 12);
+                      }
+                      // 검증: NPC_ID가 아닌 호칭은 문맥(before+after)에 존재해야 함
+                      // 문맥에 없는 자의적 호칭(경찰관 등)은 reject
+                      if (answer.length >= 2) {
+                        if (/^NPC_[A-Z_0-9]+$/.test(answer)) {
+                          assignments.set(idx, answer);
+                        } else {
+                          const entry = dialogueEntries[idx];
+                          const ctx = entry ? (entry.before + ' ' + entry.after) : '';
+                          if (ctx.includes(answer) || answer.length <= 3) {
+                            assignments.set(idx, answer);
+                          } else {
+                            this.logger.debug(`[NanoSpeaker] Rejected "${answer}" — not found in context`);
+                          }
                         }
                       }
                     }
-                    // 10자 초과 호칭은 자르기
-                    if (!/^NPC_/.test(answer) && answer.length > 12) {
-                      answer = answer.slice(0, 12);
-                    }
-                    // NPC_ID 형태면 @NPC_ID, 한글이면 @[호칭]
-                    if (/^NPC_[A-Z_0-9]+$/.test(answer)) {
-                      replacements.push({ full: um[0], replacement: `@${answer} ${um[1]}` });
-                    } else if (answer.length >= 2 && answer.length <= 12) {
-                      replacements.push({ full: um[0], replacement: `@[${answer}] ${um[1]}` });
-                    }
-                    this.logger.debug(`[NanoSpeaker] turn=${pending.turnNo} "${dialogue.slice(0,20)}..." → ${answer}`);
                   }
-                } catch (err) {
-                  this.logger.warn(`Nano speaker judge failed: ${err instanceof Error ? err.message : err}`);
-                }
-              }
 
-              // 교체 적용
-              for (const r of replacements) {
-                narrative = narrative.replace(r.full, r.replacement);
+                  // 뒤에서부터 마커 삽입 (인덱스 밀림 방지)
+                  for (let i = dialogueEntries.length - 1; i >= 0; i--) {
+                    const entry = dialogueEntries[i];
+                    const answer = assignments.get(i);
+                    if (!answer) continue;
+
+                    const marker = /^NPC_[A-Z_0-9]+$/.test(answer)
+                      ? `@${answer} `
+                      : `@[${answer}] `;
+                    narrative = narrative.slice(0, entry.index) + marker + narrative.slice(entry.index);
+                  }
+
+                  nanoSuccess = assignments.size > 0;
+                  this.logger.debug(
+                    `[NanoSpeakerBatch] turn=${pending.turnNo} dialogues=${dialogueEntries.length} assigned=${assignments.size}`,
+                  );
+                }
+              } catch (err) {
+                this.logger.warn(`Nano speaker batch failed, falling back to regex: ${err instanceof Error ? err.message : err}`);
+                nanoSuccess = false;
               }
             }
 
-            // A-3: 남은 @[UNMATCHED] 제거
-            narrative = narrative.replace(/@\[UNMATCHED\]\s*/g, '');
+            // A-2: nano 실패 시 서버 regex fallback
+            if (!nanoSuccess) {
+              this.logger.debug(`[DialogueMarker] Falling back to regex pipeline for turn=${pending.turnNo}`);
+              const regexResult = this.dialogueMarker.insertMarkers(narrative, npcStates, fallbackNpcId, eventNpcIds, pending.rawInput ?? undefined);
+              narrative = regexResult.text;
+              // 남은 @[UNMATCHED] 제거
+              narrative = narrative.replace(/@\[UNMATCHED\]\s*/g, '');
+            }
           }
 
           // A-4: 불완전 @마커 정리 (@[ 시작했지만 ] 닫히지 않은 패턴)
