@@ -713,8 +713,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               .filter(Boolean)
               .join('\n');
 
-            // 대사 추출 (마커 없는 큰따옴표 대사)
-            const dialogueRegex = /["\u201C]([^"\u201D]{4,}?)["\u201D]/g;
+            // 대사 추출 (마커 없는 큰따옴표 대사, 8글자+ — 더듬기/짧은 인용 제외)
+            const dialogueRegex = /["\u201C]([^"\u201D]{8,}?)["\u201D]/g;
             const dialogueEntries: Array<{ index: number; full: string; text: string; before: string; after: string }> = [];
             let dm: RegExpExecArray | null;
             while ((dm = dialogueRegex.exec(narrative)) !== null) {
@@ -833,6 +833,14 @@ ${npcList}`,
                     const entry = dialogueEntries[i];
                     const answer = assignments.get(i);
                     if (!answer) continue;
+
+                    // 삽입 위치 검증: 대사 따옴표 직전이어야 함 (대사 내부 끼임 방지)
+                    const charBefore = entry.index > 0 ? narrative[entry.index - 1] : '';
+                    // 직전 문자가 따옴표 닫힘이면 이전 대사 끝 → 마커가 대사 사이에 끼는 상황 → skip
+                    if (charBefore === '"' || charBefore === '\u201D') {
+                      this.logger.debug(`[NanoSpeaker] Skip marker at idx=${entry.index} — adjacent to closing quote`);
+                      continue;
+                    }
 
                     const marker = /^NPC_[A-Z_0-9]+$/.test(answer)
                       ? `@${answer} `
