@@ -391,7 +391,7 @@ export class NpcDialogueMarkerService {
         const beforeIdx = before.lastIndexOf(name);
         if (beforeIdx >= 0) {
           let distance = before.length - beforeIdx - name.length;
-          if (distance > 60) continue;
+          if (distance > 100) continue;
           const afterName = before.slice(beforeIdx + name.length);
           if (speechVerb.test(afterName)) {
             distance = Math.max(0, distance - 20);
@@ -409,7 +409,7 @@ export class NpcDialogueMarkerService {
           const fuzzyMatch = before.match(fuzzyRegex);
           if (fuzzyMatch && fuzzyMatch.index != null) {
             let distance = before.length - fuzzyMatch.index - fuzzyMatch[0].length;
-            if (distance > 60) continue;
+            if (distance > 100) continue;
             distance += 10; // 부분 매칭이므로 정확 매칭보다 낮은 우선순위
             const afterName = before.slice(fuzzyMatch.index + fuzzyMatch[0].length);
             if (speechVerb.test(afterName)) {
