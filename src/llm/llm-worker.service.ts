@@ -784,16 +784,21 @@ ${npcList}`,
                     const match = line.match(/^(\d+)\s*[=:]\s*(.+)/);
                     if (match) {
                       const idx = parseInt(match[1], 10) - 1;
-                      let answer = match[2].trim().split(/[\s,]/)[0];
+                      // nano 응답에서 호칭 추출 — 첫 단어가 아닌 전체 호칭 보존
+                      let answer = match[2].trim();
+                      // NPC_ID 형태면 그대로, 아니면 쉼표/줄바꿈 이전까지
+                      if (!/^NPC_/.test(answer)) {
+                        answer = answer.split(/[,\n]/)[0].trim();
+                      }
 
-                      // NPC DB 매칭
+                      // NPC DB 매칭 — 정확 매칭만 (fuzzy includes 제거 → 오매칭 방지)
                       if (!/^NPC_[A-Z_0-9]+$/.test(answer) && answer.length >= 2) {
                         const allNpcs = this.content.getAllNpcs();
                         const dbMatch = allNpcs.find(
-                          (n) => n.unknownAlias === answer || n.name === answer
-                            || n.unknownAlias?.includes(answer) || answer.includes(n.unknownAlias ?? ''),
+                          (n) => n.unknownAlias === answer || n.name === answer,
                         );
                         if (dbMatch) answer = dbMatch.npcId;
+                        // DB에 없으면 호칭 그대로 유지 → @[호칭] contextAlias로 표시
                       }
                       // 중복 문자열 제거
                       if (answer.length > 15) {
