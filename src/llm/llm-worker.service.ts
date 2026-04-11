@@ -703,9 +703,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
             // NPC 목록 구성 (nano LLM + regex 공통)
             const npcList = Object.entries(npcStates)
-              .filter(([, s]) => s.encounterCount > 0)
-              .concat(eventNpcIds.filter(id => !npcStates[id] || npcStates[id].encounterCount <= 0).map(id => [id, {} as never]))
-              .slice(0, 10)
+              // npcStates 전체 포함 (BACKGROUND NPC도 대사 매칭 가능하도록)
+              .concat(eventNpcIds.filter(id => !npcStates[id]).map(id => [id, {} as never]))
+              .slice(0, 15)
               .map(([id]) => {
                 const def = this.content.getNpc(id as string);
                 return def ? `${id}: ${def.unknownAlias || def.name} (${def.role || '?'})` : null;
@@ -808,19 +808,16 @@ ${npcList}`,
                       if (!/^NPC_/.test(answer) && answer.length > 12) {
                         answer = answer.slice(0, 12);
                       }
-                      // 검증: NPC_ID가 아닌 호칭은 문맥(before+after)에 존재해야 함
-                      // 문맥에 없는 자의적 호칭(경찰관 등)은 reject
+                      // 검증: 최소 길이 + 한글 호칭 여부
                       if (answer.length >= 2) {
                         if (/^NPC_[A-Z_0-9]+$/.test(answer)) {
                           assignments.set(idx, answer);
+                        } else if (/[가-힣]/.test(answer)) {
+                          // 한글 호칭이면 수용 — NPC 목록에 없어도 contextAlias로 마커 부착
+                          // (BACKGROUND NPC 등 candidate에 없는 인물도 말풍선 표시)
+                          assignments.set(idx, answer);
                         } else {
-                          const entry = dialogueEntries[idx];
-                          const ctx = entry ? (entry.before + ' ' + entry.after) : '';
-                          if (ctx.includes(answer) || answer.length <= 3) {
-                            assignments.set(idx, answer);
-                          } else {
-                            this.logger.debug(`[NanoSpeaker] Rejected "${answer}" — not found in context`);
-                          }
+                          this.logger.debug(`[NanoSpeaker] Rejected "${answer}" — not Korean`);
                         }
                       }
                     }
