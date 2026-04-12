@@ -2799,9 +2799,33 @@ export class TurnsService {
           if (updatedRunState.arcState) {
             updatedRunState.arcState.questState = transition.newState;
           }
+          // 퀘스트 단계 변경 → 체류 턴 리셋
+          (updatedRunState as unknown as Record<string, unknown>).questStateSinceTurn = turnNo;
           this.logger.log(
             `[Quest] ${currentQuestState} -> ${transition.newState}`,
           );
+        } else {
+          // 단계 미변경 → 체류 턴 체크 (진행도 힌트)
+          const STALE_THRESHOLD = 5;
+          const sinceTurn = (updatedRunState as unknown as Record<string, unknown>).questStateSinceTurn as number | undefined;
+          const staleTurns = sinceTurn ? turnNo - sinceTurn : turnNo;
+
+          if (staleTurns >= STALE_THRESHOLD && discoveredFactIdsThisTurn.length === 0) {
+            // 5턴 이상 같은 퀘스트 단계 + 이번 턴 fact 발견 없음 → 힌트 자동 생성
+            const staleHint = this.questProgression.getStaleHint(currentQuestState, discoveredFacts);
+            if (staleHint) {
+              const HINT_MODES = ['OVERHEARD', 'RUMOR_ECHO', 'SCENE_CLUE'] as const;
+              const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length)];
+              updatedRunState.pendingQuestHint = {
+                hint: staleHint.hint,
+                setAtTurn: turnNo,
+                mode: hintMode,
+              };
+              this.logger.log(
+                `[Quest] Stale hint triggered: ${staleHint.factId} (${staleTurns} turns on ${currentQuestState}) mode=${hintMode}`,
+              );
+            }
+          }
         }
 
         // pendingQuestHint: 이번 턴에 발견된 fact의 nextHint를 저장 → 다음 턴 LLM 프롬프트에서 사용
@@ -2827,6 +2851,30 @@ export class TurnsService {
             this.logger.log(
               `[Quest] pendingQuestHint set for fact=${lastFactId} mode=${hintMode} at turn=${turnNo}`,
             );
+          }
+        }
+        // Phase 2: 소문 전파 — fact 발견 시 worldFacts에 소문 추가
+        if (discoveredFactIdsThisTurn.length > 0 && updatedRunState.worldState) {
+          const ws = updatedRunState.worldState;
+          if (!ws.worldFacts) ws.worldFacts = [];
+          for (const factId of discoveredFactIdsThisTurn) {
+            const detail = this.questProgression.getFactDetail(factId);
+            if (detail) {
+              ws.worldFacts.push({
+                id: `rumor_${factId}_t${turnNo}`,
+                category: 'DISCOVERY',
+                text: `소문: ${detail}`,
+                locationId: ws.currentLocationId ?? '',
+                involvedNpcs: eventPrimaryNpc ? [eventPrimaryNpc] : [],
+                turnCreated: turnNo,
+                dayCreated: ws.day ?? 1,
+                tags: [factId, 'RUMOR'],
+                impact: 'minor',
+                permanent: false,
+                expiresAtTurn: turnNo + 20,
+              } as any);
+              this.logger.debug(`[Quest] Rumor propagated: ${factId} → worldFacts`);
+            }
           }
         }
       } catch (err) {

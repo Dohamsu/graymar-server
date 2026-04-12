@@ -145,6 +145,68 @@ export class QuestProgressionService {
   }
 
   /**
+   * 진행도 힌트: 현재 퀘스트 단계에서 다음 전환에 필요한 미발견 fact를 반환.
+   * 일정 턴 이상 같은 단계에 머무르면 힌트 이벤트로 사용.
+   */
+  getStaleHint(
+    currentState: string,
+    discoveredFactIds: Set<string>,
+  ): { factId: string; hint: string; targetNpcId?: string } | null {
+    const quest = this.content.getQuestData() as QuestData | null;
+    if (!quest?.stateTransitions) return null;
+
+    // 현재 상태에서 다음 전환에 필요한 fact 찾기
+    for (const [key, transition] of Object.entries(quest.stateTransitions)) {
+      const arrowIdx = key.indexOf('\u2192');
+      if (arrowIdx === -1) continue;
+      const from = key.slice(0, arrowIdx);
+      if (from !== currentState) continue;
+
+      // requiredFacts 중 미발견
+      for (const f of transition.requiredFacts ?? []) {
+        if (!discoveredFactIds.has(f)) {
+          const hint = this.getFactNextHint(f);
+          const npcId = this.findFactNpc(f);
+          return { factId: f, hint: hint ?? `${f}와 관련된 단서가 근처에 있다`, targetNpcId: npcId ?? undefined };
+        }
+      }
+
+      // requiredAnyOf 중 미발견 그룹의 첫 번째
+      for (const group of transition.requiredAnyOf ?? []) {
+        const missing = group.filter(f => !discoveredFactIds.has(f));
+        if (missing.length > 0) {
+          const f = missing[0];
+          const hint = this.getFactNextHint(f);
+          const npcId = this.findFactNpc(f);
+          return { factId: f, hint: hint ?? `${f}와 관련된 단서가 근처에 있다`, targetNpcId: npcId ?? undefined };
+        }
+      }
+
+      // alternativeFacts 중 미발견
+      for (const f of transition.alternativeFacts ?? []) {
+        if (!discoveredFactIds.has(f)) {
+          const hint = this.getFactNextHint(f);
+          const npcId = this.findFactNpc(f);
+          return { factId: f, hint: hint ?? `${f}와 관련된 단서가 근처에 있다`, targetNpcId: npcId ?? undefined };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** fact를 알고 있는 NPC를 찾아 반환 */
+  private findFactNpc(factId: string): string | null {
+    const allNpcs = this.content.getAllNpcs();
+    for (const npc of allNpcs) {
+      if (!npc.knownFacts) continue;
+      for (const entry of npc.knownFacts) {
+        if (entry.factId === factId) return npc.npcId;
+      }
+    }
+    return null;
+  }
+
+  /**
    * factId에 해당하는 NPC knownFact의 detail 텍스트를 반환.
    * 대화 주제 추적에서 정확한 주제명을 기록하기 위해 사용.
    */
