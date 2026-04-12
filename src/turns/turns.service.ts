@@ -2811,19 +2811,49 @@ export class TurnsService {
           const staleTurns = sinceTurn ? turnNo - sinceTurn : turnNo;
 
           if (staleTurns >= STALE_THRESHOLD && discoveredFactIdsThisTurn.length === 0) {
-            // 5턴 이상 같은 퀘스트 단계 + 이번 턴 fact 발견 없음 → 힌트 자동 생성
             const staleHint = this.questProgression.getStaleHint(currentQuestState, discoveredFacts);
             if (staleHint) {
-              const HINT_MODES = ['OVERHEARD', 'RUMOR_ECHO', 'SCENE_CLUE'] as const;
-              const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length)];
-              updatedRunState.pendingQuestHint = {
-                hint: staleHint.hint,
-                setAtTurn: turnNo,
-                mode: hintMode,
-              };
-              this.logger.log(
-                `[Quest] Stale hint triggered: ${staleHint.factId} (${staleTurns} turns on ${currentQuestState}) mode=${hintMode}`,
-              );
+              const AUTO_DISCOVER_THRESHOLD = 3; // 힌트 3회 반복 → fact 자동 발견
+              const hintCount = staleTurns - STALE_THRESHOLD + 1;
+
+              if (hintCount >= AUTO_DISCOVER_THRESHOLD) {
+                // 힌트 3회 이상 → fact 자동 발견 (플레이어가 소문을 충분히 인지)
+                if (!updatedRunState.discoveredQuestFacts) updatedRunState.discoveredQuestFacts = [];
+                if (!updatedRunState.discoveredQuestFacts.includes(staleHint.factId)) {
+                  updatedRunState.discoveredQuestFacts.push(staleHint.factId);
+                  discoveredFacts.add(staleHint.factId);
+                  discoveredFactIdsThisTurn.push(staleHint.factId);
+                  if (updatedRunState.arcState?.discoveredQuestFacts) {
+                    updatedRunState.arcState.discoveredQuestFacts = [...updatedRunState.discoveredQuestFacts];
+                  }
+                  this.logger.log(
+                    `[Quest] Auto-discovered fact: ${staleHint.factId} (${hintCount} hints on ${currentQuestState})`,
+                  );
+
+                  // 자동 발견 후 전환 재체크
+                  const recheck = this.questProgression.checkTransition(currentQuestState, discoveredFacts);
+                  if (recheck.newState) {
+                    updatedRunState.questState = recheck.newState;
+                    if (updatedRunState.arcState) {
+                      updatedRunState.arcState.questState = recheck.newState;
+                    }
+                    (updatedRunState as unknown as Record<string, unknown>).questStateSinceTurn = turnNo;
+                    this.logger.log(`[Quest] Auto-transition: ${currentQuestState} -> ${recheck.newState}`);
+                  }
+                }
+              } else {
+                // 힌트만 제공 (아직 자동 발견 안 함)
+                const HINT_MODES = ['OVERHEARD', 'RUMOR_ECHO', 'SCENE_CLUE'] as const;
+                const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length)];
+                updatedRunState.pendingQuestHint = {
+                  hint: staleHint.hint,
+                  setAtTurn: turnNo,
+                  mode: hintMode,
+                };
+                this.logger.log(
+                  `[Quest] Stale hint ${hintCount}/${AUTO_DISCOVER_THRESHOLD}: ${staleHint.factId} (${staleTurns} turns on ${currentQuestState}) mode=${hintMode}`,
+                );
+              }
             }
           }
         }
