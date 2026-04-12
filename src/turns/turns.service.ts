@@ -2858,6 +2858,46 @@ export class TurnsService {
           }
         }
 
+        // Part A: fact 발견 → 관련 Incident control 증가 (퀘스트-Incident 연동)
+        if (discoveredFactIdsThisTurn.length > 0 && updatedRunState.worldState) {
+          const questData = this.content.getQuestData() as { factToIncident?: Record<string, { incidents: string[]; controlBonus: number }> } | null;
+          const mapping = questData?.factToIncident;
+          if (mapping) {
+            const activeIncidents = (updatedRunState.worldState.activeIncidents ?? []) as Array<{ incidentId: string; control: number; resolved?: boolean }>;
+            for (const factId of discoveredFactIdsThisTurn) {
+              const entry = mapping[factId];
+              if (!entry) continue;
+              for (const incId of entry.incidents) {
+                const incident = activeIncidents.find(i => i.incidentId === incId && !i.resolved);
+                if (incident) {
+                  incident.control = Math.min(100, (incident.control ?? 0) + entry.controlBonus);
+                  this.logger.log(`[Quest→Incident] ${factId} → ${incId} control +${entry.controlBonus} (now ${incident.control})`);
+                }
+              }
+            }
+          }
+        }
+
+        // Part B: S5_RESOLVE + 5턴 → 미해결 Incident resolved (엔딩 트리거)
+        {
+          const qs = updatedRunState.questState ?? '';
+          if (qs === 'S5_RESOLVE') {
+            const sinceTurn = (updatedRunState as unknown as Record<string, unknown>).questStateSinceTurn as number | undefined;
+            const s5Turns = sinceTurn ? turnNo - sinceTurn : 0;
+            if (s5Turns >= 5 && updatedRunState.worldState) {
+              const activeIncidents = (updatedRunState.worldState.activeIncidents ?? []) as Array<{ incidentId: string; control: number; resolved?: boolean; outcome?: string }>;
+              for (const inc of activeIncidents) {
+                if (!inc.resolved) {
+                  inc.control = 100;
+                  inc.resolved = true;
+                  inc.outcome = 'CONTAINED';
+                  this.logger.log(`[Quest→Ending] S5+${s5Turns}턴: ${inc.incidentId} resolved=CONTAINED (엔딩 트리거)`);
+                }
+              }
+            }
+          }
+        }
+
         // pendingQuestHint: 이번 턴에 발견된 fact의 nextHint를 저장 → 다음 턴 LLM 프롬프트에서 사용
         if (discoveredFactIdsThisTurn.length > 0) {
           // 마지막 발견 fact의 nextHint 사용 (여러 fact 동시 발견 시 가장 최근 것)

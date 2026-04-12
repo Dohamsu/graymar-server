@@ -132,6 +132,8 @@ export interface LlmContext {
   questFactHint: string | null;
   // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
   questDirectionHint: { hint: string; mode: string } | null;
+  // S5_RESOLVE 진입 시 최후의 선택 서술 지시
+  questEndingApproach: string | null;
   // 대화 잠금 상태 (연속 대화 턴 정보)
   conversationLock: {
     npcDisplayName: string;
@@ -1169,6 +1171,9 @@ export class ContextBuilderService {
       questFactHint: this.buildQuestFactHint(serverResult, runState),
       // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
       questDirectionHint: this.buildQuestDirectionHint(serverResult, runState),
+      questEndingApproach: (runState?.questState === 'S5_RESOLVE')
+        ? '이야기가 마무리에 접어들고 있다. 서술의 톤을 클라이맥스로 고조시키세요. 플레이어의 행동이 최종 결과를 결정합니다.'
+        : null,
       // 대화 잠금 상태
       conversationLock: this.buildConversationLock(runState),
       // 장소 기반 NPC 필터링
