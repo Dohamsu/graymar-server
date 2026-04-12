@@ -1569,6 +1569,11 @@ export class PromptBuilderService {
       factsParts.push(`[단서 방향]\n${directive}`);
     }
 
+    // Quest ending approach: S5_RESOLVE 진입 시 클라이맥스 서술 지시
+    if (ctx.questEndingApproach) {
+      factsParts.push(`[서술 톤 지시]\n${ctx.questEndingApproach}`);
+    }
+
     // 프롤로그 힌트 (첫 장면)
     if (sr.turnNo === 0) {
       factsParts.push(

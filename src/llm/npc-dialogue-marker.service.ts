@@ -372,6 +372,36 @@ export class NpcDialogueMarkerService {
         _consecutive: isConsecutive,
       } as DialogueMatch);
     }
+
+    // 보조 감지: 따옴표 없는 하오체 대사 (독립 문장, ~소/~오/~지 종결)
+    // 이미 @마커가 붙어있거나 따옴표 대사 범위 안이면 skip
+    const haoRegex = /(?:^|\n)\s*([^@"\u201C\n]{8,}?(?:[소오지])\.\s*)(?:\n|$)/g;
+    let hm: RegExpExecArray | null;
+    while ((hm = haoRegex.exec(text)) !== null) {
+      const sentence = hm[1].trim();
+      // 서술체 제외: 주어가 "당신/그/그녀"로 시작하면 NPC 대사가 아닌 서술
+      if (/^(?:당신|그는|그녀는|그가|그녀가)/.test(sentence)) continue;
+      // 이미 추출된 따옴표 대사 범위와 겹치면 skip
+      const sStart = hm.index;
+      const sEnd = hm.index + hm[0].length;
+      const overlaps = dialogues.some(d => sStart < d.end && sEnd > d.start);
+      if (overlaps) continue;
+      // 이미 @마커가 앞에 있으면 skip
+      const before30 = text.slice(Math.max(0, sStart - 30), sStart);
+      if (/@(?:[A-Z_]+|\[[^\]]*\])\s*$/.test(before30)) continue;
+
+      dialogues.push({
+        start: sStart,
+        end: sEnd,
+        dialogue: `"${sentence}"`, // 따옴표 래핑 (마커 삽입 형식 통일)
+        npcId: null,
+        contextAlias: null,
+      });
+    }
+
+    // 위치 순으로 정렬 (원래 따옴표 대사 + 하오체 보조 대사)
+    dialogues.sort((a, b) => a.start - b.start);
+
     return dialogues;
   }
 
