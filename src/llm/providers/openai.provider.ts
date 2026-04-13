@@ -150,6 +150,9 @@ export class OpenAIProvider implements LlmProvider {
         ? { max_completion_tokens: request.maxTokens }
         : { max_tokens: request.maxTokens }),
       temperature: request.temperature,
+      ...(request.responseFormat === 'json_object'
+        ? { response_format: { type: 'json_object' as const } }
+        : {}),
       ...openRouterParams,
     } as any);
 
