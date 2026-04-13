@@ -1040,6 +1040,16 @@ export class PromptBuilderService {
       factsParts.push(`[이번 턴 사건]\n${eventTexts.join('\n')}`);
     }
 
+    // 장소 도착 턴: NPC 대사 금지 (환경 묘사만)
+    const isMoveOnly = filteredEvents.length > 0
+      && filteredEvents.every((e) => e.kind === 'MOVE' || e.kind === 'SYSTEM')
+      && inputType === 'SYSTEM';
+    if (isMoveOnly) {
+      factsParts.push(
+        '⚠️ 이것은 장소 도착 장면입니다. NPC가 먼저 대화를 시작하지 마세요. 환경 묘사와 분위기만 서술하세요. NPC는 배경 활동(지나가기, 일하기)만 허용하고 대사는 금지합니다.',
+      );
+    }
+
     // toneHint
     factsParts.push(`[분위기] ${sr.ui.toneHint}`);
 
