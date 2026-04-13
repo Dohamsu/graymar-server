@@ -328,7 +328,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         callResult.success &&
         callResult.response &&
         alternateModel &&
-        (callResult.response.completionTokens ?? 0) < 100
+        (callResult.response.completionTokens ?? 0) < 200
       ) {
         this.logger.warn(
           `[ShortResponse] turn=${pending.turnNo} model=${callResult.response.model} tokens=${callResult.response.completionTokens} → 메인 모델로 재시도`,
@@ -340,7 +340,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           reasoningEffort,
           ...(useJsonMode ? { responseFormat: 'json_object' as const } : {}),
         });
-        if (retryResult.success && retryResult.response && (retryResult.response.completionTokens ?? 0) >= 100) {
+        if (retryResult.success && retryResult.response && (retryResult.response.completionTokens ?? 0) >= 200) {
           Object.assign(callResult, retryResult);
         }
       }
@@ -428,7 +428,14 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             this.logger.debug(`[JsonMode] turn=${pending.turnNo} segments=${jsonParsed.segments.length} parsed OK`);
           } else {
             this.logger.warn(`[JsonMode] turn=${pending.turnNo} JSON parse failed, falling back to prose pipeline`);
-            // JSON 파싱 실패 → 기존 산문 파이프라인으로 처리
+            // JSON 파싱 실패 → JSON 잔해에서 서술 텍스트만 추출 (응급 처리)
+            if (/"segments"/.test(narrative)) {
+              const textMatches = [...narrative.matchAll(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g)];
+              if (textMatches.length > 0) {
+                narrative = textMatches.map(m => m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')).join('\n');
+                this.logger.warn(`[JsonMode] Extracted ${textMatches.length} text fields from JSON residue`);
+              }
+            }
           }
         }
 
