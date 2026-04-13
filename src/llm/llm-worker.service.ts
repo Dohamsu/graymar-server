@@ -328,7 +328,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         callResult.success &&
         callResult.response &&
         alternateModel &&
-        (callResult.response.completionTokens ?? 0) < 50
+        (callResult.response.completionTokens ?? 0) < 100
       ) {
         this.logger.warn(
           `[ShortResponse] turn=${pending.turnNo} model=${callResult.response.model} tokens=${callResult.response.completionTokens} → 메인 모델로 재시도`,
@@ -340,7 +340,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           reasoningEffort,
           ...(useJsonMode ? { responseFormat: 'json_object' as const } : {}),
         });
-        if (retryResult.success && retryResult.response && (retryResult.response.completionTokens ?? 0) >= 50) {
+        if (retryResult.success && retryResult.response && (retryResult.response.completionTokens ?? 0) >= 100) {
           Object.assign(callResult, retryResult);
         }
       }
