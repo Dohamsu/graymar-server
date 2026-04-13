@@ -935,10 +935,9 @@ ${npcList}`,
             },
           );
 
-          // 초상화 표시 판정: 첫 만남(enc>=1) 또는 소개완료(introduced) → 무조건 표시
-          const shouldShowPortrait = (_npcId: string, npcState: import('../db/types/npc-state.js').NPCState | undefined): boolean => {
-            if (!npcState) return false;
-            return (npcState.encounterCount ?? 0) >= 1 || !!npcState.introduced;
+          // 초상화 표시 판정: 초상화가 존재하면 항상 표시 (소개 턴에서도 초상화는 보여줌)
+          const shouldShowPortrait = (npcId: string, _npcState: import('../db/types/npc-state.js').NPCState | undefined): boolean => {
+            return !!(portraits[npcId]);
           };
 
           // B-1: @NPC_ID "대사" → @[표시이름|초상화URL] "대사"
