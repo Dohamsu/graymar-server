@@ -1594,7 +1594,11 @@ ${npcList}`,
     try {
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return null;
-      const parsed = JSON.parse(jsonMatch[0]);
+      // LLM이 JSON에서 잘못된 이스케이프를 사용하는 경우 정리
+      const cleaned = jsonMatch[0]
+        .replace(/\\'/g, "'")           // \' → ' (JSON에서 불필요한 이스케이프)
+        .replace(/[\x00-\x1F\x7F]/g, (ch) => ch === '\n' || ch === '\t' ? ch : ''); // 제어문자 제거
+      const parsed = JSON.parse(cleaned);
       if (!parsed.segments || !Array.isArray(parsed.segments)) return null;
       for (const seg of parsed.segments) {
         if (!seg.type || !seg.text) return null;
