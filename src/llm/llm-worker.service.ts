@@ -831,7 +831,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
           // Step A: nano LLM 1차 발화자 판단 + 서버 regex fallback
           // JSON 모드에서 성공적으로 파싱된 경우 마커가 이미 삽입되어 있으므로 스킵
-          const hasDialogue = !jsonModeParsed && /["\u201C\u201D]/.test(narrative);
+          // JSON 잔해 감지: "segments" 키가 있으면 JSON fallback으로 간주하여 마커 매칭 스킵
+          const isJsonResidue = /"segments"\s*:/.test(narrative);
+          const hasDialogue = !jsonModeParsed && !isJsonResidue && /["\u201C\u201D]/.test(narrative);
           this.logger.debug(`[DialogueMarker] turn=${pending.turnNo} hasDialogue=${hasDialogue} len=${narrative.length}`);
           if (hasDialogue) {
             // A-0: 이벤트에서 NPC 추출 (fallback + 후보 확장용)
