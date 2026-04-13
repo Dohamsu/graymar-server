@@ -489,6 +489,24 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           violations.push(`AUTO_FIX: NPC_APPROACH(${approachFixCount}건 치환)`);
         }
 
+        // P1b. 메타 서술 제거 — 턴 번호 노출, "플레이어가" 3인칭 호칭
+        {
+          let metaFixCount = 0;
+          // "턴 N에서" / "턴 N에" / "턴N에서" → 문장 단위 삭제는 위험하므로 해당 구절만 제거
+          const beforeMeta = narrative;
+          narrative = narrative
+            .replace(/턴\s?\d+에서\s?/g, '')
+            .replace(/턴\s?\d+에\s/g, '')
+            .replace(/플레이어가\s/g, '당신이 ')
+            .replace(/플레이어의\s/g, '당신의 ')
+            .replace(/플레이어는\s/g, '당신은 ')
+            .replace(/플레이어를\s/g, '당신을 ');
+          if (narrative !== beforeMeta) {
+            metaFixCount = 1;
+            violations.push('AUTO_FIX: META_NARRATION');
+          }
+        }
+
         // P2. 말투 위반 감지 (대사 내 금지 패턴)
         const speechViolations =
           /["""].*?(?:자네|이보게|~일세|말일세|삼가게|하네만|어쩌겠나)["""]|["""].*?(?:해요|세요|합니다|입니다|에요|죠)["""]|["""].*?(?:~야|~해|~지만|~거든|~잖아)["""]/g;
