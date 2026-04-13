@@ -81,6 +81,31 @@ export class ConsequenceProcessorService {
           `${input.locationId}: security${locationEffect.securityDelta >= 0 ? '+' : ''}${locationEffect.securityDelta}, unrest${locationEffect.unrestDelta >= 0 ? '+' : ''}${locationEffect.unrestDelta}`,
         );
 
+        // 장소 상태 급변 시그널 (security/unrest ±10 이상)
+        if (Math.abs(locationEffect.securityDelta) >= 10 || Math.abs(locationEffect.unrestDelta) >= 10) {
+          const locName = input.locationId; // 장소 ID (nano가 변환 시 컨텍스트로 활용)
+          let sigText: string;
+          if (locationEffect.securityDelta <= -10) {
+            sigText = `${locName} 일대의 치안이 급격히 악화되었다.`;
+          } else if (locationEffect.securityDelta >= 10) {
+            sigText = `${locName} 일대의 치안이 강화되었다.`;
+          } else if (locationEffect.unrestDelta >= 10) {
+            sigText = `${locName}에서 불안이 고조되고 있다.`;
+          } else {
+            sigText = `${locName}의 상황이 안정을 되찾고 있다.`;
+          }
+          const sf = (ws.signalFeed ?? []) as Array<Record<string, unknown>>;
+          sf.push({
+            id: `sig_loc_${input.locationId}_${input.turnNo}`,
+            channel: 'SECURITY',
+            severity: 3,
+            locationId: input.locationId,
+            text: sigText,
+            createdAtClock: ws.globalClock,
+          });
+          ws.signalFeed = sf as any;
+        }
+
         // === 임계값 트리거: 장소 수치 → 조건 자동 발동 ===
         const triggered = this.checkThresholdTriggers(
           ws, input.locationId, state, input.turnNo,

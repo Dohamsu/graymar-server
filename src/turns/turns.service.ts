@@ -2832,6 +2832,27 @@ export class TurnsService {
           this.logger.log(
             `[Quest] ${currentQuestState} -> ${transition.newState}`,
           );
+
+          // 퀘스트 전환 시그널 → 호외 발행 대상
+          if (updatedRunState.worldState) {
+            const QUEST_LABEL: Record<string, string> = {
+              S1_GET_ANGLE: '사건의 실마리가 포착되었다.',
+              S2_PROVE_TAMPER: '조작의 흔적이 드러나기 시작했다.',
+              S3_TRACE_ROUTE: '배후의 경로가 윤곽을 드러내고 있다.',
+              S4_CONFRONT: '진실에 한 걸음 더 다가섰다.',
+              S5_RESOLVE: '모든 것이 끝을 향해 치닫고 있다.',
+            };
+            const questText = QUEST_LABEL[transition.newState] ?? `사건이 새로운 국면에 접어들었다.`;
+            const sf = (updatedRunState.worldState.signalFeed ?? []) as Array<Record<string, unknown>>;
+            sf.push({
+              id: `sig_quest_${transition.newState}_${turnNo}`,
+              channel: 'RUMOR',
+              severity: 4,
+              text: questText,
+              createdAtClock: (updatedRunState.worldState as any).globalClock ?? 0,
+            });
+            updatedRunState.worldState = { ...updatedRunState.worldState, signalFeed: sf } as any;
+          }
         } else {
           // 단계 미변경 → 체류 턴 체크 (진행도 힌트)
           const STALE_THRESHOLD = 5;
@@ -3370,7 +3391,7 @@ export class TurnsService {
     }
 
     // === Narrative Engine v1: UI data 추가 ===
-    const finalWs = updatedRunState.worldState;
+    const finalWs = updatedRunState.worldState!;
     // Signal Feed
     const signalFeedUI = (finalWs.signalFeed ?? []).map(
       (s: any) => ({
