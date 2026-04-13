@@ -1574,6 +1574,17 @@ export class PromptBuilderService {
       factsParts.push(`[서술 톤 지시]\n${ctx.questEndingApproach}`);
     }
 
+    // NPC 아젠다 목격: 같은 장소에서 NPC가 무언가를 하고 있는 장면
+    if (ctx.agendaWitnessHint) {
+      factsParts.push(
+        [
+          `[목격 장면]`,
+          ctx.agendaWitnessHint,
+          `서술 후반부에 당신의 시야에 이 장면이 스쳐 지나가는 것을 자연스럽게 삽입하세요. 직접 개입하는 것이 아니라 멀리서 목격하는 느낌으로, 2~3문장으로 짧게 묘사하세요.`,
+        ].join('\n'),
+      );
+    }
+
     // 프롤로그 힌트 (첫 장면)
     if (sr.turnNo === 0) {
       factsParts.push(
