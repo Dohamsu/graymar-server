@@ -226,32 +226,10 @@ export class WorldTickService {
 
     const newDay = Math.floor(ws.globalClock / TICKS_PER_DAY) + 1;
 
-    // 시간대 전환 시그널
-    const oldPhase = ws.phaseV2;
-    let updatedSignalFeed = ws.signalFeed;
-    if (oldPhase && newPhase !== oldPhase) {
-      const PHASE_TEXT: Record<string, string> = {
-        DAWN: '동이 트기 시작했다. 그레이마르에 새벽이 밝았다.',
-        DAY: '해가 떠올랐다. 거리에 사람들이 모여들고 있다.',
-        DUSK: '해가 기울고 있다. 그림자가 길어지기 시작한다.',
-        NIGHT: '밤이 내렸다. 그레이마르의 어둠이 깊어지고 있다.',
-      };
-      const sf = [...(ws.signalFeed ?? [])] as Array<Record<string, unknown>>;
-      sf.push({
-        id: `sig_phase_${newPhase}_d${newDay}_${ws.globalClock}`,
-        channel: 'VISUAL',
-        severity: 3,
-        text: PHASE_TEXT[newPhase] ?? `시간이 흘렀다.`,
-        createdAtClock: ws.globalClock,
-      });
-      updatedSignalFeed = sf as any;
-    }
-
     return {
       ...ws,
       phaseV2: newPhase,
       day: newDay,
-      signalFeed: updatedSignalFeed,
     };
   }
 
