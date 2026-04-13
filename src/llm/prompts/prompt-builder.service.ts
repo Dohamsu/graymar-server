@@ -314,9 +314,9 @@ export class PromptBuilderService {
         let narrativePart = '';
 
         if (distFromEnd === 0 && t.narrative) {
-          // 직전 턴만: 원문 마지막 300자 (이어쓰기 앵커)
+          // 직전 턴만: 원문 마지막 200자 (이어쓰기 앵커, 프롬프트 압축)
           const trimmed =
-            t.narrative.length > 300
+            t.narrative.length > 200
               ? '...' + t.narrative.slice(-300)
               : t.narrative;
           narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
@@ -326,10 +326,10 @@ export class PromptBuilderService {
           if (threadSummary) {
             narrativePart = `\n상황: ${threadSummary}`;
           } else if (t.narrative) {
-            // THREAD 없으면 원문 100자 fallback
+            // THREAD 없으면 원문 60자 fallback (프롬프트 압축)
             const trimmed =
-              t.narrative.length > 100
-                ? '...' + t.narrative.slice(-100)
+              t.narrative.length > 60
+                ? '...' + t.narrative.slice(-60)
                 : t.narrative;
             narrativePart = `\n상황(요약): ${trimmed}`;
           }

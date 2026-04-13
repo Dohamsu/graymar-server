@@ -323,6 +323,28 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         ...(useJsonMode ? { responseFormat: 'json_object' as const } : {}),
       });
 
+      // 4.5. 응답 너무 짧으면 메인 모델로 재시도 (Flash Lite 긴 프롬프트 실패 방어)
+      if (
+        callResult.success &&
+        callResult.response &&
+        alternateModel &&
+        (callResult.response.completionTokens ?? 0) < 50
+      ) {
+        this.logger.warn(
+          `[ShortResponse] turn=${pending.turnNo} model=${callResult.response.model} tokens=${callResult.response.completionTokens} → 메인 모델로 재시도`,
+        );
+        const retryResult = await this.llmCaller.call({
+          messages,
+          maxTokens: config.maxTokens,
+          temperature: config.temperature,
+          reasoningEffort,
+          ...(useJsonMode ? { responseFormat: 'json_object' as const } : {}),
+        });
+        if (retryResult.success && retryResult.response && (retryResult.response.completionTokens ?? 0) >= 50) {
+          Object.assign(callResult, retryResult);
+        }
+      }
+
       // 5. 내러티브 결정 — 실패 또는 mock fallback 시 SceneShell로 graceful degradation
       let narrative: string;
       let modelUsed: string;
