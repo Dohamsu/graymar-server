@@ -458,6 +458,7 @@ export class RunsService {
         characterName,
         portraitUrl: options?.portraitUrl ?? undefined,
         traitId,
+        bonusStats: bonusStats ?? undefined,
         traitEffects,
         actionBonuses:
           Object.keys(mergedActionBonuses).length > 0
@@ -859,6 +860,8 @@ export class RunsService {
             (lastRun.runState as RunState | null)?.traitId ?? undefined,
           portraitUrl:
             (lastRun.runState as RunState | null)?.portraitUrl ?? undefined,
+          bonusStats:
+            (lastRun.runState as Record<string, unknown> | null)?.bonusStats as Record<string, number> | undefined,
         }
       : undefined;
 

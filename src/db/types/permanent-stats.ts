@@ -123,6 +123,7 @@ export interface RunState {
   characterName?: string; // 플레이어 지정 캐릭터 이름 (1~8자)
   portraitUrl?: string; // AI 생성 초상화 URL
   traitId?: string; // 선택된 특성 ID (traits.json 참조)
+  bonusStats?: Record<string, number>; // 캐릭터 생성 시 보너스 스탯 원본 (재생성용)
   traitEffects?: import('../../content/content.types.js').TraitEffects; // 런타임 참조용 특성 효과
   /** 프리셋 + 특성 합산 actionBonuses (런타임 참조용) */
   actionBonuses?: Record<string, number>;
