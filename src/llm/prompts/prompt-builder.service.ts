@@ -13,6 +13,7 @@ import type { LlmMessage } from '../types/index.js';
 import {
   NARRATIVE_SYSTEM_PROMPT,
   PARTY_NARRATIVE_SYSTEM_PROMPT,
+  NARRATIVE_JSON_FORMAT_INSTRUCTION,
 } from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { TokenBudgetService } from '../token-budget.service.js';
@@ -42,6 +43,7 @@ export class PromptBuilderService {
     previousChoiceLabels?: string[],
     directorHint?: import('../nano-director.service.js').DirectorHint | null,
     nanoEventHint?: import('../nano-event-director.service.js').NanoEventResult | null,
+    useJsonMode?: boolean,
   ): LlmMessage[] {
     const messages: LlmMessage[] = [];
     const isHub = sr.node.type === 'HUB';
@@ -76,10 +78,12 @@ export class PromptBuilderService {
       !isPartyMode && ctx.gender === 'female'
         ? '\n\n## 주인공 성별\n주인공("당신")은 **여성**입니다. NPC의 호칭(아가씨, 자매, 부인 등), 외모 묘사, 주변 반응에 성별을 자연스럽게 반영하세요. 단, 과도한 성별 강조는 피하세요.'
         : '';
+    // JSON 모드일 때 산문 출력 형식을 JSON 스키마로 교체
+    const formatSuffix = useJsonMode ? `\n\n${NARRATIVE_JSON_FORMAT_INSTRUCTION}` : '';
     const systemContent =
       ctx.theme.length > 0
-        ? `${basePrompt}${partyIntro}${genderHint}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}`
-        : `${basePrompt}${partyIntro}${genderHint}`;
+        ? `${basePrompt}${partyIntro}${genderHint}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}${formatSuffix}`
+        : `${basePrompt}${partyIntro}${genderHint}${formatSuffix}`;
     messages.push({
       role: 'system',
       content: systemContent,
@@ -634,19 +638,29 @@ export class PromptBuilderService {
         );
       }
 
-      // NPC 대사 호칭 매핑 — 마커 정확도 향상을 위해 구체적 호칭 목록 제공
+      // NPC 대사 호칭 매핑 — 마커 정확도 향상을 위해 구체적 호칭 + 짧은 호칭 제공
       if (sceneNpcIds.size > 0) {
         const aliasLines: string[] = [];
         for (const npcId of sceneNpcIds) {
           const def = this.content.getNpc(npcId);
           if (def) {
             const alias = def.unknownAlias || def.name;
-            aliasLines.push(`- ${alias}`);
+            // 역할명에서 짧은 호칭 추출 (예: "날카로운 눈매의 회계사" → "회계사")
+            const words = alias.split(/\s/);
+            const shortAlias = words.length > 1 ? words[words.length - 1] : alias;
+            aliasLines.push(
+              shortAlias !== alias
+                ? `- ${alias} (짧은 호칭: "${shortAlias}")`
+                : `- ${alias}`,
+            );
           }
         }
         if (aliasLines.length > 0) {
           memoryParts.push(
-            `[NPC 대사 호칭] ⚠️ 아래 NPC가 대사를 할 때, 대사 직전에 반드시 이 호칭을 사용하세요:\n${aliasLines.join('\n')}`,
+            `[NPC 대사 호칭] ⚠️ 필수 — 대사 직전에 반드시 아래 호칭을 사용하세요:\n` +
+            `${aliasLines.join('\n')}\n` +
+            `⚠️ "그가", "그녀가", "그는" 대신 반드시 위 호칭 또는 짧은 호칭을 사용.\n` +
+            `⚠️ 같은 NPC가 연속 발화하더라도 두 번째 대사부터 짧은 호칭 사용.`,
           );
         }
       }

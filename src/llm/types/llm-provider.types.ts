@@ -13,6 +13,7 @@ export interface LlmProviderRequest {
   temperature: number;
   model?: string;
   reasoningEffort?: 'low' | 'medium' | 'high'; // GPT-5/o-series reasoning 강도
+  responseFormat?: 'text' | 'json_object'; // JSON 구조화 출력 모드
 }
 
 export interface LlmProviderResponse {

@@ -35,6 +35,20 @@ import {
   createEmptyStructuredMemory,
 } from '../db/types/structured-memory.js';
 
+/** JSON 구조화 출력 모드 타입 (LLM_JSON_MODE=true) */
+interface NarrativeJsonSegment {
+  type: 'narration' | 'dialogue';
+  text: string;
+  speaker_id?: string | null;
+  speaker_alias?: string;
+}
+interface NarrativeJsonOutput {
+  segments: NarrativeJsonSegment[];
+  choices?: Array<{ label: string; affordance: string; hint?: string }>;
+  memories?: Array<{ category: string; text: string }>;
+  thread?: string;
+}
+
 const POLL_INTERVAL_MS = 1000;
 const LOCK_TIMEOUT_S = 60;
 const MAX_CONCURRENT_TURNS = 5; // 동시 처리 턴 수 (10명 동시접속 목표)
@@ -268,6 +282,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // 3.5. 프롬프트 메시지 조립
       const config = this.configService.get();
+      const isCombat = pending.nodeType === 'COMBAT';
+      const useJsonMode = process.env.LLM_JSON_MODE === 'true' && !isCombat;
       const messages = this.promptBuilder.buildNarrativePrompt(
         llmContext,
         serverResult,
@@ -276,11 +292,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         previousChoiceLabels,
         directorHint,
         nanoEventHint ?? null,
+        useJsonMode,
       );
 
       // 4. LLM 호출 (재시도/fallback 포함)
       // COMBAT 턴은 경량 모델(nano) 사용 — 정형화된 짧은 전투 서술이라 충분
-      const isCombat = pending.nodeType === 'COMBAT';
       const lightConfig = isCombat
         ? this.configService.getLightModelConfig()
         : null;
@@ -304,6 +320,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         reasoningEffort,
         ...(lightConfig ? { model: lightConfig.model } : {}),
         ...(alternateModel ? { model: alternateModel } : {}),
+        ...(useJsonMode ? { responseFormat: 'json_object' as const } : {}),
       });
 
       // 5. 내러티브 결정 — 실패 또는 mock fallback 시 SceneShell로 graceful degradation
@@ -318,9 +335,67 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         callResult.providerUsed === 'mock' &&
         config.provider !== 'mock';
 
+      // JSON 모드 파싱 성공 여부 — 마커 후처리 스킵 판단용
+      let jsonModeParsed = false;
+
       if (callResult.success && callResult.response && !isMockFallback) {
         narrative = callResult.response.text;
         modelUsed = callResult.response.model;
+
+        // === JSON 모드: 구조화 출력 파싱 ===
+        if (useJsonMode) {
+          const jsonParsed = this.parseJsonNarrative(narrative);
+          if (jsonParsed) {
+            // JSON에서 서술 + @마커 조립
+            narrative = this.assembleFromJson(jsonParsed);
+            jsonModeParsed = true;
+
+            // JSON에서 memories 추출
+            if (jsonParsed.memories) {
+              for (const mem of jsonParsed.memories.slice(0, 4)) {
+                if (LLM_FACT_CATEGORY.includes(mem.category as LlmFactCategory) && mem.text?.length > 0) {
+                  extractedFacts.push({
+                    turnNo: pending.turnNo,
+                    category: mem.category as LlmFactCategory,
+                    text: mem.text.slice(0, 80),
+                    importance: 0.7,
+                  });
+                }
+              }
+            }
+            // JSON에서 thread 추출
+            if (jsonParsed.thread) {
+              threadEntry = jsonParsed.thread.slice(0, 200);
+            }
+            // JSON에서 choices 추출
+            if (jsonParsed.choices && pending.nodeType === 'LOCATION') {
+              const AFFORDANCE_SET = new Set([
+                'INVESTIGATE', 'PERSUADE', 'SNEAK', 'BRIBE', 'THREATEN',
+                'HELP', 'STEAL', 'FIGHT', 'OBSERVE', 'TRADE', 'TALK', 'SEARCH',
+              ]);
+              const parsed: ChoiceItem[] = jsonParsed.choices
+                .filter((c: { label?: string; affordance?: string }) => c.label && AFFORDANCE_SET.has(c.affordance ?? ''))
+                .slice(0, 3)
+                .map((c: { label: string; affordance: string; hint?: string }, idx: number) => ({
+                  id: `choice_${idx}`,
+                  label: c.label,
+                  action: { type: 'CHOICE' as const, payload: { affordance: c.affordance, hint: c.hint ?? '' } },
+                }));
+              if (parsed.length > 0) {
+                parsed.push({
+                  id: 'go_hub',
+                  label: "'잠긴 닻' 선술집으로 돌아간다",
+                  action: { type: 'CHOICE', payload: { returnToHub: true } },
+                } as ChoiceItem);
+                llmChoices = parsed;
+              }
+            }
+            this.logger.debug(`[JsonMode] turn=${pending.turnNo} segments=${jsonParsed.segments.length} parsed OK`);
+          } else {
+            this.logger.warn(`[JsonMode] turn=${pending.turnNo} JSON parse failed, falling back to prose pipeline`);
+            // JSON 파싱 실패 → 기존 산문 파이프라인으로 처리
+          }
+        }
 
         // 4-a-0. [MEMORY] 태그 파싱 및 스트립 (최대 4개, 80자)
         const memoryMatches = [
@@ -716,7 +791,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           const { sanitizeNpcNamesForTurn, getNpcDisplayName } = await import('../db/types/npc-state.js');
 
           // Step A: nano LLM 1차 발화자 판단 + 서버 regex fallback
-          const hasDialogue = /["\u201C\u201D]/.test(narrative);
+          // JSON 모드에서 성공적으로 파싱된 경우 마커가 이미 삽입되어 있으므로 스킵
+          const hasDialogue = !jsonModeParsed && /["\u201C\u201D]/.test(narrative);
           this.logger.debug(`[DialogueMarker] turn=${pending.turnNo} hasDialogue=${hasDialogue} len=${narrative.length}`);
           if (hasDialogue) {
             // A-0: 이벤트에서 NPC 추출 (fallback + 후보 확장용)
@@ -791,7 +867,13 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                     {
                       role: 'system',
                       content: `아래 서술의 각 대사에 대해 발화자를 판단하라.
-NPC 목록에서 찾으면 NPC_ID를, 없으면 문맥 속 호칭(2~10자)을 답하라.
+
+판단 규칙 (우선순위):
+1. 대사 직전 문맥에 NPC 호칭/이름이 있으면 → 해당 NPC_ID
+2. 대명사만 있을 때("그가","그녀가") → 성별로 NPC 목록 필터, 1명이면 해당 NPC
+3. 직업명/역할명("경비병","상인") → NPC 목록에서 role 매칭
+4. 아무 단서 없으면 → NPC 목록 첫 번째(주 NPC)
+5. 절대 빈 문자열, "UNKNOWN", "없음" 금지. 반드시 NPC_ID 또는 한글 호칭
 
 형식: 번호=발화자 (한 줄에 하나씩)
 예:
@@ -807,7 +889,7 @@ ${npcList}`,
                       content: dialoguePrompt,
                     },
                   ],
-                  maxTokens: Math.max(dialogueEntries.length * 25, 60),
+                  maxTokens: Math.max(dialogueEntries.length * 30, 80),
                   temperature: 0,
                   model: lightConfig.model,
                 });
@@ -867,6 +949,91 @@ ${npcList}`,
                           this.logger.debug(`[NanoSpeaker] Rejected "${answer}" — not Korean`);
                         }
                       }
+                    }
+                  }
+
+                  // A-1.5: 미할당 대사 서브 LLM 2차 검증
+                  const unassignedIndices = dialogueEntries
+                    .map((_, i) => i)
+                    .filter(i => !assignments.has(i));
+
+                  if (unassignedIndices.length > 0 && unassignedIndices.length <= 4) {
+                    try {
+                      const fallbackModelConfig = this.configService.get();
+                      const subModel = fallbackModelConfig.fallbackModel || 'openai/gpt-4.1-mini';
+
+                      const unassignedPrompt = unassignedIndices.map(i => {
+                        const d = dialogueEntries[i];
+                        return `[${i + 1}] 앞: ${d.before.slice(-200)}\n    대사: "${d.text}"\n    뒤: ${d.after.slice(0, 80)}`;
+                      }).join('\n\n');
+
+                      const verifyResult = await this.llmCaller.call({
+                        messages: [
+                          {
+                            role: 'system',
+                            content: `아래 서술에서 발화자가 불명확한 대사들의 발화자를 판단하라.
+전체 서술 문맥과 NPC 목록을 참고하여 가장 적합한 NPC를 선택하라.
+
+판단 규칙:
+1. 서술 문맥에서 대사 직전 등장한 NPC
+2. 대화 흐름상 번갈아 말하는 상대 NPC
+3. 장면의 주 NPC (이벤트 핵심 인물)
+
+형식: 번호=NPC_ID (한 줄에 하나씩)
+
+NPC 목록:
+${npcList}`,
+                          },
+                          {
+                            role: 'user',
+                            content: `전체 서술:\n${narrative.slice(0, 1500)}\n\n미할당 대사:\n${unassignedPrompt}`,
+                          },
+                        ],
+                        maxTokens: Math.max(unassignedIndices.length * 30, 60),
+                        temperature: 0,
+                        model: subModel,
+                      });
+
+                      if (verifyResult.success && verifyResult.response?.text) {
+                        let subResolved = 0;
+                        const subLines = verifyResult.response.text.trim().split('\n');
+                        for (const subLine of subLines) {
+                          const subMatch = subLine.match(/^(\d+)\s*[=:]\s*(.+)/);
+                          if (!subMatch) continue;
+                          const subIdx = parseInt(subMatch[1], 10) - 1;
+                          if (!unassignedIndices.includes(subIdx)) continue;
+                          let subAnswer = subMatch[2].trim();
+                          if (!/^NPC_/.test(subAnswer)) {
+                            subAnswer = subAnswer.split(/[,\n]/)[0].trim();
+                          }
+                          // NPC DB 매칭
+                          if (!/^NPC_[A-Z_0-9]+$/.test(subAnswer) && subAnswer.length >= 2) {
+                            const allNpcs = this.content.getAllNpcs();
+                            const dbMatch = allNpcs.find(
+                              (n) => n.unknownAlias === subAnswer || n.name === subAnswer,
+                            );
+                            if (dbMatch) subAnswer = dbMatch.npcId;
+                          }
+                          // 검증 후 할당
+                          if (/^NPC_[A-Z_0-9]+$/.test(subAnswer)) {
+                            assignments.set(subIdx, subAnswer);
+                            subResolved++;
+                          } else if (/[가-힣]/.test(subAnswer) && subAnswer.length >= 2) {
+                            const matchesCandidate = npcAliasNames.some(
+                              (name: string) => subAnswer.includes(name) || name.includes(subAnswer),
+                            );
+                            if (matchesCandidate) {
+                              assignments.set(subIdx, subAnswer);
+                              subResolved++;
+                            }
+                          }
+                        }
+                        this.logger.debug(
+                          `[SubLlmVerify] turn=${pending.turnNo} unassigned=${unassignedIndices.length} resolved=${subResolved}`,
+                        );
+                      }
+                    } catch (subErr) {
+                      this.logger.warn(`Sub-LLM verify failed: ${subErr instanceof Error ? subErr.message : subErr}`);
                     }
                   }
 
@@ -1339,6 +1506,45 @@ ${npcList}`,
    * [THREAD] 태그 미출력 시 serverResult 기반 구조화 요약 생성.
    * 위치 + 행동/결과 + 핵심 이벤트(NPC/QUEST)를 조합하여 맥락 요약을 만든다.
    */
+  // === JSON 구조화 출력 모드 헬퍼 ===
+
+  private parseJsonNarrative(raw: string): NarrativeJsonOutput | null {
+    try {
+      // LLM이 ```json 래핑할 수 있으므로 JSON 객체만 추출
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (!parsed.segments || !Array.isArray(parsed.segments)) return null;
+      // segments 최소 검증
+      for (const seg of parsed.segments) {
+        if (!seg.type || !seg.text) return null;
+        if (seg.type !== 'narration' && seg.type !== 'dialogue') return null;
+      }
+      return parsed as NarrativeJsonOutput;
+    } catch {
+      return null;
+    }
+  }
+
+  private assembleFromJson(json: NarrativeJsonOutput): string {
+    const parts: string[] = [];
+    for (const seg of json.segments) {
+      if (seg.type === 'narration') {
+        parts.push(seg.text);
+      } else if (seg.type === 'dialogue') {
+        // speaker_id가 NPC_ID 형태면 @NPC_ID 마커 삽입
+        // speaker_alias가 있으면 @[alias] 마커 삽입
+        const marker = seg.speaker_id && /^NPC_[A-Z_0-9]+$/.test(seg.speaker_id)
+          ? `@${seg.speaker_id} `
+          : seg.speaker_alias
+            ? `@[${seg.speaker_alias}] `
+            : '';
+        parts.push(`${marker}"${seg.text}"`);
+      }
+    }
+    return parts.join('\n');
+  }
+
   private buildFallbackThread(
     sr: ServerResultV1,
     rawInput: string | null,
