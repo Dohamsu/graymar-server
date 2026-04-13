@@ -861,9 +861,9 @@ export class PromptBuilderService {
             }
           | undefined;
         const parts = [
-          `⚠️ [이번 턴 플레이어 행동 — 서술의 핵심]`,
-          `플레이어 원문: "${sanitizeUserInput(rawInput)}"`,
-          `이 행동이 이번 서술의 주제입니다. 반드시 이 행동을 시도하는 장면으로 시작하세요.`,
+          `⚠️ [이번 턴 행동]`,
+          `당신은 ${sanitizeUserInput(rawInput)}.`,
+          `위 행동의 결과를 서술하세요. 행동 내용을 반복하거나 요약하지 말고, NPC 반응이나 환경 변화부터 바로 시작하세요.`,
         ];
         if (actionCtx?.parsedType) {
           parts.push(
@@ -902,7 +902,7 @@ export class PromptBuilderService {
           );
         } else {
           parts.push(
-            '서술 규칙: 이전 턴에서 무슨 일이 있었든, 이번 턴은 위 행동에서 시작합니다. 이전 장면을 되풀이하지 마세요. 먼저 플레이어가 원문 행동을 실제로 시도하는 장면을 묘사하세요. 결과가 원래 의도와 다르면, 왜 방향이 바뀌었는지(주변 상황, 상대 반응, 목격자 등)를 자연스럽게 서술하세요. 행동을 조용히 무시하거나 완전히 다른 행동으로 대체하지 마세요.',
+            '서술 규칙: 행동이 이미 일어난 것으로 시작하세요. "~했다", "~를 시도했다" 같은 요약문은 쓰지 마세요. NPC의 즉각적 반응(표정, 대사, 행동)이나 환경 변화로 서술을 여세요.',
           );
         }
         factsParts.push(parts.join('\n'));
