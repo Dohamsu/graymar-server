@@ -1532,6 +1532,16 @@ ${npcList}`,
       if (seg.type === 'narration') {
         parts.push(seg.text);
       } else if (seg.type === 'dialogue') {
+        // 가드: "당신"이 주어인 문장은 narration으로 전환 (LLM 분류 오류 방어)
+        if (/^당신[은이가의를에]/.test(seg.text)) {
+          parts.push(seg.text);
+          continue;
+        }
+        // 가드: speaker 없으면 narration으로 전환
+        if (!seg.speaker_id && !seg.speaker_alias) {
+          parts.push(`"${seg.text}"`);
+          continue;
+        }
         // speaker_id가 NPC_ID 형태면 @NPC_ID 마커 삽입
         // speaker_alias가 있으면 @[alias] 마커 삽입
         const marker = seg.speaker_id && /^NPC_[A-Z_0-9]+$/.test(seg.speaker_id)
