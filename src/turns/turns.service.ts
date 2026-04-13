@@ -3383,16 +3383,28 @@ export class TurnsService {
     ) as SignalFeedItemUI[];
     (result.ui as any).signalFeed = signalFeedUI;
 
-    // 호외 헤드라인: severity 3+ 시그널을 nano로 신문 문체 변환 (비동기, 실패 무시)
-    const importantSignals = signalFeedUI.filter(s => s.severity >= 3);
-    if (importantSignals.length > 0) {
+    // 호외 헤드라인: severity 3+ 시그널을 nano로 신문 기사 변환 (비동기, 실패 무시)
+    const rawSignals = (finalWs.signalFeed ?? []) as Array<{ id: string; channel: string; severity: number; text: string; sourceIncidentId?: string }>;
+    const importantRaw = rawSignals.filter(s => s.severity >= 3);
+    if (importantRaw.length > 0) {
       try {
-        const headlines = await this.generateNewsHeadlines(importantSignals.map(s => s.text));
+        const incDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
+        const locName = this.content.getLocation(locationId)?.name ?? locationId;
+        const timePhase = (finalWs as any).timePhaseV2 ?? finalWs.timePhase ?? 'DAY';
+        const newsContext = importantRaw.map(s => ({
+          text: s.text,
+          channel: s.channel,
+          severity: s.severity,
+          location: locName,
+          incidentTitle: s.sourceIncidentId ? incDefMap.get(s.sourceIncidentId)?.title : undefined,
+          timePhase,
+        }));
+        const headlines = await this.generateNewsHeadlines(newsContext);
         if (headlines.length > 0) {
           (result.ui as any).newsHeadlines = headlines;
         }
       } catch {
-        // nano 실패 시 원본 텍스트 사용 — 호외 표시에 영향 없음
+        // nano 실패 시 원본 텍스트 사용
       }
     }
 
@@ -5235,34 +5247,60 @@ export class TurnsService {
     return { count, repeatedType: lastType };
   }
 
-  /** 시그널 텍스트를 신문 호외 문체로 변환 (nano LLM) */
-  private async generateNewsHeadlines(signalTexts: string[]): Promise<string[]> {
-    if (!this.llmCaller) return signalTexts;
-    const joined = signalTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
+  /** 시그널을 신문 호외 기사로 변환 (nano LLM, 컨텍스트 보강) */
+  private async generateNewsHeadlines(signals: Array<{
+    text: string;
+    channel: string;
+    severity: number;
+    location: string;
+    incidentTitle?: string;
+    timePhase: string;
+  }>): Promise<string[]> {
+    if (!this.llmCaller) return signals.map(s => s.text);
+
+    const CHANNEL_KR: Record<string, string> = {
+      RUMOR: '소문', SECURITY: '치안', NPC_BEHAVIOR: '인물', ECONOMY: '경제', VISUAL: '목격',
+    };
+    const TIME_KR: Record<string, string> = {
+      DAY: '낮', NIGHT: '밤', DAWN: '새벽', DUSK: '해질녘',
+    };
+
+    const joined = signals.map((s, i) => {
+      const parts = [`${i + 1}. "${s.text}"`];
+      parts.push(`장소: ${s.location}`);
+      parts.push(`분류: ${CHANNEL_KR[s.channel] ?? s.channel}`);
+      parts.push(`시간: ${TIME_KR[s.timePhase] ?? s.timePhase}`);
+      if (s.incidentTitle) parts.push(`관련 사건: ${s.incidentTitle}`);
+      parts.push(`긴급도: ${s.severity}/5`);
+      return parts.join(', ');
+    }).join('\n');
+
     const raw = await this.llmCaller.callLight({
       messages: [
         {
           role: 'system',
-          content: `당신은 중세 판타지 도시 "그레이마르"의 신문 편집장이다. 짧은 소식을 신문 헤드라인 문체로 다시 써라.
+          content: `당신은 중세 판타지 항구도시 "그레이마르"의 호외 신문 기자이다.
+각 소식을 2~3문장의 신문 기사 본문으로 확장하라.
+
 규칙:
-- 각 항목을 1~2문장의 신문 기사 헤드라인으로 변환
-- 3인칭 객관적 보도 문체 ("~한 것으로 알려졌다", "~한 정황이 포착되었다")
-- 과장하지 말고 사실 기반으로
-- 번호를 유지하여 출력 (1. ... 2. ...)
-- 원문의 의미를 바꾸지 마라`,
+- 장소, 시간대, 관련 사건 정보를 자연스럽게 녹여라
+- 3인칭 객관적 보도체 ("~것으로 알려졌다", "~정황이 포착되었다", "~것으로 전해진다")
+- 구체적 디테일을 추가하라 (목격자 증언, 경비대 반응, 주민 반응 등)
+- 번호를 유지하여 출력
+- 각 기사는 2~3문장`,
         },
         { role: 'user', content: joined },
       ],
-      maxTokens: 200,
+      maxTokens: 400,
       temperature: 0.7,
     });
 
-    if (!raw) return signalTexts; // 실패 시 원본
+    if (!raw) return signals.map(s => s.text);
     return raw
       .split('\n')
       .map(line => line.replace(/^\d+\.\s*/, '').trim())
       .filter(line => line.length > 0)
-      .slice(0, signalTexts.length);
+      .slice(0, signals.length);
   }
 
   /** IntentActionType → 한국어 라벨 (summary.short용) */
