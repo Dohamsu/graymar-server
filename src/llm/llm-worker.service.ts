@@ -702,10 +702,17 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       });
 
       // 5.5. nano 후처리: 대사 @NPC_ID 마커 삽입 → 표시이름 변환 → 실명 세이프가드
+      // 서술에 실제 등장한 NPC ID 수집 (소개 카드 갱신용, 5.9에서 사용)
+      let _appearedNpcIds = new Set<string>();
+      let _portraits: Record<string, string> = {};
+      let _npcStatesRef: Record<string, import('../db/types/npc-state.js').NPCState> | undefined;
+      let _getNpcDisplayNameFn: typeof import('../db/types/npc-state.js').getNpcDisplayName | undefined;
+
       if (runSession?.runState) {
         const rs = runSession.runState as unknown as Record<string, unknown>;
         const npcStates = rs.npcStates as Record<string, import('../db/types/npc-state.js').NPCState> | undefined;
         if (npcStates) {
+          _npcStatesRef = npcStates;
           const { sanitizeNpcNamesForTurn, getNpcDisplayName } = await import('../db/types/npc-state.js');
 
           // Step A: nano LLM 1차 발화자 판단 + 서버 regex fallback
@@ -945,6 +952,9 @@ ${npcList}`,
             return !!(portraits[npcId]);
           };
 
+          // 서술에 실제 등장한 NPC ID 수집 (소개 카드 갱신용)
+          const appearedNpcIds = new Set<string>();
+
           // B-1: @NPC_ID "대사" → @[표시이름|초상화URL] "대사"
           narrative = narrative.replace(
             /@([A-Z][A-Z_0-9]+)\s*(?=["\u201C\u201D])/g,
@@ -952,7 +962,8 @@ ${npcList}`,
               if (npcId === 'UNKNOWN') return '@[무명 인물] ';
               const npcDef = this.content.getNpc(npcId);
               const npcState = npcStates[npcId];
-              if (!npcDef) return ''; // NPC DB에 없는 할루시네이션 ID → 제거
+              if (!npcDef) return '';
+              appearedNpcIds.add(npcId);
               const displayName = npcState
                 ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
                 : (npcDef.unknownAlias || npcDef.name);
@@ -973,6 +984,7 @@ ${npcList}`,
               for (const npcId of npcIdCandidates) {
                 const npcDef = this.content.getNpc(npcId);
                 if (!npcDef) continue;
+                appearedNpcIds.add(npcId);
                 const npcState = npcStates[npcId];
                 const displayName = npcState
                   ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
@@ -982,13 +994,14 @@ ${npcList}`,
                   ? `@[${displayName}|${portrait}] `
                   : `@[${displayName}] `;
               }
-              // 부분 매칭: "MESSENGER" → NPC DB에서 ID에 포함된 NPC 찾기
+              // 부분 매칭
               if (idOrName !== 'NPC_ID' && idOrName !== 'UNMATCHED') {
                 const allNpcs = this.content.getAllNpcs();
                 const partialMatch = allNpcs.find(
                   (n) => n.npcId.includes(idOrName),
                 );
                 if (partialMatch) {
+                  appearedNpcIds.add(partialMatch.npcId);
                   const npcState = npcStates[partialMatch.npcId];
                   const displayName = npcState
                     ? getNpcDisplayName(npcState, partialMatch, pending.turnNo)
@@ -1069,31 +1082,67 @@ ${npcList}`,
               lastMarkerNpc = markerNpc;
             }
           }
+
+          // 상위 스코프로 변수 전달 (5.9에서 사용)
+          _appearedNpcIds = appearedNpcIds;
+          _portraits = portraits;
+          _getNpcDisplayNameFn = getNpcDisplayName;
         }
       }
 
-      // 5.9 초상화/speakingNpc를 LLM 출력 기반으로 재결정
-      // Gemini Flash Lite는 불완전 마커를 생성하므로 비활성화
-      const isGeminiModel = modelUsed?.includes('gemini') ?? false;
-      if (!isGeminiModel) {
+      // 5.9 speakingNpc + npcPortrait를 LLM 출력 기반으로 재결정
+      {
+        const updatedSr = { ...serverResult } as Record<string, unknown>;
+        const ui = { ...(updatedSr.ui as Record<string, unknown> ?? {}) };
+        let srChanged = false;
+
+        // speakingNpc 갱신 (첫 번째 @마커 기반)
         const markerMatch = narrative.match(/@\[([^\]|]+)(?:\|([^\]]+))?\]/);
         if (markerMatch) {
           const actualName = markerMatch[1].trim();
           const actualImg = markerMatch[2]?.trim() || undefined;
           if (actualName.length > 0 && actualName.length <= 20 && !actualName.includes('"')) {
-            const updatedSr = { ...serverResult } as Record<string, unknown>;
-            const ui = { ...(updatedSr.ui as Record<string, unknown> ?? {}) };
             ui.speakingNpc = {
               npcId: null,
               displayName: actualName,
               imageUrl: actualImg && actualImg.startsWith('/') ? actualImg : undefined,
             };
-            updatedSr.ui = ui;
-            await this.db
-              .update(turns)
-              .set({ serverResult: updatedSr as any })
-              .where(eq(turns.id, pending.id));
+            srChanged = true;
           }
+        }
+
+        // npcPortrait 갱신: 서술에 실제 등장한 NPC만 카드 표시
+        const existingPortrait = ui.npcPortrait as { npcId?: string } | undefined;
+        if (existingPortrait && _appearedNpcIds.size > 0) {
+          if (existingPortrait.npcId && !_appearedNpcIds.has(existingPortrait.npcId)) {
+            const newPortraitNpc = [..._appearedNpcIds].find(id => _portraits[id]);
+            if (newPortraitNpc) {
+              const npcDef = this.content.getNpc(newPortraitNpc);
+              const npcState = _npcStatesRef?.[newPortraitNpc];
+              ui.npcPortrait = {
+                npcId: newPortraitNpc,
+                npcName: npcState && npcDef && _getNpcDisplayNameFn
+                  ? _getNpcDisplayNameFn(npcState, npcDef, pending.turnNo)
+                  : (npcDef?.name ?? newPortraitNpc),
+                imageUrl: _portraits[newPortraitNpc],
+                isNewlyIntroduced: npcState?.introduced && npcState?.introducedAtTurn === pending.turnNo,
+              };
+            } else {
+              ui.npcPortrait = null;
+            }
+            srChanged = true;
+          }
+        } else if (existingPortrait && _appearedNpcIds.size === 0) {
+          ui.npcPortrait = null;
+          srChanged = true;
+        }
+
+        if (srChanged) {
+          updatedSr.ui = ui;
+          await this.db
+            .update(turns)
+            .set({ serverResult: updatedSr as any })
+            .where(eq(turns.id, pending.id));
         }
       }
 
