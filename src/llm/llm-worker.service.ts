@@ -500,7 +500,12 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             .replace(/플레이어가\s/g, '당신이 ')
             .replace(/플레이어의\s/g, '당신의 ')
             .replace(/플레이어는\s/g, '당신은 ')
-            .replace(/플레이어를\s/g, '당신을 ');
+            .replace(/플레이어를\s/g, '당신을 ')
+            // "방금 전 NPC에게 X를 시도하여 성공/실패한 직후였다" 패턴 제거
+            .replace(/당신이\s?방금\s?전\s?[^.]*?시도하여\s?(?:성공|실패)[^.]*?직후였다\.\s?/g, '')
+            .replace(/[^.]*?를\s시도하여\s(?:성공|실패)\s?(?:한|했던)\s?직후[^.]*?\.\s?/g, '')
+            // "(활성 단서: ...)" 시스템 메모 노출 제거
+            .replace(/\(활성 단서:[^)]*\)\s?/g, '');
           if (narrative !== beforeMeta) {
             metaFixCount = 1;
             violations.push('AUTO_FIX: META_NARRATION');
