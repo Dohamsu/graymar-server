@@ -58,6 +58,7 @@ import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js';
 import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
+import { LlmCallerService } from '../llm/llm-caller.service.js';
 import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
 // User-Driven System v3
 import { IntentV3BuilderService } from '../engine/hub/intent-v3-builder.service.js';
@@ -190,6 +191,7 @@ export class TurnsService {
     @Optional() private readonly playerGoalService?: PlayerGoalService,
     @Optional() private readonly questProgression?: QuestProgressionService,
     @Optional() private readonly nanoEventDirector?: NanoEventDirectorService,
+    @Optional() private readonly llmCaller?: LlmCallerService,
   ) {}
 
   /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
@@ -3370,7 +3372,7 @@ export class TurnsService {
     // === Narrative Engine v1: UI data 추가 ===
     const finalWs = updatedRunState.worldState;
     // Signal Feed
-    (result.ui as any).signalFeed = (finalWs.signalFeed ?? []).map(
+    const signalFeedUI = (finalWs.signalFeed ?? []).map(
       (s: any) => ({
         id: s.id,
         channel: s.channel,
@@ -3379,6 +3381,20 @@ export class TurnsService {
         text: s.text,
       }),
     ) as SignalFeedItemUI[];
+    (result.ui as any).signalFeed = signalFeedUI;
+
+    // 호외 헤드라인: severity 3+ 시그널을 nano로 신문 문체 변환 (비동기, 실패 무시)
+    const importantSignals = signalFeedUI.filter(s => s.severity >= 3);
+    if (importantSignals.length > 0) {
+      try {
+        const headlines = await this.generateNewsHeadlines(importantSignals.map(s => s.text));
+        if (headlines.length > 0) {
+          (result.ui as any).newsHeadlines = headlines;
+        }
+      } catch {
+        // nano 실패 시 원본 텍스트 사용 — 호외 표시에 영향 없음
+      }
+    }
 
     // Active Incidents
     const incidentDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
@@ -5217,6 +5233,36 @@ export class TurnsService {
       }
     }
     return { count, repeatedType: lastType };
+  }
+
+  /** 시그널 텍스트를 신문 호외 문체로 변환 (nano LLM) */
+  private async generateNewsHeadlines(signalTexts: string[]): Promise<string[]> {
+    if (!this.llmCaller) return signalTexts;
+    const joined = signalTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
+    const raw = await this.llmCaller.callLight({
+      messages: [
+        {
+          role: 'system',
+          content: `당신은 중세 판타지 도시 "그레이마르"의 신문 편집장이다. 짧은 소식을 신문 헤드라인 문체로 다시 써라.
+규칙:
+- 각 항목을 1~2문장의 신문 기사 헤드라인으로 변환
+- 3인칭 객관적 보도 문체 ("~한 것으로 알려졌다", "~한 정황이 포착되었다")
+- 과장하지 말고 사실 기반으로
+- 번호를 유지하여 출력 (1. ... 2. ...)
+- 원문의 의미를 바꾸지 마라`,
+        },
+        { role: 'user', content: joined },
+      ],
+      maxTokens: 200,
+      temperature: 0.7,
+    });
+
+    if (!raw) return signalTexts; // 실패 시 원본
+    return raw
+      .split('\n')
+      .map(line => line.replace(/^\d+\.\s*/, '').trim())
+      .filter(line => line.length > 0)
+      .slice(0, signalTexts.length);
   }
 
   /** IntentActionType → 한국어 라벨 (summary.short용) */
