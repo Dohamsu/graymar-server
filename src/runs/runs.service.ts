@@ -843,7 +843,26 @@ export class RunsService {
       ),
       orderBy: desc(runSessions.updatedAt),
     });
-    if (!run) return null;
+
+    // 가장 최근 런(활성/종료 무관)에서 캐릭터 정보 추출
+    const lastRun = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.userId, userId),
+      orderBy: desc(runSessions.updatedAt),
+    });
+    const lastCharacter = lastRun
+      ? {
+          presetId: lastRun.presetId ?? undefined,
+          gender: (lastRun.gender ?? 'male') as 'male' | 'female',
+          characterName:
+            (lastRun.runState as RunState | null)?.characterName ?? undefined,
+          traitId:
+            (lastRun.runState as RunState | null)?.traitId ?? undefined,
+          portraitUrl:
+            (lastRun.runState as RunState | null)?.portraitUrl ?? undefined,
+        }
+      : undefined;
+
+    if (!run) return { lastCharacter };
     return {
       runId: run.id,
       presetId: run.presetId,
@@ -851,6 +870,7 @@ export class RunsService {
       currentTurnNo: run.currentTurnNo,
       currentNodeIndex: run.currentNodeIndex,
       startedAt: run.startedAt,
+      lastCharacter,
     };
   }
 
