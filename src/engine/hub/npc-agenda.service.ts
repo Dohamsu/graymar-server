@@ -137,7 +137,7 @@ export class NpcAgendaService {
         {
           id: `sig_agenda_${npcId}_s${stage.stage}_${currentTurn}`,
           channel,
-          severity: 2,
+          severity: 3,
           text: stage.onTrigger.signalText,
           createdAtClock: ws.globalClock,
         },
