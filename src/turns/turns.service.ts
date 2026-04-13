@@ -2099,6 +2099,9 @@ export class TurnsService {
       (event.payload as Record<string, unknown>).primaryNpcId =
         conversationLockedNpcId;
     }
+    // Posture 변화 이벤트 (result 선언 전이므로 임시 저장)
+    const pendingPostureEvents: Array<{ id: string; kind: 'NPC'; text: string; tags: string[]; data: Record<string, unknown> }> = [];
+
     // 현재 location의 관련 NPC에게 감정 영향 적용
     if (eventPrimaryNpc) {
       const npcId = eventPrimaryNpc;
@@ -2144,6 +2147,7 @@ export class TurnsService {
       const npc = npcStates[npcId];
       // 감정 변화 delta 계산을 위해 before 저장
       const emoBefore = npc.emotional ? { ...npc.emotional } : undefined;
+      const postureBefore = npc.posture;
       npc.emotional = this.npcEmotional.applyActionImpact(
         npc.emotional,
         intent.actionType,
@@ -2151,6 +2155,28 @@ export class TurnsService {
         true,
       );
       npcStates[npcId] = this.npcEmotional.syncLegacyFields(npc);
+
+      // Posture 변화 감지 (result 선언 후 이벤트에 추가)
+      const postureAfter = npcStates[npcId].posture;
+      if (postureBefore && postureAfter && postureBefore !== postureAfter) {
+        const displayName = getNpcDisplayName(npcStates[npcId], this.content.getNpc(npcId));
+        const POSTURE_LABEL: Record<string, string> = {
+          FRIENDLY: '우호',
+          CAUTIOUS: '경계',
+          HOSTILE: '적대',
+          FEARFUL: '두려움',
+          CALCULATING: '계산적',
+        };
+        const fromLabel = POSTURE_LABEL[postureBefore] ?? postureBefore;
+        const toLabel = POSTURE_LABEL[postureAfter] ?? postureAfter;
+        pendingPostureEvents.push({
+          id: `posture_${npcId}_${turnNo}`,
+          kind: 'NPC' as const,
+          text: `${displayName}의 태도가 변했다 — ${fromLabel} → ${toLabel}`,
+          tags: ['POSTURE_CHANGE'],
+          data: { npcId, from: postureBefore, to: postureAfter },
+        });
+      }
       // delta 계산 및 runState에 저장 (LLM 컨텍스트 전달용)
       if (emoBefore && npc.emotional) {
         const delta: Record<string, number> = {};
@@ -3176,6 +3202,11 @@ export class TurnsService {
           },
       allEquipmentAdded.length > 0 ? allEquipmentAdded : undefined,
     );
+
+    // Posture 변화 이벤트 반영
+    for (const pe of pendingPostureEvents) {
+      result.events.push(pe);
+    }
 
     // 고집 2회째 경고 이벤트 — 다음 반복 시 에스컬레이션 예고
     if (intent.insistenceWarning) {
