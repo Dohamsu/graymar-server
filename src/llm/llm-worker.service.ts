@@ -398,6 +398,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
 
         // 4-a-0. [MEMORY] 태그 파싱 및 스트립 (최대 4개, 80자)
+        // JSON 모드에서는 memories/thread/choices를 이미 추출했으므로 산문 태그 파싱 스킵
+        if (!jsonModeParsed) {
         const memoryMatches = [
           ...narrative.matchAll(
             /\[MEMORY:(\w+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
@@ -524,6 +526,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           // 방어적 최종 패스: 닫는 태그 없이 남은 고아 태그 강제 제거
           .replace(/\[\/?(?:MEMORY|THREAD|CHOICES)[^\]]*\]/g, '')
           .trim();
+        } // end if (!jsonModeParsed) — 산문 태그 파싱
 
         // 4-a-2b. 플레이어 대사 큰따옴표 방어 — LLM이 플레이어 대사를 큰따옴표로 쓰면 홑따옴표로 치환
         // 패턴: "당신은/당신이 + ~라/~고/~며 + 물/말/외/중얼 + 큰따옴표 대사"
@@ -686,7 +689,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
 
         // P6. "당신은/당신이" 시작 보정 — NanoDirector opening으로 교체
-        {
+        // JSON 모드에서는 스킵 (JSON 조립 결과의 첫 segment를 임의 재편집 방지)
+        if (!jsonModeParsed) {
           const trimmedStart = narrative.trimStart();
           if (trimmedStart.startsWith('당신은 ') || trimmedStart.startsWith('당신이 ')) {
             if (directorHint?.opening) {
@@ -1181,6 +1185,29 @@ ${npcList}`,
               }
               // "NPC_ID" 리터럴이나 매칭 불가 → 마커 제거
               return '';
+            },
+          );
+
+          // B-2.5: @[한글호칭] "대사" → NPC DB lookup → @[표시이름|초상화URL] (JSON 모드 speaker_alias 변환)
+          narrative = narrative.replace(
+            /@\[([가-힣][^\]]*)\](\s*(?=["\u201C\u201D]))/g,
+            (_match, alias: string, trailing: string) => {
+              const allNpcs = this.content.getAllNpcs();
+              const cleanAlias = alias.split('|')[0].trim(); // @[이름|URL]에서 이름만
+              const found = allNpcs.find(
+                (n) => n.unknownAlias === cleanAlias || n.name === cleanAlias
+                  || (n.aliases ?? []).some((a: string) => a === cleanAlias),
+              );
+              if (!found) return `@[${alias}]${trailing}`; // 매칭 실패 → 유지
+              appearedNpcIds.add(found.npcId);
+              const npcState = npcStates[found.npcId];
+              const displayName = npcState
+                ? getNpcDisplayName(npcState, found, pending.turnNo)
+                : (found.unknownAlias || found.name);
+              const portrait = shouldShowPortrait(found.npcId, npcState) ? (portraits[found.npcId] ?? '') : '';
+              return portrait
+                ? `@[${displayName}|${portrait}]${trailing}`
+                : `@[${displayName}]${trailing}`;
             },
           );
 
