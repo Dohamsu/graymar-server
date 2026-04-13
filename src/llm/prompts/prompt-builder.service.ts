@@ -266,7 +266,7 @@ export class PromptBuilderService {
       );
       if (trimmed) {
         memoryParts.push(
-          `[활성 단서]\n${trimmed}\n이 단서들을 서술에 자연스럽게 활용하세요. 관련 장면에서 플레이어가 이미 알고 있는 단서로 취급하세요.`,
+          `당신이 알고 있는 것:\n${trimmed}\n이 정보를 서술에 자연스럽게 녹이세요. 위 문장을 그대로 인용하지 마세요.`,
         );
       }
     }
