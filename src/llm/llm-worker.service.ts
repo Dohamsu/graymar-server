@@ -374,12 +374,25 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 'HELP', 'STEAL', 'FIGHT', 'OBSERVE', 'TRADE', 'TALK', 'SEARCH',
               ]);
               const parsed: ChoiceItem[] = jsonParsed.choices
-                .filter((c: { label?: string; affordance?: string }) => c.label && AFFORDANCE_SET.has(c.affordance ?? ''))
+                .map((c: { label?: string; affordance?: string; hint?: string }) => {
+                  // LLM이 "label|affordance|hint" 파이프 구분으로 출력하는 경우 분리
+                  let label = c.label ?? '';
+                  let affordance = c.affordance ?? '';
+                  let hint = c.hint ?? '';
+                  if (label.includes('|')) {
+                    const parts = label.split('|');
+                    label = parts[0].trim();
+                    if (parts[1] && AFFORDANCE_SET.has(parts[1].trim())) affordance = parts[1].trim();
+                    if (parts[2]) hint = parts[2].trim();
+                  }
+                  return { label, affordance, hint };
+                })
+                .filter((c: { label: string; affordance: string }) => c.label && AFFORDANCE_SET.has(c.affordance))
                 .slice(0, 3)
-                .map((c: { label: string; affordance: string; hint?: string }, idx: number) => ({
+                .map((c: { label: string; affordance: string; hint: string }, idx: number) => ({
                   id: `choice_${idx}`,
                   label: c.label,
-                  action: { type: 'CHOICE' as const, payload: { affordance: c.affordance, hint: c.hint ?? '' } },
+                  action: { type: 'CHOICE' as const, payload: { affordance: c.affordance, hint: c.hint } },
                 }));
               if (parsed.length > 0) {
                 parsed.push({
