@@ -1588,8 +1588,9 @@ ${npcList}`,
       if (seg.type === 'narration') {
         parts.push(seg.text);
       } else if (seg.type === 'dialogue') {
-        // 가드: "당신"이 주어인 문장은 narration으로 전환 (LLM 분류 오류 방어)
-        if (/^당신[은이가의를에]/.test(seg.text)) {
+        // 가드: speaker 없이 "당신"이 주어인 문장은 narration으로 전환 (LLM 분류 오류 방어)
+        // 단, speaker가 있으면 NPC가 "당신"에게 말하는 것이므로 허용
+        if (/^당신[은이가의를에]/.test(seg.text) && !seg.speaker_id && !seg.speaker_alias) {
           parts.push(seg.text);
           continue;
         }
