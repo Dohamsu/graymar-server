@@ -127,15 +127,8 @@ export class NpcDialogueMarkerService {
         continue;
       }
 
-      // 5단계: 문맥 호칭 추출 (DB 미매칭이면 텍스트 호칭 사용)
-      const alias = this.extractSpeakerAlias(before, after);
-      if (alias) {
-        d.contextAlias = alias;
-        continue;
-      }
-
-      // 6단계: fallback NPC 귀속
-      // (마커 삽입 단계에서 처리)
+      // 5단계: 매칭 실패 → 마커 없이 일반 서술로 처리 (오귀속 방지)
+      // 잘못된 말풍선보다 말풍선 없는 게 낫다
     }
 
     // 뒤에서부터 마커 삽입
@@ -143,19 +136,14 @@ export class NpcDialogueMarkerService {
     let unmatchedCount = 0;
     for (let i = dialogues.length - 1; i >= 0; i--) {
       const d = dialogues[i];
-      let marker: string;
       if (d.npcId) {
-        marker = `@${d.npcId} `;
-      } else if (d.contextAlias) {
-        marker = `@[${d.contextAlias}] `;
-      } else if (fallbackNpcId) {
-        d.npcId = fallbackNpcId;
-        marker = `@${fallbackNpcId} `;
+        // 확실한 매칭만 마커 삽입
+        const marker = `@${d.npcId} `;
+        result = result.slice(0, d.start) + marker + result.slice(d.start);
       } else {
+        // 매칭 실패 → 마커 없이 일반 서술로 유지 (오귀속 방지)
         unmatchedCount++;
-        marker = '@[UNMATCHED] ';
       }
-      result = result.slice(0, d.start) + marker + result.slice(d.start);
     }
 
     this.logger.debug(

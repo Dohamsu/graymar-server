@@ -720,16 +720,22 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             }
 
             // NPC 목록 구성 (nano LLM + regex 공통)
-            const npcList = Object.entries(npcStates)
-              // npcStates 전체 포함 (BACKGROUND NPC도 대사 매칭 가능하도록)
+            const npcEntries = Object.entries(npcStates)
               .concat(eventNpcIds.filter(id => !npcStates[id]).map(id => [id, {} as never]))
-              .slice(0, 15)
+              .slice(0, 15);
+            const npcList = npcEntries
               .map(([id]) => {
                 const def = this.content.getNpc(id as string);
                 return def ? `${id}: ${def.unknownAlias || def.name} (${def.role || '?'})` : null;
               })
               .filter(Boolean)
               .join('\n');
+            // 후보 NPC 별칭 목록 (nano 결과 검증용)
+            const npcAliasNames: string[] = npcEntries.flatMap(([id]) => {
+              const def = this.content.getNpc(id as string);
+              if (!def) return [];
+              return [def.unknownAlias, def.name, ...(def.aliases ?? [])].filter(Boolean) as string[];
+            });
 
             // 대사 추출 (마커 없는 큰따옴표 대사, 8글자+ — 더듬기/짧은 인용 제외)
             const dialogueRegex = /["\u201C]([^"\u201D]{8,}?)["\u201D]/g;
@@ -836,9 +842,15 @@ ${npcList}`,
                         if (/^NPC_[A-Z_0-9]+$/.test(answer)) {
                           assignments.set(idx, answer);
                         } else if (/[가-힣]/.test(answer)) {
-                          // 한글 호칭이면 수용 — NPC 목록에 없어도 contextAlias로 마커 부착
-                          // (BACKGROUND NPC 등 candidate에 없는 인물도 말풍선 표시)
-                          assignments.set(idx, answer);
+                          // 한글 호칭 → NPC 후보 별칭과 대조하여 검증
+                          const matchesCandidate = npcAliasNames.some(
+                            (name: string) => answer.includes(name) || name.includes(answer),
+                          );
+                          if (matchesCandidate) {
+                            assignments.set(idx, answer);
+                          } else {
+                            this.logger.debug(`[NanoSpeaker] Rejected "${answer}" — not in candidate aliases`);
+                          }
                         } else {
                           this.logger.debug(`[NanoSpeaker] Rejected "${answer}" — not Korean`);
                         }
