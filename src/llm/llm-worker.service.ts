@@ -1582,12 +1582,12 @@ ${npcList}`,
           parts.push(`"${seg.text}"`);
           continue;
         }
-        // speaker_id가 NPC_ID 형태면 @NPC_ID 마커 삽입
-        // speaker_alias가 있으면 @[alias] 마커 삽입
-        const marker = seg.speaker_id && /^NPC_[A-Z_0-9]+$/.test(seg.speaker_id)
-          ? `@${seg.speaker_id} `
-          : seg.speaker_alias
-            ? `@[${seg.speaker_alias}] `
+        // speaker_alias 우선 사용 (B-2.5에서 NPC DB lookup + 초상화 변환)
+        // speaker_id는 LLM이 임의 ID를 출력할 수 있어서 DB 미존재 위험
+        const marker = seg.speaker_alias
+          ? `@[${seg.speaker_alias}] `
+          : seg.speaker_id && /^NPC_[A-Z_0-9]+$/.test(seg.speaker_id)
+            ? `@${seg.speaker_id} `
             : '';
         parts.push(`${marker}"${seg.text}"`);
       }
