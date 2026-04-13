@@ -134,6 +134,8 @@ export interface LlmContext {
   questDirectionHint: { hint: string; mode: string } | null;
   // S5_RESOLVE 진입 시 최후의 선택 서술 지시
   questEndingApproach: string | null;
+  // NPC 아젠다 목격 힌트 (같은 장소에서 진행된 아젠다)
+  agendaWitnessHint: string | null;
   // 대화 잠금 상태 (연속 대화 턴 정보)
   conversationLock: {
     npcDisplayName: string;
@@ -1174,6 +1176,7 @@ export class ContextBuilderService {
       questEndingApproach: (runState?.questState === 'S5_RESOLVE')
         ? '이야기가 마무리에 접어들고 있다. 서술의 톤을 클라이맥스로 고조시키세요. 플레이어의 행동이 최종 결과를 결정합니다.'
         : null,
+      agendaWitnessHint: this.buildAgendaWitnessHint(runState, serverResult),
       // 대화 잠금 상태
       conversationLock: this.buildConversationLock(runState),
       // 장소 기반 NPC 필터링
@@ -1673,5 +1676,40 @@ export class ContextBuilderService {
       : (npcDef?.unknownAlias ?? '상대');
 
     return { npcDisplayName: displayName, consecutiveTurns: count };
+  }
+
+  /** NPC 아젠다 목격 힌트: 이번 턴에 진행된 아젠다 중 플레이어가 같은 장소에 있는 것 */
+  private buildAgendaWitnessHint(
+    runState: Record<string, unknown> | null | undefined,
+    serverResult: ServerResultV1,
+  ): string | null {
+    if (!runState?.worldState) return null;
+    const ws = runState.worldState as Record<string, unknown>;
+    const agendaEvents = ws.recentAgendaEvents as Array<{ npcId: string; signal: string }> | undefined;
+    if (!agendaEvents || agendaEvents.length === 0) return null;
+
+    const playerLocation = ws.currentLocationId as string | undefined;
+    if (!playerLocation) return null;
+
+    // NPC 스케줄에서 현재 장소에 있는 NPC만 필터
+    const witnessHints: string[] = [];
+    for (const event of agendaEvents) {
+      const npcDef = this.content.getNpc(event.npcId);
+      if (!npcDef) continue;
+
+      // NPC의 스케줄 장소 확인
+      const schedule = (npcDef as Record<string, unknown>).schedule as { default?: string } | undefined;
+      const npcLocation = schedule?.default;
+
+      // 플레이어와 같은 장소이거나, 장소 정보가 없으면 포함
+      if (npcLocation && npcLocation !== playerLocation) continue;
+
+      const npcName = (npcDef as Record<string, unknown>).unknownAlias as string ?? (npcDef as Record<string, unknown>).name as string ?? event.npcId;
+      witnessHints.push(`${npcName}: ${event.signal}`);
+    }
+
+    if (witnessHints.length === 0) return null;
+
+    return witnessHints.join('\n');
   }
 }
