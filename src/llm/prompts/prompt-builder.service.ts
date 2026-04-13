@@ -656,12 +656,20 @@ export class PromptBuilderService {
           }
         }
         if (aliasLines.length > 0) {
-          memoryParts.push(
-            `[NPC 대사 호칭] ⚠️ 필수 — 대사 직전에 반드시 아래 호칭을 사용하세요:\n` +
-            `${aliasLines.join('\n')}\n` +
-            `⚠️ "그가", "그녀가", "그는" 대신 반드시 위 호칭 또는 짧은 호칭을 사용.\n` +
-            `⚠️ 같은 NPC가 연속 발화하더라도 두 번째 대사부터 짧은 호칭 사용.`,
-          );
+          if (useJsonMode) {
+            // JSON 모드: dialogue segment의 speaker_alias에 호칭 사용
+            memoryParts.push(
+              `[등장 가능 NPC 목록] dialogue의 speaker_alias에 아래 호칭을 사용하세요:\n` +
+              `${aliasLines.join('\n')}`,
+            );
+          } else {
+            memoryParts.push(
+              `[NPC 대사 호칭] ⚠️ 필수 — 대사 직전에 반드시 아래 호칭을 사용하세요:\n` +
+              `${aliasLines.join('\n')}\n` +
+              `⚠️ "그가", "그녀가", "그는" 대신 반드시 위 호칭 또는 짧은 호칭을 사용.\n` +
+              `⚠️ 같은 NPC가 연속 발화하더라도 두 번째 대사부터 짧은 호칭 사용.`,
+            );
+          }
         }
       }
     }

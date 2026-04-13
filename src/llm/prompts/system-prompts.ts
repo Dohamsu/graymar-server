@@ -364,4 +364,6 @@ export const NARRATIVE_JSON_FORMAT_INSTRUCTION = `
 - choices는 정확히 3개
 - memories는 이번 턴에서 기억할 사실들
 - thread는 장면 요약 (80~180자)
+- ⚠️ JSON 값(value) 앞에 NPC 호칭이나 @마커를 삽입하지 마세요. 발화자 정보는 speaker_id와 speaker_alias 필드에만 넣으세요.
+- ⚠️ "NPC 대사 작성 규칙"(호칭+동사+마침표+"대사" 패턴)은 이 JSON 모드에서는 적용하지 마세요. dialogue segment가 자동으로 발화자를 분리합니다.
 `;

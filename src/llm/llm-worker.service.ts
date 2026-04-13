@@ -1549,13 +1549,29 @@ ${npcList}`,
   // === JSON 구조화 출력 모드 헬퍼 ===
 
   private parseJsonNarrative(raw: string): NarrativeJsonOutput | null {
+    // 1차: 원본에서 JSON 파싱 시도
+    const result = this.tryParseJson(raw);
+    if (result) return result;
+
+    // 2차: @마커가 JSON 구조를 깨뜨린 경우 → strip 후 재시도
+    if (/@\[/.test(raw)) {
+      const cleaned = raw.replace(/@\[[^\]]*\]\s*/g, '');
+      const retried = this.tryParseJson(cleaned);
+      if (retried) {
+        this.logger.warn('[JsonMode] Recovered by stripping @markers from JSON');
+        return retried;
+      }
+    }
+
+    return null;
+  }
+
+  private tryParseJson(raw: string): NarrativeJsonOutput | null {
     try {
-      // LLM이 ```json 래핑할 수 있으므로 JSON 객체만 추출
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return null;
       const parsed = JSON.parse(jsonMatch[0]);
       if (!parsed.segments || !Array.isArray(parsed.segments)) return null;
-      // segments 최소 검증
       for (const seg of parsed.segments) {
         if (!seg.type || !seg.text) return null;
         if (seg.type !== 'narration' && seg.type !== 'dialogue') return null;
