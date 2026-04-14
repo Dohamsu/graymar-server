@@ -322,20 +322,15 @@ export class PromptBuilderService {
         const distFromEnd = totalTurns - 1 - idx; // 0 = 직전, 1 = 그 이전, ...
         let narrativePart = '';
 
-        if (distFromEnd === 0 && t.narrative) {
-          // 직전 턴만: 원문 마지막 200자 (이어쓰기 앵커, 프롬프트 압축)
-          const trimmed =
-            t.narrative.length > 200
-              ? '...' + t.narrative.slice(-300)
-              : t.narrative;
-          narrativePart = `\n서술(끝부분 — 여기서 이어쓰세요, 이 텍스트를 반복하지 마세요): ${trimmed}`;
-        } else {
-          // 2번째 이전부터: THREAD 요약 사용 (원문 제거 → 어휘 반복 차단)
+        // 모든 턴: THREAD 요약 사용 (원문 주입 폐기 — 어휘 오염 방지)
+        {
           const threadSummary = threadEntries.get(t.turnNo);
           if (threadSummary) {
-            narrativePart = `\n상황: ${threadSummary}`;
+            narrativePart = distFromEnd === 0
+              ? `\n상황(직전 — 여기서 이어쓰세요): ${threadSummary}`
+              : `\n상황: ${threadSummary}`;
           } else if (t.narrative) {
-            // THREAD 없으면 원문 60자 fallback (프롬프트 압축)
+            // THREAD 없으면 원문 60자 fallback
             const trimmed =
               t.narrative.length > 60
                 ? '...' + t.narrative.slice(-60)

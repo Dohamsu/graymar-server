@@ -17,6 +17,7 @@ import { GeminiProvider } from './providers/gemini.provider.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
 import { NanoDirectorService } from './nano-director.service.js';
 import { NanoEventDirectorService } from './nano-event-director.service.js';
+import { FactExtractorService } from './fact-extractor.service.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
 import { ContentModule } from '../content/content.module.js';
 
@@ -37,6 +38,7 @@ import { ContentModule } from '../content/content.module.js';
     NpcDialogueMarkerService,
     NanoDirectorService,
     NanoEventDirectorService,
+    FactExtractorService,
   ],
   exports: [
     ContextBuilderService,
@@ -44,6 +46,7 @@ import { ContentModule } from '../content/content.module.js';
     LlmCallerService,
     LlmProviderRegistryService,
     NanoEventDirectorService,
+    FactExtractorService,
   ],
 })
 export class LlmModule implements OnModuleInit {

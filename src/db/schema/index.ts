@@ -5,7 +5,12 @@ export { runSessions } from './run-sessions.js';
 export { nodeInstances } from './node-instances.js';
 export { battleStates } from './battle-states.js';
 export { turns } from './turns.js';
-export { runMemories, nodeMemories, recentSummaries } from './memories.js';
+export {
+  runMemories,
+  nodeMemories,
+  recentSummaries,
+  entityFacts,
+} from './memories.js';
 export { aiTurnLogs } from './ai-turn-logs.js';
 export { campaigns } from './campaigns.js';
 export { bugReports } from './bug-reports.js';
