@@ -25,6 +25,7 @@ import { AiTurnLogService } from './ai-turn-log.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
 import { NanoDirectorService, type DirectorHint, type SenseCategory } from './nano-director.service.js';
+import { FactExtractorService } from './fact-extractor.service.js';
 import type { ServerResultV1, ChoiceItem } from '../db/types/index.js';
 import type {
   LlmExtractedFact,
@@ -85,6 +86,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly content: ContentLoaderService,
     private readonly dialogueMarker: NpcDialogueMarkerService,
     private readonly nanoDirector: NanoDirectorService,
+    private readonly factExtractor: FactExtractorService,
   ) {}
 
   onModuleInit(): void {
@@ -1155,6 +1157,7 @@ ${npcList}`,
               const allNpcs = this.content.getAllNpcs();
               const found = allNpcs.find(
                 (n) => n.unknownAlias === cleanName || n.name === cleanName
+                  || n.shortAlias === cleanName
                   || n.unknownAlias?.endsWith(cleanName)
                   || n.unknownAlias?.includes(cleanName),
               );
@@ -1240,7 +1243,10 @@ ${npcList}`,
               const cleanAlias = alias.split('|')[0].trim(); // @[이름|URL]에서 이름만
               const found = allNpcs.find(
                 (n) => n.unknownAlias === cleanAlias || n.name === cleanAlias
-                  || (n.aliases ?? []).some((a: string) => a === cleanAlias),
+                  || n.shortAlias === cleanAlias
+                  || (n.aliases ?? []).some((a: string) => a === cleanAlias)
+                  || n.unknownAlias?.endsWith(cleanAlias)
+                  || (n.name && cleanAlias.includes(n.name)),
               );
               if (!found) return `@[${alias}]${trailing}`; // 매칭 실패 → 유지
               appearedNpcIds.add(found.npcId);
@@ -1385,6 +1391,11 @@ ${npcList}`,
       }
 
       // 6. DONE 저장 (토큰 통계 + 프롬프트 포함)
+      // 5.10. 별칭 반복 후처리: 본문 내 unknownAlias 2회차+ → shortAlias/대명사
+      if (narrative) {
+        narrative = this.deduplicateAliases(narrative);
+      }
+
       await this.db
         .update(turns)
         .set({
@@ -1410,6 +1421,29 @@ ${npcList}`,
         turnNo: pending.turnNo,
         summary: narrative,
       });
+
+      // 4-b-0. Memory v4: THREAD를 nano 구조화 요약으로 교체 (원문 어휘 오염 방지)
+      if (narrative && pending.nodeType === 'LOCATION' && threadEntry) {
+        try {
+          const nanoSummary = await this.factExtractor.summarizeNarrative({
+            narrative,
+            rawInput: pending.rawInput ?? '',
+            resolveOutcome: ((serverResult.ui as Record<string, unknown>)?.resolveOutcome as string) ?? null,
+            npcDisplayName: (() => {
+              if (_appearedNpcIds.size === 0) return null;
+              const firstNpcId = [..._appearedNpcIds][0];
+              const npcDef = this.content.getNpc(firstNpcId);
+              return npcDef?.name ?? npcDef?.unknownAlias ?? null;
+            })(),
+          });
+          if (nanoSummary && nanoSummary.length > 10) {
+            threadEntry = nanoSummary;
+            this.logger.debug(`[FactExtractor] turn=${pending.turnNo} thread replaced with nano summary (${nanoSummary.length}chars)`);
+          }
+        } catch (err) {
+          this.logger.debug(`[FactExtractor] nano thread failed, keeping original: ${err instanceof Error ? err.message : err}`);
+        }
+      }
 
       // 4-b. narrativeThread 누적 저장
       if (threadEntry && pending.nodeInstanceId) {
@@ -1489,6 +1523,28 @@ ${npcList}`,
             `Failed to save MEMORY facts for turn ${pending.turnNo}: ${err}`,
           );
         }
+      }
+
+      // 4-d. Memory v4: nano 구조화 사실 추출 → entity_facts DB (비동기, 실패 무시)
+      if (narrative && pending.nodeType === 'LOCATION') {
+        const ws = runSession?.runState as Record<string, unknown> | undefined;
+        const locationId = (ws?.worldState as Record<string, unknown> | undefined)?.currentLocationId as string ?? '';
+        const npcList: string[] = [];
+        if (_appearedNpcIds.size > 0 && _npcStatesRef) {
+          for (const npcId of _appearedNpcIds) {
+            const npcDef = this.content.getNpc(npcId);
+            const displayName = npcDef?.name ?? npcId;
+            npcList.push(`${npcId} (${displayName})`);
+          }
+        }
+        // 비동기 fire-and-forget — 결과를 기다리지 않음
+        void this.factExtractor.extractAndSave({
+          runId: pending.runId,
+          narrative,
+          npcList,
+          locationId,
+          turnNo: pending.turnNo,
+        });
       }
 
       const prompt = callResult.response?.promptTokens ?? 0;
@@ -1705,5 +1761,93 @@ ${npcList}`,
 
     if (parts.length === 0) return null;
     return parts.join('. ').slice(0, 100);
+  }
+
+  /**
+   * 서술 본문에서 NPC 별칭(unknownAlias)의 2회차+ 출현을 shortAlias/대명사로 교체.
+   * @마커 내부(@[...])는 건드리지 않음.
+   * gender 기반 대명사 풀에서 랜덤 선택하여 다채로움 확보.
+   */
+  private deduplicateAliases(narrative: string): string {
+    // 1. @마커 위치 기록 (교체 대상에서 제외)
+    const markerRanges: Array<[number, number]> = [];
+    const markerRegex = /@\[[^\]]*\]/g;
+    let mm: RegExpExecArray | null;
+    while ((mm = markerRegex.exec(narrative)) !== null) {
+      markerRanges.push([mm.index, mm.index + mm[0].length]);
+    }
+
+    const isInMarker = (pos: number): boolean =>
+      markerRanges.some(([s, e]) => pos >= s && pos < e);
+
+    // 2. 모든 CORE/SUB NPC의 unknownAlias 수집
+    const allNpcs = this.content.getAllNpcs?.() ?? [];
+    const aliasMap = new Map<
+      string,
+      { shortAlias: string; gender: string; npcId: string }
+    >();
+    for (const npc of allNpcs) {
+      if (!npc.unknownAlias || !npc.shortAlias) continue;
+      if (npc.unknownAlias === npc.shortAlias) continue;
+      aliasMap.set(npc.unknownAlias, {
+        shortAlias: npc.shortAlias,
+        gender: npc.gender ?? 'male',
+        npcId: npc.npcId,
+      });
+    }
+
+    // 3. 각 별칭의 본문 내 출현 위치 수집 (마커 밖만)
+    let result = narrative;
+    for (const [fullAlias, info] of aliasMap) {
+      const positions: number[] = [];
+      let searchFrom = 0;
+      while (true) {
+        const idx = result.indexOf(fullAlias, searchFrom);
+        if (idx === -1) break;
+        if (!isInMarker(idx)) {
+          positions.push(idx);
+        }
+        searchFrom = idx + fullAlias.length;
+      }
+
+      // 2회차+만 교체 (첫 출현은 유지)
+      if (positions.length <= 1) continue;
+
+      // 대명사 풀 (gender 기반)
+      const pronouns =
+        info.gender === 'female'
+          ? ['그녀는', '그녀가', '그녀의']
+          : ['그는', '그가', '그의'];
+
+      // 뒤에서부터 교체 (인덱스 밀림 방지)
+      for (let i = positions.length - 1; i >= 1; i--) {
+        const pos = positions[i];
+        const afterAlias = result[pos + fullAlias.length] ?? '';
+
+        // 별칭 뒤 조사에 따라 교체어 결정
+        let replacement: string;
+        if (['는', '은', '가', '이', '의', '를', '을', '에게', '와', '과'].some(
+          (j) => result.slice(pos + fullAlias.length).startsWith(j),
+        )) {
+          // 조사가 붙은 경우 → shortAlias + 조사 유지
+          replacement = info.shortAlias;
+        } else if (afterAlias === ' ' || afterAlias === '.' || afterAlias === ',') {
+          // 교체 대상의 50%는 shortAlias, 50%는 대명사 (다채로움)
+          replacement =
+            i % 2 === 0
+              ? info.shortAlias
+              : pronouns[i % pronouns.length].replace(/[는가의]$/, '');
+        } else {
+          replacement = info.shortAlias;
+        }
+
+        result =
+          result.slice(0, pos) +
+          replacement +
+          result.slice(pos + fullAlias.length);
+      }
+    }
+
+    return result;
   }
 }

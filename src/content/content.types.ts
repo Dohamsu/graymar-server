@@ -195,6 +195,7 @@ export type NpcDefinition = {
   npcId: string;
   name: string;
   unknownAlias?: string;
+  shortAlias?: string;
   role: string;
   faction: string | null;
   hostile: boolean | 'conditional';

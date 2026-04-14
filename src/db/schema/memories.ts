@@ -2,9 +2,11 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
+  unique,
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { NodeFact, ThemeMemory } from '../types/index.js';
@@ -39,6 +41,34 @@ export const nodeMemories = pgTable('node_memories', {
   visitContext: jsonb('visit_context').$type<VisitContextCache>(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+// Memory v4 — 구조화 사실 테이블 (entity+key UPSERT)
+export const entityFacts = pgTable(
+  'entity_facts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => runSessions.id),
+    entity: text('entity').notNull(), // NPC_ID | LOC_ID | PLOT
+    factType: text('fact_type').notNull(), // APPEARANCE | BEHAVIOR | KNOWLEDGE | RELATIONSHIP | LOCATION_DETAIL | PLOT_CLUE
+    key: text('key').notNull(), // 사실 식별 키
+    value: text('value').notNull(), // 구체적 내용 (30자)
+    importance: numeric('importance', { precision: 3, scale: 2 }).default(
+      '0.70',
+    ),
+    discoveredAtTurn: integer('discovered_at_turn').notNull(),
+    updatedAtTurn: integer('updated_at_turn').notNull(),
+    source: text('source').default('LLM_EXTRACT'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    unique('entity_facts_upsert_key').on(table.runId, table.entity, table.key),
+    index('idx_entity_facts_entity').on(table.runId, table.entity),
+    index('idx_entity_facts_type').on(table.runId, table.factType),
+  ],
+);
 
 // L3 — 최근 요약
 export const recentSummaries = pgTable(
