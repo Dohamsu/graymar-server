@@ -1396,6 +1396,39 @@ ${npcList}`,
         narrative = this.deduplicateAliases(narrative);
       }
 
+      // 5.11. NPC 소개 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
+      {
+        const uiData = serverResult.ui as Record<string, unknown>;
+        const newlyIntroduced = (uiData?.newlyIntroducedNpcIds as string[]) ?? [];
+        if (newlyIntroduced.length > 0 && narrative && runSession?.runState) {
+          const rs = runSession.runState as unknown as Record<string, unknown>;
+          const npcStatesForRollback = rs.npcStates as Record<string, { introduced?: boolean; introducedAtTurn?: number }> | undefined;
+          let rollbackNeeded = false;
+
+          for (const npcId of newlyIntroduced) {
+            const npcDef = this.content.getNpc(npcId);
+            if (!npcDef?.name) continue;
+            // LLM 서술에 NPC 실명이 있는지 확인
+            if (!narrative.includes(npcDef.name)) {
+              // 실명 미언급 → introduced 롤백
+              if (npcStatesForRollback?.[npcId]) {
+                npcStatesForRollback[npcId].introduced = false;
+                npcStatesForRollback[npcId].introducedAtTurn = undefined;
+                rollbackNeeded = true;
+                this.logger.debug(`[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백`);
+              }
+            }
+          }
+
+          if (rollbackNeeded) {
+            await this.db
+              .update(runSessions)
+              .set({ runState: rs as any })
+              .where(eq(runSessions.id, pending.runId));
+          }
+        }
+      }
+
       await this.db
         .update(turns)
         .set({
