@@ -1036,6 +1036,28 @@ export class PromptBuilderService {
       if (outcomeMap) {
         const specific = outcomeMap[actionType] ?? outcomeMap._DEFAULT ?? '';
         factsParts.push(`⚠️ [이번 턴 판정: ${outcome}]\n${specific}`);
+
+        // 판정별 서술 예시 동적 삽입 (시스템 프롬프트에서 제거됨)
+        const EXAMPLES: Record<string, Record<string, string>> = {
+          TALK: {
+            PARTIAL: '예시: 노부인이 당신을 올려다보았다. "무엇을 찾으시오?" 시장 분위기를 묻자 그녀의 표정이 굳었다. "이 할미는 약초만 팔 뿐이오." 대화는 거기서 끊겼다. 그러나 그녀의 시선이 골목 한쪽을 스쳤다.',
+            SUCCESS: '예시: 노부인이 고개를 끄덕이며 목소리를 낮추었다. "부두 쪽 3번 창고에서 밤마다 불빛이 새어 나온다오." 그녀의 눈빛은 진지했다.',
+            FAIL: '예시: 노부인이 고개를 돌렸다. 약초 다발을 집어 들며 당신을 무시했다. 대화의 문이 닫혔다.',
+          },
+          SNEAK: {
+            SUCCESS: '예시: 그림자 속으로 미끄러지듯 이동했다. 발소리 하나 없이 천막 사이를 빠져나갔다.',
+            FAIL: '예시: 발끝이 빈 상자를 스치며 날카로운 소리가 울렸다. 건너편에서 경비병이 고개를 돌렸다.',
+          },
+          INVESTIGATE: {
+            SUCCESS: '예시: 상자 틈새에서 희미한 잉크 자국이 묻은 종이 조각을 발견했다. 글씨는 반쯤 지워져 있었지만 핵심 단어는 읽을 수 있었다.',
+            FAIL: '예시: 상자를 뒤졌으나 먼지와 거미줄만 손에 묻었다. 아무것도 찾지 못했다.',
+          },
+        };
+        const exMap = EXAMPLES[actionType];
+        if (exMap) {
+          const ex = exMap[outcome] ?? Object.values(exMap)[0];
+          if (ex) factsParts.push(`[서술 참고]\n${ex}`);
+        }
       }
     }
 
