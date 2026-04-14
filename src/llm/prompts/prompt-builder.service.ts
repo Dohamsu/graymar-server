@@ -78,12 +78,21 @@ export class PromptBuilderService {
       !isPartyMode && ctx.gender === 'female'
         ? '\n\n## 주인공 성별\n주인공("당신")은 **여성**입니다. NPC의 호칭(아가씨, 자매, 부인 등), 외모 묘사, 주변 반응에 성별을 자연스럽게 반영하세요. 단, 과도한 성별 강조는 피하세요.'
         : '';
-    // JSON 모드일 때 산문 출력 형식을 JSON 스키마로 교체
+    // JSON 모드일 때: 산문 태그 섹션(CHOICES/MEMORY/THREAD) 제거 + JSON 스키마 추가
+    let effectivePrompt = basePrompt;
+    if (useJsonMode) {
+      // E: 기억 추출 태그, F: 장면 요약 태그, G: 맥락 선택지 생성 — JSON 스키마에서 이미 정의
+      effectivePrompt = effectivePrompt
+        .replace(/## 맥락 선택지 생성 \(필수\)[\s\S]*?(?=## |$)/, '')
+        .replace(/## 기억 추출 태그 \(선택적\)[\s\S]*?(?=## |$)/, '')
+        .replace(/## 장면 요약 태그 \(필수\)[\s\S]*?(?=## |$)/, '')
+        .replace(/## 출력 형식\n산문만 출력[^\n]*\n?/, ''); // "산문만 출력" 규칙도 제거
+    }
     const formatSuffix = useJsonMode ? `\n\n${NARRATIVE_JSON_FORMAT_INSTRUCTION}` : '';
     const systemContent =
       ctx.theme.length > 0
-        ? `${basePrompt}${partyIntro}${genderHint}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}${formatSuffix}`
-        : `${basePrompt}${partyIntro}${genderHint}${formatSuffix}`;
+        ? `${effectivePrompt}${partyIntro}${genderHint}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}${formatSuffix}`
+        : `${effectivePrompt}${partyIntro}${genderHint}${formatSuffix}`;
     messages.push({
       role: 'system',
       content: systemContent,
