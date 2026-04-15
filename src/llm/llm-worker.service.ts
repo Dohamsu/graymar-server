@@ -3,6 +3,7 @@
 import {
   Inject,
   Injectable,
+  Optional,
   type OnModuleInit,
   type OnModuleDestroy,
   Logger,
@@ -30,6 +31,7 @@ import {
   type SenseCategory,
 } from './nano-director.service.js';
 import { FactExtractorService } from './fact-extractor.service.js';
+import { NanoEventDirectorService } from './nano-event-director.service.js';
 import {
   DialogueGeneratorService,
   type DialogueSlot,
@@ -101,6 +103,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly nanoDirector: NanoDirectorService,
     private readonly factExtractor: FactExtractorService,
     private readonly dialogueGenerator: DialogueGeneratorService,
+    @Optional() private readonly nanoEventDirector: NanoEventDirectorService,
   ) {}
 
   onModuleInit(): void {
@@ -259,10 +262,51 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // 3. NanoDirector / NanoEventDirector: LOCATION 턴에서 연출 지시서 생성
       let directorHint: DirectorHint | null = null;
-      const nanoEventHint = (serverResult.ui as Record<string, unknown>)
+      let nanoEventHint = (serverResult.ui as Record<string, unknown>)
         ?.nanoEventHint as
         | import('./nano-event-director.service.js').NanoEventResult
         | undefined;
+
+      // 비동기 분리: nanoEventCtx가 있으면 여기서 NanoEventDirector.generate() 호출
+      const nanoEventCtx = (serverResult.ui as Record<string, unknown>)
+        ?.nanoEventCtx as
+        | import('./nano-event-director.service.js').NanoEventContext
+        | undefined;
+      if (!nanoEventHint && nanoEventCtx && this.nanoEventDirector) {
+        try {
+          const nanoResult = await this.nanoEventDirector.generate(nanoEventCtx);
+          if (nanoResult) {
+            nanoEventHint = nanoResult;
+            this.logger.log(
+              `[LlmWorker:NanoEvent] npc=${nanoResult.npc} concept="${nanoResult.concept.slice(0, 40)}" fact=${nanoResult.fact ?? 'none'}`,
+            );
+
+            // nano 선택지를 llmChoices에 저장 (클라이언트 폴링 시 반환)
+            if (nanoResult.choices.length >= 3) {
+              const nanoChoices = nanoResult.choices.map((nc, idx) => ({
+                id: `nano_${pending.turnNo}_${idx}`,
+                label: nc.label,
+                action: {
+                  type: 'CHOICE' as string,
+                  payload: {
+                    affordance: nc.affordance,
+                    sourceNpcId: nc.npcId ?? nanoResult.npcId,
+                  },
+                },
+              }));
+              nanoChoices.push({
+                id: 'go_hub',
+                label: '다른 장소로 이동한다',
+                action: { type: 'CHOICE', payload: { affordance: 'MOVE_LOCATION', sourceNpcId: null } },
+              });
+              // llmChoices에 저장 (DB 업데이트는 아래에서 함께)
+              (pending as any)._nanoChoices = nanoChoices;
+            }
+          }
+        } catch (err) {
+          this.logger.warn(`[LlmWorker:NanoEvent] 실패 (fallback): ${err}`);
+        }
+      }
 
       if (pending.nodeType === 'LOCATION' && pending.inputType !== 'SYSTEM') {
         if (nanoEventHint) {
@@ -1864,7 +1908,7 @@ ${npcList}`,
             latencyMs: callResult.response?.latencyMs ?? 0,
           },
           llmCompletedAt: new Date(),
-          llmChoices: llmChoices,
+          llmChoices: (pending as any)._nanoChoices ?? llmChoices,
           llmPrompt: messages as unknown[],
         })
         .where(eq(turns.id, pending.id));
