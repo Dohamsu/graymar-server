@@ -14,6 +14,7 @@ import {
   NARRATIVE_SYSTEM_PROMPT,
   PARTY_NARRATIVE_SYSTEM_PROMPT,
   NARRATIVE_JSON_FORMAT_INSTRUCTION,
+  NARRATIVE_JSON_FORMAT_INSTRUCTION_SPLIT,
 } from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { TokenBudgetService } from '../token-budget.service.js';
@@ -79,6 +80,7 @@ export class PromptBuilderService {
         ? '\n\n## 주인공 성별\n주인공("당신")은 **여성**입니다. NPC의 호칭(아가씨, 자매, 부인 등), 외모 묘사, 주변 반응에 성별을 자연스럽게 반영하세요. 단, 과도한 성별 강조는 피하세요.'
         : '';
     // JSON 모드일 때: 산문 태그 섹션(CHOICES/MEMORY/THREAD) 제거 + JSON 스키마 추가
+    const useDialogueSplit = useJsonMode && process.env.LLM_DIALOGUE_SPLIT === 'true';
     let effectivePrompt = basePrompt;
     if (useJsonMode) {
       // E: 기억 추출 태그, F: 장면 요약 태그, G: 맥락 선택지 생성 — JSON 스키마에서 이미 정의
@@ -88,7 +90,16 @@ export class PromptBuilderService {
         .replace(/## 장면 요약 태그 \(필수\)[\s\S]*?(?=## |$)/, '')
         .replace(/## 출력 형식\n산문만 출력[^\n]*\n?/, ''); // "산문만 출력" 규칙도 제거
     }
-    const formatSuffix = useJsonMode ? `\n\n${NARRATIVE_JSON_FORMAT_INSTRUCTION}` : '';
+    if (useDialogueSplit) {
+      // 대사 분리 모드: NPC 대사 작성 규칙 제거 (Stage B가 담당)
+      effectivePrompt = effectivePrompt
+        .replace(/## NPC 대사 작성 규칙 \(⚠️ 최우선[^]*?(?=## 따옴표 사용 규칙)/, '')
+        .replace(/## 따옴표 사용 규칙 \(필수\)[\s\S]*?(?=## |$)/, '');
+    }
+    const formatInstruction = useDialogueSplit
+      ? NARRATIVE_JSON_FORMAT_INSTRUCTION_SPLIT
+      : (useJsonMode ? NARRATIVE_JSON_FORMAT_INSTRUCTION : '');
+    const formatSuffix = formatInstruction ? `\n\n${formatInstruction}` : '';
     const systemContent =
       ctx.theme.length > 0
         ? `${effectivePrompt}${partyIntro}${genderHint}\n\n## 세계관 기억\n${JSON.stringify(ctx.theme)}${formatSuffix}`
@@ -358,6 +369,13 @@ export class PromptBuilderService {
           sessionLines.join('\n---\n'),
         ].join('\n'),
       );
+
+      // 장기 체류 소재 리프레시: 5턴 이상 같은 장소 → 새로운 관점 강제
+      if (ctx.locationSessionTurns.length >= 5) {
+        memoryParts.push(
+          `⚠️ 이 장소에서 ${ctx.locationSessionTurns.length}턴째입니다. 이전 턴에서 사용한 소재(장소명, 물건, 냄새, 인물 묘사)를 재활용하지 마세요. 완전히 새로운 시각/청각/촉각 디테일과 새로운 소품으로 장면을 구성하세요.`,
+        );
+      }
 
       // Mod4: 직전 턴 핵심 정보 — 맥락 유지 강화
       if (ctx.locationSessionTurns.length >= 1) {
@@ -823,8 +841,26 @@ export class PromptBuilderService {
       if (directorHint.npcGesture) {
         dirParts.push(`[NPC 행동] NPC의 대사 전후에 아래 행동을 사용하세요:\n${directorHint.npcGesture}`);
       }
-      if (directorHint.avoid.length > 0) {
-        dirParts.push(`[반복 금지] 아래 표현은 이번 턴에서 절대 사용하지 마세요:\n${directorHint.avoid.join(', ')}`);
+      // 반복 금지: NanoDirector avoid + 장기 체류 시 동적 반복 단어 감지
+      const allAvoid = [...directorHint.avoid];
+      // sessionTurns에서 고빈도 단어 추출 (3턴 윈도우에서 3회+ 나온 2글자+ 한글 단어)
+      if (ctx.locationSessionTurns && ctx.locationSessionTurns.length >= 3) {
+        const recentNarr = ctx.locationSessionTurns.slice(-3)
+          .map((t) => t.narrative ?? '').join(' ');
+        const wordCounts = new Map<string, number>();
+        const words = recentNarr.match(/[가-힣]{2,}/g) ?? [];
+        for (const w of words) {
+          wordCounts.set(w, (wordCounts.get(w) ?? 0) + 1);
+        }
+        const commonWords = new Set(['당신은', '당신이', '당신의', '그의', '그는', '그녀의', '있다', '있었다', '없다', '않는다']);
+        for (const [w, c] of wordCounts) {
+          if (c >= 3 && !commonWords.has(w) && !allAvoid.includes(w)) {
+            allAvoid.push(w);
+          }
+        }
+      }
+      if (allAvoid.length > 0) {
+        dirParts.push(`[반복 금지] 아래 표현은 이번 턴에서 절대 사용하지 마세요:\n${allAvoid.slice(0, 10).join(', ')}`);
       }
       if (directorHint.mood) {
         dirParts.push(`[분위기] ${directorHint.mood}`);

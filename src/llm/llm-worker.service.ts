@@ -26,6 +26,7 @@ import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
 import { NanoDirectorService, type DirectorHint, type SenseCategory } from './nano-director.service.js';
 import { FactExtractorService } from './fact-extractor.service.js';
+import { DialogueGeneratorService, type DialogueSlot, type DialogueIntent } from './dialogue-generator.service.js';
 import type { ServerResultV1, ChoiceItem } from '../db/types/index.js';
 import type {
   LlmExtractedFact,
@@ -38,10 +39,14 @@ import {
 
 /** JSON 구조화 출력 모드 타입 (LLM_JSON_MODE=true) */
 interface NarrativeJsonSegment {
-  type: 'narration' | 'dialogue';
-  text: string;
+  type: 'narration' | 'dialogue' | 'dialogue_slot';
+  text?: string;
   speaker_id?: string | null;
   speaker_alias?: string;
+  // dialogue_slot 전용 필드
+  intent?: string;
+  context?: string;
+  tone?: string;
 }
 interface NarrativeJsonOutput {
   segments: NarrativeJsonSegment[];
@@ -87,6 +92,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly dialogueMarker: NpcDialogueMarkerService,
     private readonly nanoDirector: NanoDirectorService,
     private readonly factExtractor: FactExtractorService,
+    private readonly dialogueGenerator: DialogueGeneratorService,
   ) {}
 
   onModuleInit(): void {
@@ -361,6 +367,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // JSON 모드 파싱 성공 여부 — 마커 후처리 스킵 판단용
       let jsonModeParsed = false;
+      // dialogue_slot에서 등장한 NPC 추적 (5.9 npcPortrait 갱신용)
+      const dialogueSlotNpcIds = new Set<string>();
 
       if (callResult.success && callResult.response && !isMockFallback) {
         narrative = callResult.response.text;
@@ -370,6 +378,74 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         if (useJsonMode) {
           const jsonParsed = this.parseJsonNarrative(narrative);
           if (jsonParsed) {
+            // 대사 분리 모드: dialogue_slot → Stage B 대사 생성 → 조립
+            const dialogueSlots = jsonParsed.segments.filter(
+              (s) => s.type === 'dialogue_slot' && s.speaker_id,
+            );
+            if (dialogueSlots.length > 0 && process.env.LLM_DIALOGUE_SPLIT === 'true') {
+              const rs = runSession?.runState as unknown as Record<string, unknown> | undefined;
+              const npcStates = (rs?.npcStates ?? {}) as Record<string, import('../db/types/npc-state.js').NPCState>;
+              const narrativeContext = jsonParsed.segments
+                .filter((s) => s.type === 'narration')
+                .map((s) => s.text ?? '')
+                .join(' ')
+                .slice(0, 300);
+
+              // speaker_id가 한글 호칭인 경우 NPC DB에서 NPC_ID로 변환
+              const allNpcs = this.content.getAllNpcs();
+              const resolveNpcId = (speakerId: string): string => {
+                if (/^NPC_[A-Z_0-9]+$/.test(speakerId)) return speakerId;
+                const found = allNpcs.find(
+                  (n) => n.unknownAlias === speakerId || n.name === speakerId
+                    || n.shortAlias === speakerId
+                    || (n.name && speakerId.includes(n.name))
+                    || n.unknownAlias?.endsWith(speakerId)
+                    || n.unknownAlias?.includes(speakerId),
+                );
+                return found?.npcId ?? speakerId;
+              };
+
+              const inputs = dialogueSlots.map((slot) => {
+                const npcId = resolveNpcId(slot.speaker_id!);
+                return {
+                  slot: {
+                    speaker_id: npcId,
+                    intent: (slot.intent ?? 'REACT') as DialogueIntent,
+                    context: slot.context ?? '',
+                    tone: slot.tone,
+                  },
+                  npcState: npcStates[npcId],
+                  previousDialogues: [] as string[],
+                  narrativeContext,
+                  turnNo: pending.turnNo,
+                };
+              });
+
+              const dialogueResults = await this.dialogueGenerator.generateAll(inputs);
+
+              // dialogue_slot → dialogue로 변환
+              let slotIdx = 0;
+              for (let i = 0; i < jsonParsed.segments.length; i++) {
+                const seg = jsonParsed.segments[i];
+                if (seg.type === 'dialogue_slot' && seg.speaker_id) {
+                  const result = dialogueResults[slotIdx];
+                  if (result) {
+                    dialogueSlotNpcIds.add(result.speakerId);
+                    jsonParsed.segments[i] = {
+                      type: 'dialogue',
+                      text: result.text,
+                      speaker_id: result.speakerId,
+                      speaker_alias: result.speakerAlias,
+                    };
+                  }
+                  slotIdx++;
+                }
+              }
+              this.logger.debug(
+                `[DialogueSplit] turn=${pending.turnNo} slots=${dialogueSlots.length} filled`,
+              );
+            }
+
             // JSON에서 서술 + @마커 조립
             narrative = this.assembleFromJson(jsonParsed);
             jsonModeParsed = true;
@@ -1334,6 +1410,11 @@ ${npcList}`,
         }
       }
 
+      // dialogue_slot에서 등장한 NPC도 _appearedNpcIds에 추가 (5.9 npcPortrait 갱신용)
+      for (const npcId of dialogueSlotNpcIds) {
+        _appearedNpcIds.add(npcId);
+      }
+
       // 5.9 speakingNpc + npcPortrait를 LLM 출력 기반으로 재결정
       {
         const updatedSr = { ...serverResult } as Record<string, unknown>;
@@ -1697,7 +1778,13 @@ ${npcList}`,
       const parsed = JSON.parse(cleaned);
       if (!parsed.segments || !Array.isArray(parsed.segments)) return null;
       for (const seg of parsed.segments) {
-        if (!seg.type || !seg.text) return null;
+        if (!seg.type) return null;
+        // dialogue_slot은 text 없이 speaker_id+intent만 있을 수 있음
+        if (seg.type === 'dialogue_slot') {
+          if (!seg.speaker_id) return null;
+          continue;
+        }
+        if (!seg.text) return null;
         if (seg.type !== 'narration' && seg.type !== 'dialogue') return null;
       }
       return parsed as NarrativeJsonOutput;
@@ -1710,17 +1797,21 @@ ${npcList}`,
     const parts: string[] = [];
     for (const seg of json.segments) {
       if (seg.type === 'narration') {
-        parts.push(seg.text);
+        parts.push(seg.text ?? '');
+      } else if (seg.type === 'dialogue_slot') {
+        // dialogue_slot이 변환되지 않고 남은 경우 스킵
+        continue;
       } else if (seg.type === 'dialogue') {
+        const segText = seg.text ?? '';
         // 가드: speaker 없이 "당신"이 주어인 문장은 narration으로 전환 (LLM 분류 오류 방어)
         // 단, speaker가 있으면 NPC가 "당신"에게 말하는 것이므로 허용
-        if (/^당신[은이가의를에]/.test(seg.text) && !seg.speaker_id && !seg.speaker_alias) {
-          parts.push(seg.text);
+        if (/^당신[은이가의를에]/.test(segText) && !seg.speaker_id && !seg.speaker_alias) {
+          parts.push(segText);
           continue;
         }
         // 가드: speaker 없으면 narration으로 전환
         if (!seg.speaker_id && !seg.speaker_alias) {
-          parts.push(`"${seg.text}"`);
+          parts.push(`"${segText}"`);
           continue;
         }
         // speaker_alias 우선 사용 (B-2.5에서 NPC DB lookup + 초상화 변환)
@@ -1730,7 +1821,7 @@ ${npcList}`,
           : seg.speaker_id && /^NPC_[A-Z_0-9]+$/.test(seg.speaker_id)
             ? `@${seg.speaker_id} `
             : '';
-        parts.push(`${marker}"${seg.text}"`);
+        parts.push(`${marker}"${segText}"`);
       }
     }
     return parts.join('\n');
