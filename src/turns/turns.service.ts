@@ -1066,18 +1066,23 @@ export class TurnsService {
         (inc: any) => inc.pressure >= 70 && inc.locationId === locationId,
       );
 
+      // 맥락 NPC: 직전 턴의 primaryNpcId (행동 종류 무관 — FIGHT 후에도 유지)
+      // lastPrimaryNpcId는 대화 잠금용(SOCIAL_ACTION 연속), contextNpcId는 모든 행동에서 유지
+      const contextNpcId = (lastEntry?.primaryNpcId as string) ?? null;
+
       // ── Player-First 턴 모드 결정 ──
       const turnMode = this.determineTurnMode({
         earlyTargetNpcId,
         intentV3TargetNpcId: intentV3.targetNpcId ?? null,
         actionType: intent.actionType,
         lastPrimaryNpcId: lastPrimaryNpcId ?? null,
+        contextNpcId,
         isFirstTurnAtLocation,
         incidentPressureHigh,
         questFactTrigger,
       });
       this.logger.log(
-        `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger})`,
+        `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'})`,
       );
 
       // ── 모드별 이벤트 매칭 ──
@@ -1111,6 +1116,8 @@ export class TurnsService {
 
         case TurnMode.CONVERSATION_CONT: {
           // 대화 연속 → 이벤트 매칭 스킵, 같은 NPC 유지
+          // lastPrimaryNpcId(대화 잠금) 우선, 없으면 contextNpcId(맥락 NPC) fallback
+          const convNpcId = lastPrimaryNpcId ?? contextNpcId;
           matchedEvent = {
             eventId: `FREE_CONV_${turnNo}`,
             eventType: 'FALLBACK' as any,
@@ -1125,7 +1132,7 @@ export class TurnsService {
               sceneFrame: '',
               choices: [],
               tags: [],
-              primaryNpcId: lastPrimaryNpcId,
+              primaryNpcId: convNpcId,
             },
           } as any;
           this.logger.log(
@@ -5896,6 +5903,8 @@ export class TurnsService {
     intentV3TargetNpcId: string | null;
     actionType: string;
     lastPrimaryNpcId: string | null;
+    /** 직전 턴의 primaryNpcId (행동 종류 무관 — FIGHT 후에도 유지) */
+    contextNpcId: string | null;
     isFirstTurnAtLocation: boolean;
     incidentPressureHigh: boolean;
     questFactTrigger: boolean;
@@ -5913,8 +5922,6 @@ export class TurnsService {
 
     // 1) 플레이어가 NPC를 명시적으로 지목
     if (ctx.earlyTargetNpcId || ctx.intentV3TargetNpcId) {
-      // 퀘스트 팩트 트리거가 있어도 플레이어 의도 우선
-      // 단, 장소 첫 진입은 분위기 설정을 위해 WORLD_EVENT
       if (ctx.isFirstTurnAtLocation) {
         return TurnMode.WORLD_EVENT;
       }
@@ -5923,7 +5930,15 @@ export class TurnsService {
 
     // 2) 대화 연속 (SOCIAL_ACTION + 이전 대화 NPC 존재)
     if (ctx.lastPrimaryNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
-      // 강제 세계 이벤트가 아닌 한 대화 연속
+      if (ctx.isFirstTurnAtLocation) {
+        return TurnMode.WORLD_EVENT;
+      }
+      return TurnMode.CONVERSATION_CONT;
+    }
+
+    // 2b) 맥락 NPC 연결 — FIGHT/STEAL 후 TALK 시 직전 NPC를 대화 대상으로 유지
+    // "이게 뭔지 대답해" 같이 대상 미명시 + 직전 턴에 NPC가 있었으면 맥락 연결
+    if (ctx.contextNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
       if (ctx.isFirstTurnAtLocation) {
         return TurnMode.WORLD_EVENT;
       }
@@ -5933,7 +5948,7 @@ export class TurnsService {
     // 3) 강제 세계 이벤트 (축소된 조건)
     if (
       ctx.isFirstTurnAtLocation ||
-      ctx.incidentPressureHigh || // 50 → 70으로 상향
+      ctx.incidentPressureHigh ||
       ctx.questFactTrigger
     ) {
       return TurnMode.WORLD_EVENT;
