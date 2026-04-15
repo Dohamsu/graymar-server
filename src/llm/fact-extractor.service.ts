@@ -213,6 +213,48 @@ export class FactExtractorService {
   }
 
   /**
+   * Phase 4b: 키워드 기반 entity_facts 조회 (로어북 연동)
+   * 기존 NPC/장소 필터 + 키워드 매칭으로 관련 사실만 선별
+   */
+  async getRelevantFactsByKeywords(
+    runId: string,
+    keywords: string[],
+    relevantNpcIds: string[],
+    locationId: string,
+  ): Promise<EntityFactEntry[]> {
+    if (keywords.length === 0) {
+      return this.getRelevantFacts(runId, relevantNpcIds, locationId);
+    }
+
+    // 먼저 전체 관련 facts를 조회
+    const allFacts = await this.getRelevantFacts(runId, relevantNpcIds, locationId);
+
+    // 키워드 매칭으로 필터링 + 점수 가중
+    const scored = allFacts.map((fact) => {
+      const matchCount = keywords.filter((kw) =>
+        fact.key.includes(kw) || fact.value.includes(kw) || kw.includes(fact.key),
+      ).length;
+      return { fact, matchCount };
+    });
+
+    // 매칭된 항목 우선 정렬 (매칭 있는 것 먼저, 그 다음 importance)
+    scored.sort((a, b) => {
+      if (a.matchCount > 0 && b.matchCount === 0) return -1;
+      if (a.matchCount === 0 && b.matchCount > 0) return 1;
+      return b.fact.importance - a.fact.importance;
+    });
+
+    // 매칭된 항목만 or 상위 5개
+    const matched = scored.filter((s) => s.matchCount > 0);
+    if (matched.length > 0) {
+      return matched.slice(0, 8).map((s) => s.fact);
+    }
+
+    // 매칭 없으면 기존 로직 (상위 5개)
+    return scored.slice(0, 5).map((s) => s.fact);
+  }
+
+  /**
    * Phase 4: nano 요약 주입 — facts 목록을 NPC별 1~2문장으로 요약
    */
   async summarizeFacts(facts: EntityFactEntry[]): Promise<string> {

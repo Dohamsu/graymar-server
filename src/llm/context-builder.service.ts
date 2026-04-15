@@ -31,6 +31,7 @@ import { MemoryRendererService } from './memory-renderer.service.js';
 import { MidSummaryService } from './mid-summary.service.js';
 import { IntentMemoryService } from '../engine/hub/intent-memory.service.js';
 import { FactExtractorService } from './fact-extractor.service.js';
+import { LorebookService } from './lorebook.service.js';
 
 export interface RecentTurnEntry {
   turnNo: number;
@@ -93,6 +94,7 @@ export interface LlmContext {
   incidentChronicleText: string | null; // 사건 연대기
   milestonesText: string | null; // 서사 이정표
   llmFactsText: string | null; // LLM 추출 사실
+  lorebookContext: string | null; // 로어북: 키워드 트리거 기반 세계 지식
   // 장면 연속성: 현재 장면 상태
   currentSceneContext: string | null; // 대화 상대, 세부 위치, 진행 중인 상황
   // PR2: Mid Summary (설계문서 18)
@@ -165,6 +167,7 @@ export class ContextBuilderService {
     private readonly midSummaryService: MidSummaryService,
     private readonly intentMemoryService: IntentMemoryService,
     private readonly factExtractor: FactExtractorService,
+    private readonly lorebook: LorebookService,
   ) {}
 
   /** 텍스트에 포함된 NPC 실명을 introduced 상태에 따라 displayName으로 치환 */
@@ -619,8 +622,12 @@ export class ContextBuilderService {
       // fallback: 기존 llmExtracted 렌더링
       const encounterNpcIds = structured.npcJournal.map((e) => e.npcId);
       try {
-        const entityFactRows = await this.factExtractor.getRelevantFacts(
+        // 로어북 키워드 연동: rawInput에서 키워드 추출하여 entity_facts 필터링
+        const rawInputForFacts = ((serverResult as Record<string, unknown>)?.summary as Record<string, unknown>)?.short as string ?? '';
+        const factKeywords = (rawInputForFacts.match(/[가-힣]{2,}/g) ?? []).slice(0, 10);
+        const entityFactRows = await this.factExtractor.getRelevantFactsByKeywords(
           runId,
+          factKeywords,
           encounterNpcIds,
           currentLocationId ?? '',
         );
@@ -640,6 +647,47 @@ export class ContextBuilderService {
             currentLocationId ?? undefined,
             encounterNpcIds,
           ) || null;
+      }
+    }
+
+    // 로어북: 키워드 트리거 기반 관련 세계 지식 주입
+    let lorebookContext: string | null = null;
+    {
+      const uiData = serverResult.ui as Record<string, unknown>;
+      const actionCtx = uiData?.actionContext as Record<string, unknown> | undefined;
+      const rawInput = ((serverResult as Record<string, unknown>)?.summary as Record<string, unknown>)?.short as string ?? '';
+      const actionType = (actionCtx?.parsedType as string) ?? '';
+      const ws = runState?.worldState as Record<string, unknown> | undefined;
+      const currentLocationId = ws?.currentLocationId as string ?? '';
+      const npcStates = (runState?.npcStates ?? {}) as Record<string, import('../db/types/npc-state.js').NPCState>;
+      const lorebookState = (runState?.lorebook ?? {}) as Record<string, unknown>;
+      const discoveredFacts = lorebookState.discoveredFacts as string[] ?? [];
+      const discoveredSecrets = lorebookState.discoveredSecrets as string[] ?? [];
+
+      // 현재 턴에 등장하는 NPC IDs
+      const currentNpcIds: string[] = [];
+      const events = serverResult.events ?? [];
+      for (const evt of events) {
+        if (evt.kind === 'NPC' && evt.tags) {
+          for (const tag of evt.tags) {
+            if (tag.startsWith('NPC_')) currentNpcIds.push(tag);
+          }
+        }
+      }
+
+      const result = this.lorebook.getRelevantLore({
+        rawInput,
+        actionType,
+        currentNpcIds,
+        locationId: currentLocationId,
+        npcStates,
+        discoveredFacts,
+        discoveredSecrets,
+        activeIncidents: ((ws as Record<string, unknown>)?.activeIncidents as Array<{ incidentId: string; stage: number }>) ?? [],
+      });
+
+      if (result.contextText) {
+        lorebookContext = result.contextText;
       }
     }
 
@@ -1200,6 +1248,7 @@ export class ContextBuilderService {
       incidentChronicleText: sanitize(incidentChronicleText),
       milestonesText: sanitize(milestonesText),
       llmFactsText: sanitize(llmFactsText),
+      lorebookContext: lorebookContext,
       // 장면 연속성
       currentSceneContext: sanitize(currentSceneContext),
       // PR2/3/4: 신규 컨텍스트

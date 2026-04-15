@@ -208,6 +208,11 @@ export class PromptBuilderService {
       }
     }
 
+    // 로어북: 키워드 트리거 기반 관련 세계 지식
+    if (ctx.lorebookContext) {
+      memoryParts.push(ctx.lorebookContext);
+    }
+
     // L1 확장: LOCATION 컨텍스트
     if (ctx.locationContext) {
       memoryParts.push(`[현재 장소]\n${ctx.locationContext}`);
@@ -563,26 +568,24 @@ export class PromptBuilderService {
         const alias = npc.unknownAlias || '낯선 인물';
         const pronoun = npc.gender === 'female' ? '그녀' : '그';
 
+        // NPC_ID를 병기하여 dialogue_slot에서 정확한 ID 사용 유도
+        const idTag = `[ID:${npc.npcId}]`;
+
         if (isNewlyIntroduced && isNewlyEncountered) {
-          // 첫 만남 + 이번에 소개 (FRIENDLY/FEARFUL) → 자기소개
-          return `- ${npc.name}${title}: ${npc.role} [첫 만남 — 자연스럽게 자기소개(이름 포함)를 하도록 서술하세요]`;
+          return `- ${npc.name}${title} ${idTag}: ${npc.role} [첫 만남 — 자연스럽게 자기소개(이름 포함)를 하도록 서술하세요]`;
         } else if (isNewlyIntroduced && !isNewlyEncountered) {
-          // 재만남에서 소개 (CAUTIOUS/CALCULATING/HOSTILE) → 상황/타인 통해 이름 공개
-          return `- ${npc.name}${title}: ${npc.role} [이번 장면에서 이름이 자연스럽게 드러납니다 — 다른 인물이 이름을 부르거나, 상황 단서(문서, 간판, 대화)를 통해 알게 되는 식으로 서술하세요. 직접 자기소개하지 않습니다]`;
+          return `- ${npc.name}${title} ${idTag}: ${npc.role} [이번 장면에서 이름이 자연스럽게 드러납니다 — 다른 인물이 이름을 부르거나, 상황 단서(문서, 간판, 대화)를 통해 알게 되는 식으로 서술하세요. 직접 자기소개하지 않습니다]`;
         } else if (isNewlyEncountered && !isNewlyIntroduced) {
-          // 첫 만남이지만 소개 안 함 (CAUTIOUS 등) → 별칭만
-          return `- "${alias}": ${npc.role} [첫 만남 — 이름을 밝히지 않습니다. 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "${pronoun}", "${pronoun} 인물" 등 짧은 대명사로 대체하세요]`;
+          return `- "${alias}" ${idTag}: ${npc.role} [첫 만남 — 이름을 밝히지 않습니다. 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "${pronoun}", "${pronoun} 인물" 등 짧은 대명사로 대체하세요]`;
         } else if (isIntroduced) {
-          // 이미 소개됨 → 실명 + knowledge
           const knowledgeEntries = (ctx.npcKnowledge ?? {})[npc.npcId];
           const knowledgePart =
             knowledgeEntries && knowledgeEntries.length > 0
               ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`
               : '';
-          return `- ${npc.name}${title}: ${npc.role} [이미 소개됨, 대명사: ${pronoun}]${knowledgePart}`;
+          return `- ${npc.name}${title} ${idTag}: ${npc.role} [이미 소개됨, 대명사: ${pronoun}]${knowledgePart}`;
         } else {
-          // 아직 만나지 않았거나 소개 안 됨 → 별칭 (간략히)
-          return `- "${alias}": ${npc.role} [이름 미공개]`;
+          return `- "${alias}" ${idTag}: ${npc.role} [이름 미공개]`;
         }
       });
       const relationPart =
@@ -974,6 +977,7 @@ export class PromptBuilderService {
           '서술 규칙: 먼저 플레이어가 이 선택을 실행하는 장면을 구체적으로 묘사하세요.',
           '직전 턴의 장면·장소·NPC에서 자연스럽게 이어져야 합니다. 장면을 갑자기 다른 장소로 옮기지 마세요.',
           '선택의 결과를 충분히 보여준 뒤, 자연스럽게 다음 상황으로 전환하세요.',
+          '⚠️ NPC가 플레이어와 이전에 대화한 적이 없다면, "그대의 말대로라면" 같은 이전 대화를 전제한 표현을 사용하지 마세요. NPC는 플레이어의 행동/선택에 대한 반응만 보여야 합니다.',
         ];
         if (actionCtx?.parsedType) {
           parts.push(`엔진 해석: ${actionCtx.parsedType}`);

@@ -394,11 +394,46 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               // speaker_id가 한글 호칭인 경우 NPC DB에서 NPC_ID로 변환
               const allNpcs = this.content.getAllNpcs();
               const resolveNpcId = (speakerId: string): string => {
-                if (/^NPC_[A-Z_0-9]+$/.test(speakerId)) return speakerId;
+                // 1. NPC_ID 형식이면 DB에서 직접 확인
+                if (/^NPC_[A-Z_0-9]+$/.test(speakerId)) {
+                  const direct = this.content.getNpc(speakerId);
+                  if (direct) return speakerId;
+                  // DB에 없으면 퍼지 매칭 (오타 방어: NPC_RODEN → NPC_RONEN)
+                  const idPart = speakerId.replace(/^NPC_/, '').toLowerCase();
+                  const fuzzy = allNpcs.find((n) => {
+                    const nPart = n.npcId.replace(/^NPC_/, '').toLowerCase();
+                    if (nPart === idPart) return true;
+                    if (Math.abs(nPart.length - idPart.length) > 2) return false;
+                    let diff = 0;
+                    for (let i = 0; i < Math.max(nPart.length, idPart.length); i++) {
+                      if (nPart[i] !== idPart[i]) diff++;
+                      if (diff > 2) return false;
+                    }
+                    return diff <= 2;
+                  });
+                  if (fuzzy) {
+                    this.logger.debug(`[DialogueSplit] fuzzy NPC_ID match: ${speakerId} → ${fuzzy.npcId}`);
+                    return fuzzy.npcId;
+                  }
+                  // 3. NPC_ID에서 영문 부분 추출 → 한글 이름으로 변환 시도
+                  // 예: NPC_HAWIK → "HAWIK" → 서술 본문에서 관련 NPC 찾기
+                  const narrationNpcs = narrativeContext.match(/[가-힣]{2,10}/g) ?? [];
+                  for (const word of narrationNpcs) {
+                    const byName = allNpcs.find(
+                      (n) => n.name === word || n.unknownAlias?.includes(word) || n.shortAlias === word,
+                    );
+                    if (byName) {
+                      this.logger.debug(`[DialogueSplit] narrative fallback match: ${speakerId} → ${byName.npcId} (via "${word}")`);
+                      return byName.npcId;
+                    }
+                  }
+                  return speakerId;
+                }
+                // 2. 한글 호칭이면 기존 매칭
                 const found = allNpcs.find(
                   (n) => n.unknownAlias === speakerId || n.name === speakerId
                     || n.shortAlias === speakerId
-                    || (n.name && speakerId.includes(n.name))
+                    || (n.name && n.name.length >= 2 && speakerId.includes(n.name))
                     || n.unknownAlias?.endsWith(speakerId)
                     || n.unknownAlias?.includes(speakerId),
                 );
@@ -741,8 +776,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               const npcDef = this.content.getNpc(npcId);
               if (!npcDef?.name) continue;
               const alias = npcDef.unknownAlias || '누군가';
-              // 서술 sanitize
-              if (narrative.includes(npcDef.name)) {
+              // 서술 sanitize — 2글자 미만 NPC 이름은 일반 단어 오탐 방지 (예: "벅"→"허벅지" 매칭)
+              if (npcDef.name.length >= 2 && narrative.includes(npcDef.name)) {
                 narrative = narrative.replaceAll(npcDef.name, alias);
                 violations.push(`AUTO_FIX: NPC_NAME(${npcDef.name}→${alias})`);
               }
