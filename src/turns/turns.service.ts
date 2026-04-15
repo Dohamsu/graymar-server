@@ -1053,13 +1053,50 @@ export class TurnsService {
       const questFactTrigger =
         hasUndiscoveredFactEvent && actionHistory.length > 0;
 
+      // 대화 연속 감지: 직전 턴에 NPC와 대화 중이고 + 이번 행동이 대화 계열이면 이벤트 스킵
+      const SOCIAL_ACTIONS = new Set(['TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP']);
+      const lastEntry = actionHistory[actionHistory.length - 1] as
+        | Record<string, unknown>
+        | undefined;
+      const lastPrimaryNpcId = lastEntry?.primaryNpcId as string | null | undefined;
+      const isConversationContinuation =
+        !isFirstTurnAtLocation &&
+        lastPrimaryNpcId &&
+        SOCIAL_ACTIONS.has(intent.actionType);
+
+      if (isConversationContinuation) {
+        // 대화 연속 → 이벤트 매칭 스킵, FREE 이벤트로 현재 NPC 유지
+        matchedEvent = {
+          eventId: `FREE_CONV_${turnNo}`,
+          eventType: 'FALLBACK',
+          locationId,
+          priority: 1,
+          weight: 1,
+          conditions: [],
+          affordances: ['ANY'],
+          friction: 0,
+          matchPolicy: 'NEUTRAL',
+          payload: {
+            sceneFrame: '',
+            choices: [],
+            tags: [],
+            primaryNpcId: lastPrimaryNpcId,
+          },
+        } as any;
+        this.logger.log(
+          `[ConversationContinuation] 대화 연속 감지 → 이벤트 스킵, NPC=${lastPrimaryNpcId}, action=${intent.actionType}`,
+        );
+      }
+
       const shouldMatchEvent =
-        isFirstTurnAtLocation ||
-        incidentPressureHigh ||
-        routingHasStrongIncident ||
-        questFactTrigger;
+        !isConversationContinuation && (
+          isFirstTurnAtLocation ||
+          incidentPressureHigh ||
+          routingHasStrongIncident ||
+          questFactTrigger
+        );
       this.logger.log(
-        `[EventTrigger] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} routing=${routingHasStrongIncident}(${routingResult.routeMode}:${routingResult.matchScore}) questFact=${questFactTrigger} → match=${shouldMatchEvent}`,
+        `[EventTrigger] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} routing=${routingHasStrongIncident}(${routingResult.routeMode}:${routingResult.matchScore}) questFact=${questFactTrigger} convCont=${!!isConversationContinuation} → match=${shouldMatchEvent}`,
       );
 
       if (shouldMatchEvent) {
@@ -1127,9 +1164,7 @@ export class TurnsService {
           // NPC 연속성 컨텍스트
           const NON_SOCIAL_BREAK = new Set(['SNEAK', 'STEAL', 'FIGHT']);
           const shouldBreakNpc = NON_SOCIAL_BREAK.has(intent.actionType);
-          const lastEntry = actionHistory[actionHistory.length - 1] as
-            | Record<string, unknown>
-            | undefined;
+          // lastEntry는 상위 스코프에서 이미 선언됨
           const sessionNpcContext = {
             lastPrimaryNpcId: shouldBreakNpc
               ? null
