@@ -40,18 +40,59 @@ export interface DialogueGenResult {
   portraitUrl: string;
 }
 
+/** 어체별 규칙 정의 */
+const REGISTER_RULES: Record<string, { name: string; endings: string; examples: string; forbidden: string; playerRef: string }> = {
+  HAOCHE: {
+    name: '하오체 (중세 경어)',
+    endings: '~소/~오/~하오/~이오/~시오/~겠소',
+    examples: '"무엇을 찾으시오?", "조심하시오.", "그건 곤란하오."',
+    forbidden: '~다/~해/~야/~합니다/~세요/~해요',
+    playerRef: '"그대" 또는 "당신"',
+  },
+  HAEYO: {
+    name: '해요체 (부드러운 존댓말)',
+    endings: '~해요/~에요/~이에요/~거예요/~하세요/~죠',
+    examples: '"조심하셔야 해요.", "이쪽으로 오세요.", "괜찮으세요?"',
+    forbidden: '~다/~해/~야/~소/~오/~하오',
+    playerRef: '"당신" 또는 이름',
+  },
+  BANMAL: {
+    name: '반말 (비격식, 아이/친근)',
+    endings: '~야/~해/~이야/~래/~거야/~지/~는데',
+    examples: '"이쪽이야! 빨리 와!", "내가 봤어!", "위험해, 조심해!"',
+    forbidden: '~소/~오/~하오/~합니다/~습니다',
+    playerRef: '"아저씨", "형", "언니", 또는 이름',
+  },
+  HAPSYO: {
+    name: '합쇼체 (공식/정중)',
+    endings: '~합니다/~입니다/~습니다/~겠습니다/~십시오',
+    examples: '"보고드릴 것이 있습니다.", "확인하였습니다.", "따라오십시오."',
+    forbidden: '~다/~해/~야/~소/~오/~하오',
+    playerRef: '"손님", "나리", 또는 직함',
+  },
+  HAECHE: {
+    name: '해체 (노인/느슨한 반말)',
+    endings: '~지/~거든/~는데/~야/~이야/~걸',
+    examples: '"그건 말이지... 조심해야 하는 거야.", "내가 보기엔 말이지...", "옛날엔 말이야..."',
+    forbidden: '~소/~오/~하오/~합니다/~습니다',
+    playerRef: '"자네", "젊은이", "총각/아가씨"',
+  },
+};
+
+function getRegisterRule(register: string) {
+  return REGISTER_RULES[register] ?? REGISTER_RULES['HAOCHE'];
+}
+
 const DIALOGUE_SYSTEM = `당신은 중세 판타지 RPG의 NPC 대사 작성자입니다.
 
-## 규칙
-- ⚠️ 모든 대사의 모든 문장은 경어체(~소/~오/~하오/~이오/~시오/~겠소)로 끝나야 합니다.
-- ⚠️ 금지 어미 (사용하면 실격):
-  ~다/~했다(해라체), ~지/~는데(반말), ~합니다/~세요/~해요/~에요/~군요/~네요/~바요(현대 존댓말), ~일세/~하네(고어)
-- 올바른 예: "조심하시오.", "무엇을 찾으시오?", "그건 곤란하오.", "들어보시오."
-- 나쁜 예: "조심하세요." "찾으시는군요." "여쭙는 바요." "느껴지는군요."
-- 플레이어 지칭: "그대" 또는 "당신". "너"는 금지.
+## 어체 규칙
+- NPC마다 지정된 어체(speechRegister)가 있습니다.
+- 반드시 해당 어체의 어미 규칙을 따르세요.
+- NPC의 말투(speechStyle)가 제공되면 그 톤과 특성을 최대한 반영하세요.
+
+## 기타
 - 대사 길이: 1~2문장 (20~80자). 간결하고 임팩트 있게.
 - 따옴표 없이 대사 텍스트만 출력하세요.
-- NPC의 성격과 감정 상태를 반영하세요.
 - 같은 NPC의 이전 대사와 다른 표현을 사용하세요.`;
 
 const INTENT_GUIDES: Record<DialogueIntent, string> = {
@@ -66,30 +107,54 @@ const INTENT_GUIDES: Record<DialogueIntent, string> = {
   TRADE: '거래를 제안하거나 대가를 요구',
 };
 
-/** 대사 하오체 검증 — 금지 어미 감지 + 경어체 어미 확인 */
-function validateHaoche(text: string): boolean {
-  // 금지 어미 감지 (해라체, 반말, 현대 존댓말)
-  const forbidden = /(?:합니다|습니다|세요|해요|에요|군요|네요|는데요|거든요|잖아요|바요|일세|하네|는군|이야|해라|한다|된다)[.!?…]*$/;
+/** 어체별 어미 검증 */
+function validateSpeechRegister(text: string, register: string): boolean {
   const sentences = text.split(/[.!?…]+/).filter((s) => s.trim().length > 3);
-  for (const s of sentences) {
-    if (forbidden.test(s.trim())) return false;
-  }
-  // 마지막 문장에 경어체 어미가 있는지
   if (sentences.length === 0) return false;
   const last = sentences[sentences.length - 1].trim();
-  return /(?:하오|이오|시오|겠소|없소|있소|했소|되오|보시오|마시오|드리오|주시오|[소오])\s*$/.test(last);
+
+  switch (register) {
+    case 'HAOCHE':
+      return /(?:하오|이오|시오|겠소|없소|있소|했소|되오|보시오|마시오|드리오|주시오|[소오])\s*$/.test(last);
+    case 'HAEYO':
+      return /(?:해요|에요|이에요|세요|거예요|을까요|인가요|죠|네요)\s*$/.test(last);
+    case 'BANMAL':
+      return /(?:[야해지]|이야|거야|는데|잖아|래|거든|어|었어|았어|겠어)\s*$/.test(last);
+    case 'HAPSYO':
+      return /(?:합니다|입니다|습니다|겠습니다|십시오|옵니다)\s*$/.test(last);
+    case 'HAECHE':
+      return /(?:[지야]|거든|는데|이야|걸|잖아|는걸|어|었어)\s*$/.test(last);
+    default:
+      return true; // 알 수 없는 register면 통과
+  }
 }
 
-const FALLBACK_DIALOGUES: Record<DialogueIntent, string[]> = {
-  WARN: ['조심하시오, 그대.', '여기선 눈을 크게 뜨고 있어야 하오.'],
-  INFO: ['한 가지 알아두시오.', '들어보시오.'],
-  QUESTION: ['무슨 용무이시오?', '무엇을 찾으시오?'],
-  REFUSE: ['그건 곤란하오.', '더 이상 할 말이 없소.'],
-  GREET: ['어서 오시오.', '뵙게 되어 반갑소.'],
-  REACT: ['흠…', '그렇소.'],
-  HINT: ['혹시…', '한 가지 알려드리리다.'],
-  THREATEN: ['그대의 안전을 보장할 수 없소.', '현명한 선택을 하시오.'],
-  TRADE: ['거래를 원하시오?', '적정한 대가가 필요하오.'],
+const FALLBACK_BY_REGISTER: Record<string, Record<DialogueIntent, string[]>> = {
+  HAOCHE: {
+    WARN: ['조심하시오.', '위험하오.'], INFO: ['알아두시오.'], QUESTION: ['무슨 용무이시오?'],
+    REFUSE: ['곤란하오.'], GREET: ['어서 오시오.'], REACT: ['그렇소.'],
+    HINT: ['혹시…'], THREATEN: ['안전을 보장할 수 없소.'], TRADE: ['거래를 원하시오?'],
+  },
+  HAEYO: {
+    WARN: ['조심하세요.', '위험해요.'], INFO: ['알려드릴게요.'], QUESTION: ['무슨 일이세요?'],
+    REFUSE: ['그건 좀 어려워요.'], GREET: ['어서 오세요.'], REACT: ['그렇군요.'],
+    HINT: ['혹시요…'], THREATEN: ['조심하시는 게 좋을 거예요.'], TRADE: ['거래하실 건가요?'],
+  },
+  BANMAL: {
+    WARN: ['조심해!', '위험해!'], INFO: ['있잖아…'], QUESTION: ['뭐야?'],
+    REFUSE: ['싫어!', '안 돼!'], GREET: ['안녕!'], REACT: ['헐…'],
+    HINT: ['있지…'], THREATEN: ['가만 안 둬!'], TRADE: ['거래할래?'],
+  },
+  HAPSYO: {
+    WARN: ['조심하십시오.'], INFO: ['보고드립니다.'], QUESTION: ['무엇을 도와드릴까요?'],
+    REFUSE: ['그건 어렵겠습니다.'], GREET: ['어서 오십시오.'], REACT: ['그렇습니다.'],
+    HINT: ['한 가지 말씀드리겠습니다.'], THREATEN: ['경고드립니다.'], TRADE: ['거래를 원하십니까?'],
+  },
+  HAECHE: {
+    WARN: ['조심해야 해.', '위험하거든.'], INFO: ['있잖아, 그게 말이지…'], QUESTION: ['뭘 찾는 거야?'],
+    REFUSE: ['그건 안 되지.'], GREET: ['왔구먼.'], REACT: ['그래…'],
+    HINT: ['내가 보기엔 말이지…'], THREATEN: ['함부로 굴면 안 되는 거야.'], TRADE: ['거래할 건가?'],
+  },
 };
 
 @Injectable()
@@ -130,12 +195,17 @@ export class DialogueGeneratorService {
     const personality = npcDef.personality;
     const posture = input.npcState?.posture ?? npcDef.basePosture ?? 'CAUTIOUS';
     const trust = input.npcState?.emotional?.trust ?? 0;
+    const register = (personality as Record<string, unknown>)?.speechRegister as string ?? 'HAOCHE';
+    const rule = getRegisterRule(register);
 
     const profileLines = [
       `이름: ${npcDef.unknownAlias ?? npcDef.name}`,
       `역할: ${npcDef.role}`,
       `성격: ${posture} (신뢰도: ${trust})`,
-      personality?.speechStyle ? `말투: ${personality.speechStyle}` : '',
+      `⚠️ 어체: ${rule.name} — 어미는 반드시 ${rule.endings}로 끝내세요`,
+      `올바른 예: ${rule.examples}`,
+      `플레이어 지칭: ${rule.playerRef}`,
+      personality?.speechStyle ? `⚠️ 말투 (반드시 반영): ${personality.speechStyle}` : '',
       personality?.signature?.length ? `시그니처 표현: ${personality.signature.join(', ')}` : '',
       input.factToReveal ? `이번에 전달할 정보: ${input.factToReveal}` : '',
     ].filter(Boolean).join('\n');
@@ -180,13 +250,13 @@ export class DialogueGeneratorService {
     if (dialogue.length < 5) return this.buildFallback(input);
     if (dialogue.length > 150) dialogue = dialogue.slice(0, 150);
 
-    // 하오체 검증 — 실패 시 1회 재시도 후 fallback
-    if (!validateHaoche(dialogue)) {
-      this.logger.debug(`[DialogueGen] haoche validation failed: "${dialogue.slice(0, 50)}" — retrying`);
+    // 어체 검증 — 실패 시 1회 재시도 후 fallback
+    if (!validateSpeechRegister(dialogue, register)) {
+      this.logger.debug(`[DialogueGen] ${register} validation failed: "${dialogue.slice(0, 50)}" — retrying`);
       const retry = await this.llmCaller.call({
         messages: [
           { role: 'system', content: DIALOGUE_SYSTEM },
-          { role: 'user', content: userMsg + '\n\n⚠️ 이전 출력이 경어체 규칙을 위반했습니다. 반드시 ~소/~오/~하오/~이오/~시오로 끝내세요.' },
+          { role: 'user', content: userMsg + `\n\n⚠️ 이전 출력이 어체 규칙을 위반했습니다. 반드시 ${rule.endings}로 끝내세요.` },
         ],
         maxTokens: 100,
         temperature: 0.7,
@@ -194,7 +264,7 @@ export class DialogueGeneratorService {
       });
       if (retry.success && retry.response?.text) {
         let retryDialogue = retry.response.text.trim().replace(/^[""\u201C]+|[""\u201D]+$/g, '');
-        if (retryDialogue.length >= 5 && validateHaoche(retryDialogue)) {
+        if (retryDialogue.length >= 5 && validateSpeechRegister(retryDialogue, register)) {
           dialogue = retryDialogue.slice(0, 150);
           this.logger.debug(`[DialogueGen] retry succeeded: "${dialogue.slice(0, 40)}..."`);
         } else {
@@ -230,7 +300,9 @@ export class DialogueGeneratorService {
       ? getNpcDisplayName(input.npcState, npcDef, input.turnNo)
       : (npcDef?.unknownAlias ?? npcDef?.name ?? '무명 인물');
 
-    const pool = FALLBACK_DIALOGUES[input.slot.intent] ?? ['…'];
+    const register = (npcDef?.personality as Record<string, unknown>)?.speechRegister as string ?? 'HAOCHE';
+    const fallbacks = FALLBACK_BY_REGISTER[register] ?? FALLBACK_BY_REGISTER['HAOCHE'];
+    const pool = fallbacks[input.slot.intent] ?? ['…'];
     const text = pool[Math.floor(Math.random() * pool.length)];
 
     return {

@@ -19,6 +19,7 @@ import { NanoDirectorService } from './nano-director.service.js';
 import { NanoEventDirectorService } from './nano-event-director.service.js';
 import { FactExtractorService } from './fact-extractor.service.js';
 import { DialogueGeneratorService } from './dialogue-generator.service.js';
+import { LorebookService } from './lorebook.service.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
 import { ContentModule } from '../content/content.module.js';
 
@@ -41,6 +42,7 @@ import { ContentModule } from '../content/content.module.js';
     NanoEventDirectorService,
     FactExtractorService,
     DialogueGeneratorService,
+    LorebookService,
   ],
   exports: [
     ContextBuilderService,

@@ -182,6 +182,7 @@ export type NpcPersonality = {
   core: string; // 한 줄 캐릭터 본질
   traits: string[]; // 2~3개 성격 특성
   speechStyle: string; // 말투/어조
+  speechRegister?: 'HAOCHE' | 'HAEYO' | 'BANMAL' | 'HAPSYO' | 'HAECHE'; // 어체 (기본: HAOCHE)
   innerConflict: string; // 내면 갈등
   softSpot: string; // 약점/인간적 순간 트리거
   signature: string[]; // 시그니처 표현 2~3개
@@ -213,7 +214,14 @@ export type NpcDefinition = {
   schedule?: import('../db/types/npc-schedule.js').NpcSchedule;
   longTermAgenda?: import('../db/types/npc-schedule.js').NpcAgenda;
   /** NPC가 알고 있는 구체적 단서 — SUCCESS 판정 시 순서대로 점진 공개 */
-  knownFacts?: Array<{ factId: string; detail: string }>;
+  knownFacts?: Array<{
+    factId: string;
+    detail: string;
+    importance?: number;
+    keywords?: string[];
+    minTrust?: number;
+    revealOnce?: boolean;
+  }>;
   /** 이 NPC와 관련된 사건 ID 목록 */
   linkedIncidents?: string[];
 };
