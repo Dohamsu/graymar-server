@@ -355,3 +355,52 @@ export const NARRATIVE_JSON_FORMAT_INSTRUCTION = `
 - ⚠️ JSON 값(value) 앞에 NPC 호칭이나 @마커를 삽입하지 마세요. 발화자 정보는 speaker_id와 speaker_alias 필드에만 넣으세요.
 - ⚠️ "NPC 대사 작성 규칙"(호칭+동사+마침표+"대사" 패턴)은 이 JSON 모드에서는 적용하지 마세요. dialogue segment가 자동으로 발화자를 분리합니다.
 `;
+
+/** 대사 분리 모드: dialogue를 직접 쓰지 않고 dialogue_slot으로 위치+의도만 지정 */
+export const NARRATIVE_JSON_FORMAT_INSTRUCTION_SPLIT = `
+## 출력 형식 (JSON — 대사 분리 모드)
+반드시 아래 JSON 형식으로만 출력하세요. 다른 텍스트를 JSON 앞뒤에 추가하지 마세요.
+
+⚠️ 중요: NPC 대사를 직접 작성하지 마세요. 대사가 필요한 위치에 dialogue_slot을 배치하면 시스템이 자동으로 대사를 생성합니다.
+
+{
+  "segments": [
+    { "type": "narration", "text": "환경 묘사와 플레이어 행동 서술" },
+    { "type": "narration", "text": "NPC가 등장하거나 반응하는 행동 묘사 (대사 제외)" },
+    { "type": "dialogue_slot", "speaker_id": "NPC_ID", "intent": "의도", "context": "상황 설명", "tone": "어조" },
+    { "type": "narration", "text": "대사 이후 이어지는 서술" }
+  ],
+  "choices": [
+    { "label": "선택지 텍스트", "affordance": "INVESTIGATE", "hint": "힌트" }
+  ],
+  "memories": [
+    { "category": "NPC_DETAIL", "text": "기억할 사실" }
+  ],
+  "thread": "장면 요약 (80~180자)"
+}
+
+### segment 규칙:
+- narration: 환경, 감각, 플레이어 행동, NPC 몸짓/표정 — 대사는 절대 포함하지 마세요
+- dialogue_slot: NPC 대사가 들어갈 위치 지정 (시스템이 대사를 자동 생성)
+  - speaker_id: ⚠️ 반드시 NPC_로 시작하는 NPC_ID만 사용 (예: NPC_EDRIC_VEIL, NPC_HARLUN). 한글 호칭이나 별칭을 넣지 마세요. [등장 가능 NPC 목록]에서 NPC_ID를 찾으세요.
+  - intent: WARN | INFO | QUESTION | REFUSE | GREET | REACT | HINT | THREATEN | TRADE
+  - context: 이 대사의 맥락 설명 (30~80자, 무엇에 대해 말하는지)
+  - tone: 어조 (예: "나지막이", "경계하며", "단호하게") — 선택적
+- dialogue_slot 앞에 반드시 해당 NPC의 행동/표정 묘사 narration이 있어야 합니다
+- dialogue_slot은 한 턴에 최대 2개
+
+### choices 규칙:
+- 정확히 3개. 최소 2종 이상 AFFORDANCE.
+- 이번 서술에 등장한 고유명사 포함 (구체적으로)
+
+### intent 가이드:
+- WARN: 위험 경고, 조심하라는 충고
+- INFO: 단서나 사실 전달 (knownFacts 관련)
+- QUESTION: NPC가 플레이어에게 질문
+- REFUSE: 요청 거부
+- GREET: 인사, 자기소개
+- REACT: 감정 반응 (놀라움, 한숨, 분노)
+- HINT: 간접적 암시
+- THREATEN: 위협
+- TRADE: 거래 제안
+`;
