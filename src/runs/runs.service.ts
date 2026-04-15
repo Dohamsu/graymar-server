@@ -691,15 +691,18 @@ export class RunsService {
               "파도가 방파제를 때리는 소리가 선술집 벽 너머로 둔탁하게 울렸다. '잠긴 닻'의 천장에 매달린 등불이 바람에 흔들리며, 거친 선원들의 낮은 웃음소리 사이로 나무 바닥이 삐걱거렸다. 당신은 어두운 구석에서 주변을 살피고 있었다.",
               "안개 낀 항만의 밤. 선술집 '잠긴 닻'은 축축한 공기와 시큼한 에일 냄새로 가득했다. 당신은 닳은 탁자에 팔꿈치를 괴고, 문 쪽을 등진 채 자리를 잡고 있었다. 간간이 들려오는 주사위 소리와 선원들의 투덜거림이 배경음처럼 깔렸다.",
             ];
-            const atmo = atmospheres[Math.floor(Math.random() * atmospheres.length)];
-            const hook = preset?.prologueHook ?? '부두에서 당신이 일하는 것을 봤소. 길드 안 사람은 아무도 믿을 수가 없어서… 외부 사람이 필요했소.';
+            const atmo =
+              atmospheres[Math.floor(Math.random() * atmospheres.length)];
+            const hook =
+              preset?.prologueHook ??
+              '부두에서 당신이 일하는 것을 봤습니다. 길드 안 사람은 아무도 믿을 수가 없어서… 외부 사람이 필요했습니다.';
 
             const display = [
               atmo,
               '',
               '그때, 초라한 행색의 사내가 조심스럽게 다가와 테이블 건너편에 앉았다. 끊임없이 문 쪽을 훔쳐보는 눈동자가 불안을 감추지 못했다.',
               '',
-              `@[로넨|/npc-portraits/ronen.png] "실례하겠소. 항만 노동 길드 서기관 로넨이라 하오."`,
+              `@[로넨|/npc-portraits/ronen.png] "실례합니다. 항만 노동 길드 서기관 로넨이라고 합니다."`,
               '',
               '당신은 잔을 내려놓고 사내를 살폈다. 길드 서기라기엔 너무 핏기 없는 얼굴이었다.',
               '',
@@ -707,11 +710,11 @@ export class RunsService {
               '',
               '로넨이 목소리를 한층 낮췄다.',
               '',
-              '@[로넨|/npc-portraits/ronen.png] "장부가 사라졌소. 이틀 전 밤에 사무실을 털렸는데… 공물 내역만이 아니오. 뒷거래 기록이 전부 들어 있소."',
+              '@[로넨|/npc-portraits/ronen.png] "장부가 사라졌습니다. 이틀 전 밤에 사무실을 털렸는데… 공물 내역만이 아닙니다. 뒷거래 기록이 전부 들어 있습니다."',
               '',
               '당신의 눈이 좁아졌다.',
               '',
-              '@[로넨|/npc-portraits/ronen.png] "길드 간부들이 해관청에 흘린 뇌물 목록이오. 그 장부를 찾아주시오. 보수는… 넉넉히 치르겠소."',
+              '@[로넨|/npc-portraits/ronen.png] "길드 간부들이 해관청에 흘린 뇌물 목록입니다. 그 장부를 찾아주십시오. 보수는… 넉넉히 치르겠습니다."',
               '',
               '로넨의 손이 잔 위에서 미세하게 떨렸다.',
             ].join('\n');
@@ -853,15 +856,12 @@ export class RunsService {
     const lastCharacter = lastRun
       ? {
           presetId: lastRun.presetId ?? undefined,
-          gender: (lastRun.gender ?? 'male') as 'male' | 'female',
-          characterName:
-            (lastRun.runState as RunState | null)?.characterName ?? undefined,
-          traitId:
-            (lastRun.runState as RunState | null)?.traitId ?? undefined,
-          portraitUrl:
-            (lastRun.runState as RunState | null)?.portraitUrl ?? undefined,
-          bonusStats:
-            (lastRun.runState as Record<string, unknown> | null)?.bonusStats as Record<string, number> | undefined,
+          gender: lastRun.gender ?? 'male',
+          characterName: lastRun.runState?.characterName ?? undefined,
+          traitId: lastRun.runState?.traitId ?? undefined,
+          portraitUrl: lastRun.runState?.portraitUrl ?? undefined,
+          bonusStats: (lastRun.runState as Record<string, unknown> | null)
+            ?.bonusStats as Record<string, number> | undefined,
         }
       : undefined;
 
