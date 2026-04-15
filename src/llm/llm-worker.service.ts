@@ -24,9 +24,17 @@ import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
-import { NanoDirectorService, type DirectorHint, type SenseCategory } from './nano-director.service.js';
+import {
+  NanoDirectorService,
+  type DirectorHint,
+  type SenseCategory,
+} from './nano-director.service.js';
 import { FactExtractorService } from './fact-extractor.service.js';
-import { DialogueGeneratorService, type DialogueSlot, type DialogueIntent } from './dialogue-generator.service.js';
+import {
+  DialogueGeneratorService,
+  type DialogueSlot,
+  type DialogueIntent,
+} from './dialogue-generator.service.js';
 import type { ServerResultV1, ChoiceItem } from '../db/types/index.js';
 import type {
   LlmExtractedFact,
@@ -182,7 +190,12 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         // RunState 조회
         this.db.query.runSessions.findFirst({
           where: eq(runSessions.id, pending.runId),
-          columns: { runState: true, gender: true, presetId: true, partyRunMode: true },
+          columns: {
+            runState: true,
+            gender: true,
+            presetId: true,
+            partyRunMode: true,
+          },
         }),
         // 이전 턴 LLM 선택지 (반복 방지용)
         pending.nodeType === 'LOCATION' && pending.nodeInstanceId
@@ -197,7 +210,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             })
           : Promise.resolve(null),
         // 최근 서술 (NanoDirector fallback용)
-        pending.nodeType === 'LOCATION' && pending.inputType !== 'SYSTEM' && pending.nodeInstanceId
+        pending.nodeType === 'LOCATION' &&
+        pending.inputType !== 'SYSTEM' &&
+        pending.nodeInstanceId
           ? this.db.query.turns.findMany({
               where: and(
                 eq(turns.nodeInstanceId, pending.nodeInstanceId),
@@ -229,7 +244,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       ) {
         const ap = pending.actionPlan as unknown as Record<string, unknown>;
         if (ap.partyActions && Array.isArray(ap.partyActions)) {
-          llmContext.partyActions = ap.partyActions as typeof llmContext.partyActions;
+          llmContext.partyActions =
+            ap.partyActions as typeof llmContext.partyActions;
         }
       }
 
@@ -243,7 +259,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // 3. NanoDirector / NanoEventDirector: LOCATION 턴에서 연출 지시서 생성
       let directorHint: DirectorHint | null = null;
-      const nanoEventHint = (serverResult.ui as Record<string, unknown>)?.nanoEventHint as
+      const nanoEventHint = (serverResult.ui as Record<string, unknown>)
+        ?.nanoEventHint as
         | import('./nano-event-director.service.js').NanoEventResult
         | undefined;
 
@@ -275,7 +292,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           const npcEvt = serverResult.events?.find(
             (e) => (e.data as Record<string, unknown>)?.npcId,
           );
-          const npcId = (npcEvt?.data as Record<string, unknown>)?.npcId as string | undefined;
+          const npcId = (npcEvt?.data as Record<string, unknown>)?.npcId as
+            | string
+            | undefined;
           const npcDef = npcId ? this.content.getNpc(npcId) : null;
           const npcName = npcDef?.unknownAlias ?? npcDef?.name ?? null;
 
@@ -316,7 +335,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       const altModel = process.env.LLM_ALTERNATE_MODEL;
       if (!isCombat && altModel && pending.turnNo % 2 === 0) {
         alternateModel = altModel;
-        this.logger.debug(`[ModelAlternate] turn=${pending.turnNo} → alternate model: ${altModel}`);
+        this.logger.debug(
+          `[ModelAlternate] turn=${pending.turnNo} → alternate model: ${altModel}`,
+        );
       }
 
       const callResult = await this.llmCaller.call({
@@ -348,7 +369,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           reasoningEffort,
           ...(useJsonMode ? { responseFormat: 'json_object' as const } : {}),
         });
-        if (retryResult.success && retryResult.response && (retryResult.response.completionTokens ?? 0) >= 200) {
+        if (
+          retryResult.success &&
+          retryResult.response &&
+          (retryResult.response.completionTokens ?? 0) >= 200
+        ) {
           Object.assign(callResult, retryResult);
         }
       }
@@ -382,9 +407,17 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             const dialogueSlots = jsonParsed.segments.filter(
               (s) => s.type === 'dialogue_slot' && s.speaker_id,
             );
-            if (dialogueSlots.length > 0 && process.env.LLM_DIALOGUE_SPLIT === 'true') {
-              const rs = runSession?.runState as unknown as Record<string, unknown> | undefined;
-              const npcStates = (rs?.npcStates ?? {}) as Record<string, import('../db/types/npc-state.js').NPCState>;
+            if (
+              dialogueSlots.length > 0 &&
+              process.env.LLM_DIALOGUE_SPLIT === 'true'
+            ) {
+              const rs = runSession?.runState as unknown as
+                | Record<string, unknown>
+                | undefined;
+              const npcStates = (rs?.npcStates ?? {}) as Record<
+                string,
+                import('../db/types/npc-state.js').NPCState
+              >;
               const narrativeContext = jsonParsed.segments
                 .filter((s) => s.type === 'narration')
                 .map((s) => s.text ?? '')
@@ -403,27 +436,40 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                   const fuzzy = allNpcs.find((n) => {
                     const nPart = n.npcId.replace(/^NPC_/, '').toLowerCase();
                     if (nPart === idPart) return true;
-                    if (Math.abs(nPart.length - idPart.length) > 2) return false;
+                    if (Math.abs(nPart.length - idPart.length) > 2)
+                      return false;
                     let diff = 0;
-                    for (let i = 0; i < Math.max(nPart.length, idPart.length); i++) {
+                    for (
+                      let i = 0;
+                      i < Math.max(nPart.length, idPart.length);
+                      i++
+                    ) {
                       if (nPart[i] !== idPart[i]) diff++;
                       if (diff > 2) return false;
                     }
                     return diff <= 2;
                   });
                   if (fuzzy) {
-                    this.logger.debug(`[DialogueSplit] fuzzy NPC_ID match: ${speakerId} → ${fuzzy.npcId}`);
+                    this.logger.debug(
+                      `[DialogueSplit] fuzzy NPC_ID match: ${speakerId} → ${fuzzy.npcId}`,
+                    );
                     return fuzzy.npcId;
                   }
                   // 3. NPC_ID에서 영문 부분 추출 → 한글 이름으로 변환 시도
                   // 예: NPC_HAWIK → "HAWIK" → 서술 본문에서 관련 NPC 찾기
-                  const narrationNpcs = narrativeContext.match(/[가-힣]{2,10}/g) ?? [];
+                  const narrationNpcs =
+                    narrativeContext.match(/[가-힣]{2,10}/g) ?? [];
                   for (const word of narrationNpcs) {
                     const byName = allNpcs.find(
-                      (n) => n.name === word || n.unknownAlias?.includes(word) || n.shortAlias === word,
+                      (n) =>
+                        n.name === word ||
+                        n.unknownAlias?.includes(word) ||
+                        n.shortAlias === word,
                     );
                     if (byName) {
-                      this.logger.debug(`[DialogueSplit] narrative fallback match: ${speakerId} → ${byName.npcId} (via "${word}")`);
+                      this.logger.debug(
+                        `[DialogueSplit] narrative fallback match: ${speakerId} → ${byName.npcId} (via "${word}")`,
+                      );
                       return byName.npcId;
                     }
                   }
@@ -431,11 +477,15 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 }
                 // 2. 한글 호칭이면 기존 매칭
                 const found = allNpcs.find(
-                  (n) => n.unknownAlias === speakerId || n.name === speakerId
-                    || n.shortAlias === speakerId
-                    || (n.name && n.name.length >= 2 && speakerId.includes(n.name))
-                    || n.unknownAlias?.endsWith(speakerId)
-                    || n.unknownAlias?.includes(speakerId),
+                  (n) =>
+                    n.unknownAlias === speakerId ||
+                    n.name === speakerId ||
+                    n.shortAlias === speakerId ||
+                    (n.name &&
+                      n.name.length >= 2 &&
+                      speakerId.includes(n.name)) ||
+                    n.unknownAlias?.endsWith(speakerId) ||
+                    n.unknownAlias?.includes(speakerId),
                 );
                 return found?.npcId ?? speakerId;
               };
@@ -456,7 +506,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 };
               });
 
-              const dialogueResults = await this.dialogueGenerator.generateAll(inputs);
+              const dialogueResults =
+                await this.dialogueGenerator.generateAll(inputs);
 
               // dialogue_slot → dialogue로 변환
               let slotIdx = 0;
@@ -488,7 +539,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             // JSON에서 memories 추출
             if (jsonParsed.memories) {
               for (const mem of jsonParsed.memories.slice(0, 4)) {
-                if (LLM_FACT_CATEGORY.includes(mem.category as LlmFactCategory) && mem.text?.length > 0) {
+                if (
+                  LLM_FACT_CATEGORY.includes(mem.category as LlmFactCategory) &&
+                  mem.text?.length > 0
+                ) {
                   extractedFacts.push({
                     turnNo: pending.turnNo,
                     category: mem.category as LlmFactCategory,
@@ -505,30 +559,58 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             // JSON에서 choices 추출
             if (jsonParsed.choices && pending.nodeType === 'LOCATION') {
               const AFFORDANCE_SET = new Set([
-                'INVESTIGATE', 'PERSUADE', 'SNEAK', 'BRIBE', 'THREATEN',
-                'HELP', 'STEAL', 'FIGHT', 'OBSERVE', 'TRADE', 'TALK', 'SEARCH',
+                'INVESTIGATE',
+                'PERSUADE',
+                'SNEAK',
+                'BRIBE',
+                'THREATEN',
+                'HELP',
+                'STEAL',
+                'FIGHT',
+                'OBSERVE',
+                'TRADE',
+                'TALK',
+                'SEARCH',
               ]);
               const parsed: ChoiceItem[] = jsonParsed.choices
-                .map((c: { label?: string; affordance?: string; hint?: string }) => {
-                  // LLM이 "label|affordance|hint" 파이프 구분으로 출력하는 경우 분리
-                  let label = c.label ?? '';
-                  let affordance = c.affordance ?? '';
-                  let hint = c.hint ?? '';
-                  if (label.includes('|')) {
-                    const parts = label.split('|');
-                    label = parts[0].trim();
-                    if (parts[1] && AFFORDANCE_SET.has(parts[1].trim())) affordance = parts[1].trim();
-                    if (parts[2]) hint = parts[2].trim();
-                  }
-                  return { label, affordance, hint };
-                })
-                .filter((c: { label: string; affordance: string }) => c.label && AFFORDANCE_SET.has(c.affordance))
+                .map(
+                  (c: {
+                    label?: string;
+                    affordance?: string;
+                    hint?: string;
+                  }) => {
+                    // LLM이 "label|affordance|hint" 파이프 구분으로 출력하는 경우 분리
+                    let label = c.label ?? '';
+                    let affordance = c.affordance ?? '';
+                    let hint = c.hint ?? '';
+                    if (label.includes('|')) {
+                      const parts = label.split('|');
+                      label = parts[0].trim();
+                      if (parts[1] && AFFORDANCE_SET.has(parts[1].trim()))
+                        affordance = parts[1].trim();
+                      if (parts[2]) hint = parts[2].trim();
+                    }
+                    return { label, affordance, hint };
+                  },
+                )
+                .filter(
+                  (c: { label: string; affordance: string }) =>
+                    c.label && AFFORDANCE_SET.has(c.affordance),
+                )
                 .slice(0, 3)
-                .map((c: { label: string; affordance: string; hint: string }, idx: number) => ({
-                  id: `choice_${idx}`,
-                  label: c.label,
-                  action: { type: 'CHOICE' as const, payload: { affordance: c.affordance, hint: c.hint } },
-                }));
+                .map(
+                  (
+                    c: { label: string; affordance: string; hint: string },
+                    idx: number,
+                  ) => ({
+                    id: `choice_${idx}`,
+                    label: c.label,
+                    action: {
+                      type: 'CHOICE' as const,
+                      payload: { affordance: c.affordance, hint: c.hint },
+                    },
+                  }),
+                );
               if (parsed.length > 0) {
                 parsed.push({
                   id: 'go_hub',
@@ -538,15 +620,25 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 llmChoices = parsed;
               }
             }
-            this.logger.debug(`[JsonMode] turn=${pending.turnNo} segments=${jsonParsed.segments.length} parsed OK`);
+            this.logger.debug(
+              `[JsonMode] turn=${pending.turnNo} segments=${jsonParsed.segments.length} parsed OK`,
+            );
           } else {
-            this.logger.warn(`[JsonMode] turn=${pending.turnNo} JSON parse failed, falling back to prose pipeline`);
+            this.logger.warn(
+              `[JsonMode] turn=${pending.turnNo} JSON parse failed, falling back to prose pipeline`,
+            );
             // JSON 파싱 실패 → JSON 잔해에서 서술 텍스트만 추출 (응급 처리)
             if (/"segments"/.test(narrative)) {
-              const textMatches = [...narrative.matchAll(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g)];
+              const textMatches = [
+                ...narrative.matchAll(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g),
+              ];
               if (textMatches.length > 0) {
-                narrative = textMatches.map(m => m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')).join('\n');
-                this.logger.warn(`[JsonMode] Extracted ${textMatches.length} text fields from JSON residue`);
+                narrative = textMatches
+                  .map((m) => m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'))
+                  .join('\n');
+                this.logger.warn(
+                  `[JsonMode] Extracted ${textMatches.length} text fields from JSON residue`,
+                );
               }
             }
           }
@@ -555,132 +647,137 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         // 4-a-0. [MEMORY] 태그 파싱 및 스트립 (최대 4개, 80자)
         // JSON 모드에서는 memories/thread/choices를 이미 추출했으므로 산문 태그 파싱 스킵
         if (!jsonModeParsed) {
-        const memoryMatches = [
-          ...narrative.matchAll(
-            /\[MEMORY:(\w+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
-          ),
-        ];
-        for (const m of memoryMatches.slice(0, 4)) {
-          const category = m[1];
-          const text = m[2].trim().slice(0, 80);
-          if (
-            LLM_FACT_CATEGORY.includes(category as LlmFactCategory) &&
-            text.length > 0
-          ) {
-            extractedFacts.push({
-              turnNo: pending.turnNo,
-              category: category as LlmFactCategory,
-              text,
-              importance: 0.7,
-            });
-          }
-        }
-        // 4-a-0b. [MEMORY:NPC_KNOWLEDGE:NPC_ID] 파싱 → npcKnowledge 저장
-        const npcKnowledgeMatches = [
-          ...narrative.matchAll(
-            /\[MEMORY:NPC_KNOWLEDGE:([^\]]+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
-          ),
-        ];
-        if (npcKnowledgeMatches.length > 0) {
-          try {
-            const memRow = await this.db.query.runMemories.findFirst({
-              where: eq(runMemories.runId, pending.runId),
-            });
-            if (memRow) {
-              const structured =
-                memRow.structuredMemory ?? createEmptyStructuredMemory();
-              {
-                const knowledge = structured.npcKnowledge ?? {};
-                for (const km of npcKnowledgeMatches.slice(0, 3)) {
-                  const npcId = km[1];
-                  const text = km[2].trim().slice(0, 80);
-                  if (!text) continue;
-                  const entries = knowledge[npcId] ?? [];
-                  entries.push({
-                    factId: `nk_llm_${pending.turnNo}_${npcId}`,
-                    text,
-                    source: 'WITNESSED' as const,
-                    turnNo: pending.turnNo,
-                    locationId: '',
-                    importance: 0.7,
-                  });
-                  if (entries.length > 5) {
-                    entries.sort(
-                      (a, b) =>
-                        b.importance - a.importance || b.turnNo - a.turnNo,
-                    );
-                    entries.length = 5;
-                  }
-                  knowledge[npcId] = entries;
-                }
-                structured.npcKnowledge = knowledge;
-                await this.db
-                  .update(runMemories)
-                  .set({ structuredMemory: structured, updatedAt: new Date() })
-                  .where(eq(runMemories.runId, pending.runId));
-              }
+          const memoryMatches = [
+            ...narrative.matchAll(
+              /\[MEMORY:(\w+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
+            ),
+          ];
+          for (const m of memoryMatches.slice(0, 4)) {
+            const category = m[1];
+            const text = m[2].trim().slice(0, 80);
+            if (
+              LLM_FACT_CATEGORY.includes(category as LlmFactCategory) &&
+              text.length > 0
+            ) {
+              extractedFacts.push({
+                turnNo: pending.turnNo,
+                category: category as LlmFactCategory,
+                text,
+                importance: 0.7,
+              });
             }
-          } catch (err) {
-            this.logger.warn(
-              `Failed to save NPC_KNOWLEDGE for turn ${pending.turnNo}: ${err}`,
+          }
+          // 4-a-0b. [MEMORY:NPC_KNOWLEDGE:NPC_ID] 파싱 → npcKnowledge 저장
+          const npcKnowledgeMatches = [
+            ...narrative.matchAll(
+              /\[MEMORY:NPC_KNOWLEDGE:([^\]]+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
+            ),
+          ];
+          if (npcKnowledgeMatches.length > 0) {
+            try {
+              const memRow = await this.db.query.runMemories.findFirst({
+                where: eq(runMemories.runId, pending.runId),
+              });
+              if (memRow) {
+                const structured =
+                  memRow.structuredMemory ?? createEmptyStructuredMemory();
+                {
+                  const knowledge = structured.npcKnowledge ?? {};
+                  for (const km of npcKnowledgeMatches.slice(0, 3)) {
+                    const npcId = km[1];
+                    const text = km[2].trim().slice(0, 80);
+                    if (!text) continue;
+                    const entries = knowledge[npcId] ?? [];
+                    entries.push({
+                      factId: `nk_llm_${pending.turnNo}_${npcId}`,
+                      text,
+                      source: 'WITNESSED' as const,
+                      turnNo: pending.turnNo,
+                      locationId: '',
+                      importance: 0.7,
+                    });
+                    if (entries.length > 5) {
+                      entries.sort(
+                        (a, b) =>
+                          b.importance - a.importance || b.turnNo - a.turnNo,
+                      );
+                      entries.length = 5;
+                    }
+                    knowledge[npcId] = entries;
+                  }
+                  structured.npcKnowledge = knowledge;
+                  await this.db
+                    .update(runMemories)
+                    .set({
+                      structuredMemory: structured,
+                      updatedAt: new Date(),
+                    })
+                    .where(eq(runMemories.runId, pending.runId));
+                }
+              }
+            } catch (err) {
+              this.logger.warn(
+                `Failed to save NPC_KNOWLEDGE for turn ${pending.turnNo}: ${err}`,
+              );
+            }
+          }
+
+          // 서술 본문에서 [MEMORY] 태그 제거 (NPC_KNOWLEDGE 포함, 한국어 NPC 이름 대응)
+          narrative = narrative
+            .replace(/\s*\[MEMORY:[^\]]+\][\s\S]*?\[\/MEMORY\]/g, '')
+            .trim();
+
+          // 4-a. [THREAD] 태그 파싱 및 스트립
+          const threadMatch = narrative.match(
+            /\[THREAD\]([\s\S]*?)\[\/THREAD\]/,
+          );
+          if (threadMatch) {
+            threadEntry = threadMatch[1].trim().slice(0, 200);
+            narrative = narrative
+              .replace(/\s*\[THREAD\][\s\S]*?\[\/THREAD\]\s*/g, '')
+              .trim();
+          } else {
+            // Fallback: serverResult 기반 구조화 요약
+            threadEntry = this.buildFallbackThread(
+              serverResult,
+              pending.rawInput,
             );
           }
-        }
 
-        // 서술 본문에서 [MEMORY] 태그 제거 (NPC_KNOWLEDGE 포함, 한국어 NPC 이름 대응)
-        narrative = narrative
-          .replace(/\s*\[MEMORY:[^\]]+\][\s\S]*?\[\/MEMORY\]/g, '')
-          .trim();
-
-        // 4-a. [THREAD] 태그 파싱 및 스트립
-        const threadMatch = narrative.match(/\[THREAD\]([\s\S]*?)\[\/THREAD\]/);
-        if (threadMatch) {
-          threadEntry = threadMatch[1].trim().slice(0, 200);
-          narrative = narrative
-            .replace(/\s*\[THREAD\][\s\S]*?\[\/THREAD\]\s*/g, '')
-            .trim();
-        } else {
-          // Fallback: serverResult 기반 구조화 요약
-          threadEntry = this.buildFallbackThread(
-            serverResult,
-            pending.rawInput,
-          );
-        }
-
-        // 4-a-3. [CHOICES] 파싱 (LOCATION 턴만)
-        if (pending.nodeType === 'LOCATION') {
-          const choiceResult = this.parseAndValidateChoices(
-            narrative,
-            pending.turnNo,
-          );
-          narrative = choiceResult.cleanedNarrative;
-          if (choiceResult.choices) {
-            choiceResult.choices.push({
-              id: 'go_hub',
-              label: "'잠긴 닻' 선술집으로 돌아간다",
-              action: { type: 'CHOICE', payload: { returnToHub: true } },
-            });
-            llmChoices = choiceResult.choices;
+          // 4-a-3. [CHOICES] 파싱 (LOCATION 턴만)
+          if (pending.nodeType === 'LOCATION') {
+            const choiceResult = this.parseAndValidateChoices(
+              narrative,
+              pending.turnNo,
+            );
+            narrative = choiceResult.cleanedNarrative;
+            if (choiceResult.choices) {
+              choiceResult.choices.push({
+                id: 'go_hub',
+                label: "'잠긴 닻' 선술집으로 돌아간다",
+                action: { type: 'CHOICE', payload: { returnToHub: true } },
+              });
+              llmChoices = choiceResult.choices;
+            }
           }
-        }
 
-        // 4-a-2. 방어적 출력 클리닝: LLM이 입력 태그를 복사하거나 자체 생성한 대괄호 태그 제거
-        // [이야기 이정표], [서사 이정표], [NPC 관계] 등 어떤 대괄호 태그든 산문에 포함되면 안 됨
-        narrative = narrative
-          .replace(/\n*\[이야기 이정표\][\s\S]*$/g, '')
-          .replace(/\n*\[서사 이정표\][\s\S]*$/g, '')
-          .replace(/\n*\[NPC 관계\][\s\S]*$/g, '')
-          .replace(/\n*\[사건 일지\][\s\S]*$/g, '')
-          .replace(/\n*\[기억된 사실\][\s\S]*$/g, '')
-          .replace(/\n*\[이야기 요약\][\s\S]*$/g, '')
-          .replace(/\n*\[세계 상태\][\s\S]*$/g, '')
-          .replace(/\n*\[상황 요약\][\s\S]*$/g, '')
-          .replace(/\n*\[선택지\][\s\S]*$/g, '')
-          .replace(/\n*\[CHOICES\][\s\S]*?\[\/CHOICES\]/g, '')
-          .replace(/\n*\[CHOICES\][\s\S]*$/g, '')
-          // 방어적 최종 패스: 닫는 태그 없이 남은 고아 태그 강제 제거
-          .replace(/\[\/?(?:MEMORY|THREAD|CHOICES)[^\]]*\]/g, '')
-          .trim();
+          // 4-a-2. 방어적 출력 클리닝: LLM이 입력 태그를 복사하거나 자체 생성한 대괄호 태그 제거
+          // [이야기 이정표], [서사 이정표], [NPC 관계] 등 어떤 대괄호 태그든 산문에 포함되면 안 됨
+          narrative = narrative
+            .replace(/\n*\[이야기 이정표\][\s\S]*$/g, '')
+            .replace(/\n*\[서사 이정표\][\s\S]*$/g, '')
+            .replace(/\n*\[NPC 관계\][\s\S]*$/g, '')
+            .replace(/\n*\[사건 일지\][\s\S]*$/g, '')
+            .replace(/\n*\[기억된 사실\][\s\S]*$/g, '')
+            .replace(/\n*\[이야기 요약\][\s\S]*$/g, '')
+            .replace(/\n*\[세계 상태\][\s\S]*$/g, '')
+            .replace(/\n*\[상황 요약\][\s\S]*$/g, '')
+            .replace(/\n*\[선택지\][\s\S]*$/g, '')
+            .replace(/\n*\[CHOICES\][\s\S]*?\[\/CHOICES\]/g, '')
+            .replace(/\n*\[CHOICES\][\s\S]*$/g, '')
+            // 방어적 최종 패스: 닫는 태그 없이 남은 고아 태그 강제 제거
+            .replace(/\[\/?(?:MEMORY|THREAD|CHOICES)[^\]]*\]/g, '')
+            .trim();
         } // end if (!jsonModeParsed) — 산문 태그 파싱
 
         // 4-a-2b. 플레이어 대사 큰따옴표 방어 — LLM이 플레이어 대사를 큰따옴표로 쓰면 홑따옴표로 치환
@@ -735,8 +832,14 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             .replace(/플레이어는\s/g, '당신은 ')
             .replace(/플레이어를\s/g, '당신을 ')
             // "방금 전 NPC에게 X를 시도하여 성공/실패한 직후였다" 패턴 제거
-            .replace(/당신이\s?방금\s?전\s?[^.]*?시도하여\s?(?:성공|실패)[^.]*?직후였다\.\s?/g, '')
-            .replace(/[^.]*?를\s시도하여\s(?:성공|실패)\s?(?:한|했던)\s?직후[^.]*?\.\s?/g, '')
+            .replace(
+              /당신이\s?방금\s?전\s?[^.]*?시도하여\s?(?:성공|실패)[^.]*?직후였다\.\s?/g,
+              '',
+            )
+            .replace(
+              /[^.]*?를\s시도하여\s(?:성공|실패)\s?(?:한|했던)\s?직후[^.]*?\.\s?/g,
+              '',
+            )
             // "(활성 단서: ...)" 시스템 메모 노출 제거
             .replace(/\(활성 단서:[^)]*\)\s?/g, '');
           if (narrative !== beforeMeta) {
@@ -847,17 +950,25 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         // JSON 모드에서는 스킵 (JSON 조립 결과의 첫 segment를 임의 재편집 방지)
         if (!jsonModeParsed) {
           const trimmedStart = narrative.trimStart();
-          if (trimmedStart.startsWith('당신은 ') || trimmedStart.startsWith('당신이 ')) {
+          if (
+            trimmedStart.startsWith('당신은 ') ||
+            trimmedStart.startsWith('당신이 ')
+          ) {
             if (directorHint?.opening) {
               // NanoDirector opening으로 첫 문장 교체
               const firstSentenceEnd = trimmedStart.search(/[.!?。]\s/);
               if (firstSentenceEnd > 0) {
-                narrative = directorHint.opening + ' ' + trimmedStart.slice(firstSentenceEnd + 2).trimStart();
+                narrative =
+                  directorHint.opening +
+                  ' ' +
+                  trimmedStart.slice(firstSentenceEnd + 2).trimStart();
                 violations.push('AUTO_FIX: OPENING_REPLACE(director)');
               }
             } else {
               // Fallback: "당신은 " / "당신이 " 접두사만 제거
-              narrative = trimmedStart.replace(/^당신은\s+/, '').replace(/^당신이\s+/, '');
+              narrative = trimmedStart
+                .replace(/^당신은\s+/, '')
+                .replace(/^당신이\s+/, '');
               violations.push('AUTO_FIX: OPENING_STRIP(당신은/당신이)');
             }
           }
@@ -939,28 +1050,40 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       // 서술에 실제 등장한 NPC ID 수집 (소개 카드 갱신용, 5.9에서 사용)
       let _appearedNpcIds = new Set<string>();
       let _portraits: Record<string, string> = {};
-      let _npcStatesRef: Record<string, import('../db/types/npc-state.js').NPCState> | undefined;
-      let _getNpcDisplayNameFn: typeof import('../db/types/npc-state.js').getNpcDisplayName | undefined;
+      let _npcStatesRef:
+        | Record<string, import('../db/types/npc-state.js').NPCState>
+        | undefined;
+      let _getNpcDisplayNameFn:
+        | typeof import('../db/types/npc-state.js').getNpcDisplayName
+        | undefined;
 
       if (runSession?.runState) {
         const rs = runSession.runState as unknown as Record<string, unknown>;
-        const npcStates = rs.npcStates as Record<string, import('../db/types/npc-state.js').NPCState> | undefined;
+        const npcStates = rs.npcStates as
+          | Record<string, import('../db/types/npc-state.js').NPCState>
+          | undefined;
         if (npcStates) {
           _npcStatesRef = npcStates;
-          const { sanitizeNpcNamesForTurn, getNpcDisplayName } = await import('../db/types/npc-state.js');
+          const { sanitizeNpcNamesForTurn, getNpcDisplayName } =
+            await import('../db/types/npc-state.js');
 
           // Step A: nano LLM 1차 발화자 판단 + 서버 regex fallback
           // JSON 모드에서 성공적으로 파싱된 경우 마커가 이미 삽입되어 있으므로 스킵
           // JSON 잔해 감지: "segments" 키가 있으면 JSON fallback으로 간주하여 마커 매칭 스킵
           const isJsonResidue = /"segments"\s*:/.test(narrative);
-          const hasDialogue = !jsonModeParsed && !isJsonResidue && /["\u201C\u201D]/.test(narrative);
-          this.logger.debug(`[DialogueMarker] turn=${pending.turnNo} hasDialogue=${hasDialogue} len=${narrative.length}`);
+          const hasDialogue =
+            !jsonModeParsed &&
+            !isJsonResidue &&
+            /["\u201C\u201D]/.test(narrative);
+          this.logger.debug(
+            `[DialogueMarker] turn=${pending.turnNo} hasDialogue=${hasDialogue} len=${narrative.length}`,
+          );
           if (hasDialogue) {
             // A-0: 이벤트에서 NPC 추출 (fallback + 후보 확장용)
             const eventNpcIds: string[] = [];
             let fallbackNpcId: string | undefined;
             for (const evt of serverResult.events ?? []) {
-              const data = evt.data as Record<string, unknown> | undefined;
+              const data = evt.data;
               const nid = data?.npcId as string | undefined;
               if (nid) {
                 eventNpcIds.push(nid);
@@ -970,37 +1093,64 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
             // NPC 목록 구성 (nano LLM + regex 공통)
             const npcEntries = Object.entries(npcStates)
-              .concat(eventNpcIds.filter(id => !npcStates[id]).map(id => [id, {} as never]))
+              .concat(
+                eventNpcIds
+                  .filter((id) => !npcStates[id])
+                  .map((id) => [id, {} as never]),
+              )
               .slice(0, 15);
             const npcList = npcEntries
               .map(([id]) => {
-                const def = this.content.getNpc(id as string);
-                return def ? `${id}: ${def.unknownAlias || def.name} (${def.role || '?'})` : null;
+                const def = this.content.getNpc(id);
+                return def
+                  ? `${id}: ${def.unknownAlias || def.name} (${def.role || '?'})`
+                  : null;
               })
               .filter(Boolean)
               .join('\n');
             // 후보 NPC 별칭 목록 (nano 결과 검증용)
             const npcAliasNames: string[] = npcEntries.flatMap(([id]) => {
-              const def = this.content.getNpc(id as string);
+              const def = this.content.getNpc(id);
               if (!def) return [];
-              return [def.unknownAlias, def.name, ...(def.aliases ?? [])].filter(Boolean) as string[];
+              return [
+                def.unknownAlias,
+                def.name,
+                ...(def.aliases ?? []),
+              ].filter(Boolean) as string[];
             });
 
             // 대사 추출 (마커 없는 큰따옴표 대사, 8글자+ — 더듬기/짧은 인용 제외)
             const dialogueRegex = /["\u201C]([^"\u201D]{8,}?)["\u201D]/g;
-            const dialogueEntries: Array<{ index: number; full: string; text: string; before: string; after: string }> = [];
+            const dialogueEntries: Array<{
+              index: number;
+              full: string;
+              text: string;
+              before: string;
+              after: string;
+            }> = [];
             let dm: RegExpExecArray | null;
             while ((dm = dialogueRegex.exec(narrative)) !== null) {
               // 이미 @마커가 붙은 대사는 skip
-              const beforeCheck = narrative.slice(Math.max(0, dm.index - 30), dm.index);
+              const beforeCheck = narrative.slice(
+                Math.max(0, dm.index - 30),
+                dm.index,
+              );
               if (/@(?:[A-Z_]+|\[[^\]]*\])\s*$/.test(beforeCheck)) continue;
               // 인용 조사 필터 (라는/라고 등)
-              const afterCheck = narrative.slice(dm.index + dm[0].length, dm.index + dm[0].length + 6);
-              if (/^(?:라는|라고|란|이라는|이라고|라며|라면서)/.test(afterCheck)) continue;
+              const afterCheck = narrative.slice(
+                dm.index + dm[0].length,
+                dm.index + dm[0].length + 6,
+              );
+              if (
+                /^(?:라는|라고|란|이라는|이라고|라며|라면서)/.test(afterCheck)
+              )
+                continue;
               // rawInput 유사도 필터
               if (pending.rawInput && pending.rawInput.length >= 4) {
-                const overlap = pending.rawInput.length <= dm[1].length
-                  ? dm[1].includes(pending.rawInput) : pending.rawInput.includes(dm[1]);
+                const overlap =
+                  pending.rawInput.length <= dm[1].length
+                    ? dm[1].includes(pending.rawInput)
+                    : pending.rawInput.includes(dm[1]);
                 if (overlap) continue;
               }
 
@@ -1008,8 +1158,15 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 index: dm.index,
                 full: dm[0],
                 text: dm[1].slice(0, 50),
-                before: narrative.slice(Math.max(0, dm.index - 120), dm.index).trim(),
-                after: narrative.slice(dm.index + dm[0].length, Math.min(narrative.length, dm.index + dm[0].length + 60)).trim(),
+                before: narrative
+                  .slice(Math.max(0, dm.index - 120), dm.index)
+                  .trim(),
+                after: narrative
+                  .slice(
+                    dm.index + dm[0].length,
+                    Math.min(narrative.length, dm.index + dm[0].length + 60),
+                  )
+                  .trim(),
               });
             }
 
@@ -1019,9 +1176,12 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             if (dialogueEntries.length > 0 && npcList) {
               try {
                 const lightConfig = this.configService.getLightModelConfig();
-                const dialoguePrompt = dialogueEntries.map((d, idx) =>
-                  `[${idx + 1}] 앞: ${d.before.slice(-120)}\n    대사: "${d.text}"\n    뒤: ${d.after.slice(0, 40)}`,
-                ).join('\n\n');
+                const dialoguePrompt = dialogueEntries
+                  .map(
+                    (d, idx) =>
+                      `[${idx + 1}] 앞: ${d.before.slice(-120)}\n    대사: "${d.text}"\n    뒤: ${d.after.slice(0, 40)}`,
+                  )
+                  .join('\n\n');
 
                 const nanoResult = await this.llmCaller.call({
                   messages: [
@@ -1071,7 +1231,10 @@ ${npcList}`,
                       }
 
                       // NPC DB 매칭 — 정확 매칭만 (fuzzy includes 제거 → 오매칭 방지)
-                      if (!/^NPC_[A-Z_0-9]+$/.test(answer) && answer.length >= 2) {
+                      if (
+                        !/^NPC_[A-Z_0-9]+$/.test(answer) &&
+                        answer.length >= 2
+                      ) {
                         const allNpcs = this.content.getAllNpcs();
                         const dbMatch = allNpcs.find(
                           (n) => n.unknownAlias === answer || n.name === answer,
@@ -1085,7 +1248,8 @@ ${npcList}`,
                         for (let dup = 3; dup <= half; dup++) {
                           const prefix = answer.slice(0, dup);
                           if (answer.slice(dup).startsWith(prefix)) {
-                            answer = answer.slice(dup); break;
+                            answer = answer.slice(dup);
+                            break;
                           }
                         }
                       }
@@ -1099,15 +1263,20 @@ ${npcList}`,
                         } else if (/[가-힣]/.test(answer)) {
                           // 한글 호칭 → NPC 후보 별칭과 대조하여 검증
                           const matchesCandidate = npcAliasNames.some(
-                            (name: string) => answer.includes(name) || name.includes(answer),
+                            (name: string) =>
+                              answer.includes(name) || name.includes(answer),
                           );
                           if (matchesCandidate) {
                             assignments.set(idx, answer);
                           } else {
-                            this.logger.debug(`[NanoSpeaker] Rejected "${answer}" — not in candidate aliases`);
+                            this.logger.debug(
+                              `[NanoSpeaker] Rejected "${answer}" — not in candidate aliases`,
+                            );
                           }
                         } else {
-                          this.logger.debug(`[NanoSpeaker] Rejected "${answer}" — not Korean`);
+                          this.logger.debug(
+                            `[NanoSpeaker] Rejected "${answer}" — not Korean`,
+                          );
                         }
                       }
                     }
@@ -1116,17 +1285,24 @@ ${npcList}`,
                   // A-1.5: 미할당 대사 서브 LLM 2차 검증
                   const unassignedIndices = dialogueEntries
                     .map((_, i) => i)
-                    .filter(i => !assignments.has(i));
+                    .filter((i) => !assignments.has(i));
 
-                  if (unassignedIndices.length > 0 && unassignedIndices.length <= 4) {
+                  if (
+                    unassignedIndices.length > 0 &&
+                    unassignedIndices.length <= 4
+                  ) {
                     try {
                       const fallbackModelConfig = this.configService.get();
-                      const subModel = fallbackModelConfig.fallbackModel || 'openai/gpt-4.1-mini';
+                      const subModel =
+                        fallbackModelConfig.fallbackModel ||
+                        'openai/gpt-4.1-mini';
 
-                      const unassignedPrompt = unassignedIndices.map(i => {
-                        const d = dialogueEntries[i];
-                        return `[${i + 1}] 앞: ${d.before.slice(-200)}\n    대사: "${d.text}"\n    뒤: ${d.after.slice(0, 80)}`;
-                      }).join('\n\n');
+                      const unassignedPrompt = unassignedIndices
+                        .map((i) => {
+                          const d = dialogueEntries[i];
+                          return `[${i + 1}] 앞: ${d.before.slice(-200)}\n    대사: "${d.text}"\n    뒤: ${d.after.slice(0, 80)}`;
+                        })
+                        .join('\n\n');
 
                       const verifyResult = await this.llmCaller.call({
                         messages: [
@@ -1157,9 +1333,12 @@ ${npcList}`,
 
                       if (verifyResult.success && verifyResult.response?.text) {
                         let subResolved = 0;
-                        const subLines = verifyResult.response.text.trim().split('\n');
+                        const subLines = verifyResult.response.text
+                          .trim()
+                          .split('\n');
                         for (const subLine of subLines) {
-                          const subMatch = subLine.match(/^(\d+)\s*[=:]\s*(.+)/);
+                          const subMatch =
+                            subLine.match(/^(\d+)\s*[=:]\s*(.+)/);
                           if (!subMatch) continue;
                           const subIdx = parseInt(subMatch[1], 10) - 1;
                           if (!unassignedIndices.includes(subIdx)) continue;
@@ -1168,10 +1347,15 @@ ${npcList}`,
                             subAnswer = subAnswer.split(/[,\n]/)[0].trim();
                           }
                           // NPC DB 매칭
-                          if (!/^NPC_[A-Z_0-9]+$/.test(subAnswer) && subAnswer.length >= 2) {
+                          if (
+                            !/^NPC_[A-Z_0-9]+$/.test(subAnswer) &&
+                            subAnswer.length >= 2
+                          ) {
                             const allNpcs = this.content.getAllNpcs();
                             const dbMatch = allNpcs.find(
-                              (n) => n.unknownAlias === subAnswer || n.name === subAnswer,
+                              (n) =>
+                                n.unknownAlias === subAnswer ||
+                                n.name === subAnswer,
                             );
                             if (dbMatch) subAnswer = dbMatch.npcId;
                           }
@@ -1179,9 +1363,14 @@ ${npcList}`,
                           if (/^NPC_[A-Z_0-9]+$/.test(subAnswer)) {
                             assignments.set(subIdx, subAnswer);
                             subResolved++;
-                          } else if (/[가-힣]/.test(subAnswer) && subAnswer.length >= 2) {
+                          } else if (
+                            /[가-힣]/.test(subAnswer) &&
+                            subAnswer.length >= 2
+                          ) {
                             const matchesCandidate = npcAliasNames.some(
-                              (name: string) => subAnswer.includes(name) || name.includes(subAnswer),
+                              (name: string) =>
+                                subAnswer.includes(name) ||
+                                name.includes(subAnswer),
                             );
                             if (matchesCandidate) {
                               assignments.set(subIdx, subAnswer);
@@ -1194,7 +1383,9 @@ ${npcList}`,
                         );
                       }
                     } catch (subErr) {
-                      this.logger.warn(`Sub-LLM verify failed: ${subErr instanceof Error ? subErr.message : subErr}`);
+                      this.logger.warn(
+                        `Sub-LLM verify failed: ${subErr instanceof Error ? subErr.message : subErr}`,
+                      );
                     }
                   }
 
@@ -1205,17 +1396,23 @@ ${npcList}`,
                     if (!answer) continue;
 
                     // 삽입 위치 검증: 대사 따옴표 직전이어야 함 (대사 내부 끼임 방지)
-                    const charBefore = entry.index > 0 ? narrative[entry.index - 1] : '';
+                    const charBefore =
+                      entry.index > 0 ? narrative[entry.index - 1] : '';
                     // 직전 문자가 따옴표 닫힘이면 이전 대사 끝 → 마커가 대사 사이에 끼는 상황 → skip
                     if (charBefore === '"' || charBefore === '\u201D') {
-                      this.logger.debug(`[NanoSpeaker] Skip marker at idx=${entry.index} — adjacent to closing quote`);
+                      this.logger.debug(
+                        `[NanoSpeaker] Skip marker at idx=${entry.index} — adjacent to closing quote`,
+                      );
                       continue;
                     }
 
                     const marker = /^NPC_[A-Z_0-9]+$/.test(answer)
                       ? `@${answer} `
                       : `@[${answer}] `;
-                    narrative = narrative.slice(0, entry.index) + marker + narrative.slice(entry.index);
+                    narrative =
+                      narrative.slice(0, entry.index) +
+                      marker +
+                      narrative.slice(entry.index);
                   }
 
                   nanoSuccess = assignments.size > 0;
@@ -1224,15 +1421,25 @@ ${npcList}`,
                   );
                 }
               } catch (err) {
-                this.logger.warn(`Nano speaker batch failed, falling back to regex: ${err instanceof Error ? err.message : err}`);
+                this.logger.warn(
+                  `Nano speaker batch failed, falling back to regex: ${err instanceof Error ? err.message : err}`,
+                );
                 nanoSuccess = false;
               }
             }
 
             // A-2: nano 실패 시 서버 regex fallback
             if (!nanoSuccess) {
-              this.logger.debug(`[DialogueMarker] Falling back to regex pipeline for turn=${pending.turnNo}`);
-              const regexResult = this.dialogueMarker.insertMarkers(narrative, npcStates, fallbackNpcId, eventNpcIds, pending.rawInput ?? undefined);
+              this.logger.debug(
+                `[DialogueMarker] Falling back to regex pipeline for turn=${pending.turnNo}`,
+              );
+              const regexResult = this.dialogueMarker.insertMarkers(
+                narrative,
+                npcStates,
+                fallbackNpcId,
+                eventNpcIds,
+                pending.rawInput ?? undefined,
+              );
               narrative = regexResult.text;
               // 남은 @[UNMATCHED] 제거
               narrative = narrative.replace(/@\[UNMATCHED\]\s*/g, '');
@@ -1249,16 +1456,20 @@ ${npcList}`,
           narrative = narrative.replace(/@\[[^\]]{31,}/g, '');
 
           // Step B: @NPC_ID / @[NPC_ID] / @[RONEN] → @[표시이름|초상화URL] 변환
-          const { NPC_PORTRAITS: portraits } = await import('../db/types/npc-portraits.js');
+          const { NPC_PORTRAITS: portraits } =
+            await import('../db/types/npc-portraits.js');
           const { isNameRevealed } = await import('../db/types/npc-state.js');
 
           // B-0: 잔여물 제거
           narrative = narrative.replace(/@마커/g, '');
           narrative = narrative.replace(/@\[서술속호칭\]/g, '');
           narrative = narrative.replace(/@\[문맥속_호칭\]/g, '');
-          narrative = narrative.replace(/@unknownAlias\s*/g, '');  // LLM이 변수명 출력
+          narrative = narrative.replace(/@unknownAlias\s*/g, ''); // LLM이 변수명 출력
           // 일본어/중국어 마커 제거 (Gemma4 다국어 출력 방어)
-          narrative = narrative.replace(/@[\u3000-\u9FFF\uFF00-\uFFEF_]+\s*(?=["\u201C\u201D])/g, '');
+          narrative = narrative.replace(
+            /@[\u3000-\u9FFF\uFF00-\uFFEF_]+\s*(?=["\u201C\u201D])/g,
+            '',
+          );
 
           // B-0.5: @NPC_한글 또는 @한글_한글 → NPC DB lookup으로 변환 or 제거
           narrative = narrative.replace(
@@ -1267,18 +1478,23 @@ ${npcList}`,
               const cleanName = koreanName.replace(/_/g, ' ').trim();
               const allNpcs = this.content.getAllNpcs();
               const found = allNpcs.find(
-                (n) => n.unknownAlias === cleanName || n.name === cleanName
-                  || n.shortAlias === cleanName
-                  || n.unknownAlias?.endsWith(cleanName)
-                  || n.unknownAlias?.includes(cleanName),
+                (n) =>
+                  n.unknownAlias === cleanName ||
+                  n.name === cleanName ||
+                  n.shortAlias === cleanName ||
+                  n.unknownAlias?.endsWith(cleanName) ||
+                  n.unknownAlias?.includes(cleanName),
               );
               return found ? `@${found.npcId} ` : '';
             },
           );
 
           // 초상화 표시 판정: 초상화가 존재하면 항상 표시 (소개 턴에서도 초상화는 보여줌)
-          const shouldShowPortrait = (npcId: string, _npcState: import('../db/types/npc-state.js').NPCState | undefined): boolean => {
-            return !!(portraits[npcId]);
+          const shouldShowPortrait = (
+            npcId: string,
+            _npcState: import('../db/types/npc-state.js').NPCState | undefined,
+          ): boolean => {
+            return !!portraits[npcId];
           };
 
           // 서술에 실제 등장한 NPC ID 수집 (소개 카드 갱신용)
@@ -1295,8 +1511,10 @@ ${npcList}`,
               appearedNpcIds.add(npcId);
               const displayName = npcState
                 ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
-                : (npcDef.unknownAlias || npcDef.name);
-              const portrait = shouldShowPortrait(npcId, npcState) ? (portraits[npcId] ?? '') : '';
+                : npcDef.unknownAlias || npcDef.name;
+              const portrait = shouldShowPortrait(npcId, npcState)
+                ? (portraits[npcId] ?? '')
+                : '';
               return portrait
                 ? `@[${displayName}|${portrait}] `
                 : `@[${displayName}] `;
@@ -1309,7 +1527,11 @@ ${npcList}`,
             /@\[([A-Z][A-Z_0-9]*)\]\s*(?=["\u201C\u201D])/g,
             (_match, idOrName: string) => {
               // NPC_ID 직접 매칭 → NPC_ 접두 → NPC_BG_ 접두 → 부분 매칭
-              const npcIdCandidates = [idOrName, `NPC_${idOrName}`, `NPC_BG_${idOrName}`];
+              const npcIdCandidates = [
+                idOrName,
+                `NPC_${idOrName}`,
+                `NPC_BG_${idOrName}`,
+              ];
               for (const npcId of npcIdCandidates) {
                 const npcDef = this.content.getNpc(npcId);
                 if (!npcDef) continue;
@@ -1317,8 +1539,10 @@ ${npcList}`,
                 const npcState = npcStates[npcId];
                 const displayName = npcState
                   ? getNpcDisplayName(npcState, npcDef, pending.turnNo)
-                  : (npcDef.unknownAlias || npcDef.name);
-                const portrait = shouldShowPortrait(npcId, npcState) ? (portraits[npcId] ?? '') : '';
+                  : npcDef.unknownAlias || npcDef.name;
+                const portrait = shouldShowPortrait(npcId, npcState)
+                  ? (portraits[npcId] ?? '')
+                  : '';
                 return portrait
                   ? `@[${displayName}|${portrait}] `
                   : `@[${displayName}] `;
@@ -1326,16 +1550,21 @@ ${npcList}`,
               // 부분 매칭
               if (idOrName !== 'NPC_ID' && idOrName !== 'UNMATCHED') {
                 const allNpcs = this.content.getAllNpcs();
-                const partialMatch = allNpcs.find(
-                  (n) => n.npcId.includes(idOrName),
+                const partialMatch = allNpcs.find((n) =>
+                  n.npcId.includes(idOrName),
                 );
                 if (partialMatch) {
                   appearedNpcIds.add(partialMatch.npcId);
                   const npcState = npcStates[partialMatch.npcId];
                   const displayName = npcState
                     ? getNpcDisplayName(npcState, partialMatch, pending.turnNo)
-                    : (partialMatch.unknownAlias || partialMatch.name);
-                  const portrait = shouldShowPortrait(partialMatch.npcId, npcState) ? (portraits[partialMatch.npcId] ?? '') : '';
+                    : partialMatch.unknownAlias || partialMatch.name;
+                  const portrait = shouldShowPortrait(
+                    partialMatch.npcId,
+                    npcState,
+                  )
+                    ? (portraits[partialMatch.npcId] ?? '')
+                    : '';
                   return portrait
                     ? `@[${displayName}|${portrait}] `
                     : `@[${displayName}] `;
@@ -1353,19 +1582,23 @@ ${npcList}`,
               const allNpcs = this.content.getAllNpcs();
               const cleanAlias = alias.split('|')[0].trim(); // @[이름|URL]에서 이름만
               const found = allNpcs.find(
-                (n) => n.unknownAlias === cleanAlias || n.name === cleanAlias
-                  || n.shortAlias === cleanAlias
-                  || (n.aliases ?? []).some((a: string) => a === cleanAlias)
-                  || n.unknownAlias?.endsWith(cleanAlias)
-                  || (n.name && cleanAlias.includes(n.name)),
+                (n) =>
+                  n.unknownAlias === cleanAlias ||
+                  n.name === cleanAlias ||
+                  n.shortAlias === cleanAlias ||
+                  (n.aliases ?? []).some((a: string) => a === cleanAlias) ||
+                  n.unknownAlias?.endsWith(cleanAlias) ||
+                  (n.name && cleanAlias.includes(n.name)),
               );
               if (!found) return `@[${alias}]${trailing}`; // 매칭 실패 → 유지
               appearedNpcIds.add(found.npcId);
               const npcState = npcStates[found.npcId];
               const displayName = npcState
                 ? getNpcDisplayName(npcState, found, pending.turnNo)
-                : (found.unknownAlias || found.name);
-              const portrait = shouldShowPortrait(found.npcId, npcState) ? (portraits[found.npcId] ?? '') : '';
+                : found.unknownAlias || found.name;
+              const portrait = shouldShowPortrait(found.npcId, npcState)
+                ? (portraits[found.npcId] ?? '')
+                : '';
               return portrait
                 ? `@[${displayName}|${portrait}]${trailing}`
                 : `@[${displayName}]${trailing}`;
@@ -1374,13 +1607,19 @@ ${npcList}`,
 
           // B-3: 비표준 @마커 안전망 — @한글이름 or @한글_한글 (대괄호 없음) → 제거
           // 뒤에 따옴표, @[마커], 또는 줄 끝이 오는 경우 모두 처리
-          narrative = narrative.replace(/@(?!\[)[가-힣_\s]+\s*(?=["\u201C\u201D@])/g, '');
+          narrative = narrative.replace(
+            /@(?!\[)[가-힣_\s]+\s*(?=["\u201C\u201D@])/g,
+            '',
+          );
 
           // Step C: 실명 세이프가드
           narrative = sanitizeNpcNamesForTurn(
             narrative,
             npcStates,
-            (npcId) => this.content.getNpc(npcId) as { name: string; unknownAlias?: string; aliases?: string[] } | undefined,
+            (npcId) =>
+              this.content.getNpc(npcId) as
+                | { name: string; unknownAlias?: string; aliases?: string[] }
+                | undefined,
             pending.turnNo,
           );
 
@@ -1388,26 +1627,42 @@ ${npcList}`,
           // @마커 직전의 "XX가 입을 열었다." 같은 단순 발화 도입 문장 제거
           // 규칙: 연속 대사(같은 NPC 2번째+) → 항상 제거, 첫 대사 → NPC호칭 제외 15자 이하면 제거
           {
-            const markerPositions = [...narrative.matchAll(/@\[([^\]]+)\]\s*["\u201C]/g)];
+            const markerPositions = [
+              ...narrative.matchAll(/@\[([^\]]+)\]\s*["\u201C]/g),
+            ];
             let lastMarkerNpc: string | null = null;
 
             // 뒤에서부터 처리 (위치가 안 밀리도록)
             for (let mi = markerPositions.length - 1; mi >= 0; mi--) {
               const mp = markerPositions[mi];
-              const markerStart = mp.index!;
+              const markerStart = mp.index;
               const markerNpc = mp[1].split('|')[0].trim();
 
               // @마커 직전 문장 추출 (마침표/줄바꿈부터 @마커까지)
               const beforeMarker = narrative.slice(0, markerStart);
-              const lastSentenceMatch = beforeMarker.match(/([^.!?。\n]*[.!?。]?\s*)$/);
-              if (!lastSentenceMatch) { lastMarkerNpc = markerNpc; continue; }
+              const lastSentenceMatch = beforeMarker.match(
+                /([^.!?。\n]*[.!?。]?\s*)$/,
+              );
+              if (!lastSentenceMatch) {
+                lastMarkerNpc = markerNpc;
+                continue;
+              }
 
               const sentence = lastSentenceMatch[1].trim();
-              if (!sentence) { lastMarkerNpc = markerNpc; continue; }
+              if (!sentence) {
+                lastMarkerNpc = markerNpc;
+                continue;
+              }
 
               // 발화 동사 패턴 감지
-              const hasSpeechVerb = /(?:입을\s*열|말했|덧붙|읊조|속삭|외치|내뱉|중얼|대답|되물|답했|쏘아붙|한마디|불렀|으르렁)/.test(sentence);
-              if (!hasSpeechVerb) { lastMarkerNpc = markerNpc; continue; }
+              const hasSpeechVerb =
+                /(?:입을\s*열|말했|덧붙|읊조|속삭|외치|내뱉|중얼|대답|되물|답했|쏘아붙|한마디|불렀|으르렁)/.test(
+                  sentence,
+                );
+              if (!hasSpeechVerb) {
+                lastMarkerNpc = markerNpc;
+                continue;
+              }
 
               // NPC 호칭 제외한 순수 서술 길이 계산
               let pureSentence = sentence;
@@ -1416,11 +1671,15 @@ ${npcList}`,
               // NPC 호칭/이름 제거 (unknownAlias, name)
               for (const [, state] of Object.entries(npcStates)) {
                 const npcDef = this.content.getNpc(state.npcId ?? '');
-                if (npcDef?.unknownAlias) pureSentence = pureSentence.replace(npcDef.unknownAlias, '');
-                if (npcDef?.name) pureSentence = pureSentence.replace(npcDef.name, '');
+                if (npcDef?.unknownAlias)
+                  pureSentence = pureSentence.replace(npcDef.unknownAlias, '');
+                if (npcDef?.name)
+                  pureSentence = pureSentence.replace(npcDef.name, '');
               }
               // 조사/공백 제거 후 순수 길이
-              const pureLen = pureSentence.replace(/[이가은는의을를에게서도와과]\s*/g, '').trim().length;
+              const pureLen = pureSentence
+                .replace(/[이가은는의을를에게서도와과]\s*/g, '')
+                .trim().length;
 
               // 연속 대사 (같은 NPC): 항상 제거
               const isConsecutive = lastMarkerNpc === markerNpc;
@@ -1430,11 +1689,34 @@ ${npcList}`,
               if (shouldRemove) {
                 const sentenceStart = markerStart - lastSentenceMatch[1].length;
                 if (sentenceStart >= 0) {
-                  narrative = narrative.slice(0, sentenceStart) + narrative.slice(markerStart);
+                  narrative =
+                    narrative.slice(0, sentenceStart) +
+                    narrative.slice(markerStart);
                 }
               }
 
               lastMarkerNpc = markerNpc;
+            }
+          }
+
+          // Step E: 대사 내부 "NPC이름: " 프리픽스 제거
+          // LLM이 대사 텍스트 안에 화자 이름을 "NPC이름: 대사내용" 형태로 삽입하는 경우 제거
+          // 예: @[에드릭 베일] "날카로운 눈매의 회계사: 이 서류는..." → @[에드릭 베일] "이 서류는..."
+          {
+            const allNpcs = this.content.getAllNpcs();
+            const npcNamePatterns = allNpcs
+              .flatMap((n) => [n.name, n.unknownAlias, n.shortAlias].filter(Boolean))
+              .filter((name) => name && name.length >= 2)
+              .sort((a, b) => b!.length - a!.length); // 긴 이름 먼저 매칭
+
+            for (const npcName of npcNamePatterns) {
+              // 따옴표 안의 "NPC이름: " 또는 "NPC이름:" 패턴 제거
+              const escaped = npcName!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const pattern = new RegExp(
+                `(["\\u201C])${escaped}\\s*[:：]\\s*`,
+                'g',
+              );
+              narrative = narrative.replace(pattern, '$1');
             }
           }
 
@@ -1453,7 +1735,7 @@ ${npcList}`,
       // 5.9 speakingNpc + npcPortrait를 LLM 출력 기반으로 재결정
       {
         const updatedSr = { ...serverResult } as Record<string, unknown>;
-        const ui = { ...(updatedSr.ui as Record<string, unknown> ?? {}) };
+        const ui = { ...((updatedSr.ui as Record<string, unknown>) ?? {}) };
         let srChanged = false;
 
         // speakingNpc 갱신 (첫 번째 @마커 기반)
@@ -1461,31 +1743,46 @@ ${npcList}`,
         if (markerMatch) {
           const actualName = markerMatch[1].trim();
           const actualImg = markerMatch[2]?.trim() || undefined;
-          if (actualName.length > 0 && actualName.length <= 20 && !actualName.includes('"')) {
+          if (
+            actualName.length > 0 &&
+            actualName.length <= 20 &&
+            !actualName.includes('"')
+          ) {
             ui.speakingNpc = {
               npcId: null,
               displayName: actualName,
-              imageUrl: actualImg && actualImg.startsWith('/') ? actualImg : undefined,
+              imageUrl:
+                actualImg && actualImg.startsWith('/') ? actualImg : undefined,
             };
             srChanged = true;
           }
         }
 
         // npcPortrait 갱신: 서술에 실제 등장한 NPC만 카드 표시
-        const existingPortrait = ui.npcPortrait as { npcId?: string } | undefined;
+        const existingPortrait = ui.npcPortrait as
+          | { npcId?: string }
+          | undefined;
         if (existingPortrait && _appearedNpcIds.size > 0) {
-          if (existingPortrait.npcId && !_appearedNpcIds.has(existingPortrait.npcId)) {
-            const newPortraitNpc = [..._appearedNpcIds].find(id => _portraits[id]);
+          if (
+            existingPortrait.npcId &&
+            !_appearedNpcIds.has(existingPortrait.npcId)
+          ) {
+            const newPortraitNpc = [..._appearedNpcIds].find(
+              (id) => _portraits[id],
+            );
             if (newPortraitNpc) {
               const npcDef = this.content.getNpc(newPortraitNpc);
               const npcState = _npcStatesRef?.[newPortraitNpc];
               ui.npcPortrait = {
                 npcId: newPortraitNpc,
-                npcName: npcState && npcDef && _getNpcDisplayNameFn
-                  ? _getNpcDisplayNameFn(npcState, npcDef, pending.turnNo)
-                  : (npcDef?.name ?? newPortraitNpc),
+                npcName:
+                  npcState && npcDef && _getNpcDisplayNameFn
+                    ? _getNpcDisplayNameFn(npcState, npcDef, pending.turnNo)
+                    : (npcDef?.name ?? newPortraitNpc),
                 imageUrl: _portraits[newPortraitNpc],
-                isNewlyIntroduced: npcState?.introduced && npcState?.introducedAtTurn === pending.turnNo,
+                isNewlyIntroduced:
+                  npcState?.introduced &&
+                  npcState?.introducedAtTurn === pending.turnNo,
               };
             } else {
               ui.npcPortrait = null;
@@ -1515,10 +1812,16 @@ ${npcList}`,
       // 5.11. NPC 소개 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
       {
         const uiData = serverResult.ui as Record<string, unknown>;
-        const newlyIntroduced = (uiData?.newlyIntroducedNpcIds as string[]) ?? [];
+        const newlyIntroduced =
+          (uiData?.newlyIntroducedNpcIds as string[]) ?? [];
         if (newlyIntroduced.length > 0 && narrative && runSession?.runState) {
           const rs = runSession.runState as unknown as Record<string, unknown>;
-          const npcStatesForRollback = rs.npcStates as Record<string, { introduced?: boolean; introducedAtTurn?: number }> | undefined;
+          const npcStatesForRollback = rs.npcStates as
+            | Record<
+                string,
+                { introduced?: boolean; introducedAtTurn?: number }
+              >
+            | undefined;
           let rollbackNeeded = false;
 
           for (const npcId of newlyIntroduced) {
@@ -1531,7 +1834,9 @@ ${npcList}`,
                 npcStatesForRollback[npcId].introduced = false;
                 npcStatesForRollback[npcId].introducedAtTurn = undefined;
                 rollbackNeeded = true;
-                this.logger.debug(`[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백`);
+                this.logger.debug(
+                  `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백`,
+                );
               }
             }
           }
@@ -1577,7 +1882,9 @@ ${npcList}`,
           const nanoSummary = await this.factExtractor.summarizeNarrative({
             narrative,
             rawInput: pending.rawInput ?? '',
-            resolveOutcome: ((serverResult.ui as Record<string, unknown>)?.resolveOutcome as string) ?? null,
+            resolveOutcome:
+              ((serverResult.ui as Record<string, unknown>)
+                ?.resolveOutcome as string) ?? null,
             npcDisplayName: (() => {
               if (_appearedNpcIds.size === 0) return null;
               const firstNpcId = [..._appearedNpcIds][0];
@@ -1587,10 +1894,14 @@ ${npcList}`,
           });
           if (nanoSummary && nanoSummary.length > 10) {
             threadEntry = nanoSummary;
-            this.logger.debug(`[FactExtractor] turn=${pending.turnNo} thread replaced with nano summary (${nanoSummary.length}chars)`);
+            this.logger.debug(
+              `[FactExtractor] turn=${pending.turnNo} thread replaced with nano summary (${nanoSummary.length}chars)`,
+            );
           }
         } catch (err) {
-          this.logger.debug(`[FactExtractor] nano thread failed, keeping original: ${err instanceof Error ? err.message : err}`);
+          this.logger.debug(
+            `[FactExtractor] nano thread failed, keeping original: ${err instanceof Error ? err.message : err}`,
+          );
         }
       }
 
@@ -1677,7 +1988,9 @@ ${npcList}`,
       // 4-d. Memory v4: nano 구조화 사실 추출 → entity_facts DB (비동기, 실패 무시)
       if (narrative && pending.nodeType === 'LOCATION') {
         const ws = runSession?.runState as Record<string, unknown> | undefined;
-        const locationId = (ws?.worldState as Record<string, unknown> | undefined)?.currentLocationId as string ?? '';
+        const locationId =
+          ((ws?.worldState as Record<string, unknown> | undefined)
+            ?.currentLocationId as string) ?? '';
         const npcList: string[] = [];
         if (_appearedNpcIds.size > 0 && _npcStatesRef) {
           for (const npcId of _appearedNpcIds) {
@@ -1794,7 +2107,9 @@ ${npcList}`,
       const cleaned = raw.replace(/@\[[^\]]*\]\s*/g, '');
       const retried = this.tryParseJson(cleaned);
       if (retried) {
-        this.logger.warn('[JsonMode] Recovered by stripping @markers from JSON');
+        this.logger.warn(
+          '[JsonMode] Recovered by stripping @markers from JSON',
+        );
         return retried;
       }
     }
@@ -1808,8 +2123,10 @@ ${npcList}`,
       if (!jsonMatch) return null;
       // LLM이 JSON에서 잘못된 이스케이프를 사용하는 경우 정리
       const cleaned = jsonMatch[0]
-        .replace(/\\'/g, "'")           // \' → ' (JSON에서 불필요한 이스케이프)
-        .replace(/[\x00-\x1F\x7F]/g, (ch) => ch === '\n' || ch === '\t' ? ch : ''); // 제어문자 제거
+        .replace(/\\'/g, "'") // \' → ' (JSON에서 불필요한 이스케이프)
+        .replace(/[\x00-\x1F\x7F]/g, (ch) =>
+          ch === '\n' || ch === '\t' ? ch : '',
+        ); // 제어문자 제거
       const parsed = JSON.parse(cleaned);
       if (!parsed.segments || !Array.isArray(parsed.segments)) return null;
       for (const seg of parsed.segments) {
@@ -1840,7 +2157,11 @@ ${npcList}`,
         const segText = seg.text ?? '';
         // 가드: speaker 없이 "당신"이 주어인 문장은 narration으로 전환 (LLM 분류 오류 방어)
         // 단, speaker가 있으면 NPC가 "당신"에게 말하는 것이므로 허용
-        if (/^당신[은이가의를에]/.test(segText) && !seg.speaker_id && !seg.speaker_alias) {
+        if (
+          /^당신[은이가의를에]/.test(segText) &&
+          !seg.speaker_id &&
+          !seg.speaker_alias
+        ) {
           parts.push(segText);
           continue;
         }
@@ -1985,12 +2306,18 @@ ${npcList}`,
 
         // 별칭 뒤 조사에 따라 교체어 결정
         let replacement: string;
-        if (['는', '은', '가', '이', '의', '를', '을', '에게', '와', '과'].some(
-          (j) => result.slice(pos + fullAlias.length).startsWith(j),
-        )) {
+        if (
+          ['는', '은', '가', '이', '의', '를', '을', '에게', '와', '과'].some(
+            (j) => result.slice(pos + fullAlias.length).startsWith(j),
+          )
+        ) {
           // 조사가 붙은 경우 → shortAlias + 조사 유지
           replacement = info.shortAlias;
-        } else if (afterAlias === ' ' || afterAlias === '.' || afterAlias === ',') {
+        } else if (
+          afterAlias === ' ' ||
+          afterAlias === '.' ||
+          afterAlias === ','
+        ) {
           // 교체 대상의 50%는 shortAlias, 50%는 대명사 (다채로움)
           replacement =
             i % 2 === 0
