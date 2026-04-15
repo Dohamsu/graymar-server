@@ -1,5 +1,16 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/restrict-template-expressions, @typescript-eslint/no-base-to-string, @typescript-eslint/no-require-imports */
 // 정본: specs/HUB_system.md — Action-First 턴 파이프라인
+// Player-First Event Engine: 이벤트가 유저를 끌고가지 않고, 유저가 게임을 끌고간다
+
+/** LOCATION 턴 모드 — 이벤트 매칭 전에 결정되어 파이프라인을 분기 */
+enum TurnMode {
+  /** 플레이어가 NPC/행동을 명시 → 이벤트 매칭 스킵, NPC 직접 상호작용 */
+  PLAYER_DIRECTED = 'PLAYER_DIRECTED',
+  /** 대화 연속 중 → 이벤트 매칭 스킵, 같은 NPC 유지 */
+  CONVERSATION_CONT = 'CONVERSATION_CONT',
+  /** 세계 이벤트 트리거 → 기존 이벤트 매칭 파이프라인 */
+  WORLD_EVENT = 'WORLD_EVENT',
+}
 
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 
@@ -90,7 +101,11 @@ import { PlayerGoalService } from '../engine/hub/player-goal.service.js';
 import { QuestProgressionService } from '../engine/hub/quest-progression.service.js';
 import { ShopService } from '../engine/hub/shop.service.js';
 import { LegendaryRewardService } from '../engine/rewards/legendary-reward.service.js';
-import { NanoEventDirectorService, type NanoEventResult, type NanoEventContext } from '../llm/nano-event-director.service.js';
+import {
+  NanoEventDirectorService,
+  type NanoEventResult,
+  type NanoEventContext,
+} from '../llm/nano-event-director.service.js';
 import type { RegionEconomy } from '../db/types/region-state.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import {
@@ -1002,20 +1017,7 @@ export class TurnsService {
       }
     }
 
-    // Step 2: CHOICE sourceEventId 이벤트 연속 — 선택지로 명시적 연속만 허용
-    // 대화 잠금(ACTION 연속)은 삭제 — 이벤트 없는 자유 턴을 위해
-    // NPC 연속성은 sessionNpcContext + 프롬프트가 담당 (이벤트 강제 아님)
-    const SOCIAL_ACTIONS = new Set([
-      'TALK',
-      'PERSUADE',
-      'BRIBE',
-      'THREATEN',
-      'HELP',
-    ]);
-    const _isSocialAction = SOCIAL_ACTIONS.has(intent.actionType);
-
-    // Step 3: 이벤트 매칭 — 트리거 조건이 있을 때만 (플레이어 주도)
-    // IncidentRouter: intentV3 기반으로 관련 incident 라우팅
+    // Step 2: IncidentRouter — intentV3 기반으로 관련 incident 라우팅
     const incidentDefsForRouting =
       this.content.getIncidentsData() as IncidentDef[];
     const routingResult = this.incidentRouter.route(
@@ -1030,18 +1032,9 @@ export class TurnsService {
       );
     }
 
+    // Step 3: Player-First 턴 모드 결정 + 이벤트 매칭
     if (!matchedEvent) {
-      // === 트리거 조건 판단: 이벤트 매칭이 필요한 상황인가? ===
-      const isFirstTurnAtLocation = actionHistory.length === 0; // 장소 첫 진입
-      const incidentPressureHigh = (ws.activeIncidents ?? []).some(
-        (inc: any) => inc.pressure >= 50 && inc.locationId === locationId,
-      ); // 사건 압력 임계 (50 이상이어야 이벤트 강제)
-      // 사건 라우팅: DIRECT_MATCH + 높은 점수(40+)만 트리거로 인정
-      const routingHasStrongIncident =
-        routingResult.routeMode === 'DIRECT_MATCH' &&
-        routingResult.matchScore >= 40;
-
-      // P1: 미발견 quest fact 이벤트가 현재 장소에 존재하면 매 턴 매칭 허용 (첫 턴 제외 — 첫 턴은 이미 통과)
+      const isFirstTurnAtLocation = actionHistory.length === 0;
       const discoveredFacts = new Set(runState.discoveredQuestFacts ?? []);
       const allEventsForCheck = this.content.getAllEventsV2();
       const hasUndiscoveredFactEvent = allEventsForCheck.some(
@@ -1053,188 +1046,232 @@ export class TurnsService {
       const questFactTrigger =
         hasUndiscoveredFactEvent && actionHistory.length > 0;
 
-      // 대화 연속 감지: 직전 턴에 NPC와 대화 중이고 + 이번 행동이 대화 계열이면 이벤트 스킵
-      const SOCIAL_ACTIONS = new Set(['TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP']);
+      // 직전 턴 NPC 정보
       const lastEntry = actionHistory[actionHistory.length - 1] as
         | Record<string, unknown>
         | undefined;
-      const lastPrimaryNpcId = lastEntry?.primaryNpcId as string | null | undefined;
-      const isConversationContinuation =
-        !isFirstTurnAtLocation &&
-        lastPrimaryNpcId &&
-        SOCIAL_ACTIONS.has(intent.actionType);
+      const lastPrimaryNpcId = lastEntry?.primaryNpcId as
+        | string
+        | null
+        | undefined;
 
-      if (isConversationContinuation) {
-        // 대화 연속 → 이벤트 매칭 스킵, FREE 이벤트로 현재 NPC 유지
-        matchedEvent = {
-          eventId: `FREE_CONV_${turnNo}`,
-          eventType: 'FALLBACK',
-          locationId,
-          priority: 1,
-          weight: 1,
-          conditions: [],
-          affordances: ['ANY'],
-          friction: 0,
-          matchPolicy: 'NEUTRAL',
-          payload: {
-            sceneFrame: '',
-            choices: [],
-            tags: [],
-            primaryNpcId: lastPrimaryNpcId,
-          },
-        } as any;
-        this.logger.log(
-          `[ConversationContinuation] 대화 연속 감지 → 이벤트 스킵, NPC=${lastPrimaryNpcId}, action=${intent.actionType}`,
-        );
-      }
-
-      const shouldMatchEvent =
-        !isConversationContinuation && (
-          isFirstTurnAtLocation ||
-          incidentPressureHigh ||
-          routingHasStrongIncident ||
-          questFactTrigger
-        );
-      this.logger.log(
-        `[EventTrigger] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} routing=${routingHasStrongIncident}(${routingResult.routeMode}:${routingResult.matchScore}) questFact=${questFactTrigger} convCont=${!!isConversationContinuation} → match=${shouldMatchEvent}`,
+      // 플레이어 텍스트에서 NPC 매칭 (사전 판별 — turnMode 결정용)
+      const earlyTargetNpcId = this.extractTargetNpcFromInput(
+        rawInput,
+        body.input.type,
       );
 
-      if (shouldMatchEvent) {
-        const allEvents = this.content.getAllEventsV2();
-        const recentEventIds = actionHistory
-          .filter((h) => h.eventId)
-          .map((h) => h.eventId!);
+      // 사건 압력 계산 (pressure ≥ 70으로 상향 — Player-First)
+      const incidentPressureHigh = (ws.activeIncidents ?? []).some(
+        (inc: any) => inc.pressure >= 70 && inc.locationId === locationId,
+      );
 
-        // Living World v2: SituationGenerator 우선 시도
-        // P0: questFactTrigger로 게이트를 열었으면 SitGen 바이패스 → fact 이벤트 매칭 보장
-        const lastEventId = recentEventIds[recentEventIds.length - 1] ?? '';
-        const lastWasDynamic =
-          lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
-        const dynamicRoll = rng.range(0, 100);
+      // ── Player-First 턴 모드 결정 ──
+      const turnMode = this.determineTurnMode({
+        earlyTargetNpcId,
+        intentV3TargetNpcId: intentV3.targetNpcId ?? null,
+        actionType: intent.actionType,
+        lastPrimaryNpcId: lastPrimaryNpcId ?? null,
+        isFirstTurnAtLocation,
+        incidentPressureHigh,
+        questFactTrigger,
+      });
+      this.logger.log(
+        `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger})`,
+      );
 
-        const { SITGEN_CHANCE } =
-          require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
-        if (
-          this.situationGenerator &&
-          !lastWasDynamic &&
-          dynamicRoll < SITGEN_CHANCE &&
-          !questFactTrigger
-        ) {
-          try {
-            const incidentDefs =
-              this.content.getIncidentsData() as IncidentDef[];
-            const recentPrimaryNpcIds = actionHistory
-              .filter((h) => (h as Record<string, unknown>).primaryNpcId)
-              .map(
-                (h) => (h as Record<string, unknown>).primaryNpcId as string,
+      // ── 모드별 이벤트 매칭 ──
+      switch (turnMode) {
+        case TurnMode.PLAYER_DIRECTED: {
+          // 플레이어가 NPC/행동을 명시 → 이벤트 매칭 스킵
+          const targetNpcForShell =
+            earlyTargetNpcId ?? intentV3.targetNpcId ?? null;
+          matchedEvent = {
+            eventId: `FREE_PLAYER_${turnNo}`,
+            eventType: 'ENCOUNTER' as any,
+            locationId,
+            affordances: [intent.actionType] as any[],
+            matchPolicy: 'NEUTRAL' as any,
+            priority: 1,
+            weight: 1,
+            friction: 0,
+            conditions: [],
+            payload: {
+              sceneFrame: '',
+              choices: [],
+              tags: [],
+              primaryNpcId: targetNpcForShell,
+            },
+          } as any;
+          this.logger.log(
+            `[PlayerDirected] 이벤트 스킵, NPC=${targetNpcForShell ?? 'none'}, action=${intent.actionType}`,
+          );
+          break;
+        }
+
+        case TurnMode.CONVERSATION_CONT: {
+          // 대화 연속 → 이벤트 매칭 스킵, 같은 NPC 유지
+          matchedEvent = {
+            eventId: `FREE_CONV_${turnNo}`,
+            eventType: 'FALLBACK' as any,
+            locationId,
+            priority: 1,
+            weight: 1,
+            conditions: [],
+            affordances: ['ANY'],
+            friction: 0,
+            matchPolicy: 'NEUTRAL',
+            payload: {
+              sceneFrame: '',
+              choices: [],
+              tags: [],
+              primaryNpcId: lastPrimaryNpcId,
+            },
+          } as any;
+          this.logger.log(
+            `[ConversationCont] 대화 연속 감지 → 이벤트 스킵, NPC=${lastPrimaryNpcId}, action=${intent.actionType}`,
+          );
+          break;
+        }
+
+        case TurnMode.WORLD_EVENT: {
+          // 세계 이벤트 트리거 → 기존 이벤트 매칭 파이프라인
+          this.logger.log(
+            `[WorldEvent] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} questFact=${questFactTrigger}`,
+          );
+
+          const allEvents = this.content.getAllEventsV2();
+          const recentEventIds = actionHistory
+            .filter((h) => h.eventId)
+            .map((h) => h.eventId!);
+
+          // SituationGenerator 우선 시도
+          const lastEventId = recentEventIds[recentEventIds.length - 1] ?? '';
+          const lastWasDynamic =
+            lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
+          const dynamicRoll = rng.range(0, 100);
+
+          const { SITGEN_CHANCE } =
+            require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
+          if (
+            this.situationGenerator &&
+            !lastWasDynamic &&
+            dynamicRoll < SITGEN_CHANCE &&
+            !questFactTrigger
+          ) {
+            try {
+              const incidentDefs =
+                this.content.getIncidentsData() as IncidentDef[];
+              const recentPrimaryNpcIds = actionHistory
+                .filter((h) => (h as Record<string, unknown>).primaryNpcId)
+                .map(
+                  (h) => (h as Record<string, unknown>).primaryNpcId as string,
+                );
+              const situation = this.situationGenerator.generate(
+                ws,
+                locationId,
+                intent,
+                allEvents,
+                incidentDefs,
+                recentPrimaryNpcIds,
+                discoveredFacts,
               );
-            const situation = this.situationGenerator.generate(
-              ws,
+              if (situation) {
+                matchedEvent = situation.eventDef;
+                this.logger.debug(
+                  `[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`,
+                );
+                if (
+                  situation.trigger === 'CONSEQUENCE' &&
+                  situation.relatedFacts.length > 0
+                ) {
+                  const usedFacts = (ws as any)._consequenceUsedFacts ?? [];
+                  (ws as any)._consequenceUsedFacts = [
+                    ...usedFacts,
+                    ...situation.relatedFacts,
+                  ];
+                }
+              }
+            } catch (err) {
+              this.logger.warn(
+                `[SituationGenerator] error, falling back to EventMatcher: ${err}`,
+              );
+            }
+          }
+
+          if (!matchedEvent) {
+            const NON_SOCIAL_BREAK = new Set(['SNEAK', 'STEAL', 'FIGHT']);
+            const shouldBreakNpc = NON_SOCIAL_BREAK.has(intent.actionType);
+            const sessionNpcContext = {
+              lastPrimaryNpcId: shouldBreakNpc
+                ? null
+                : ((lastEntry?.primaryNpcId as string) ?? null),
+              sessionTurnCount: actionHistory.length,
+              interactedNpcIds: [
+                ...new Set(
+                  (actionHistory as Array<Record<string, unknown>>)
+                    .filter((a) => a.primaryNpcId)
+                    .map((a) => a.primaryNpcId as string),
+                ),
+              ],
+            };
+
+            // Player-First: WORLD_EVENT에서도 targetNpcId를 전달하여 호환 이벤트 우선
+            const earlyTarget = earlyTargetNpcId ?? intentV3.targetNpcId ?? null;
+            const directorResult = this.eventDirector.select(
+              allEvents,
               locationId,
               intent,
-              allEvents,
-              incidentDefs,
-              recentPrimaryNpcIds,
-              discoveredFacts,
+              ws,
+              arcState,
+              agenda,
+              cooldowns,
+              turnNo,
+              rng,
+              recentEventIds,
+              routingResult,
+              sessionNpcContext,
+              intentV3,
+              earlyTarget,
             );
-            if (situation) {
-              matchedEvent = situation.eventDef;
+            matchedEvent = directorResult.selectedEvent;
+
+            if (directorResult.filterLog.length > 0) {
               this.logger.debug(
-                `[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`,
+                `[EventDirector] ${directorResult.filterLog.join(', ')}`,
               );
-              if (
-                situation.trigger === 'CONSEQUENCE' &&
-                situation.relatedFacts.length > 0
-              ) {
-                const usedFacts = (ws as any)._consequenceUsedFacts ?? [];
-                (ws as any)._consequenceUsedFacts = [
-                  ...usedFacts,
-                  ...situation.relatedFacts,
-                ];
-              }
             }
-          } catch (err) {
-            this.logger.warn(
-              `[SituationGenerator] error, falling back to EventMatcher: ${err}`,
-            );
           }
-        }
 
-        if (!matchedEvent) {
-          // NPC 연속성 컨텍스트
-          const NON_SOCIAL_BREAK = new Set(['SNEAK', 'STEAL', 'FIGHT']);
-          const shouldBreakNpc = NON_SOCIAL_BREAK.has(intent.actionType);
-          // lastEntry는 상위 스코프에서 이미 선언됨
-          const sessionNpcContext = {
-            lastPrimaryNpcId: shouldBreakNpc
-              ? null
-              : ((lastEntry?.primaryNpcId as string) ?? null),
-            sessionTurnCount: actionHistory.length,
-            interactedNpcIds: [
-              ...new Set(
-                (actionHistory as Array<Record<string, unknown>>)
-                  .filter((a) => a.primaryNpcId)
-                  .map((a) => a.primaryNpcId as string),
-              ),
-            ],
-          };
-
-          const directorResult = this.eventDirector.select(
-            allEvents,
-            locationId,
-            intent,
-            ws,
-            arcState,
-            agenda,
-            cooldowns,
-            turnNo,
-            rng,
-            recentEventIds,
-            routingResult,
-            sessionNpcContext,
-            intentV3,
-          );
-          matchedEvent = directorResult.selectedEvent;
-
-          if (directorResult.filterLog.length > 0) {
-            this.logger.debug(
-              `[EventDirector] ${directorResult.filterLog.join(', ')}`,
+          // ProceduralEvent fallback
+          if (!matchedEvent || matchedEvent.eventType === 'FALLBACK') {
+            const proceduralHistory = ws.proceduralHistory ?? [];
+            const proceduralResult = this.proceduralEvent.generate(
+              {
+                locationId,
+                timePhase: ws.phaseV2 ?? ws.timePhase,
+                stage:
+                  ws.mainArc?.stage != null
+                    ? String(ws.mainArc.stage)
+                    : undefined,
+              },
+              proceduralHistory,
+              turnNo,
+              rng,
             );
+            if (proceduralResult) {
+              matchedEvent = proceduralResult;
+              this.logger.debug(
+                `[ProceduralEvent] 생성: ${proceduralResult.eventId}`,
+              );
+            }
           }
+          break;
         }
-
-        // ProceduralEvent fallback — 트리거 있는데 이벤트 못 잡은 경우만
-        if (!matchedEvent || matchedEvent.eventType === 'FALLBACK') {
-          const proceduralHistory = ws.proceduralHistory ?? [];
-          const proceduralResult = this.proceduralEvent.generate(
-            {
-              locationId,
-              timePhase: ws.phaseV2 ?? ws.timePhase,
-              stage:
-                ws.mainArc?.stage != null
-                  ? String(ws.mainArc.stage)
-                  : undefined,
-            },
-            proceduralHistory,
-            turnNo,
-            rng,
-          );
-          if (proceduralResult) {
-            matchedEvent = proceduralResult;
-            this.logger.debug(
-              `[ProceduralEvent] 생성: ${proceduralResult.eventId}`,
-            );
-          }
-        }
-      } else {
-        this.logger.log(
-          `[EventSkip] No trigger — player-driven turn (action=${intent.actionType}, historyLen=${actionHistory.length}, pressureHigh=${incidentPressureHigh}, routing=${routingHasStrongIncident})`,
-        );
       }
     }
 
-    // 이벤트 없는 턴: 플레이어 행동 중심으로 자유 서술 (이벤트가 강제되지 않음)
-    // matchedEvent가 null이면 기본 이벤트 셸을 생성하여 resolve 파이프라인을 통과시킴
+    // 이벤트 없는 턴: FREE 이벤트 셸 보장
     if (!matchedEvent) {
       matchedEvent = {
         eventId: `FREE_${turnNo}`,
@@ -1246,7 +1283,7 @@ export class TurnsService {
         weight: 1,
         friction: 0,
         payload: {
-          sceneFrame: '', // 분위기 강제 없음 — LLM이 이전 맥락에서 자유 서술
+          sceneFrame: '',
           tags: [],
           suggested_choices: [],
         },
@@ -1414,21 +1451,28 @@ export class TurnsService {
         const locDynamic = ws.locationDynamicStates as
           | Record<string, { presentNpcs?: string[] }>
           | undefined;
-        const presentNpcIds =
-          locDynamic?.[locationId]?.presentNpcs ?? [];
-        const existingNpcStates = (runState.npcStates ?? {}) as Record<string, NPCState>;
+        const presentNpcIds = locDynamic?.[locationId]?.presentNpcs ?? [];
+        const existingNpcStates = runState.npcStates ?? {};
         // NPC별 연속 대화 턴 수 계산
         const npcConsecutiveMap: Record<string, number> = {};
         for (let i = actionHistory.length - 1; i >= 0; i--) {
-          const hNpc = (actionHistory[i] as Record<string, unknown>).primaryNpcId as string | undefined;
+          const hNpc = (actionHistory[i] as Record<string, unknown>)
+            .primaryNpcId as string | undefined;
           if (!hNpc) break;
           npcConsecutiveMap[hNpc] = (npcConsecutiveMap[hNpc] ?? 0) + 1;
-          if (i > 0 && (actionHistory[i - 1] as Record<string, unknown>).primaryNpcId !== hNpc) break;
+          if (
+            i > 0 &&
+            (actionHistory[i - 1] as Record<string, unknown>).primaryNpcId !==
+              hNpc
+          )
+            break;
         }
         const presentNpcs = presentNpcIds.map((id: string) => {
           const npcDef = this.content.getNpc(id);
           const npcState = existingNpcStates[id];
-          const met = actionHistory.some((h) => (h as Record<string, unknown>).primaryNpcId === id);
+          const met = actionHistory.some(
+            (h) => (h as Record<string, unknown>).primaryNpcId === id,
+          );
           return {
             npcId: id,
             displayName: getNpcDisplayName(npcState, npcDef),
@@ -1442,7 +1486,8 @@ export class TurnsService {
         // 발견 가능 fact 목록
         const discoveredFactsSet = new Set(runState.discoveredQuestFacts ?? []);
         const availableFacts = this.questProgression
-          ? this.content.getAllEventsV2()
+          ? this.content
+              .getAllEventsV2()
               .filter(
                 (e: any) =>
                   e.locationId === locationId &&
@@ -1450,13 +1495,18 @@ export class TurnsService {
                   !discoveredFactsSet.has(e.discoverableFact),
               )
               .map((e: any) => {
-                const factDetail = this.questProgression!.getFactDetail(e.discoverableFact);
+                const factDetail = this.questProgression!.getFactDetail(
+                  e.discoverableFact,
+                );
                 return {
                   factId: e.discoverableFact as string,
                   description: factDetail ?? e.discoverableFact,
-                  rate: resolveResult.outcome === 'SUCCESS' ? 1.0
-                    : resolveResult.outcome === 'PARTIAL' ? 0.5
-                    : 0,
+                  rate:
+                    resolveResult.outcome === 'SUCCESS'
+                      ? 1.0
+                      : resolveResult.outcome === 'PARTIAL'
+                        ? 0.5
+                        : 0,
                 };
               })
           : [];
@@ -1476,21 +1526,34 @@ export class TurnsService {
         const lastNpcDef = lastNpcId ? this.content.getNpc(lastNpcId) : null;
 
         // sourceNpcId from choice payload (NPC 연속성)
-        const choiceSourceNpcId = (choicePayload?.sourceNpcId as string) ?? null;
+        const choiceSourceNpcId =
+          (choicePayload?.sourceNpcId as string) ?? null;
         const effectiveLastNpcId = choiceSourceNpcId ?? lastNpcId;
 
         // targetNpcId: IntentV3에서 감지된 대상 NPC
         const nanoTargetNpcId = intentV3.targetNpcId ?? null;
 
         // wantNewNpc: "다른/아무나/새로운" 키워드 감지
-        const WANT_NEW_KEYWORDS = ['다른 사람', '아무나', '아무한테', '새로운', '다른 누구', '다른사람'];
-        const wantNewNpc = WANT_NEW_KEYWORDS.some((kw) => rawInput.includes(kw));
+        const WANT_NEW_KEYWORDS = [
+          '다른 사람',
+          '아무나',
+          '아무한테',
+          '새로운',
+          '다른 누구',
+          '다른사람',
+        ];
+        const wantNewNpc = WANT_NEW_KEYWORDS.some((kw) =>
+          rawInput.includes(kw),
+        );
 
         // 같은 NPC 연속 턴 수
         let npcConsecutiveTurns = 0;
         if (effectiveLastNpcId) {
           for (let i = actionHistory.length - 1; i >= 0; i--) {
-            if ((actionHistory[i] as Record<string, unknown>).primaryNpcId === effectiveLastNpcId) {
+            if (
+              (actionHistory[i] as Record<string, unknown>).primaryNpcId ===
+              effectiveLastNpcId
+            ) {
               npcConsecutiveTurns++;
             } else {
               break;
@@ -1498,18 +1561,32 @@ export class TurnsService {
           }
         }
 
+        // Player-First: npcLocked 판정 — FREE_PLAYER_ / FREE_CONV_ 이벤트면 NPC 고정
+        const isNpcLocked =
+          event.eventId.startsWith('FREE_PLAYER_') ||
+          event.eventId.startsWith('FREE_CONV_');
+        const lockedNpcId = isNpcLocked
+          ? ((event.payload as Record<string, unknown>).primaryNpcId as
+              | string
+              | null)
+          : null;
+
         const nanoCtx: NanoEventContext = {
           locationId,
-          locationName: this.content.getLocation(locationId)?.name ?? locationId,
+          locationName:
+            this.content.getLocation(locationId)?.name ?? locationId,
           timePhase: (ws.phaseV2 ?? ws.timePhase) as string,
           hubHeat: ws.hubHeat,
           hubSafety: ws.hubSafety as string,
           rawInput,
           actionType: intent.actionType,
-          resolveOutcome: resolveResult.outcome as 'SUCCESS' | 'PARTIAL' | 'FAIL',
+          resolveOutcome: resolveResult.outcome,
           lastNpcId: effectiveLastNpcId,
           lastNpcName: effectiveLastNpcId
-            ? (getNpcDisplayName(existingNpcStates[effectiveLastNpcId], this.content.getNpc(effectiveLastNpcId)))
+            ? getNpcDisplayName(
+                existingNpcStates[effectiveLastNpcId],
+                this.content.getNpc(effectiveLastNpcId),
+              )
             : null,
           targetNpcId: nanoTargetNpcId,
           wantNewNpc,
@@ -1519,8 +1596,11 @@ export class TurnsService {
           availableFacts,
           questState: runState.questState ?? 'S0_ARRIVE',
           previousOpening: null,
-          activeConditions: (locDynamic?.[locationId] as any)?.activeConditions ?? [],
+          activeConditions:
+            (locDynamic?.[locationId] as any)?.activeConditions ?? [],
           npcReactions: [], // 이번 턴 반응은 nano 호출 후 계산됨 — LLM 프롬프트에서 직접 주입
+          npcLocked: isNpcLocked,
+          lockedNpcId,
         };
 
         nanoEventResult = await this.nanoEventDirector.generate(nanoCtx);
@@ -1529,13 +1609,24 @@ export class TurnsService {
             `[NanoEventDirector] npc=${nanoEventResult.npc} concept="${nanoEventResult.concept.slice(0, 40)}" fact=${nanoEventResult.fact ?? 'none'} choices=${nanoEventResult.choices.length}`,
           );
 
-          // nano가 추천한 NPC를 이벤트 primaryNpcId에 반영
-          if (nanoEventResult.npcId && event.eventId.startsWith('FREE_')) {
-            (event.payload as Record<string, unknown>).primaryNpcId = nanoEventResult.npcId;
+          // Player-First: NPC 덮어쓰기는 WORLD_EVENT 모드의 FREE 이벤트에서만 허용
+          // PLAYER_DIRECTED/CONVERSATION_CONT에서는 플레이어/대화 잠금 NPC 유지
+          const isPlayerLocked =
+            event.eventId.startsWith('FREE_PLAYER_') ||
+            event.eventId.startsWith('FREE_CONV_');
+          if (
+            nanoEventResult.npcId &&
+            event.eventId.startsWith('FREE_') &&
+            !isPlayerLocked
+          ) {
+            (event.payload as Record<string, unknown>).primaryNpcId =
+              nanoEventResult.npcId;
           }
         }
       } catch (err) {
-        this.logger.warn(`[NanoEventDirector] error (non-fatal, fallback to legacy): ${err}`);
+        this.logger.warn(
+          `[NanoEventDirector] error (non-fatal, fallback to legacy): ${err}`,
+        );
         nanoEventResult = null;
       }
     }
@@ -1571,7 +1662,9 @@ export class TurnsService {
             RIOT: '🔥 폭동이 발생했다!',
           };
           // 시그널 피드에 직접 추가
-          const signalFeed = (ws.signalFeed ?? []) as Array<Record<string, unknown>>;
+          const signalFeed = (ws.signalFeed ?? []) as Array<
+            Record<string, unknown>
+          >;
           for (const condId of consequenceOutput.triggeredConditions) {
             const signalText = CONDITION_SIGNALS[condId];
             if (signalText) {
@@ -1595,7 +1688,13 @@ export class TurnsService {
     }
 
     // === Layer 3: NPC 능동 반응 — WITNESSED NPC가 trust/posture에 따라 반응 ===
-    const npcReactions: Array<{ npcId: string; npcName: string; type: 'warn' | 'inform' | 'avoid' | 'hostile'; text: string; heatDelta: number }> = [];
+    const npcReactions: Array<{
+      npcId: string;
+      npcName: string;
+      type: 'warn' | 'inform' | 'avoid' | 'hostile';
+      text: string;
+      heatDelta: number;
+    }> = [];
     {
       // 최근 WorldFacts에서 WITNESSED 기록 조회
       const worldFacts = (ws.worldFacts ?? []) as Array<{
@@ -1621,7 +1720,7 @@ export class TurnsService {
 
       // 각 목격 NPC의 trust/posture에 따라 반응 결정
       const DANGEROUS_TAGS = new Set(['fight', 'steal', 'threaten', 'success']);
-      const existingNpcStatesForReaction = (runState.npcStates ?? {}) as Record<string, NPCState>;
+      const existingNpcStatesForReaction = runState.npcStates ?? {};
 
       for (const [npcId, tags] of recentWitnesses) {
         const npcState = existingNpcStatesForReaction[npcId];
@@ -1633,27 +1732,50 @@ export class TurnsService {
 
         if (!hasDangerousAction) continue; // 위험한 행동 목격만 반응
 
-        let reaction: { type: 'warn' | 'inform' | 'avoid' | 'hostile'; text: string; heatDelta: number };
+        let reaction: {
+          type: 'warn' | 'inform' | 'avoid' | 'hostile';
+          text: string;
+          heatDelta: number;
+        };
 
         if (trust >= 20) {
           // 우호적 NPC → 경고 (Heat 변동 없음)
-          reaction = { type: 'warn', text: `${npcName}이(가) 조심하라고 경고한다`, heatDelta: 0 };
+          reaction = {
+            type: 'warn',
+            text: `${npcName}이(가) 조심하라고 경고한다`,
+            heatDelta: 0,
+          };
         } else if (trust >= -10) {
           // 중립 NPC → 회피 (관계 소폭 악화)
-          reaction = { type: 'avoid', text: `${npcName}이(가) 눈을 피하며 거리를 둔다`, heatDelta: 0 };
+          reaction = {
+            type: 'avoid',
+            text: `${npcName}이(가) 눈을 피하며 거리를 둔다`,
+            heatDelta: 0,
+          };
         } else if (trust >= -30) {
           // 적대적 NPC → 밀고 (Heat 증가)
-          reaction = { type: 'inform', text: `${npcName}이(가) 경비대에 밀고했다`, heatDelta: 5 };
+          reaction = {
+            type: 'inform',
+            text: `${npcName}이(가) 경비대에 밀고했다`,
+            heatDelta: 5,
+          };
         } else {
           // 매우 적대적 → 적극 대응
-          reaction = { type: 'hostile', text: `${npcName}이(가) 경비대를 불러왔다`, heatDelta: 8 };
+          reaction = {
+            type: 'hostile',
+            text: `${npcName}이(가) 경비대를 불러왔다`,
+            heatDelta: 8,
+          };
         }
 
         npcReactions.push({ npcId, npcName, ...reaction });
 
         // Heat 변동 적용
         if (reaction.heatDelta > 0) {
-          ws = { ...ws, hubHeat: Math.min(100, ws.hubHeat + reaction.heatDelta) };
+          ws = {
+            ...ws,
+            hubHeat: Math.min(100, ws.hubHeat + reaction.heatDelta),
+          };
         }
       }
 
@@ -1968,7 +2090,9 @@ export class TurnsService {
     // === Narrative Engine v1: postStepTick (impact patches, safety, signal expire) ===
     // phaseV2가 없는 기존 런 방어 (NpcSchedule DAWN 크래시 방지)
     if (!ws.phaseV2) {
-      ws.phaseV2 = (ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY') as import('../db/types/world-state.js').TimePhaseV2;
+      ws.phaseV2 = (
+        ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY'
+      ) as import('../db/types/world-state.js').TimePhaseV2;
     }
     ws = this.worldTick.postStepTick(ws, resolvedPatches);
 
@@ -2137,7 +2261,13 @@ export class TurnsService {
         conversationLockedNpcId;
     }
     // Posture 변화 이벤트 (result 선언 전이므로 임시 저장)
-    const pendingPostureEvents: Array<{ id: string; kind: 'NPC'; text: string; tags: string[]; data: Record<string, unknown> }> = [];
+    const pendingPostureEvents: Array<{
+      id: string;
+      kind: 'NPC';
+      text: string;
+      tags: string[];
+      data: Record<string, unknown>;
+    }> = [];
 
     // 현재 location의 관련 NPC에게 감정 영향 적용
     if (eventPrimaryNpc) {
@@ -2174,7 +2304,9 @@ export class TurnsService {
       // 성격 기반 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
       const introPosture = npcStates[npcId].posture;
       const npcDefForIntro = this.content.getNpc(npcId);
-      const npcTier = (npcDefForIntro as Record<string, unknown>)?.tier as string | undefined;
+      const npcTier = (npcDefForIntro as Record<string, unknown>)?.tier as
+        | string
+        | undefined;
       if (shouldIntroduce(npcStates[npcId], introPosture, npcTier)) {
         npcStates[npcId].introduced = true;
         npcStates[npcId].introducedAtTurn = turnNo; // 2턴 분리: 이번 턴은 alias, 다음 턴부터 실명
@@ -2196,7 +2328,10 @@ export class TurnsService {
       // Posture 변화 감지 (result 선언 후 이벤트에 추가)
       const postureAfter = npcStates[npcId].posture;
       if (postureBefore && postureAfter && postureBefore !== postureAfter) {
-        const displayName = getNpcDisplayName(npcStates[npcId], this.content.getNpc(npcId));
+        const displayName = getNpcDisplayName(
+          npcStates[npcId],
+          this.content.getNpc(npcId),
+        );
         const POSTURE_LABEL: Record<string, string> = {
           FRIENDLY: '우호',
           CAUTIOUS: '경계',
@@ -2827,24 +2962,32 @@ export class TurnsService {
           const nanoFact = nanoEventResult.fact;
           if (!existing.includes(nanoFact)) {
             // nano가 추천한 fact가 유효한지 확인 (발견 가능 목록에 있는지)
-            const isValidFact = this.content.getAllEventsV2().some(
-              (e: any) => e.discoverableFact === nanoFact,
-            );
+            const isValidFact = this.content
+              .getAllEventsV2()
+              .some((e: any) => e.discoverableFact === nanoFact);
             if (isValidFact) {
               // 서버 RNG로 최종 확정 (SUCCESS=100%, PARTIAL=50%)
               const factRoll = rng.range(0, 100);
-              const threshold = resolveResult.outcome === 'SUCCESS' ? 100
-                : resolveResult.outcome === 'PARTIAL' ? 50 : 0;
+              const threshold =
+                resolveResult.outcome === 'SUCCESS'
+                  ? 100
+                  : resolveResult.outcome === 'PARTIAL'
+                    ? 50
+                    : 0;
               if (factRoll < threshold) {
                 addFact(nanoFact, `nano:${nanoEventResult.npcId ?? 'none'}`);
               } else {
                 // RNG 실패 → fact 미발견, LLM 프롬프트에도 반영 안 함
                 nanoEventResult.factRevealed = false;
-                this.logger.debug(`[NanoEventDirector] fact ${nanoFact} RNG failed (roll=${factRoll}, threshold=${threshold})`);
+                this.logger.debug(
+                  `[NanoEventDirector] fact ${nanoFact} RNG failed (roll=${factRoll}, threshold=${threshold})`,
+                );
               }
             } else {
               nanoEventResult.factRevealed = false;
-              this.logger.debug(`[NanoEventDirector] fact ${nanoFact} not in valid fact list`);
+              this.logger.debug(
+                `[NanoEventDirector] fact ${nanoFact} not in valid fact list`,
+              );
             }
           }
         }
@@ -2863,7 +3006,9 @@ export class TurnsService {
             updatedRunState.arcState.questState = transition.newState;
           }
           // 퀘스트 단계 변경 → 체류 턴 리셋
-          (updatedRunState as unknown as Record<string, unknown>).questStateSinceTurn = turnNo;
+          (
+            updatedRunState as unknown as Record<string, unknown>
+          ).questStateSinceTurn = turnNo;
           this.logger.log(
             `[Quest] ${currentQuestState} -> ${transition.newState}`,
           );
@@ -2877,57 +3022,91 @@ export class TurnsService {
               S4_CONFRONT: '진실에 한 걸음 더 다가섰다.',
               S5_RESOLVE: '모든 것이 끝을 향해 치닫고 있다.',
             };
-            const questText = QUEST_LABEL[transition.newState] ?? `사건이 새로운 국면에 접어들었다.`;
-            const sf = (updatedRunState.worldState.signalFeed ?? []) as Array<Record<string, unknown>>;
+            const questText =
+              QUEST_LABEL[transition.newState] ??
+              `사건이 새로운 국면에 접어들었다.`;
+            const sf = (updatedRunState.worldState.signalFeed ?? []) as Array<
+              Record<string, unknown>
+            >;
             sf.push({
               id: `sig_quest_${transition.newState}_${turnNo}`,
               channel: 'RUMOR',
               severity: 4,
               text: questText,
-              createdAtClock: (updatedRunState.worldState as any).globalClock ?? 0,
+              createdAtClock:
+                (updatedRunState.worldState as any).globalClock ?? 0,
             });
-            updatedRunState.worldState = { ...updatedRunState.worldState, signalFeed: sf } as any;
+            updatedRunState.worldState = {
+              ...updatedRunState.worldState,
+              signalFeed: sf,
+            } as any;
           }
         } else {
           // 단계 미변경 → 체류 턴 체크 (진행도 힌트)
           const STALE_THRESHOLD = 5;
-          const sinceTurn = (updatedRunState as unknown as Record<string, unknown>).questStateSinceTurn as number | undefined;
+          const sinceTurn = (
+            updatedRunState as unknown as Record<string, unknown>
+          ).questStateSinceTurn as number | undefined;
           const staleTurns = sinceTurn ? turnNo - sinceTurn : turnNo;
 
-          if (staleTurns >= STALE_THRESHOLD && discoveredFactIdsThisTurn.length === 0) {
-            const staleHint = this.questProgression.getStaleHint(currentQuestState, discoveredFacts);
+          if (
+            staleTurns >= STALE_THRESHOLD &&
+            discoveredFactIdsThisTurn.length === 0
+          ) {
+            const staleHint = this.questProgression.getStaleHint(
+              currentQuestState,
+              discoveredFacts,
+            );
             if (staleHint) {
               const AUTO_DISCOVER_THRESHOLD = 3; // 힌트 3회 반복 → fact 자동 발견
               const hintCount = staleTurns - STALE_THRESHOLD + 1;
 
               if (hintCount >= AUTO_DISCOVER_THRESHOLD) {
                 // 힌트 3회 이상 → fact 자동 발견 (플레이어가 소문을 충분히 인지)
-                if (!updatedRunState.discoveredQuestFacts) updatedRunState.discoveredQuestFacts = [];
-                if (!updatedRunState.discoveredQuestFacts.includes(staleHint.factId)) {
+                if (!updatedRunState.discoveredQuestFacts)
+                  updatedRunState.discoveredQuestFacts = [];
+                if (
+                  !updatedRunState.discoveredQuestFacts.includes(
+                    staleHint.factId,
+                  )
+                ) {
                   updatedRunState.discoveredQuestFacts.push(staleHint.factId);
                   discoveredFacts.add(staleHint.factId);
                   discoveredFactIdsThisTurn.push(staleHint.factId);
                   if (updatedRunState.arcState?.discoveredQuestFacts) {
-                    updatedRunState.arcState.discoveredQuestFacts = [...updatedRunState.discoveredQuestFacts];
+                    updatedRunState.arcState.discoveredQuestFacts = [
+                      ...updatedRunState.discoveredQuestFacts,
+                    ];
                   }
                   this.logger.log(
                     `[Quest] Auto-discovered fact: ${staleHint.factId} (${hintCount} hints on ${currentQuestState})`,
                   );
 
                   // 자동 발견 후 전환 재체크
-                  const recheck = this.questProgression.checkTransition(currentQuestState, discoveredFacts);
+                  const recheck = this.questProgression.checkTransition(
+                    currentQuestState,
+                    discoveredFacts,
+                  );
                   if (recheck.newState) {
                     updatedRunState.questState = recheck.newState;
                     if (updatedRunState.arcState) {
                       updatedRunState.arcState.questState = recheck.newState;
                     }
-                    (updatedRunState as unknown as Record<string, unknown>).questStateSinceTurn = turnNo;
-                    this.logger.log(`[Quest] Auto-transition: ${currentQuestState} -> ${recheck.newState}`);
+                    (
+                      updatedRunState as unknown as Record<string, unknown>
+                    ).questStateSinceTurn = turnNo;
+                    this.logger.log(
+                      `[Quest] Auto-transition: ${currentQuestState} -> ${recheck.newState}`,
+                    );
                   }
                 }
               } else {
                 // 힌트만 제공 (아직 자동 발견 안 함)
-                const HINT_MODES = ['OVERHEARD', 'RUMOR_ECHO', 'SCENE_CLUE'] as const;
+                const HINT_MODES = [
+                  'OVERHEARD',
+                  'RUMOR_ECHO',
+                  'SCENE_CLUE',
+                ] as const;
                 const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length)];
                 updatedRunState.pendingQuestHint = {
                   hint: staleHint.hint,
@@ -2943,19 +3122,39 @@ export class TurnsService {
         }
 
         // Part A: fact 발견 → 관련 Incident control 증가 (퀘스트-Incident 연동)
-        if (discoveredFactIdsThisTurn.length > 0 && updatedRunState.worldState) {
-          const questData = this.content.getQuestData() as { factToIncident?: Record<string, { incidents: string[]; controlBonus: number }> } | null;
+        if (
+          discoveredFactIdsThisTurn.length > 0 &&
+          updatedRunState.worldState
+        ) {
+          const questData = this.content.getQuestData() as {
+            factToIncident?: Record<
+              string,
+              { incidents: string[]; controlBonus: number }
+            >;
+          } | null;
           const mapping = questData?.factToIncident;
           if (mapping) {
-            const activeIncidents = (updatedRunState.worldState.activeIncidents ?? []) as Array<{ incidentId: string; control: number; resolved?: boolean }>;
+            const activeIncidents = (updatedRunState.worldState
+              .activeIncidents ?? []) as Array<{
+              incidentId: string;
+              control: number;
+              resolved?: boolean;
+            }>;
             for (const factId of discoveredFactIdsThisTurn) {
               const entry = mapping[factId];
               if (!entry) continue;
               for (const incId of entry.incidents) {
-                const incident = activeIncidents.find(i => i.incidentId === incId && !i.resolved);
+                const incident = activeIncidents.find(
+                  (i) => i.incidentId === incId && !i.resolved,
+                );
                 if (incident) {
-                  incident.control = Math.min(100, (incident.control ?? 0) + entry.controlBonus);
-                  this.logger.log(`[Quest→Incident] ${factId} → ${incId} control +${entry.controlBonus} (now ${incident.control})`);
+                  incident.control = Math.min(
+                    100,
+                    (incident.control ?? 0) + entry.controlBonus,
+                  );
+                  this.logger.log(
+                    `[Quest→Incident] ${factId} → ${incId} control +${entry.controlBonus} (now ${incident.control})`,
+                  );
                 }
               }
             }
@@ -2966,16 +3165,26 @@ export class TurnsService {
         {
           const qs = updatedRunState.questState ?? '';
           if (qs === 'S5_RESOLVE') {
-            const sinceTurn = (updatedRunState as unknown as Record<string, unknown>).questStateSinceTurn as number | undefined;
+            const sinceTurn = (
+              updatedRunState as unknown as Record<string, unknown>
+            ).questStateSinceTurn as number | undefined;
             const s5Turns = sinceTurn ? turnNo - sinceTurn : 0;
             if (s5Turns >= 5 && updatedRunState.worldState) {
-              const activeIncidents = (updatedRunState.worldState.activeIncidents ?? []) as Array<{ incidentId: string; control: number; resolved?: boolean; outcome?: string }>;
+              const activeIncidents = (updatedRunState.worldState
+                .activeIncidents ?? []) as Array<{
+                incidentId: string;
+                control: number;
+                resolved?: boolean;
+                outcome?: string;
+              }>;
               for (const inc of activeIncidents) {
                 if (!inc.resolved) {
                   inc.control = 100;
                   inc.resolved = true;
                   inc.outcome = 'CONTAINED';
-                  this.logger.log(`[Quest→Ending] S5+${s5Turns}턴: ${inc.incidentId} resolved=CONTAINED (엔딩 트리거)`);
+                  this.logger.log(
+                    `[Quest→Ending] S5+${s5Turns}턴: ${inc.incidentId} resolved=CONTAINED (엔딩 트리거)`,
+                  );
                 }
               }
             }
@@ -3008,7 +3217,10 @@ export class TurnsService {
           }
         }
         // Phase 2: 소문 전파 — fact 발견 시 worldFacts에 소문 추가
-        if (discoveredFactIdsThisTurn.length > 0 && updatedRunState.worldState) {
+        if (
+          discoveredFactIdsThisTurn.length > 0 &&
+          updatedRunState.worldState
+        ) {
           const ws = updatedRunState.worldState;
           if (!ws.worldFacts) ws.worldFacts = [];
           for (const factId of discoveredFactIdsThisTurn) {
@@ -3027,7 +3239,9 @@ export class TurnsService {
                 permanent: false,
                 expiresAtTurn: turnNo + 20,
               } as any);
-              this.logger.debug(`[Quest] Rumor propagated: ${factId} → worldFacts`);
+              this.logger.debug(
+                `[Quest] Rumor propagated: ${factId} → worldFacts`,
+              );
             }
           }
         }
@@ -3184,7 +3398,7 @@ export class TurnsService {
           type: 'CHOICE' as import('../db/types/index.js').InputType,
           payload: {
             affordance: nc.affordance,
-            sourceNpcId: nc.npcId ?? nanoEventResult!.npcId,
+            sourceNpcId: nc.npcId ?? nanoEventResult.npcId,
           },
         },
       }));
@@ -3192,7 +3406,10 @@ export class TurnsService {
       choices.push({
         id: 'go_hub',
         label: '다른 장소로 이동한다',
-        action: { type: 'CHOICE' as import('../db/types/index.js').InputType, payload: { affordance: 'MOVE_LOCATION' } },
+        action: {
+          type: 'CHOICE' as import('../db/types/index.js').InputType,
+          payload: { affordance: 'MOVE_LOCATION' },
+        },
       });
     }
 
@@ -3244,6 +3461,11 @@ export class TurnsService {
         approachVector: intentV3.approachVector,
         goalText: intentV3.goalText,
         targetNpcId: intentV3.targetNpcId ?? undefined,
+        turnMode: event.eventId.startsWith('FREE_PLAYER_')
+          ? 'PLAYER_DIRECTED'
+          : event.eventId.startsWith('FREE_CONV_')
+            ? 'CONVERSATION_CONT'
+            : 'WORLD_EVENT',
       },
       isNonChallenge,
       totalGoldDelta,
@@ -3386,12 +3608,13 @@ export class TurnsService {
     // === Speaking NPC: 대사 주체 정보 (클라이언트 DialogueBubble용) ===
     // PROCEDURAL/SIT_ 이벤트에서 injectedNpc가 override한 경우 → 원래 이벤트의 primaryNpcId 사용
     // injectedNpc는 프롬프트 컨텍스트용이지 대사 주체가 아님
-    const eventOriginalPrimaryNpc =
-      (event.payload as Record<string, unknown>)?.primaryNpcId as string | undefined;
-    const isProcedural = event.eventId.startsWith('PROC_') || event.eventId.startsWith('SIT_');
+    const eventOriginalPrimaryNpc = (event.payload as Record<string, unknown>)
+      ?.primaryNpcId as string | undefined;
+    const isProcedural =
+      event.eventId.startsWith('PROC_') || event.eventId.startsWith('SIT_');
     const primaryNpcIdForSpeaking = isProcedural
-      ? eventOriginalPrimaryNpc ?? null  // PROC/SIT: 원래 이벤트의 NPC만 (injected 무시)
-      : eventPrimaryNpc ?? eventOriginalPrimaryNpc ?? null;  // 고정 이벤트: 기존 로직
+      ? (eventOriginalPrimaryNpc ?? null) // PROC/SIT: 원래 이벤트의 NPC만 (injected 무시)
+      : (eventPrimaryNpc ?? eventOriginalPrimaryNpc ?? null); // 고정 이벤트: 기존 로직
 
     if (primaryNpcIdForSpeaking) {
       // NPC 지정 이벤트 — displayName/imageUrl 결정
@@ -3399,14 +3622,15 @@ export class TurnsService {
       const npcDefForSpeaking = this.content.getNpc(primaryNpcIdForSpeaking);
       // 초상화 표시 조건: 첫 만남(enc>=1) 또는 소개완료(introduced) → 무조건 표시
       const showPortrait = npcStateForSpeaking
-        ? ((npcStateForSpeaking.encounterCount ?? 0) >= 1 || !!npcStateForSpeaking.introduced)
+        ? (npcStateForSpeaking.encounterCount ?? 0) >= 1 ||
+          !!npcStateForSpeaking.introduced
         : true;
       // npcNames에 없으면 content에서 직접 조회 (fallback)
       let displayName = npcNames[primaryNpcIdForSpeaking];
       if (!displayName) {
         const npcDef = this.content.getNpc(primaryNpcIdForSpeaking);
         displayName = npcDef
-          ? (npcDef.unknownAlias || npcDef.name || '낯선 인물')
+          ? npcDef.unknownAlias || npcDef.name || '낯선 인물'
           : '낯선 인물';
       }
       (result.ui as any).speakingNpc = {
@@ -3428,31 +3652,39 @@ export class TurnsService {
     // === Narrative Engine v1: UI data 추가 ===
     const finalWs = updatedRunState.worldState!;
     // Signal Feed
-    const signalFeedUI = (finalWs.signalFeed ?? []).map(
-      (s: any) => ({
-        id: s.id,
-        channel: s.channel,
-        severity: s.severity,
-        locationId: s.locationId,
-        text: s.text,
-      }),
-    ) as SignalFeedItemUI[];
+    const signalFeedUI = (finalWs.signalFeed ?? []).map((s: any) => ({
+      id: s.id,
+      channel: s.channel,
+      severity: s.severity,
+      locationId: s.locationId,
+      text: s.text,
+    })) as SignalFeedItemUI[];
     (result.ui as any).signalFeed = signalFeedUI;
 
     // 호외 헤드라인: severity 3+ 시그널을 nano로 신문 기사 변환 (비동기, 실패 무시)
-    const rawSignals = (finalWs.signalFeed ?? []) as Array<{ id: string; channel: string; severity: number; text: string; sourceIncidentId?: string }>;
-    const importantRaw = rawSignals.filter(s => s.severity >= 3);
+    const rawSignals = (finalWs.signalFeed ?? []) as Array<{
+      id: string;
+      channel: string;
+      severity: number;
+      text: string;
+      sourceIncidentId?: string;
+    }>;
+    const importantRaw = rawSignals.filter((s) => s.severity >= 3);
     if (importantRaw.length > 0) {
       try {
         const incDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
-        const locName = this.content.getLocation(locationId)?.name ?? locationId;
-        const timePhase = (finalWs as any).timePhaseV2 ?? finalWs.timePhase ?? 'DAY';
-        const newsContext = importantRaw.map(s => ({
+        const locName =
+          this.content.getLocation(locationId)?.name ?? locationId;
+        const timePhase =
+          (finalWs as any).timePhaseV2 ?? finalWs.timePhase ?? 'DAY';
+        const newsContext = importantRaw.map((s) => ({
           text: s.text,
           channel: s.channel,
           severity: s.severity,
           location: locName,
-          incidentTitle: s.sourceIncidentId ? incDefMap.get(s.sourceIncidentId)?.title : undefined,
+          incidentTitle: s.sourceIncidentId
+            ? incDefMap.get(s.sourceIncidentId)?.title
+            : undefined,
           timePhase,
         }));
         const headlines = await this.generateNewsHeadlines(newsContext);
@@ -5304,32 +5536,43 @@ export class TurnsService {
   }
 
   /** 시그널을 신문 호외 기사로 변환 (nano LLM, 컨텍스트 보강) */
-  private async generateNewsHeadlines(signals: Array<{
-    text: string;
-    channel: string;
-    severity: number;
-    location: string;
-    incidentTitle?: string;
-    timePhase: string;
-  }>): Promise<string[]> {
-    if (!this.llmCaller) return signals.map(s => s.text);
+  private async generateNewsHeadlines(
+    signals: Array<{
+      text: string;
+      channel: string;
+      severity: number;
+      location: string;
+      incidentTitle?: string;
+      timePhase: string;
+    }>,
+  ): Promise<string[]> {
+    if (!this.llmCaller) return signals.map((s) => s.text);
 
     const CHANNEL_KR: Record<string, string> = {
-      RUMOR: '소문', SECURITY: '치안', NPC_BEHAVIOR: '인물', ECONOMY: '경제', VISUAL: '목격',
+      RUMOR: '소문',
+      SECURITY: '치안',
+      NPC_BEHAVIOR: '인물',
+      ECONOMY: '경제',
+      VISUAL: '목격',
     };
     const TIME_KR: Record<string, string> = {
-      DAY: '낮', NIGHT: '밤', DAWN: '새벽', DUSK: '해질녘',
+      DAY: '낮',
+      NIGHT: '밤',
+      DAWN: '새벽',
+      DUSK: '해질녘',
     };
 
-    const joined = signals.map((s, i) => {
-      const parts = [`${i + 1}. "${s.text}"`];
-      parts.push(`장소: ${s.location}`);
-      parts.push(`분류: ${CHANNEL_KR[s.channel] ?? s.channel}`);
-      parts.push(`시간: ${TIME_KR[s.timePhase] ?? s.timePhase}`);
-      if (s.incidentTitle) parts.push(`관련 사건: ${s.incidentTitle}`);
-      parts.push(`긴급도: ${s.severity}/5`);
-      return parts.join(', ');
-    }).join('\n');
+    const joined = signals
+      .map((s, i) => {
+        const parts = [`${i + 1}. "${s.text}"`];
+        parts.push(`장소: ${s.location}`);
+        parts.push(`분류: ${CHANNEL_KR[s.channel] ?? s.channel}`);
+        parts.push(`시간: ${TIME_KR[s.timePhase] ?? s.timePhase}`);
+        if (s.incidentTitle) parts.push(`관련 사건: ${s.incidentTitle}`);
+        parts.push(`긴급도: ${s.severity}/5`);
+        return parts.join(', ');
+      })
+      .join('\n');
 
     const raw = await this.llmCaller.callLight({
       messages: [
@@ -5351,11 +5594,11 @@ export class TurnsService {
       temperature: 0.7,
     });
 
-    if (!raw) return signals.map(s => s.text);
+    if (!raw) return signals.map((s) => s.text);
     return raw
       .split('\n')
-      .map(line => line.replace(/^\d+\.\s*/, '').trim())
-      .filter(line => line.length > 0)
+      .map((line) => line.replace(/^\d+\.\s*/, '').trim())
+      .filter((line) => line.length > 0)
       .slice(0, signals.length);
   }
 
@@ -5402,6 +5645,8 @@ export class TurnsService {
       approachVector?: string;
       goalText?: string;
       targetNpcId?: string;
+      /** Player-First: 턴 모드 (PLAYER_DIRECTED / CONVERSATION_CONT / WORLD_EVENT) */
+      turnMode?: string;
     },
     hideResolve?: boolean,
     goldDelta?: number,
@@ -5706,5 +5951,112 @@ export class TurnsService {
         turns: usageTurns.length,
       },
     };
+  }
+
+  // ── Player-First: 턴 모드 결정 ──
+  private determineTurnMode(ctx: {
+    earlyTargetNpcId: string | null;
+    intentV3TargetNpcId: string | null;
+    actionType: string;
+    lastPrimaryNpcId: string | null;
+    isFirstTurnAtLocation: boolean;
+    incidentPressureHigh: boolean;
+    questFactTrigger: boolean;
+  }): TurnMode {
+    const SOCIAL_ACTIONS = new Set([
+      'TALK',
+      'PERSUADE',
+      'BRIBE',
+      'THREATEN',
+      'HELP',
+      'INVESTIGATE',
+      'OBSERVE',
+      'TRADE',
+    ]);
+
+    // 1) 플레이어가 NPC를 명시적으로 지목
+    if (ctx.earlyTargetNpcId || ctx.intentV3TargetNpcId) {
+      // 퀘스트 팩트 트리거가 있어도 플레이어 의도 우선
+      // 단, 장소 첫 진입은 분위기 설정을 위해 WORLD_EVENT
+      if (ctx.isFirstTurnAtLocation) {
+        return TurnMode.WORLD_EVENT;
+      }
+      return TurnMode.PLAYER_DIRECTED;
+    }
+
+    // 2) 대화 연속 (SOCIAL_ACTION + 이전 대화 NPC 존재)
+    if (ctx.lastPrimaryNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
+      // 강제 세계 이벤트가 아닌 한 대화 연속
+      if (ctx.isFirstTurnAtLocation) {
+        return TurnMode.WORLD_EVENT;
+      }
+      return TurnMode.CONVERSATION_CONT;
+    }
+
+    // 3) 강제 세계 이벤트 (축소된 조건)
+    if (
+      ctx.isFirstTurnAtLocation ||
+      ctx.incidentPressureHigh || // 50 → 70으로 상향
+      ctx.questFactTrigger
+    ) {
+      return TurnMode.WORLD_EVENT;
+    }
+
+    // 4) 기본값: 플레이어 주도 (이벤트 강제 없음)
+    return TurnMode.PLAYER_DIRECTED;
+  }
+
+  // ── Player-First: 입력 텍스트에서 NPC 추출 (turnMode 결정용) ──
+  private extractTargetNpcFromInput(
+    rawInput: string,
+    inputType: string,
+  ): string | null {
+    if (inputType !== 'ACTION' || !rawInput) return null;
+
+    const inputLower = rawInput.toLowerCase();
+    const allNpcs = this.content.getAllNpcs();
+
+    // Pass 1: 실명 또는 별칭 전체 매칭
+    for (const npc of allNpcs) {
+      if (npc.name && inputLower.includes(npc.name.toLowerCase()))
+        return npc.npcId;
+      if (
+        npc.unknownAlias &&
+        inputLower.includes(npc.unknownAlias.toLowerCase())
+      )
+        return npc.npcId;
+    }
+
+    // Pass 2: "~에게" 패턴
+    const egeMatch = rawInput.match(/(.+?)에게/);
+    if (egeMatch) {
+      const targetWord = egeMatch[1].trim().toLowerCase();
+      for (const npc of allNpcs) {
+        if (npc.name && targetWord.includes(npc.name.toLowerCase()))
+          return npc.npcId;
+        const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
+        if (
+          aliasKw.some(
+            (kw: string) =>
+              kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
+          )
+        )
+          return npc.npcId;
+      }
+    }
+
+    // Pass 3: 별칭 키워드 부분 매칭 (3자 이상)
+    for (const npc of allNpcs) {
+      const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
+      if (
+        aliasKw.some(
+          (kw: string) =>
+            kw.length >= 3 && inputLower.includes(kw.toLowerCase()),
+        )
+      )
+        return npc.npcId;
+    }
+
+    return null;
   }
 }

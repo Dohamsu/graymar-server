@@ -9,20 +9,20 @@ import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { ServerResultV1 } from '../db/types/index.js';
 
 export interface NanoEventResult {
-  npc: string;                    // NPC 표시명
-  npcId: string | null;           // NPC ID (서버 검증용)
-  concept: string;                // 이벤트 컨셉 (30~60자)
-  tone: string;                   // 분위기
-  opening: string;                // 첫 문장 (감각 묘사)
-  npcGesture: string;             // NPC 행동
-  fact: string | null;            // 발견 추천 fact ID
-  factRevealed: boolean;          // fact 발견 여부 (서버 RNG로 최종 확정)
+  npc: string; // NPC 표시명
+  npcId: string | null; // NPC ID (서버 검증용)
+  concept: string; // 이벤트 컨셉 (30~60자)
+  tone: string; // 분위기
+  opening: string; // 첫 문장 (감각 묘사)
+  npcGesture: string; // NPC 행동
+  fact: string | null; // 발견 추천 fact ID
+  factRevealed: boolean; // fact 발견 여부 (서버 RNG로 최종 확정)
   factDelivery: 'direct' | 'indirect' | 'observe';
-  avoid: string[];                // 반복 금지 표현
+  avoid: string[]; // 반복 금지 표현
   choices: Array<{
     label: string;
     affordance: string;
-    npcId: string | null;         // 같은 NPC면 대화 연속, null이면 전환 기회
+    npcId: string | null; // 같은 NPC면 대화 연속, null이면 전환 기회
   }>;
 }
 
@@ -37,16 +37,35 @@ export interface NanoEventContext {
   resolveOutcome: 'SUCCESS' | 'PARTIAL' | 'FAIL' | null;
   lastNpcId: string | null;
   lastNpcName: string | null;
-  targetNpcId: string | null;     // 플레이어가 텍스트에서 지목한 NPC
-  wantNewNpc: boolean;            // "다른/아무나" 키워드 감지
-  npcConsecutiveTurns: number;    // 같은 NPC 연속 대화 턴 수
-  presentNpcs: Array<{ npcId: string; displayName: string; posture: string; trust: number; consecutiveTurns: number; met: boolean }>;
-  recentSummary: string;          // 직전 2턴 요약
+  targetNpcId: string | null; // 플레이어가 텍스트에서 지목한 NPC
+  wantNewNpc: boolean; // "다른/아무나" 키워드 감지
+  npcConsecutiveTurns: number; // 같은 NPC 연속 대화 턴 수
+  presentNpcs: Array<{
+    npcId: string;
+    displayName: string;
+    posture: string;
+    trust: number;
+    consecutiveTurns: number;
+    met: boolean;
+  }>;
+  recentSummary: string; // 직전 2턴 요약
   availableFacts: Array<{ factId: string; description: string; rate: number }>;
   questState: string;
   previousOpening: string | null; // 직전 감각 카테고리 회피용
-  activeConditions: Array<{ id: string; effects: { blockedActions?: string[]; boostedActions?: string[] } }>;
-  npcReactions: Array<{ npcId: string; npcName: string; type: string; text: string }>;
+  activeConditions: Array<{
+    id: string;
+    effects: { blockedActions?: string[]; boostedActions?: string[] };
+  }>;
+  npcReactions: Array<{
+    npcId: string;
+    npcName: string;
+    type: string;
+    text: string;
+  }>;
+  /** Player-First: true면 NPC 변경 금지 (PLAYER_DIRECTED/CONVERSATION_CONT 모드) */
+  npcLocked?: boolean;
+  /** Player-First: 강제 지정된 NPC ID (PLAYER_DIRECTED 모드에서 플레이어가 지목한 NPC) */
+  lockedNpcId?: string | null;
 }
 
 const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
@@ -124,7 +143,9 @@ export class NanoEventDirectorService {
 
       return validated;
     } catch (err) {
-      this.logger.warn(`[NanoEventDirector] 실패: ${err instanceof Error ? err.message : err}`);
+      this.logger.warn(
+        `[NanoEventDirector] 실패: ${err instanceof Error ? err.message : err}`,
+      );
       return null;
     }
   }
@@ -133,15 +154,22 @@ export class NanoEventDirectorService {
     const npcList = ctx.presentNpcs
       .map((n) => {
         const tags: string[] = [`trust:${n.trust}`, n.posture];
-        if (n.npcId === ctx.lastNpcId) tags.push(`직전 대화 NPC, ${n.consecutiveTurns}턴 연속`);
+        if (n.npcId === ctx.lastNpcId)
+          tags.push(`직전 대화 NPC, ${n.consecutiveTurns}턴 연속`);
         if (!n.met) tags.push('미대면');
         return `- ${n.displayName} [${n.npcId}] (${tags.join(', ')})`;
       })
       .join('\n');
 
-    const factList = ctx.availableFacts.length > 0
-      ? ctx.availableFacts.map((f) => `- ${f.factId}: ${f.description} (확률 ${Math.round(f.rate * 100)}%)`).join('\n')
-      : '(없음)';
+    const factList =
+      ctx.availableFacts.length > 0
+        ? ctx.availableFacts
+            .map(
+              (f) =>
+                `- ${f.factId}: ${f.description} (확률 ${Math.round(f.rate * 100)}%)`,
+            )
+            .join('\n')
+        : '(없음)';
 
     const parts = [
       `[맥락]`,
@@ -176,25 +204,55 @@ export class NanoEventDirectorService {
     }
 
     if (ctx.previousOpening) {
-      parts.push(``, `[직전 opening] "${ctx.previousOpening}" → 다른 감각 사용`);
+      parts.push(
+        ``,
+        `[직전 opening] "${ctx.previousOpening}" → 다른 감각 사용`,
+      );
     }
 
     // NPC 반응 (목격자 행동)
     if (ctx.npcReactions.length > 0) {
-      const reactionLines = ctx.npcReactions.map((r) => `- ${r.npcName}: ${r.text}`);
-      parts.push(``, `[NPC 반응 — 이전 행동을 목격한 NPC들의 반응을 반영하세요]`, ...reactionLines);
+      const reactionLines = ctx.npcReactions.map(
+        (r) => `- ${r.npcName}: ${r.text}`,
+      );
+      parts.push(
+        ``,
+        `[NPC 반응 — 이전 행동을 목격한 NPC들의 반응을 반영하세요]`,
+        ...reactionLines,
+      );
     }
 
     // NPC 선택 시그널
-    if (ctx.targetNpcId) {
-      const targetNpc = ctx.presentNpcs.find((n) => n.npcId === ctx.targetNpcId);
+    if (ctx.npcLocked && ctx.lockedNpcId) {
+      // Player-First: NPC가 잠겨있으면 변경 불가
+      const lockedNpc = ctx.presentNpcs.find(
+        (n) => n.npcId === ctx.lockedNpcId,
+      );
+      const lockedName = lockedNpc?.displayName ?? ctx.lockedNpcId;
+      parts.push(
+        ``,
+        `[NPC 고정] ${lockedName}이(가) 이 장면의 NPC입니다. 변경 불가. 이 NPC에 맞는 상황만 생성하세요.`,
+      );
+    } else if (ctx.targetNpcId) {
+      const targetNpc = ctx.presentNpcs.find(
+        (n) => n.npcId === ctx.targetNpcId,
+      );
       if (targetNpc) {
-        parts.push(``, `[NPC 지정] 플레이어가 ${targetNpc.displayName}을(를) 지목 → 이 NPC 선택 필수`);
+        parts.push(
+          ``,
+          `[NPC 지정] 플레이어가 ${targetNpc.displayName}을(를) 지목 → 이 NPC 선택 필수`,
+        );
       }
     } else if (ctx.wantNewNpc) {
-      parts.push(``, `[NPC 전환] 플레이어가 "다른 사람"을 원함 → 직전 NPC 외 다른 NPC 선택`);
+      parts.push(
+        ``,
+        `[NPC 전환] 플레이어가 "다른 사람"을 원함 → 직전 NPC 외 다른 NPC 선택`,
+      );
     } else if (ctx.npcConsecutiveTurns >= 3) {
-      parts.push(``, `[NPC 피로] 같은 NPC ${ctx.npcConsecutiveTurns}턴 연속 → 다른 NPC 또는 환경 묘사 권장`);
+      parts.push(
+        ``,
+        `[NPC 피로] 같은 NPC ${ctx.npcConsecutiveTurns}턴 연속 → 다른 NPC 또는 환경 묘사 권장`,
+      );
     }
 
     return parts.join('\n');
@@ -203,7 +261,9 @@ export class NanoEventDirectorService {
   private parseResponse(text: string): NanoEventResult | null {
     const jsonMatch = text.trim().match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      this.logger.warn(`[NanoEventDirector] JSON 파싱 실패: ${text.slice(0, 100)}`);
+      this.logger.warn(
+        `[NanoEventDirector] JSON 파싱 실패: ${text.slice(0, 100)}`,
+      );
       return null;
     }
 
@@ -216,17 +276,23 @@ export class NanoEventDirectorService {
         concept: typeof parsed.concept === 'string' ? parsed.concept : '',
         tone: typeof parsed.tone === 'string' ? parsed.tone : '',
         opening: typeof parsed.opening === 'string' ? parsed.opening : '',
-        npcGesture: typeof parsed.npcGesture === 'string' ? parsed.npcGesture : '',
+        npcGesture:
+          typeof parsed.npcGesture === 'string' ? parsed.npcGesture : '',
         fact: typeof parsed.fact === 'string' ? parsed.fact : null,
         factRevealed: parsed.factRevealed === true,
-        factDelivery: ['direct', 'indirect', 'observe'].includes(parsed.factDelivery as string)
-          ? parsed.factDelivery as 'direct' | 'indirect' | 'observe'
+        factDelivery: ['direct', 'indirect', 'observe'].includes(
+          parsed.factDelivery as string,
+        )
+          ? (parsed.factDelivery as 'direct' | 'indirect' | 'observe')
           : 'indirect',
-        avoid: Array.isArray(parsed.avoid) ? parsed.avoid.filter((a) => typeof a === 'string').slice(0, 5) : [],
+        avoid: Array.isArray(parsed.avoid)
+          ? parsed.avoid.filter((a) => typeof a === 'string').slice(0, 5)
+          : [],
         choices: Array.isArray(parsed.choices)
           ? parsed.choices.slice(0, 3).map((c) => ({
               label: typeof c.label === 'string' ? c.label : '행동한다',
-              affordance: typeof c.affordance === 'string' ? c.affordance : 'TALK',
+              affordance:
+                typeof c.affordance === 'string' ? c.affordance : 'TALK',
               npcId: typeof c.npcId === 'string' ? c.npcId : null,
             }))
           : [],
@@ -237,42 +303,63 @@ export class NanoEventDirectorService {
     }
   }
 
-  private validate(result: NanoEventResult, ctx: NanoEventContext): NanoEventResult {
-    // 0. 플레이어가 NPC를 지목한 경우 강제 오버라이드
-    if (ctx.targetNpcId) {
+  private validate(
+    result: NanoEventResult,
+    ctx: NanoEventContext,
+  ): NanoEventResult {
+    // 0. Player-First: npcLocked면 NPC 변경 금지
+    if (ctx.npcLocked && ctx.lockedNpcId) {
+      result.npcId = ctx.lockedNpcId;
+      const npcDef = this.content.getNpc(ctx.lockedNpcId);
+      result.npc = npcDef?.unknownAlias ?? npcDef?.name ?? result.npc;
+      // npcLocked에서는 NPC 관련 검증 스킵 — 컨셉/톤/fact만 유효
+      this.logger.debug(
+        `[NanoEventDirector] npcLocked → NPC=${ctx.lockedNpcId} 고정`,
+      );
+    } else {
+      // 0b. 플레이어가 NPC를 지목한 경우 강제 오버라이드
+      if (ctx.targetNpcId) {
+        const presentIds = ctx.presentNpcs.map((n) => n.npcId);
+        if (presentIds.includes(ctx.targetNpcId)) {
+          result.npcId = ctx.targetNpcId;
+          const npcDef = this.content.getNpc(ctx.targetNpcId);
+          result.npc = npcDef?.unknownAlias ?? npcDef?.name ?? result.npc;
+        }
+      }
+
+      // 1. NPC가 현재 장소에 있는지 확인
       const presentIds = ctx.presentNpcs.map((n) => n.npcId);
-      if (presentIds.includes(ctx.targetNpcId)) {
-        result.npcId = ctx.targetNpcId;
-        const npcDef = this.content.getNpc(ctx.targetNpcId);
-        result.npc = npcDef?.unknownAlias ?? npcDef?.name ?? result.npc;
+      if (result.npcId && !presentIds.includes(result.npcId)) {
+        result.npcId = ctx.lastNpcId ?? (presentIds[0] || null);
+        if (result.npcId) {
+          const npcDef = this.content.getNpc(result.npcId);
+          result.npc = npcDef?.unknownAlias ?? npcDef?.name ?? result.npc;
+        }
       }
-    }
 
-    // 1. NPC가 현재 장소에 있는지 확인
-    const presentIds = ctx.presentNpcs.map((n) => n.npcId);
-    if (result.npcId && !presentIds.includes(result.npcId)) {
-      // 직전 NPC 우선, 없으면 첫 번째
-      result.npcId = ctx.lastNpcId ?? (presentIds[0] || null);
-      if (result.npcId) {
-        const npcDef = this.content.getNpc(result.npcId);
-        result.npc = npcDef?.unknownAlias ?? npcDef?.name ?? result.npc;
-      }
-    }
-
-    // 1b. 5턴 이상 같은 NPC 연속 → 강제 전환
-    if (ctx.npcConsecutiveTurns >= 5 && result.npcId === ctx.lastNpcId && presentIds.length > 1) {
-      const others = presentIds.filter((id) => id !== ctx.lastNpcId);
-      if (others.length > 0) {
-        result.npcId = others[0];
-        const npcDef = this.content.getNpc(result.npcId!);
-        result.npc = npcDef?.unknownAlias ?? npcDef?.name ?? result.npc;
-        this.logger.debug(`[NanoEventDirector] 5턴 강제 전환: ${ctx.lastNpcId} → ${result.npcId}`);
+      // 1b. 5턴 이상 같은 NPC 연속 → 강제 전환
+      if (
+        ctx.npcConsecutiveTurns >= 5 &&
+        result.npcId === ctx.lastNpcId &&
+        presentIds.length > 1
+      ) {
+        const others = presentIds.filter((id) => id !== ctx.lastNpcId);
+        if (others.length > 0) {
+          result.npcId = others[0];
+          const npcDef = this.content.getNpc(result.npcId);
+          result.npc = npcDef?.unknownAlias ?? npcDef?.name ?? result.npc;
+          this.logger.debug(
+            `[NanoEventDirector] 5턴 강제 전환: ${ctx.lastNpcId} → ${result.npcId}`,
+          );
+        }
       }
     }
 
     // 2. fact가 발견 가능 목록에 있는지
     if (result.fact) {
-      const validFact = ctx.availableFacts.find((f) => f.factId === result.fact);
+      const validFact = ctx.availableFacts.find(
+        (f) => f.factId === result.fact,
+      );
       if (!validFact) {
         result.fact = null;
         result.factRevealed = false;
@@ -280,20 +367,37 @@ export class NanoEventDirectorService {
     }
 
     // 3. opening "당신은" 방지
-    if (result.opening.startsWith('당신은') || result.opening.startsWith('당신이')) {
+    if (
+      result.opening.startsWith('당신은') ||
+      result.opening.startsWith('당신이')
+    ) {
       result.opening = '';
     }
 
     // 4. 선택지 보정 (최소 3개, affordance 유효성)
     const VALID_AFF = new Set([
-      'INVESTIGATE', 'PERSUADE', 'SNEAK', 'BRIBE', 'THREATEN', 'HELP',
-      'STEAL', 'FIGHT', 'OBSERVE', 'TRADE', 'TALK', 'SEARCH',
+      'INVESTIGATE',
+      'PERSUADE',
+      'SNEAK',
+      'BRIBE',
+      'THREATEN',
+      'HELP',
+      'STEAL',
+      'FIGHT',
+      'OBSERVE',
+      'TRADE',
+      'TALK',
+      'SEARCH',
     ]);
     for (const choice of result.choices) {
       if (!VALID_AFF.has(choice.affordance)) choice.affordance = 'TALK';
     }
     while (result.choices.length < 3) {
-      result.choices.push({ label: '주변을 살핀다', affordance: 'OBSERVE', npcId: null });
+      result.choices.push({
+        label: '주변을 살핀다',
+        affordance: 'OBSERVE',
+        npcId: null,
+      });
     }
 
     return result;

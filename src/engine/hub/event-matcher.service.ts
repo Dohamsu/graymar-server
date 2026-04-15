@@ -203,6 +203,8 @@ export class EventMatcherService {
     recentEventIds: string[],
     routingResult: IncidentRoutingResult | null,
     sessionNpcContext?: SessionNpcContext,
+    /** Player-First: 플레이어가 지목한 NPC — 호환 이벤트 가중치 부스트 */
+    targetNpcId?: string | null,
   ): EventDefV2 | null {
     if (!routingResult || routingResult.routeMode === 'FALLBACK_SCENE') {
       return this.match(
@@ -349,6 +351,18 @@ export class EventMatcherService {
       const effectiveNpcBonus =
         repeatPenalty > 0 ? Math.min(npcBonus, repeatPenalty * 0.5) : npcBonus;
 
+      // Player-First: targetNpcId 호환 가중치
+      let targetNpcBoost = 0;
+      if (targetNpcId) {
+        const evtNpc = e.payload.primaryNpcId;
+        if (evtNpc === targetNpcId) {
+          targetNpcBoost = 50;   // 플레이어 지목 NPC와 일치 → +50
+        } else if (evtNpc && evtNpc !== targetNpcId) {
+          targetNpcBoost = -50;  // 다른 NPC 하드코딩 → -50
+        }
+        // primaryNpcId가 없는 이벤트는 중립 (어떤 NPC와도 호환)
+      }
+
       return Math.max(
         1,
         base +
@@ -356,7 +370,8 @@ export class EventMatcherService {
           questFactBoost +
           incidentBoost +
           effectiveNpcBonus +
-          tagBonus -
+          tagBonus +
+          targetNpcBoost -
           penalty,
       );
     });

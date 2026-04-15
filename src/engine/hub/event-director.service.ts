@@ -77,6 +77,8 @@ export class EventDirectorService {
     routingResult: IncidentRoutingResult | null,
     sessionNpcContext?: SessionNpcContext,
     intentV3?: ParsedIntentV3 | null,
+    /** Player-First: 플레이어가 지목한 NPC — 호환 이벤트 우선 */
+    targetNpcId?: string | null,
   ): EventDirectorResult {
     const filterLog: string[] = [];
 
@@ -132,6 +134,7 @@ export class EventDirectorService {
       recentEventIds,
       routingResult,
       sessionNpcContext,
+      targetNpcId,
     );
 
     const candidateCount = remapped.filter(
