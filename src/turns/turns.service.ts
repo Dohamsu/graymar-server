@@ -1443,8 +1443,9 @@ export class TurnsService {
       `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${event.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}${resolveResult.traitBonus ? ` traitBonus=${resolveResult.traitBonus > 0 ? '+' : ''}${resolveResult.traitBonus}` : ''}${resolveResult.gamblerLuckTriggered ? ' GAMBLER_LUCK!' : ''}`,
     );
 
-    // === NanoEventDirector: nano LLM 기반 동적 이벤트 컨셉 생성 ===
+    // === NanoEventDirector: 비동기 분리 — nanoCtx만 빌드, LLM Worker에서 호출 ===
     let nanoEventResult: NanoEventResult | null = null;
+    let nanoEventCtx: NanoEventContext | null = null;
     if (this.nanoEventDirector) {
       try {
         // 장소에 있는 NPC 목록
@@ -1603,31 +1604,16 @@ export class TurnsService {
           lockedNpcId,
         };
 
-        nanoEventResult = await this.nanoEventDirector.generate(nanoCtx);
-        if (nanoEventResult) {
-          this.logger.log(
-            `[NanoEventDirector] npc=${nanoEventResult.npc} concept="${nanoEventResult.concept.slice(0, 40)}" fact=${nanoEventResult.fact ?? 'none'} choices=${nanoEventResult.choices.length}`,
-          );
-
-          // Player-First: NPC 덮어쓰기는 WORLD_EVENT 모드의 FREE 이벤트에서만 허용
-          // PLAYER_DIRECTED/CONVERSATION_CONT에서는 플레이어/대화 잠금 NPC 유지
-          const isPlayerLocked =
-            event.eventId.startsWith('FREE_PLAYER_') ||
-            event.eventId.startsWith('FREE_CONV_');
-          if (
-            nanoEventResult.npcId &&
-            event.eventId.startsWith('FREE_') &&
-            !isPlayerLocked
-          ) {
-            (event.payload as Record<string, unknown>).primaryNpcId =
-              nanoEventResult.npcId;
-          }
-        }
+        // 비동기 분리: nanoCtx만 저장, LLM Worker에서 generate() 호출
+        nanoEventCtx = nanoCtx;
+        this.logger.debug(
+          `[NanoEventDirector] nanoCtx 빌드 완료 → LLM Worker에서 비동기 호출 예정`,
+        );
       } catch (err) {
         this.logger.warn(
-          `[NanoEventDirector] error (non-fatal, fallback to legacy): ${err}`,
+          `[NanoEventDirector] nanoCtx 빌드 실패 (non-fatal): ${err}`,
         );
-        nanoEventResult = null;
+        nanoEventCtx = null;
       }
     }
 
@@ -2957,40 +2943,8 @@ export class TurnsService {
           }
         }
 
-        // 경로 4: NanoEventDirector 추천 fact — 서버 RNG로 최종 확정
-        if (nanoEventResult?.fact && nanoEventResult.factRevealed) {
-          const nanoFact = nanoEventResult.fact;
-          if (!existing.includes(nanoFact)) {
-            // nano가 추천한 fact가 유효한지 확인 (발견 가능 목록에 있는지)
-            const isValidFact = this.content
-              .getAllEventsV2()
-              .some((e: any) => e.discoverableFact === nanoFact);
-            if (isValidFact) {
-              // 서버 RNG로 최종 확정 (SUCCESS=100%, PARTIAL=50%)
-              const factRoll = rng.range(0, 100);
-              const threshold =
-                resolveResult.outcome === 'SUCCESS'
-                  ? 100
-                  : resolveResult.outcome === 'PARTIAL'
-                    ? 50
-                    : 0;
-              if (factRoll < threshold) {
-                addFact(nanoFact, `nano:${nanoEventResult.npcId ?? 'none'}`);
-              } else {
-                // RNG 실패 → fact 미발견, LLM 프롬프트에도 반영 안 함
-                nanoEventResult.factRevealed = false;
-                this.logger.debug(
-                  `[NanoEventDirector] fact ${nanoFact} RNG failed (roll=${factRoll}, threshold=${threshold})`,
-                );
-              }
-            } else {
-              nanoEventResult.factRevealed = false;
-              this.logger.debug(
-                `[NanoEventDirector] fact ${nanoFact} not in valid fact list`,
-              );
-            }
-          }
-        }
+        // 경로 4: NanoEventDirector 추천 fact — LLM Worker에서 비동기 처리 (비동기 분리)
+        // nanoEventResult는 비동기 분리 후 항상 null — fact 발견은 경로 1~3으로 충분
 
         // 전체 발견 팩트 수집 + 단계 전환 체크
         const discoveredFacts =
@@ -3389,29 +3343,8 @@ export class TurnsService {
         event.eventId,
       );
     }
-    // === NanoEventDirector 선택지 오버라이드 ===
-    if (nanoEventResult && nanoEventResult.choices.length >= 3) {
-      choices = nanoEventResult.choices.map((nc, idx) => ({
-        id: `nano_${turnNo}_${idx}`,
-        label: nc.label,
-        action: {
-          type: 'CHOICE' as import('../db/types/index.js').InputType,
-          payload: {
-            affordance: nc.affordance,
-            sourceNpcId: nc.npcId ?? nanoEventResult.npcId,
-          },
-        },
-      }));
-      // go_hub 선택지는 항상 마지막에 추가
-      choices.push({
-        id: 'go_hub',
-        label: '다른 장소로 이동한다',
-        action: {
-          type: 'CHOICE' as import('../db/types/index.js').InputType,
-          payload: { affordance: 'MOVE_LOCATION' },
-        },
-      });
-    }
+    // NanoEventDirector 선택지 → LLM Worker에서 비동기 생성 후 llmChoices에 저장
+    // 턴 응답에서는 서버 기본 선택지 사용
 
     // === 선택지별 예상 보정치(modifier) 부착 ===
     {
@@ -3552,7 +3485,11 @@ export class TurnsService {
       result.events.push(shopEvt);
     }
 
-    // NanoEventDirector 결과를 ui에 추가 (LLM 프롬프트 주입용)
+    // NanoEventDirector: nanoCtx를 ui에 저장 → LLM Worker에서 비동기 호출
+    if (nanoEventCtx) {
+      (result.ui as any).nanoEventCtx = nanoEventCtx;
+    }
+    // 하위 호환: nanoEventResult가 있으면 기존 방식으로도 전달
     if (nanoEventResult) {
       (result.ui as any).nanoEventHint = nanoEventResult;
     }
