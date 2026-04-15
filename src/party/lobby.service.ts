@@ -59,10 +59,7 @@ export class LobbyService {
       .update(partyMembers)
       .set({ isReady: ready ? 'true' : 'false' })
       .where(
-        and(
-          eq(partyMembers.partyId, partyId),
-          eq(partyMembers.userId, userId),
-        ),
+        and(eq(partyMembers.partyId, partyId), eq(partyMembers.userId, userId)),
       );
 
     const state = await this.getLobbyState(partyId);
@@ -208,13 +205,11 @@ export class LobbyService {
     await this.db
       .update(parties)
       .set({
-        status: newStatus as 'OPEN' | 'FULL',
+        status: newStatus,
         updatedAt: new Date(),
       })
       .where(eq(parties.id, partyId));
 
-    this.logger.log(
-      `Dungeon ended: party=${partyId} → status=${newStatus}`,
-    );
+    this.logger.log(`Dungeon ended: party=${partyId} → status=${newStatus}`);
   }
 }

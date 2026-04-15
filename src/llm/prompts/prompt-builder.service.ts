@@ -43,7 +43,9 @@ export class PromptBuilderService {
     inputType: string = 'SYSTEM',
     previousChoiceLabels?: string[],
     directorHint?: import('../nano-director.service.js').DirectorHint | null,
-    nanoEventHint?: import('../nano-event-director.service.js').NanoEventResult | null,
+    nanoEventHint?:
+      | import('../nano-event-director.service.js').NanoEventResult
+      | null,
     useJsonMode?: boolean,
   ): LlmMessage[] {
     const messages: LlmMessage[] = [];
@@ -67,9 +69,7 @@ export class PromptBuilderService {
         GLADIATOR: '검투사. 관중 앞에서 단련된 전투의 달인.',
       };
       const memberLines = ctx.partyActions.map((a) => {
-        const desc = a.presetId
-          ? presetDescriptions[a.presetId] ?? ''
-          : '';
+        const desc = a.presetId ? (presetDescriptions[a.presetId] ?? '') : '';
         return `- **${a.nickname}**${desc ? `: ${desc}` : ''}${a.isAutoAction ? ' (이번 턴 자동 행동)' : ''}`;
       });
       partyIntro = `\n\n## 파티 구성원\n이번 파티의 모험가들:\n${memberLines.join('\n')}\n서술 시 반드시 각 파티원의 이름을 사용하세요. "당신" 대신 이름으로 지칭합니다.`;
@@ -80,7 +80,8 @@ export class PromptBuilderService {
         ? '\n\n## 주인공 성별\n주인공("당신")은 **여성**입니다. NPC의 호칭(아가씨, 자매, 부인 등), 외모 묘사, 주변 반응에 성별을 자연스럽게 반영하세요. 단, 과도한 성별 강조는 피하세요.'
         : '';
     // JSON 모드일 때: 산문 태그 섹션(CHOICES/MEMORY/THREAD) 제거 + JSON 스키마 추가
-    const useDialogueSplit = useJsonMode && process.env.LLM_DIALOGUE_SPLIT === 'true';
+    const useDialogueSplit =
+      useJsonMode && process.env.LLM_DIALOGUE_SPLIT === 'true';
     let effectivePrompt = basePrompt;
     if (useJsonMode) {
       // E: 기억 추출 태그, F: 장면 요약 태그, G: 맥락 선택지 생성 — JSON 스키마에서 이미 정의
@@ -93,12 +94,17 @@ export class PromptBuilderService {
     if (useDialogueSplit) {
       // 대사 분리 모드: NPC 대사 작성 규칙 제거 (Stage B가 담당)
       effectivePrompt = effectivePrompt
-        .replace(/## NPC 대사 작성 규칙 \(⚠️ 최우선[^]*?(?=## 따옴표 사용 규칙)/, '')
+        .replace(
+          /## NPC 대사 작성 규칙 \(⚠️ 최우선[^]*?(?=## 따옴표 사용 규칙)/,
+          '',
+        )
         .replace(/## 따옴표 사용 규칙 \(필수\)[\s\S]*?(?=## |$)/, '');
     }
     const formatInstruction = useDialogueSplit
       ? NARRATIVE_JSON_FORMAT_INSTRUCTION_SPLIT
-      : (useJsonMode ? NARRATIVE_JSON_FORMAT_INSTRUCTION : '');
+      : useJsonMode
+        ? NARRATIVE_JSON_FORMAT_INSTRUCTION
+        : '';
     const formatSuffix = formatInstruction ? `\n\n${formatInstruction}` : '';
     const systemContent =
       ctx.theme.length > 0
@@ -309,11 +315,15 @@ export class PromptBuilderService {
     const threadEntries = new Map<number, string>();
     if (ctx.narrativeThread) {
       try {
-        const parsed = JSON.parse(ctx.narrativeThread) as { entries?: { turnNo: number; summary: string }[] };
+        const parsed = JSON.parse(ctx.narrativeThread) as {
+          entries?: { turnNo: number; summary: string }[];
+        };
         for (const e of parsed.entries ?? []) {
           threadEntries.set(e.turnNo, e.summary);
         }
-      } catch { /* 파싱 실패 시 fallback */ }
+      } catch {
+        /* 파싱 실패 시 fallback */
+      }
     }
 
     // L3: 현재 LOCATION 방문 전체 대화 (단기 기억 — 우선 사용) — HUB에서는 생략
@@ -342,9 +352,10 @@ export class PromptBuilderService {
         {
           const threadSummary = threadEntries.get(t.turnNo);
           if (threadSummary) {
-            narrativePart = distFromEnd === 0
-              ? `\n상황(직전 — 여기서 이어쓰세요): ${threadSummary}`
-              : `\n상황: ${threadSummary}`;
+            narrativePart =
+              distFromEnd === 0
+                ? `\n상황(직전 — 여기서 이어쓰세요): ${threadSummary}`
+                : `\n상황: ${threadSummary}`;
           } else if (t.narrative) {
             // THREAD 없으면 원문 60자 fallback
             const trimmed =
@@ -433,9 +444,7 @@ export class PromptBuilderService {
         const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
         // THREAD 요약 사용 (원문 제거)
         const threadSummary = threadEntries.get(t.turnNo);
-        const narrativePart = threadSummary
-          ? `\n상황: ${threadSummary}`
-          : '';
+        const narrativePart = threadSummary ? `\n상황: ${threadSummary}` : '';
         return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
       });
       memoryParts.push(`[최근 대화 이력]\n${turnLines.join('\n---\n')}`);
@@ -670,7 +679,8 @@ export class PromptBuilderService {
             const alias = def.unknownAlias || def.name;
             // 역할명에서 짧은 호칭 추출 (예: "날카로운 눈매의 회계사" → "회계사")
             const words = alias.split(/\s/);
-            const shortAlias = words.length > 1 ? words[words.length - 1] : alias;
+            const shortAlias =
+              words.length > 1 ? words[words.length - 1] : alias;
             aliasLines.push(
               shortAlias !== alias
                 ? `- ${alias} (짧은 호칭: "${shortAlias}")`
@@ -683,14 +693,14 @@ export class PromptBuilderService {
             // JSON 모드: dialogue segment의 speaker_alias에 호칭 사용
             memoryParts.push(
               `[등장 가능 NPC 목록] dialogue의 speaker_alias에 아래 호칭을 사용하세요:\n` +
-              `${aliasLines.join('\n')}`,
+                `${aliasLines.join('\n')}`,
             );
           } else {
             memoryParts.push(
               `[NPC 대사 호칭] ⚠️ 필수 — 대사 직전에 반드시 아래 호칭을 사용하세요:\n` +
-              `${aliasLines.join('\n')}\n` +
-              `⚠️ "그가", "그녀가", "그는" 대신 반드시 위 호칭 또는 짧은 호칭을 사용.\n` +
-              `⚠️ 같은 NPC가 연속 발화하더라도 두 번째 대사부터 짧은 호칭 사용.`,
+                `${aliasLines.join('\n')}\n` +
+                `⚠️ "그가", "그녀가", "그는" 대신 반드시 위 호칭 또는 짧은 호칭을 사용.\n` +
+                `⚠️ 같은 NPC가 연속 발화하더라도 두 번째 대사부터 짧은 호칭 사용.`,
             );
           }
         }
@@ -813,10 +823,15 @@ export class PromptBuilderService {
       }
       // fact 전달 지시 (서버에서 발견 확정된 경우만)
       if (nanoEventHint.fact && nanoEventHint.factRevealed) {
-        const delivery = nanoEventHint.factDelivery === 'direct'
-          ? 'NPC가 직접 말해줍니다' : nanoEventHint.factDelivery === 'observe'
-          ? '관찰을 통해 암시합니다' : 'NPC가 간접적으로 암시합니다';
-        conceptParts.push(`[정보 전달] ${delivery}:\n이번 턴에서 중요한 단서가 드러납니다.`);
+        const delivery =
+          nanoEventHint.factDelivery === 'direct'
+            ? 'NPC가 직접 말해줍니다'
+            : nanoEventHint.factDelivery === 'observe'
+              ? '관찰을 통해 암시합니다'
+              : 'NPC가 간접적으로 암시합니다';
+        conceptParts.push(
+          `[정보 전달] ${delivery}:\n이번 턴에서 중요한 단서가 드러납니다.`,
+        );
       }
       factsParts.push(conceptParts.join('\n'));
     }
@@ -826,7 +841,9 @@ export class PromptBuilderService {
       | Array<{ npcName: string; type: string; text: string }>
       | undefined;
     if (npcReactions && npcReactions.length > 0) {
-      const reactionParts = ['[NPC 반응 — 이전 행동을 목격한 NPC의 반응을 서술에 자연스럽게 포함하세요]'];
+      const reactionParts = [
+        '[NPC 반응 — 이전 행동을 목격한 NPC의 반응을 서술에 자연스럽게 포함하세요]',
+      ];
       for (const r of npcReactions) {
         reactionParts.push(`- ${r.text}`);
       }
@@ -837,26 +854,45 @@ export class PromptBuilderService {
     if (directorHint && !nanoEventHint) {
       const dirParts: string[] = ['[연출 지시 — 이번 턴의 서술 방향]'];
       if (directorHint.opening) {
-        dirParts.push(`[첫 문장] 아래 감각 묘사를 첫 문장에 활용하세요 (변형 가능):\n"${directorHint.opening}"`);
+        dirParts.push(
+          `[첫 문장] 아래 감각 묘사를 첫 문장에 활용하세요 (변형 가능):\n"${directorHint.opening}"`,
+        );
       }
       if (directorHint.npcEntrance) {
-        dirParts.push(`[NPC 등장] 아래 묘사를 참고하여 NPC를 등장시키세요:\n${directorHint.npcEntrance}`);
+        dirParts.push(
+          `[NPC 등장] 아래 묘사를 참고하여 NPC를 등장시키세요:\n${directorHint.npcEntrance}`,
+        );
       }
       if (directorHint.npcGesture) {
-        dirParts.push(`[NPC 행동] NPC의 대사 전후에 아래 행동을 사용하세요:\n${directorHint.npcGesture}`);
+        dirParts.push(
+          `[NPC 행동] NPC의 대사 전후에 아래 행동을 사용하세요:\n${directorHint.npcGesture}`,
+        );
       }
       // 반복 금지: NanoDirector avoid + 장기 체류 시 동적 반복 단어 감지
       const allAvoid = [...directorHint.avoid];
       // sessionTurns에서 고빈도 단어 추출 (3턴 윈도우에서 3회+ 나온 2글자+ 한글 단어)
       if (ctx.locationSessionTurns && ctx.locationSessionTurns.length >= 3) {
-        const recentNarr = ctx.locationSessionTurns.slice(-3)
-          .map((t) => t.narrative ?? '').join(' ');
+        const recentNarr = ctx.locationSessionTurns
+          .slice(-3)
+          .map((t) => t.narrative ?? '')
+          .join(' ');
         const wordCounts = new Map<string, number>();
         const words = recentNarr.match(/[가-힣]{2,}/g) ?? [];
         for (const w of words) {
           wordCounts.set(w, (wordCounts.get(w) ?? 0) + 1);
         }
-        const commonWords = new Set(['당신은', '당신이', '당신의', '그의', '그는', '그녀의', '있다', '있었다', '없다', '않는다']);
+        const commonWords = new Set([
+          '당신은',
+          '당신이',
+          '당신의',
+          '그의',
+          '그는',
+          '그녀의',
+          '있다',
+          '있었다',
+          '없다',
+          '않는다',
+        ]);
         for (const [w, c] of wordCounts) {
           if (c >= 3 && !commonWords.has(w) && !allAvoid.includes(w)) {
             allAvoid.push(w);
@@ -864,7 +900,9 @@ export class PromptBuilderService {
         }
       }
       if (allAvoid.length > 0) {
-        dirParts.push(`[반복 금지] 아래 표현은 이번 턴에서 절대 사용하지 마세요:\n${allAvoid.slice(0, 10).join(', ')}`);
+        dirParts.push(
+          `[반복 금지] 아래 표현은 이번 턴에서 절대 사용하지 마세요:\n${allAvoid.slice(0, 10).join(', ')}`,
+        );
       }
       if (directorHint.mood) {
         dirParts.push(`[분위기] ${directorHint.mood}`);
@@ -875,22 +913,25 @@ export class PromptBuilderService {
     // 대화 잠금 상태: 같은 NPC와 연속 대화 중임을 LLM에 전달
     if (ctx.conversationLock) {
       const { npcDisplayName, consecutiveTurns } = ctx.conversationLock;
-      const depth = consecutiveTurns >= 4 ? '깊은 신뢰' : consecutiveTurns >= 3 ? '점차 마음을 여는' : '경계를 낮추는';
+      const depth =
+        consecutiveTurns >= 4
+          ? '깊은 신뢰'
+          : consecutiveTurns >= 3
+            ? '점차 마음을 여는'
+            : '경계를 낮추는';
       factsParts.push(
         `[대화 연속 상태]\n` +
-        `${npcDisplayName}와(과) ${consecutiveTurns}턴째 연속 대화 중입니다.\n` +
-        `⚠️ 이 NPC는 처음 만난 것처럼 행동하면 안 됩니다. ${depth} 단계의 대화를 이어가세요.\n` +
-        `- 이전 대화에서 나온 내용을 참조하며 더 깊은 정보/감정을 드러내세요.\n` +
-        `- "다가와서 경고한다" 같은 첫 만남 패턴 금지. 이미 옆에 서서 대화하는 중입니다.`,
+          `${npcDisplayName}와(과) ${consecutiveTurns}턴째 연속 대화 중입니다.\n` +
+          `⚠️ 이 NPC는 처음 만난 것처럼 행동하면 안 됩니다. ${depth} 단계의 대화를 이어가세요.\n` +
+          `- 이전 대화에서 나온 내용을 참조하며 더 깊은 정보/감정을 드러내세요.\n` +
+          `- "다가와서 경고한다" 같은 첫 만남 패턴 금지. 이미 옆에 서서 대화하는 중입니다.`,
       );
     }
 
     // === Phase 2: 파티 모드 4인분 행동 통합 서술 ===
     if (ctx.partyActions && ctx.partyActions.length > 0) {
       const partyLines = ctx.partyActions.map((a) => {
-        const outcome = a.resolveOutcome
-          ? ` → [${a.resolveOutcome}]`
-          : '';
+        const outcome = a.resolveOutcome ? ` → [${a.resolveOutcome}]` : '';
         const auto = a.isAutoAction ? ' (자동 행동)' : '';
         return `- ${a.nickname}: "${sanitizeUserInput(a.rawInput)}"${outcome}${auto}`;
       });
@@ -968,6 +1009,25 @@ export class PromptBuilderService {
             '서술 규칙: 행동이 이미 일어난 것으로 시작하세요. "~했다", "~를 시도했다" 같은 요약문은 쓰지 마세요. NPC의 즉각적 반응(표정, 대사, 행동)이나 환경 변화로 서술을 여세요.',
           );
         }
+        // Player-First: 턴 모드별 프롬프트 보강
+        const turnMode = (actionCtx as Record<string, unknown> | undefined)?.turnMode as string | undefined;
+        if (turnMode === 'PLAYER_DIRECTED') {
+          parts.push(
+            '\n⚠️ [플레이어 주도 장면]',
+            '플레이어가 직접 대상을 선택하여 접근했습니다.',
+            '- 플레이어가 지목한 NPC/대상이 중심이 되어야 합니다. 다른 NPC가 끼어들거나 장면을 가로채지 마세요.',
+            '- 이벤트나 돌발 상황이 아닌, 플레이어의 행동에 대한 자연스러운 반응을 서술하세요.',
+            '- 판정 결과에 맞는 대상의 반응을 보여주세요.',
+          );
+        } else if (turnMode === 'CONVERSATION_CONT') {
+          parts.push(
+            '\n⚠️ [대화 연속 장면]',
+            '이전 턴에서 이어지는 대화입니다.',
+            '- 같은 NPC와의 대화가 자연스럽게 이어져야 합니다.',
+            '- NPC가 첫 만남처럼 행동하면 안 됩니다. 이전 대화 맥락을 이어가세요.',
+            '- 대화의 깊이가 점점 깊어져야 합니다. 이전에 다룬 주제를 반복하지 마세요.',
+          );
+        }
         factsParts.push(parts.join('\n'));
       } else if (inputType === 'CHOICE') {
         const actionCtx = sr.ui?.actionContext as
@@ -1018,7 +1078,12 @@ export class PromptBuilderService {
     // 판정 결과 — 해당 턴의 판정+행동 조합만 동적 주입 (system에서 전체 매트릭스 제거)
     if (sr.ui?.resolveOutcome) {
       const actionType = (sr.ui as Record<string, unknown>)?.actionContext
-        ? ((sr.ui as Record<string, unknown>).actionContext as Record<string, unknown>)?.intentActionType as string
+        ? ((
+            (sr.ui as Record<string, unknown>).actionContext as Record<
+              string,
+              unknown
+            >
+          )?.intentActionType as string)
         : '';
       const outcome = sr.ui.resolveOutcome as string;
 
@@ -1026,7 +1091,8 @@ export class PromptBuilderService {
       const MATRIX: Record<string, Record<string, string>> = {
         SUCCESS: {
           TALK: 'NPC가 충분한 정보를 제공하거나 협조한다. 자신감 있고 역동적으로.',
-          PERSUADE: 'NPC가 충분한 정보를 제공하거나 협조한다. 자신감 있고 역동적으로.',
+          PERSUADE:
+            'NPC가 충분한 정보를 제공하거나 협조한다. 자신감 있고 역동적으로.',
           BRIBE: 'NPC가 완전히 협조한다.',
           THREATEN: 'NPC가 굴복한다. 시선을 피하고, 짧고 끊긴 문장으로 복종.',
           SNEAK: '완벽한 은신 성공.',
@@ -1040,8 +1106,10 @@ export class PromptBuilderService {
         },
         PARTIAL: {
           TALK: '일부 정보만 얻고 핵심은 숨겨짐. ⚠️ "성공했다" 금지. 반드시 불이익 1개: NPC가 입을 다물거나, 목격자가 생기거나, 단서를 놓침.',
-          PERSUADE: '일부 정보만 얻고 핵심은 숨겨짐. ⚠️ "성공했다" 금지. 반드시 불이익 1개.',
-          BRIBE: '돈은 받았으나 의심하며 일부만 알려줌. 불이익: 뇌물 사실이 알려질 위험.',
+          PERSUADE:
+            '일부 정보만 얻고 핵심은 숨겨짐. ⚠️ "성공했다" 금지. 반드시 불이익 1개.',
+          BRIBE:
+            '돈은 받았으나 의심하며 일부만 알려줌. 불이익: 뇌물 사실이 알려질 위험.',
           THREATEN: 'NPC가 두려워하며 일부만 흘림. 완전한 복종은 아님.',
           SNEAK: '간신히 숨었으나 흔적을 남김.',
           STEAL: '일부만 탈취하거나 목격자가 생김.',
@@ -1050,7 +1118,8 @@ export class PromptBuilderService {
           OBSERVE: '일부만 포착. 핵심은 놓침.',
           SEARCH: '모호한 단서만.',
           HELP: '도움은 됐으나 불충분.',
-          _DEFAULT: '⚠️ "성공했다" 금지. ① 행동 시도 → ② 부분 성과 → ③ 명확한 불이익 1가지.',
+          _DEFAULT:
+            '⚠️ "성공했다" 금지. ① 행동 시도 → ② 부분 성과 → ③ 명확한 불이익 1가지.',
         },
         FAIL: {
           TALK: 'NPC가 침묵하거나 거부한다. 정보 0.',
@@ -1064,7 +1133,8 @@ export class PromptBuilderService {
           OBSERVE: '아무것도 포착 못함.',
           SEARCH: '아무것도 못 찾음.',
           HELP: '상황이 악화되거나 거부당함.',
-          _DEFAULT: '⚠️ 실패. NPC가 정보를 주지 않는다. 경고/암시/힌트도 금지. "거의 성공할 뻔했다" 금지.',
+          _DEFAULT:
+            '⚠️ 실패. NPC가 정보를 주지 않는다. 경고/암시/힌트도 금지. "거의 성공할 뻔했다" 금지.',
         },
       };
 
@@ -1076,16 +1146,20 @@ export class PromptBuilderService {
         // 판정별 서술 예시 동적 삽입 (시스템 프롬프트에서 제거됨)
         const EXAMPLES: Record<string, Record<string, string>> = {
           TALK: {
-            PARTIAL: '예시: 노부인이 당신을 올려다보았다. "무엇을 찾으시오?" 시장 분위기를 묻자 그녀의 표정이 굳었다. "이 할미는 약초만 팔 뿐이오." 대화는 거기서 끊겼다. 그러나 그녀의 시선이 골목 한쪽을 스쳤다.',
-            SUCCESS: '예시: 노부인이 고개를 끄덕이며 목소리를 낮추었다. "부두 쪽 3번 창고에서 밤마다 불빛이 새어 나온다오." 그녀의 눈빛은 진지했다.',
+            PARTIAL:
+              '예시: 노부인이 당신을 올려다보았다. "무엇을 찾으시오?" 시장 분위기를 묻자 그녀의 표정이 굳었다. "이 할미는 약초만 팔 뿐이오." 대화는 거기서 끊겼다. 그러나 그녀의 시선이 골목 한쪽을 스쳤다.',
+            SUCCESS:
+              '예시: 노부인이 고개를 끄덕이며 목소리를 낮추었다. "부두 쪽 3번 창고에서 밤마다 불빛이 새어 나온다오." 그녀의 눈빛은 진지했다.',
             FAIL: '예시: 노부인이 고개를 돌렸다. 약초 다발을 집어 들며 당신을 무시했다. 대화의 문이 닫혔다.',
           },
           SNEAK: {
-            SUCCESS: '예시: 그림자 속으로 미끄러지듯 이동했다. 발소리 하나 없이 천막 사이를 빠져나갔다.',
+            SUCCESS:
+              '예시: 그림자 속으로 미끄러지듯 이동했다. 발소리 하나 없이 천막 사이를 빠져나갔다.',
             FAIL: '예시: 발끝이 빈 상자를 스치며 날카로운 소리가 울렸다. 건너편에서 경비병이 고개를 돌렸다.',
           },
           INVESTIGATE: {
-            SUCCESS: '예시: 상자 틈새에서 희미한 잉크 자국이 묻은 종이 조각을 발견했다. 글씨는 반쯤 지워져 있었지만 핵심 단어는 읽을 수 있었다.',
+            SUCCESS:
+              '예시: 상자 틈새에서 희미한 잉크 자국이 묻은 종이 조각을 발견했다. 글씨는 반쯤 지워져 있었지만 핵심 단어는 읽을 수 있었다.',
             FAIL: '예시: 상자를 뒤졌으나 먼지와 거미줄만 손에 묻었다. 아무것도 찾지 못했다.',
           },
         };
@@ -1105,9 +1179,10 @@ export class PromptBuilderService {
     }
 
     // 장소 도착 턴: NPC 대사 금지 (환경 묘사만)
-    const isMoveOnly = filteredEvents.length > 0
-      && filteredEvents.every((e) => e.kind === 'MOVE' || e.kind === 'SYSTEM')
-      && inputType === 'SYSTEM';
+    const isMoveOnly =
+      filteredEvents.length > 0 &&
+      filteredEvents.every((e) => e.kind === 'MOVE' || e.kind === 'SYSTEM') &&
+      inputType === 'SYSTEM';
     if (isMoveOnly) {
       factsParts.push(
         '⚠️ 이것은 장소 도착 장면입니다. NPC가 먼저 대화를 시작하지 마세요. 환경 묘사와 분위기만 서술하세요. NPC는 배경 활동(지나가기, 일하기)만 허용하고 대사는 금지합니다.',
@@ -1205,9 +1280,15 @@ export class PromptBuilderService {
 
       // NPC trust 확인 (높은 trust NPC는 비대화 행동에서도 끼어들 수 있음)
       const npcTrust = npc.npcId
-        ? (ctx.npcStates as Record<string, { trustToPlayer?: number }> | null)?.[npc.npcId]?.trustToPlayer ?? 0
+        ? ((
+            ctx.npcStates as Record<string, { trustToPlayer?: number }> | null
+          )?.[npc.npcId]?.trustToPlayer ?? 0)
         : 0;
-      const npcCanInterrupt = npcTrust >= 25 || (ctx.npcStates as Record<string, { suspicion?: number }> | null)?.[npc.npcId ?? '']?.suspicion as number >= 50;
+      const npcCanInterrupt =
+        npcTrust >= 25 ||
+        ((ctx.npcStates as Record<string, { suspicion?: number }> | null)?.[
+          npc.npcId ?? ''
+        ]?.suspicion as number) >= 50;
 
       let npcBehaviorInstruction: string;
       if (isNonDialogueAction && !npcCanInterrupt) {
@@ -1326,9 +1407,7 @@ export class PromptBuilderService {
                 // 기본 1줄 + 회전하는 강조 1줄
                 const base = speechParts[0].trim();
                 const emphasis = speechParts[rotateIdx].trim();
-                parts.push(
-                  `    말투: ${base}. ⚠️ 이번 턴 강조: ${emphasis}`,
-                );
+                parts.push(`    말투: ${base}. ⚠️ 이번 턴 강조: ${emphasis}`);
               } else {
                 parts.push(
                   `    말투 (이 어조로 새 대사를 만들 것): ${personality.speechStyle}`,
@@ -2045,8 +2124,14 @@ export class PromptBuilderService {
       const behaviorText =
         behaviorParts.length > 0 ? `\n    ${behaviorParts.join('\n    ')}` : '';
       const moodText = currentMood ? `\n    현재 상태: ${currentMood}` : '';
+
+      // Player-First: BG NPC 전용 서술 가이드
+      const npcTier = npcDef?.tier ?? 'SUB';
+      const bgGuide = npcTier === 'BACKGROUND'
+        ? `\n    ⚠️ [배경 인물] 이 인물은 ${npcDef?.role ?? '일반인'}입니다. 직업과 일상에 맞는 소소한 정보만 전달합니다. 핵심 비밀이나 퀘스트 정보는 모릅니다. 개성과 말투를 자연스럽게 표현하되, 대화가 길어지면 "잘 모르겠다"며 자연스럽게 마무리하세요.`
+        : '';
       emotionalLines.push(
-        `- ${displayName} [${posture}]${depthGuide}${hintText}${behaviorText}${moodText}`,
+        `- ${displayName} [${posture}]${depthGuide}${hintText}${behaviorText}${moodText}${bgGuide}`,
       );
     }
 
