@@ -568,8 +568,9 @@ export class PromptBuilderService {
         const alias = npc.unknownAlias || '낯선 인물';
         const pronoun = npc.gender === 'female' ? '그녀' : '그';
 
-        // NPC_ID를 병기하여 dialogue_slot에서 정확한 ID 사용 유도
-        const idTag = `[ID:${npc.npcId}]`;
+        // NPC_ID + 성별을 병기
+        const genderTag = npc.gender === 'female' ? '여' : '남';
+        const idTag = `[ID:${npc.npcId}, ${genderTag}, 대명사:${pronoun}]`;
 
         if (isNewlyIntroduced && isNewlyEncountered) {
           return `- ${npc.name}${title} ${idTag}: ${npc.role} [첫 만남 — 자연스럽게 자기소개(이름 포함)를 하도록 서술하세요]`;
