@@ -11,8 +11,15 @@ import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 
 /** dialogue_slot의 의도 enum */
 export type DialogueIntent =
-  | 'WARN' | 'INFO' | 'QUESTION' | 'REFUSE'
-  | 'GREET' | 'REACT' | 'HINT' | 'THREATEN' | 'TRADE';
+  | 'WARN'
+  | 'INFO'
+  | 'QUESTION'
+  | 'REFUSE'
+  | 'GREET'
+  | 'REACT'
+  | 'HINT'
+  | 'THREATEN'
+  | 'TRADE';
 
 /** Stage A가 출력하는 dialogue_slot */
 export interface DialogueSlot {
@@ -41,7 +48,16 @@ export interface DialogueGenResult {
 }
 
 /** 어체별 규칙 정의 */
-const REGISTER_RULES: Record<string, { name: string; endings: string; examples: string; forbidden: string; playerRef: string }> = {
+const REGISTER_RULES: Record<
+  string,
+  {
+    name: string;
+    endings: string;
+    examples: string;
+    forbidden: string;
+    playerRef: string;
+  }
+> = {
   HAOCHE: {
     name: '하오체 (중세 경어)',
     endings: '~소/~오/~하오/~이오/~시오/~겠소',
@@ -73,7 +89,8 @@ const REGISTER_RULES: Record<string, { name: string; endings: string; examples: 
   HAECHE: {
     name: '해체 (노인/느슨한 반말)',
     endings: '~지/~거든/~는데/~야/~이야/~걸',
-    examples: '"그건 말이지... 조심해야 하는 거야.", "내가 보기엔 말이지...", "옛날엔 말이야..."',
+    examples:
+      '"그건 말이지... 조심해야 하는 거야.", "내가 보기엔 말이지...", "옛날엔 말이야..."',
     forbidden: '~소/~오/~하오/~합니다/~습니다',
     playerRef: '"자네", "젊은이", "총각/아가씨"',
   },
@@ -115,11 +132,17 @@ function validateSpeechRegister(text: string, register: string): boolean {
 
   switch (register) {
     case 'HAOCHE':
-      return /(?:하오|이오|시오|겠소|없소|있소|했소|되오|보시오|마시오|드리오|주시오|[소오])\s*$/.test(last);
+      return /(?:하오|이오|시오|겠소|없소|있소|했소|되오|보시오|마시오|드리오|주시오|[소오])\s*$/.test(
+        last,
+      );
     case 'HAEYO':
-      return /(?:해요|에요|이에요|세요|거예요|을까요|인가요|죠|네요)\s*$/.test(last);
+      return /(?:해요|에요|이에요|세요|거예요|을까요|인가요|죠|네요)\s*$/.test(
+        last,
+      );
     case 'BANMAL':
-      return /(?:[야해지]|이야|거야|는데|잖아|래|거든|어|었어|았어|겠어)\s*$/.test(last);
+      return /(?:[야해지]|이야|거야|는데|잖아|래|거든|어|었어|았어|겠어)\s*$/.test(
+        last,
+      );
     case 'HAPSYO':
       return /(?:합니다|입니다|습니다|겠습니다|십시오|옵니다)\s*$/.test(last);
     case 'HAECHE':
@@ -131,29 +154,59 @@ function validateSpeechRegister(text: string, register: string): boolean {
 
 const FALLBACK_BY_REGISTER: Record<string, Record<DialogueIntent, string[]>> = {
   HAOCHE: {
-    WARN: ['조심하시오.', '위험하오.'], INFO: ['알아두시오.'], QUESTION: ['무슨 용무이시오?'],
-    REFUSE: ['곤란하오.'], GREET: ['어서 오시오.'], REACT: ['그렇소.'],
-    HINT: ['혹시…'], THREATEN: ['안전을 보장할 수 없소.'], TRADE: ['거래를 원하시오?'],
+    WARN: ['조심하시오.', '위험하오.'],
+    INFO: ['알아두시오.'],
+    QUESTION: ['무슨 용무이시오?'],
+    REFUSE: ['곤란하오.'],
+    GREET: ['어서 오시오.'],
+    REACT: ['그렇소.'],
+    HINT: ['혹시…'],
+    THREATEN: ['안전을 보장할 수 없소.'],
+    TRADE: ['거래를 원하시오?'],
   },
   HAEYO: {
-    WARN: ['조심하세요.', '위험해요.'], INFO: ['알려드릴게요.'], QUESTION: ['무슨 일이세요?'],
-    REFUSE: ['그건 좀 어려워요.'], GREET: ['어서 오세요.'], REACT: ['그렇군요.'],
-    HINT: ['혹시요…'], THREATEN: ['조심하시는 게 좋을 거예요.'], TRADE: ['거래하실 건가요?'],
+    WARN: ['조심하세요.', '위험해요.'],
+    INFO: ['알려드릴게요.'],
+    QUESTION: ['무슨 일이세요?'],
+    REFUSE: ['그건 좀 어려워요.'],
+    GREET: ['어서 오세요.'],
+    REACT: ['그렇군요.'],
+    HINT: ['혹시요…'],
+    THREATEN: ['조심하시는 게 좋을 거예요.'],
+    TRADE: ['거래하실 건가요?'],
   },
   BANMAL: {
-    WARN: ['조심해!', '위험해!'], INFO: ['있잖아…'], QUESTION: ['뭐야?'],
-    REFUSE: ['싫어!', '안 돼!'], GREET: ['안녕!'], REACT: ['헐…'],
-    HINT: ['있지…'], THREATEN: ['가만 안 둬!'], TRADE: ['거래할래?'],
+    WARN: ['조심해!', '위험해!'],
+    INFO: ['있잖아…'],
+    QUESTION: ['뭐야?'],
+    REFUSE: ['싫어!', '안 돼!'],
+    GREET: ['안녕!'],
+    REACT: ['헐…'],
+    HINT: ['있지…'],
+    THREATEN: ['가만 안 둬!'],
+    TRADE: ['거래할래?'],
   },
   HAPSYO: {
-    WARN: ['조심하십시오.'], INFO: ['보고드립니다.'], QUESTION: ['무엇을 도와드릴까요?'],
-    REFUSE: ['그건 어렵겠습니다.'], GREET: ['어서 오십시오.'], REACT: ['그렇습니다.'],
-    HINT: ['한 가지 말씀드리겠습니다.'], THREATEN: ['경고드립니다.'], TRADE: ['거래를 원하십니까?'],
+    WARN: ['조심하십시오.'],
+    INFO: ['보고드립니다.'],
+    QUESTION: ['무엇을 도와드릴까요?'],
+    REFUSE: ['그건 어렵겠습니다.'],
+    GREET: ['어서 오십시오.'],
+    REACT: ['그렇습니다.'],
+    HINT: ['한 가지 말씀드리겠습니다.'],
+    THREATEN: ['경고드립니다.'],
+    TRADE: ['거래를 원하십니까?'],
   },
   HAECHE: {
-    WARN: ['조심해야 해.', '위험하거든.'], INFO: ['있잖아, 그게 말이지…'], QUESTION: ['뭘 찾는 거야?'],
-    REFUSE: ['그건 안 되지.'], GREET: ['왔구먼.'], REACT: ['그래…'],
-    HINT: ['내가 보기엔 말이지…'], THREATEN: ['함부로 굴면 안 되는 거야.'], TRADE: ['거래할 건가?'],
+    WARN: ['조심해야 해.', '위험하거든.'],
+    INFO: ['있잖아, 그게 말이지…'],
+    QUESTION: ['뭘 찾는 거야?'],
+    REFUSE: ['그건 안 되지.'],
+    GREET: ['왔구먼.'],
+    REACT: ['그래…'],
+    HINT: ['내가 보기엔 말이지…'],
+    THREATEN: ['함부로 굴면 안 되는 거야.'],
+    TRADE: ['거래할 건가?'],
   },
 };
 
@@ -170,9 +223,7 @@ export class DialogueGeneratorService {
   /**
    * dialogue_slot 배열에 대해 병렬로 대사 생성
    */
-  async generateAll(
-    inputs: DialogueGenInput[],
-  ): Promise<DialogueGenResult[]> {
+  async generateAll(inputs: DialogueGenInput[]): Promise<DialogueGenResult[]> {
     const results = await Promise.allSettled(
       inputs.map((input) => this.generateOne(input)),
     );
@@ -188,31 +239,44 @@ export class DialogueGeneratorService {
   /**
    * 단일 dialogue_slot에 대해 대사 생성
    */
-  private async generateOne(input: DialogueGenInput): Promise<DialogueGenResult> {
+  private async generateOne(
+    input: DialogueGenInput,
+  ): Promise<DialogueGenResult> {
     const npcDef = this.content.getNpc(input.slot.speaker_id);
     if (!npcDef) return this.buildFallback(input);
 
     const personality = npcDef.personality;
     const posture = input.npcState?.posture ?? npcDef.basePosture ?? 'CAUTIOUS';
     const trust = input.npcState?.emotional?.trust ?? 0;
-    const register = (personality as Record<string, unknown>)?.speechRegister as string ?? 'HAOCHE';
+    const register =
+      ((personality as Record<string, unknown>)?.speechRegister as string) ??
+      'HAOCHE';
     const rule = getRegisterRule(register);
 
+    const npcDisplayName = npcDef.unknownAlias ?? npcDef.name;
     const profileLines = [
-      `이름: ${npcDef.unknownAlias ?? npcDef.name}`,
+      `이름: ${npcDisplayName}`,
+      `⚠️ 이 NPC를 지칭할 때 반드시 "${npcDisplayName}" 그대로 사용. 변형/재서술/창작 금지.`,
       `역할: ${npcDef.role}`,
       `성격: ${posture} (신뢰도: ${trust})`,
       `⚠️ 어체: ${rule.name} — 어미는 반드시 ${rule.endings}로 끝내세요`,
       `올바른 예: ${rule.examples}`,
       `플레이어 지칭: ${rule.playerRef}`,
-      personality?.speechStyle ? `⚠️ 말투 (반드시 반영): ${personality.speechStyle}` : '',
-      personality?.signature?.length ? `시그니처 표현: ${personality.signature.join(', ')}` : '',
+      personality?.speechStyle
+        ? `⚠️ 말투 (반드시 반영): ${personality.speechStyle}`
+        : '',
+      personality?.signature?.length
+        ? `시그니처 표현: ${personality.signature.join(', ')}`
+        : '',
       input.factToReveal ? `이번에 전달할 정보: ${input.factToReveal}` : '',
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
 
-    const prevDialogueHint = input.previousDialogues.length > 0
-      ? `이전 대사 (반복 금지): ${input.previousDialogues.slice(-2).join(' / ')}`
-      : '';
+    const prevDialogueHint =
+      input.previousDialogues.length > 0
+        ? `이전 대사 (반복 금지): ${input.previousDialogues.slice(-2).join(' / ')}`
+        : '';
 
     const userMsg = [
       `[NPC 정보]\n${profileLines}`,
@@ -223,12 +287,15 @@ export class DialogueGeneratorService {
       prevDialogueHint,
       '',
       `[서술 맥락] ${input.narrativeContext.slice(0, 200)}`,
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     // Stage B: 대사 전용 모델 — 하오체 준수를 위해 Flash 이상 모델 사용
-    const dialogueModel = process.env.LLM_DIALOGUE_MODEL
-      ?? process.env.LLM_ALTERNATE_MODEL
-      ?? this.configService.getLightModelConfig().model;
+    const dialogueModel =
+      process.env.LLM_DIALOGUE_MODEL ??
+      process.env.LLM_ALTERNATE_MODEL ??
+      this.configService.getLightModelConfig().model;
     const result = await this.llmCaller.call({
       messages: [
         { role: 'system', content: DIALOGUE_SYSTEM },
@@ -252,21 +319,35 @@ export class DialogueGeneratorService {
 
     // 어체 검증 — 실패 시 1회 재시도 후 fallback
     if (!validateSpeechRegister(dialogue, register)) {
-      this.logger.debug(`[DialogueGen] ${register} validation failed: "${dialogue.slice(0, 50)}" — retrying`);
+      this.logger.debug(
+        `[DialogueGen] ${register} validation failed: "${dialogue.slice(0, 50)}" — retrying`,
+      );
       const retry = await this.llmCaller.call({
         messages: [
           { role: 'system', content: DIALOGUE_SYSTEM },
-          { role: 'user', content: userMsg + `\n\n⚠️ 이전 출력이 어체 규칙을 위반했습니다. 반드시 ${rule.endings}로 끝내세요.` },
+          {
+            role: 'user',
+            content:
+              userMsg +
+              `\n\n⚠️ 이전 출력이 어체 규칙을 위반했습니다. 반드시 ${rule.endings}로 끝내세요.`,
+          },
         ],
         maxTokens: 100,
         temperature: 0.7,
         model: dialogueModel,
       });
       if (retry.success && retry.response?.text) {
-        let retryDialogue = retry.response.text.trim().replace(/^[""\u201C]+|[""\u201D]+$/g, '');
-        if (retryDialogue.length >= 5 && validateSpeechRegister(retryDialogue, register)) {
+        const retryDialogue = retry.response.text
+          .trim()
+          .replace(/^[""\u201C]+|[""\u201D]+$/g, '');
+        if (
+          retryDialogue.length >= 5 &&
+          validateSpeechRegister(retryDialogue, register)
+        ) {
           dialogue = retryDialogue.slice(0, 150);
-          this.logger.debug(`[DialogueGen] retry succeeded: "${dialogue.slice(0, 40)}..."`);
+          this.logger.debug(
+            `[DialogueGen] retry succeeded: "${dialogue.slice(0, 40)}..."`,
+          );
         } else {
           return this.buildFallback(input);
         }
@@ -275,9 +356,10 @@ export class DialogueGeneratorService {
       }
     }
 
-    const displayName = input.npcState && npcDef
-      ? getNpcDisplayName(input.npcState, npcDef, input.turnNo)
-      : (npcDef.unknownAlias ?? npcDef.name);
+    const displayName =
+      input.npcState && npcDef
+        ? getNpcDisplayName(input.npcState, npcDef, input.turnNo)
+        : (npcDef.unknownAlias ?? npcDef.name);
 
     this.logger.debug(
       `[DialogueGen] ${input.slot.speaker_id} (${input.slot.intent}): "${dialogue.slice(0, 40)}..."`,
@@ -296,12 +378,16 @@ export class DialogueGeneratorService {
    */
   private buildFallback(input: DialogueGenInput): DialogueGenResult {
     const npcDef = this.content.getNpc(input.slot.speaker_id);
-    const displayName = input.npcState && npcDef
-      ? getNpcDisplayName(input.npcState, npcDef, input.turnNo)
-      : (npcDef?.unknownAlias ?? npcDef?.name ?? '무명 인물');
+    const displayName =
+      input.npcState && npcDef
+        ? getNpcDisplayName(input.npcState, npcDef, input.turnNo)
+        : (npcDef?.unknownAlias ?? npcDef?.name ?? '무명 인물');
 
-    const register = (npcDef?.personality as Record<string, unknown>)?.speechRegister as string ?? 'HAOCHE';
-    const fallbacks = FALLBACK_BY_REGISTER[register] ?? FALLBACK_BY_REGISTER['HAOCHE'];
+    const register =
+      ((npcDef?.personality as Record<string, unknown>)
+        ?.speechRegister as string) ?? 'HAOCHE';
+    const fallbacks =
+      FALLBACK_BY_REGISTER[register] ?? FALLBACK_BY_REGISTER['HAOCHE'];
     const pool = fallbacks[input.slot.intent] ?? ['…'];
     const text = pool[Math.floor(Math.random() * pool.length)];
 
