@@ -489,6 +489,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       }
 
       // 5. 내러티브 결정 — 실패 또는 mock fallback 시 SceneShell로 graceful degradation
+      // Dual-Track: 스트리밍 모드에서는 후처리 경량화 (Step C, F만)
+      const isStreamingMode = !!(this.streamBroker && !isCombat);
       let narrative: string;
       let modelUsed: string;
       let threadEntry: string | null = null;
@@ -755,8 +757,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
 
         // 4-a-0. [MEMORY] 태그 파싱 및 스트립 (최대 4개, 80자)
-        // JSON 모드에서는 memories/thread/choices를 이미 추출했으므로 산문 태그 파싱 스킵
-        if (!jsonModeParsed) {
+        // JSON 모드 또는 스트리밍 모드에서는 산문 태그 파싱 스킵 (서버가 별도 처리)
+        if (!jsonModeParsed && !isStreamingMode) {
           const memoryMatches = [
             ...narrative.matchAll(
               /\[MEMORY:(\w+)\]\s*([\s\S]*?)\s*\[\/MEMORY\]/g,
@@ -1178,11 +1180,12 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             await import('../db/types/npc-state.js');
 
           // Step A: nano LLM 1차 발화자 판단 + 서버 regex fallback
-          // JSON 모드에서 성공적으로 파싱된 경우 마커가 이미 삽입되어 있으므로 스킵
-          // JSON 잔해 감지: "segments" 키가 있으면 JSON fallback으로 간주하여 마커 매칭 스킵
+          // 스트리밍 모드: StreamClassifier가 실시간 처리하므로 Step A 스킵
+          // JSON 모드: JSON에서 이미 파싱됨
           const isJsonResidue = /"segments"\s*:/.test(narrative);
           const hasDialogue =
             !jsonModeParsed &&
+            !isStreamingMode &&
             !isJsonResidue &&
             /["\u201C\u201D]/.test(narrative);
           this.logger.debug(
