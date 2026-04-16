@@ -39,7 +39,10 @@ class RateLimiter {
   private refill(): void {
     const now = Date.now();
     const elapsed = (now - this.lastRefill) / 1000;
-    this.tokens = Math.min(this.maxTokens, this.tokens + elapsed * this.refillRate);
+    this.tokens = Math.min(
+      this.maxTokens,
+      this.tokens + elapsed * this.refillRate,
+    );
     this.lastRefill = now;
   }
 }
@@ -125,6 +128,41 @@ export class LlmCallerService {
         providerUsed: fallback.name,
         attempts,
       };
+    }
+  }
+
+  /**
+   * 스트리밍 LLM 호출 — 토큰 단위로 AsyncGenerator 반환.
+   * OpenAI Provider의 generateStream()을 사용.
+   * fallback은 non-stream으로 자동 전환.
+   */
+  async *callStream(
+    request: LlmProviderRequest,
+    model?: string,
+  ): AsyncGenerator<
+    | { type: 'token'; text: string }
+    | { type: 'done'; response: LlmProviderResponse }
+  > {
+    const primary = this.registry.getPrimary();
+    await this.rateLimiter.acquire();
+
+    const actualModel = model ?? request.model ?? this.configService.get().openaiModel;
+
+    // OpenAI Provider만 스트리밍 지원
+    if ('generateStream' in primary && typeof (primary as any).generateStream === 'function') {
+      try {
+        yield* (primary as any).generateStream(request, actualModel);
+        return;
+      } catch (err) {
+        this.logger.warn(`Stream failed, falling back to non-stream: ${err}`);
+      }
+    }
+
+    // Fallback: non-stream으로 전체 생성 후 한 번에 반환
+    const result = await this.call(request);
+    if (result.success && result.response) {
+      yield { type: 'token', text: result.response.text };
+      yield { type: 'done', response: result.response };
     }
   }
 

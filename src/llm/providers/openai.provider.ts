@@ -53,7 +53,9 @@ export class OpenAIProvider implements LlmProvider {
       /* eslint-enable @typescript-eslint/no-require-imports */
       this.client = new OpenAI({
         apiKey: this.config.openaiApiKey,
-        ...(this.config.openaiBaseUrl ? { baseURL: this.config.openaiBaseUrl } : {}),
+        ...(this.config.openaiBaseUrl
+          ? { baseURL: this.config.openaiBaseUrl }
+          : {}),
         timeout: this.config.timeoutMs,
       });
     }
@@ -137,7 +139,16 @@ export class OpenAIProvider implements LlmProvider {
             allow_fallbacks: true,
           },
           // Gemini 2.5 Flash: thinking(reasoning) 비활성화 — OpenRouter는 max_tokens: 0으로 제어
-          ...(model.includes('gemini') ? { reasoning: { max_tokens: parseInt(process.env.GEMINI_REASONING_MAX_TOKENS ?? '0', 10) } } : {}),
+          ...(model.includes('gemini')
+            ? {
+                reasoning: {
+                  max_tokens: parseInt(
+                    process.env.GEMINI_REASONING_MAX_TOKENS ?? '0',
+                    10,
+                  ),
+                },
+              }
+            : {}),
         }
       : {};
     const completion = await client.chat.completions.create({
@@ -180,6 +191,98 @@ export class OpenAIProvider implements LlmProvider {
       cacheCreationTokens: 0,
       latencyMs: Date.now() - start,
       costUsd,
+    };
+  }
+
+  /**
+   * 스트리밍 생성 — 토큰을 AsyncGenerator로 반환
+   * 각 yield는 텍스트 청크 (1~수십 글자)
+   * 최종 usage 정보는 마지막에 반환
+   */
+  async *generateStream(
+    request: LlmProviderRequest,
+    model: string,
+  ): AsyncGenerator<
+    | { type: 'token'; text: string }
+    | { type: 'done'; response: LlmProviderResponse }
+  > {
+    const start = Date.now();
+    const client = this.getClient();
+
+    const isOpenRouter = !!this.config.openaiBaseUrl?.includes('openrouter');
+    const openRouterParams = isOpenRouter
+      ? {
+          provider: {
+            sort: 'latency' as const,
+            allow_fallbacks: true,
+          },
+          ...(model.includes('gemini')
+            ? {
+                reasoning: {
+                  max_tokens: parseInt(
+                    process.env.GEMINI_REASONING_MAX_TOKENS ?? '0',
+                    10,
+                  ),
+                },
+              }
+            : {}),
+        }
+      : {};
+
+    const stream = await client.chat.completions.create({
+      model,
+      messages: request.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
+      max_tokens: request.maxTokens,
+      temperature: request.temperature,
+      stream: true,
+      stream_options: { include_usage: true },
+      ...(request.responseFormat === 'json_object'
+        ? { response_format: { type: 'json_object' as const } }
+        : {}),
+      ...openRouterParams,
+    } as any);
+
+    let fullText = '';
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let cachedTokens = 0;
+    let costUsd = 0;
+    let modelUsed = model;
+
+    for await (const chunk of stream as any) {
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (delta) {
+        fullText += delta;
+        yield { type: 'token', text: delta };
+      }
+
+      // 마지막 청크에 usage 정보
+      if (chunk.usage) {
+        promptTokens = chunk.usage.prompt_tokens ?? 0;
+        completionTokens = chunk.usage.completion_tokens ?? 0;
+        cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
+        costUsd = chunk.usage.cost ?? 0;
+      }
+      if (chunk.model) {
+        modelUsed = chunk.model;
+      }
+    }
+
+    yield {
+      type: 'done',
+      response: {
+        text: fullText,
+        model: modelUsed,
+        promptTokens,
+        completionTokens,
+        cachedTokens,
+        cacheCreationTokens: 0,
+        latencyMs: Date.now() - start,
+        costUsd,
+      },
     };
   }
 
