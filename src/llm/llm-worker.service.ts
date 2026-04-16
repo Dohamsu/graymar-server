@@ -104,6 +104,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly factExtractor: FactExtractorService,
     private readonly dialogueGenerator: DialogueGeneratorService,
     @Optional() private readonly nanoEventDirector: NanoEventDirectorService,
+    @Optional() private readonly streamBroker: import('./llm-stream-broker.service.js').LlmStreamBrokerService,
   ) {}
 
   onModuleInit(): void {
@@ -384,7 +385,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      const callResult = await this.llmCaller.call({
+      // 스트리밍 LLM 호출 — 토큰을 SSE로 브로드캐스트
+      const llmRequest = {
         messages,
         maxTokens: isCombat
           ? Math.min(config.maxTokens, 512)
@@ -394,7 +396,40 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         ...(lightConfig ? { model: lightConfig.model } : {}),
         ...(alternateModel ? { model: alternateModel } : {}),
         ...(useJsonMode ? { responseFormat: 'json_object' as const } : {}),
-      });
+      };
+
+      let callResult: import('./types/index.js').LlmCallResult;
+      if (this.streamBroker && !isCombat && !useJsonMode) {
+        // 스트리밍 모드: 서술 턴에서만 (COMBAT, JSON 모드 제외)
+        const streamModel = alternateModel ?? lightConfig?.model;
+        let streamResponse: import('./types/index.js').LlmProviderResponse | null = null;
+        try {
+          for await (const chunk of this.llmCaller.callStream(llmRequest, streamModel)) {
+            if (chunk.type === 'token') {
+              this.streamBroker.emit(pending.runId, pending.turnNo, 'token', { text: chunk.text });
+            } else if (chunk.type === 'done') {
+              streamResponse = chunk.response;
+            }
+          }
+        } catch (err) {
+          this.logger.warn(`[Stream] 실패, non-stream fallback: ${err}`);
+        }
+
+        if (streamResponse) {
+          callResult = {
+            success: true,
+            response: streamResponse,
+            providerUsed: this.llmCaller['registry']?.getPrimary()?.name ?? 'openai',
+            attempts: 1,
+          };
+        } else {
+          // 스트리밍 실패 → non-stream fallback
+          callResult = await this.llmCaller.call(llmRequest);
+        }
+      } else {
+        // 기존 non-stream 호출 (COMBAT, JSON 모드, StreamBroker 없음)
+        callResult = await this.llmCaller.call(llmRequest);
+      }
 
       // 4.5. 응답 너무 짧으면 메인 모델로 재시도 (Flash Lite 긴 프롬프트 실패 방어)
       if (
@@ -1976,6 +2011,15 @@ ${npcList}`,
           llmPrompt: messages as unknown[],
         })
         .where(eq(turns.id, pending.id));
+
+      // 스트리밍 완료 이벤트 전송 (후처리 완료된 최종 서술)
+      if (this.streamBroker) {
+        const finalChoices = (pending as any)._nanoChoices ?? llmChoices;
+        this.streamBroker.emit(pending.runId, pending.turnNo, 'done', {
+          narrative,
+          choices: finalChoices,
+        });
+      }
 
       // recent_summaries에 요약 저장
       await this.db.insert(recentSummaries).values({

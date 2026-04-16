@@ -20,6 +20,7 @@ import { NanoEventDirectorService } from './nano-event-director.service.js';
 import { FactExtractorService } from './fact-extractor.service.js';
 import { DialogueGeneratorService } from './dialogue-generator.service.js';
 import { LorebookService } from './lorebook.service.js';
+import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
 import { ContentModule } from '../content/content.module.js';
 
@@ -43,6 +44,7 @@ import { ContentModule } from '../content/content.module.js';
     FactExtractorService,
     DialogueGeneratorService,
     LorebookService,
+    LlmStreamBrokerService,
   ],
   exports: [
     ContextBuilderService,
@@ -51,6 +53,7 @@ import { ContentModule } from '../content/content.module.js';
     LlmProviderRegistryService,
     NanoEventDirectorService,
     FactExtractorService,
+    LlmStreamBrokerService,
   ],
 })
 export class LlmModule implements OnModuleInit {
@@ -63,7 +66,9 @@ export class LlmModule implements OnModuleInit {
     const config = this.configService.get();
 
     this.registry.register(new MockProvider());
-    this.registry.register(new OpenAIProvider(config, () => this.configService.get()));
+    this.registry.register(
+      new OpenAIProvider(config, () => this.configService.get()),
+    );
     this.registry.register(new ClaudeProvider(config));
     this.registry.register(new GeminiProvider(config));
   }
