@@ -194,6 +194,12 @@ export class NanoEventDirectorService {
       `[퀘스트] ${ctx.questState}`,
     ];
 
+    // 서술 맥락 (Dual-Track: 서술 완료 후 선택지 생성 시)
+    if ((ctx as any).narrativeText) {
+      const narrativePreview = (ctx as any).narrativeText.slice(0, 300);
+      parts.push(``, `[이번 턴 서술 — 이 내용에 맞는 선택지를 생성하세요]`, narrativePreview);
+    }
+
     // 활성 장소 조건
     if (ctx.activeConditions.length > 0) {
       const condLines = ctx.activeConditions.map((c) => {
