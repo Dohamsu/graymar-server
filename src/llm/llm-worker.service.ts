@@ -1764,6 +1764,70 @@ ${npcList}`,
             }
           }
 
+          // Step F: primaryNpcId와 LLM 출력 NPC 불일치 교정
+          // 서버가 배정한 NPC와 LLM이 등장시킨 NPC가 다르면 마커+서술을 교정
+          {
+            const primaryNpcId = (serverResult.ui as Record<string, unknown>)
+              ?.actionContext
+              ? ((serverResult.ui as Record<string, unknown>).actionContext as Record<string, unknown>)?.primaryNpcId as string | null
+              : null;
+
+            if (primaryNpcId) {
+              const primaryDef = this.content.getNpc(primaryNpcId);
+              const primaryAlias = primaryDef?.unknownAlias ?? primaryDef?.name;
+              const primaryPortrait = portraits[primaryNpcId] ?? '';
+
+              if (primaryAlias) {
+                // 서술의 첫 번째 @마커 NPC 확인
+                const firstMarker = narrative.match(/@\[([^\]|]+)(?:\|([^\]]+))?\]/);
+                if (firstMarker) {
+                  const markerName = firstMarker[1].trim();
+                  // primaryNpcId의 이름/별칭과 다르면 교정 필요
+                  const isMatchPrimary =
+                    markerName === primaryAlias ||
+                    markerName === primaryDef?.name ||
+                    markerName === primaryDef?.shortAlias;
+
+                  if (!isMatchPrimary) {
+                    // 다른 NPC가 등장 — 마커를 primaryNpcId의 별칭으로 교체
+                    const wrongName = markerName;
+                    const wrongImg = firstMarker[2]?.trim() ?? '';
+                    const npcState = npcStates[primaryNpcId];
+                    const isRevealed = npcState?.introduced === true;
+                    const correctName = isRevealed
+                      ? (primaryDef?.name ?? primaryAlias)
+                      : primaryAlias;
+                    const correctMarker = primaryPortrait
+                      ? `@[${correctName}|${primaryPortrait}]`
+                      : `@[${correctName}]`;
+                    const wrongMarkerPattern = wrongImg
+                      ? `@[${wrongName}|${wrongImg}]`
+                      : `@[${wrongName}]`;
+
+                    // 모든 잘못된 마커 교체
+                    narrative = narrative.split(wrongMarkerPattern).join(correctMarker);
+                    // 이미지 없는 버전도 교체
+                    if (wrongImg) {
+                      narrative = narrative.split(`@[${wrongName}]`).join(correctMarker);
+                    }
+
+                    // 서술 본문에서도 잘못된 NPC 호칭을 교체 (마커 외부)
+                    if (wrongName.length >= 4) {
+                      narrative = narrative.split(wrongName).join(correctName);
+                    }
+
+                    // appearedNpcIds 교정
+                    appearedNpcIds.add(primaryNpcId);
+
+                    this.logger.log(
+                      `[NpcMismatch] LLM이 ${wrongName}를 등장시켰으나 primaryNpcId=${primaryNpcId}(${correctName})로 교정`,
+                    );
+                  }
+                }
+              }
+            }
+          }
+
           // 상위 스코프로 변수 전달 (5.9에서 사용)
           _appearedNpcIds = appearedNpcIds;
           _portraits = portraits;
