@@ -2043,7 +2043,39 @@ ${npcList}`,
         })
         .where(eq(turns.id, pending.id));
 
-      // 스트리밍 완료 이벤트 전송 (후처리 완료된 최종 서술)
+      // Track 2: 서술 완료 후 선택지 생성 (서술 맥락 포함)
+      if (this.streamBroker && this.nanoEventDirector && pending.nodeType === 'LOCATION') {
+        try {
+          // choices_loading 이벤트 → 클라이언트에 선택지 로딩 중 알림
+          this.streamBroker.emit(pending.runId, pending.turnNo, 'choices_loading', {});
+
+          const nanoCtx2 = (serverResult.ui as Record<string, unknown>)?.nanoEventCtx as
+            | import('./nano-event-director.service.js').NanoEventContext
+            | undefined;
+          if (nanoCtx2) {
+            // 서술 텍스트를 NanoEventDirector에 전달
+            (nanoCtx2 as any).narrativeText = narrative;
+            const nanoResult2 = await this.nanoEventDirector.generate(nanoCtx2);
+            if (nanoResult2 && nanoResult2.choices.length >= 3) {
+              const nanoChoices2 = nanoResult2.choices.map((nc, idx) => ({
+                id: `nano_${pending.turnNo}_${idx}`,
+                label: nc.label,
+                action: { type: 'CHOICE' as string, payload: { affordance: nc.affordance, sourceNpcId: nc.npcId ?? nanoResult2.npcId } },
+              }));
+              nanoChoices2.push({
+                id: 'go_hub', label: '다른 장소로 이동한다',
+                action: { type: 'CHOICE', payload: { affordance: 'MOVE_LOCATION', sourceNpcId: null } },
+              });
+              (pending as any)._nanoChoices = nanoChoices2;
+              this.logger.log(`[Track2:NanoEvent] 서술 기반 선택지 ${nanoResult2.choices.length}개 생성`);
+            }
+          }
+        } catch (err) {
+          this.logger.warn(`[Track2:NanoEvent] 실패 (기본 선택지 사용): ${err}`);
+        }
+      }
+
+      // 스트리밍 완료 이벤트 전송 (후처리 완료된 최종 서술 + 선택지)
       if (this.streamBroker) {
         const finalChoices = (pending as any)._nanoChoices ?? llmChoices;
         this.streamBroker.emit(pending.runId, pending.turnNo, 'done', {
