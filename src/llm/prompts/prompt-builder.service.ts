@@ -1396,15 +1396,28 @@ export class PromptBuilderService {
             if (isFirstAppearance && personality.traits?.length) {
               parts.push(`    성격 특성: ${personality.traits.join(' / ')}`);
             }
+
+            // 어체(speechRegister) 규칙 — Dual-Track: LLM이 직접 대사 생성하므로 필수
+            const register = (personality as Record<string, unknown>).speechRegister as string | undefined;
+            const REGISTER_RULES: Record<string, { name: string; endings: string; examples: string; playerRef: string }> = {
+              HAOCHE: { name: '하오체 (중세 경어)', endings: '~소, ~오, ~하오, ~이오, ~겠소', examples: '"조심하시오." "그건 알 수 없소."', playerRef: '당신/그대' },
+              HAEYO: { name: '해요체 (부드러운 존댓말)', endings: '~해요, ~세요, ~죠, ~요', examples: '"조심하세요." "그건 잘 모르겠어요."', playerRef: '당신' },
+              BANMAL: { name: '반말 (비격식)', endings: '~야, ~해, ~지, ~거든, ~잖아', examples: '"조심해." "그건 몰라."', playerRef: '너/자네' },
+              HAPSYO: { name: '합쇼체 (공식)', endings: '~습니다, ~입니다, ~십시오, ~겠습니다', examples: '"조심하십시오." "그건 알 수 없습니다."', playerRef: '당신' },
+              HAECHE: { name: '해체 (노인/느슨한 반말)', endings: '~지, ~거든, ~는데, ~네, ~라네', examples: '"조심하게." "그건 모르겠네."', playerRef: '자네/이보게' },
+            };
+            const rule = REGISTER_RULES[register ?? 'HAOCHE'] ?? REGISTER_RULES.HAOCHE;
+            parts.push(`    ⚠️ 어체: ${rule.name} — 어미는 반드시 ${rule.endings}로 끝내세요`);
+            parts.push(`    올바른 예: ${rule.examples}`);
+            parts.push(`    플레이어 지칭: ${rule.playerRef}`);
+
             if (personality.speechStyle) {
-              // 턴마다 speechStyle의 다른 측면을 강조 — 고정 예시에 의한 반복 방지
               const speechParts = personality.speechStyle
                 .split(/[.。,，]\s*/)
                 .filter((s: string) => s.trim().length > 3);
               if (speechParts.length > 1) {
                 const turnNo = ctx.locationSessionTurns?.length ?? 0;
                 const rotateIdx = turnNo % speechParts.length;
-                // 기본 1줄 + 회전하는 강조 1줄
                 const base = speechParts[0].trim();
                 const emphasis = speechParts[rotateIdx].trim();
                 parts.push(`    말투: ${base}. ⚠️ 이번 턴 강조: ${emphasis}`);
