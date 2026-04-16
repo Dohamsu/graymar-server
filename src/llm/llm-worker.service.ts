@@ -406,39 +406,12 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         const streamModel = alternateModel ?? lightConfig?.model;
         let streamResponse: import('./types/index.js').LlmProviderResponse | null = null;
 
-        // NPC 후보 목록 생성 (분류기용)
-        const { StreamClassifierService } = await import('./stream-classifier.service.js');
-        const streamNpcStates = (llmContext.npcStates ?? {}) as Record<string, import('../db/types/npc-state.js').NPCState>;
-        const streamEventNpcIds: string[] = [];
-        const sr = serverResult;
-        if (sr.events) {
-          for (const evt of sr.events) {
-            const nid = (evt as Record<string, unknown>).npcId as string | undefined;
-            if (nid) streamEventNpcIds.push(nid);
-          }
-        }
-        const streamCandidates = StreamClassifierService.buildCandidates(
-          streamNpcStates, this.content, pending.turnNo, streamEventNpcIds,
-        );
-        const streamPrimaryNpcId = streamEventNpcIds[0] ?? null;
-        const classifier = new StreamClassifierService(streamCandidates, streamPrimaryNpcId);
-
         try {
           for await (const chunk of this.llmCaller.callStream(llmRequest, streamModel)) {
             if (chunk.type === 'token') {
-              // 분류기로 토큰 전달 → narration/dialogue 세그먼트 이벤트 방출
-              const segEvents = classifier.feed(chunk.text);
-              for (const segEvt of segEvents) {
-                this.streamBroker.emit(pending.runId, pending.turnNo, segEvt.type, segEvt);
-              }
-              // token도 함께 전송 (하위 호환: 기존 클라이언트 대응)
+              // 통합 스트리밍: narration/dialogue 분류 없이 token만 전송
               this.streamBroker.emit(pending.runId, pending.turnNo, 'token', { text: chunk.text });
             } else if (chunk.type === 'done') {
-              // 잔여 버퍼 플러시
-              const remaining = classifier.flush();
-              for (const segEvt of remaining) {
-                this.streamBroker.emit(pending.runId, pending.turnNo, segEvt.type, segEvt);
-              }
               streamResponse = chunk.response;
             }
           }
