@@ -358,4 +358,37 @@ describe('Step F: NPC 불일치 교정', () => {
     );
     expect(result.appearedNpcIds.has('NPC_EDRIC')).toBe(true);
   });
+
+  it('speakingNpc.npcId를 fallback으로 사용 (HUB 턴, actionContext 없음)', () => {
+    // HUB 턴에서는 actionContext.primaryNpcId가 없고, speakingNpc.npcId가 fallback
+    // Step F 로직: primaryNpcId ?? speakingNpc.npcId
+    const narrative = '@[그림자 상인] "거래를 제안하지."';
+
+    // speakingNpc.npcId = NPC_EDRIC (HUB fallback)
+    const result = stepF_fixNpcMismatch(
+      narrative,
+      'NPC_EDRIC', // speakingNpc.npcId as fallback
+      {},
+      { NPC_EDRIC: { introduced: false } },
+      getNpcDef,
+      new Set(),
+    );
+    expect(result.narrative).toContain('날카로운 눈매의 회계사');
+    expect(result.narrative).not.toContain('그림자 상인');
+    expect(result.appearedNpcIds.has('NPC_EDRIC')).toBe(true);
+  });
+
+  it('speakingNpc.npcId fallback + introduced=true → 실명 사용', () => {
+    const narrative = '@[그림자 상인|/images/kai.png] "거래가 필요합니다."';
+    const result = stepF_fixNpcMismatch(
+      narrative,
+      'NPC_EDRIC', // speakingNpc.npcId
+      { NPC_EDRIC: '/images/edric.png' },
+      { NPC_EDRIC: { introduced: true } },
+      getNpcDef,
+      new Set(),
+    );
+    expect(result.narrative).toContain('@[에드릭 베일|/images/edric.png]');
+    expect(result.narrative).not.toContain('그림자 상인');
+  });
 });
