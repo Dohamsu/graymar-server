@@ -35,6 +35,7 @@ export const bugReports = pgTable(
     category: text('category', { enum: BUG_REPORT_CATEGORY }).notNull(),
     description: text('description'),
     recentTurns: jsonb('recent_turns').$type<unknown[]>().notNull(),
+    uiDebugLog: jsonb('ui_debug_log').$type<unknown[]>(),
     serverVersion: text('server_version'),
     status: text('status', { enum: BUG_REPORT_STATUS })
       .notNull()
