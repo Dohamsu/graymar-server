@@ -5,7 +5,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Subject, Observable } from 'rxjs';
 
 export interface StreamEvent {
-  type: 'token' | 'done' | 'error';
+  type: 'token' | 'narration' | 'dialogue' | 'done' | 'error';
   data: unknown;
 }
 
