@@ -1830,13 +1830,13 @@ ${npcList}`,
             }
           }
 
-          // Step F: primaryNpcId와 LLM 출력 NPC 불일치 교정
+          // Step F: primaryNpcId 또는 speakingNpc와 LLM 출력 NPC 불일치 교정
           // 서버가 배정한 NPC와 LLM이 등장시킨 NPC가 다르면 마커+서술을 교정
           {
-            const primaryNpcId = (serverResult.ui as Record<string, unknown>)
-              ?.actionContext
-              ? ((serverResult.ui as Record<string, unknown>).actionContext as Record<string, unknown>)?.primaryNpcId as string | null
-              : null;
+            const primaryNpcId = (
+              ((serverResult.ui as Record<string, unknown>)?.actionContext as Record<string, unknown>)?.primaryNpcId
+              ?? ((serverResult.ui as Record<string, unknown>)?.speakingNpc as Record<string, unknown>)?.npcId
+            ) as string | null;
 
             if (primaryNpcId) {
               const primaryDef = this.content.getNpc(primaryNpcId);
