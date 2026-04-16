@@ -36,6 +36,8 @@ export const bugReports = pgTable(
     description: text('description'),
     recentTurns: jsonb('recent_turns').$type<unknown[]>().notNull(),
     uiDebugLog: jsonb('ui_debug_log').$type<unknown[]>(),
+    clientSnapshot: jsonb('client_snapshot').$type<Record<string, unknown>>(),
+    networkLog: jsonb('network_log').$type<unknown[]>(),
     serverVersion: text('server_version'),
     status: text('status', { enum: BUG_REPORT_STATUS })
       .notNull()

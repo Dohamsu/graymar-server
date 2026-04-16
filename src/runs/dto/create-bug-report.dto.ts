@@ -5,6 +5,8 @@ export const CreateBugReportBodySchema = z.object({
   description: z.string().max(2000).optional(),
   recentTurns: z.array(z.any()).min(1).max(5),
   uiDebugLog: z.array(z.any()).max(200).optional(),
+  clientSnapshot: z.record(z.string(), z.any()).optional(),
+  networkLog: z.array(z.any()).max(100).optional(),
 });
 
 export type CreateBugReportBody = z.infer<typeof CreateBugReportBodySchema>;
