@@ -32,6 +32,7 @@ import {
 } from './nano-director.service.js';
 import { FactExtractorService } from './fact-extractor.service.js';
 import { NanoEventDirectorService } from './nano-event-director.service.js';
+import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import {
   DialogueGeneratorService,
   type DialogueSlot,
@@ -104,7 +105,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly factExtractor: FactExtractorService,
     private readonly dialogueGenerator: DialogueGeneratorService,
     @Optional() private readonly nanoEventDirector: NanoEventDirectorService,
-    @Optional() private readonly streamBroker: import('./llm-stream-broker.service.js').LlmStreamBrokerService,
+    @Optional() private readonly streamBroker: LlmStreamBrokerService,
   ) {}
 
   onModuleInit(): void {
@@ -399,8 +400,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       };
 
       let callResult: import('./types/index.js').LlmCallResult;
-      if (this.streamBroker && !isCombat && !useJsonMode) {
-        // 스트리밍 모드: 서술 턴에서만 (COMBAT, JSON 모드 제외)
+      if (this.streamBroker && !isCombat) {
+        // 스트리밍 모드: 서술 턴에서만 (COMBAT 제외, JSON 모드도 stream 지원)
+        this.logger.log(`[Stream] 스트리밍 모드 시작 turn=${pending.turnNo} run=${pending.runId}`);
         const streamModel = alternateModel ?? lightConfig?.model;
         let streamResponse: import('./types/index.js').LlmProviderResponse | null = null;
         try {
