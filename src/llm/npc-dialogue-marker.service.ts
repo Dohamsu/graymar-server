@@ -23,29 +23,92 @@ interface NpcCandidate {
 }
 
 // 발화동사 공통 패턴 (모든 매칭에서 사용)
-const SPEECH_VERBS = '말|입|목소리|낮게|속삭|외치|읊조|내뱉|덧붙|끼어들|중얼|소리|한마디|물었|대답|되물|답했|불렀|으르렁|경고|지시|명령|부탁|제안|설명|알려|나지막|조용히|걸걸|울려|차갑게|부드럽게|날카롭게|쏘아|투덜|비꼬|빈정|꾸짖|질책|타이르|달래|위로|협박|윽박|재촉|독촉|거들|끼어|망설|더듬|고함|호통|선언|단언|읊|뇌까|곁눈질|눈짓|턱짓|손짓|고개|몸을';
+const SPEECH_VERBS =
+  '말|입|목소리|낮게|속삭|외치|읊조|내뱉|덧붙|끼어들|중얼|소리|한마디|물었|대답|되물|답했|불렀|으르렁|경고|지시|명령|부탁|제안|설명|알려|나지막|조용히|걸걸|울려|차갑게|부드럽게|날카롭게|쏘아|투덜|비꼬|빈정|꾸짖|질책|타이르|달래|위로|협박|윽박|재촉|독촉|거들|끼어|망설|더듬|고함|호통|선언|단언|읊|뇌까|곁눈질|눈짓|턱짓|손짓|고개|몸을';
 
 // 대명사 패턴
-const PRONOUN_MALE = new RegExp(`(?:그[가는의]|그 사내[가는]?|그 남자[가는]?)\\s{0,2}(?:${SPEECH_VERBS})`);
-const PRONOUN_FEMALE = new RegExp(`(?:그녀[가는의]?|그 여인[이가는]?|그 여자[가는]?)\\s{0,2}(?:${SPEECH_VERBS})`);
+const PRONOUN_MALE = new RegExp(
+  `(?:그[가는의]|그 사내[가는]?|그 남자[가는]?)\\s{0,2}(?:${SPEECH_VERBS})`,
+);
+const PRONOUN_FEMALE = new RegExp(
+  `(?:그녀[가는의]?|그 여인[이가는]?|그 여자[가는]?)\\s{0,2}(?:${SPEECH_VERBS})`,
+);
 const PRONOUN_NEUTRAL = new RegExp(`(?:그[가는])\\s{0,2}(?:${SPEECH_VERBS})`);
 
 // 일반명사 → 성별 매핑
 const NOUN_GENDER_MAP: Record<string, 'male' | 'female' | 'any'> = {
-  '사내': 'male', '남자': 'male', '청년': 'male', '노인': 'any', '장정': 'male',
-  '거구': 'male', '소년': 'male', '놈': 'male', '자': 'male',
-  '여인': 'female', '여자': 'female', '소녀': 'female', '노파': 'female', '할미': 'female',
-  '아이': 'any', '인물': 'any', '누군가': 'any', '이': 'any',
+  사내: 'male',
+  남자: 'male',
+  청년: 'male',
+  노인: 'any',
+  장정: 'male',
+  거구: 'male',
+  소년: 'male',
+  놈: 'male',
+  자: 'male',
+  여인: 'female',
+  여자: 'female',
+  소녀: 'female',
+  노파: 'female',
+  할미: 'female',
+  아이: 'any',
+  인물: 'any',
+  누군가: 'any',
+  이: 'any',
 };
 
 // 직업명 → role 매칭 후보
 const JOB_KEYWORDS = [
-  '상인', '경비병', '장수', '실무자', '회계사', '병사', '전령', '주인', '하인',
-  '선원', '어부', '대장', '부관', '감독관', '점원', '약사', '치료사', '행인',
-  '악사', '음유시인', '주모', '순찰병', '파수꾼', '서기', '문지기', '부랑자',
-  '거지', '도둑', '밀수꾼', '무사', '기사', '구경꾼', '인부', '노동자', '장교',
-  '책임자', '담당관', '관리인', '집사', '하녀', '요리사', '대장장이', '무기상',
-  '여관주인', '선장', '조타수', '갑판원', '창고지기', '세관원', '검시관',
+  '상인',
+  '경비병',
+  '장수',
+  '실무자',
+  '회계사',
+  '병사',
+  '전령',
+  '주인',
+  '하인',
+  '선원',
+  '어부',
+  '대장',
+  '부관',
+  '감독관',
+  '점원',
+  '약사',
+  '치료사',
+  '행인',
+  '악사',
+  '음유시인',
+  '주모',
+  '순찰병',
+  '파수꾼',
+  '서기',
+  '문지기',
+  '부랑자',
+  '거지',
+  '도둑',
+  '밀수꾼',
+  '무사',
+  '기사',
+  '구경꾼',
+  '인부',
+  '노동자',
+  '장교',
+  '책임자',
+  '담당관',
+  '관리인',
+  '집사',
+  '하녀',
+  '요리사',
+  '대장장이',
+  '무기상',
+  '여관주인',
+  '선장',
+  '조타수',
+  '갑판원',
+  '창고지기',
+  '세관원',
+  '검시관',
 ];
 
 @Injectable()
@@ -66,6 +129,22 @@ export class NpcDialogueMarkerService {
       return { text: narrative, unmatchedCount: 0 };
     }
 
+    // ── 새 형식 우선 파싱: "NPC별칭: \"대사\"" 패턴 ──
+    const colonResult = this.parseColonDialogueFormat(
+      narrative,
+      candidateNpcs,
+    );
+    if (colonResult) {
+      this.logger.debug(
+        `[ServerMarker:ColonFormat] converted=${colonResult.convertedCount} unmatched=${colonResult.unmatchedCount}`,
+      );
+      return {
+        text: colonResult.text,
+        unmatchedCount: colonResult.unmatchedCount,
+      };
+    }
+
+    // ── 기존 heuristic 로직 (fallback) ──
     const dialogues = this.extractDialogues(narrative, rawInput);
     if (dialogues.length === 0) {
       return { text: narrative, unmatchedCount: 0 };
@@ -78,7 +157,9 @@ export class NpcDialogueMarkerService {
     const preMarkerMatch = narrative.match(/@([A-Z][A-Z_0-9]+)\s*["\u201C]/);
     const preMarkerNpcId = preMarkerMatch ? preMarkerMatch[1] : null;
     // @[표시이름|URL] 형태에서도 추출
-    const preMarkerBracket = narrative.match(/@\[([^\]|]+)(?:\|[^\]]+)?\]\s*["\u201C]/);
+    const preMarkerBracket = narrative.match(
+      /@\[([^\]|]+)(?:\|[^\]]+)?\]\s*["\u201C]/,
+    );
     if (preMarkerNpcId) lastMatchedNpcId = preMarkerNpcId;
 
     for (let i = 0; i < dialogues.length; i++) {
@@ -93,10 +174,17 @@ export class NpcDialogueMarkerService {
       const prevDialogueEnd = i > 0 ? dialogues[i - 1].end : 0;
       const windowStart = Math.max(prevDialogueEnd, d.start - 300);
       const before = narrative.slice(windowStart, d.start);
-      const after = narrative.slice(d.end, Math.min(narrative.length, d.end + 50));
+      const after = narrative.slice(
+        d.end,
+        Math.min(narrative.length, d.end + 50),
+      );
 
       // 1단계: NPC DB 이름 직접 매칭 (name, unknownAlias, aliases, role)
-      const directMatch = this.matchNpcFromContext(before, after, candidateNpcs);
+      const directMatch = this.matchNpcFromContext(
+        before,
+        after,
+        candidateNpcs,
+      );
       if (directMatch) {
         d.npcId = directMatch.npcId;
         lastMatchedNpcId = directMatch.npcId;
@@ -104,7 +192,12 @@ export class NpcDialogueMarkerService {
       }
 
       // 2단계: 대명사 역추적 (그/그녀 → 직전 매칭 NPC)
-      const pronounMatch = this.matchPronoun(before, after, lastMatchedNpcId, candidateNpcs);
+      const pronounMatch = this.matchPronoun(
+        before,
+        after,
+        lastMatchedNpcId,
+        candidateNpcs,
+      );
       if (pronounMatch) {
         d.npcId = pronounMatch;
         // lastMatchedNpcId는 유지 (같은 NPC 연속)
@@ -151,6 +244,126 @@ export class NpcDialogueMarkerService {
     );
 
     return { text: result, unmatchedCount };
+  }
+
+  /**
+   * 새 형식 파싱: "NPC별칭: \"대사\"" 패턴을 감지하여 @마커로 변환.
+   * 1개 이상 매칭 시 결과 반환, 0개면 null (기존 로직 fallback).
+   */
+  private parseColonDialogueFormat(
+    narrative: string,
+    candidates: NpcCandidate[],
+  ): { text: string; convertedCount: number; unmatchedCount: number } | null {
+    // 줄 시작에서 "NPC별칭: "대사"" 패턴 매칭
+    // 별칭: 2자 이상, 콜론/따옴표 불포함
+    const colonRegex =
+      /^([^":\n\u201C\u201D]{2,}):\s*(["\u201C])([^"\u201D]{3,}?)(["\u201D])/gm;
+    const matches: Array<{
+      fullMatch: string;
+      alias: string;
+      dialogue: string;
+      index: number;
+    }> = [];
+
+    let m: RegExpExecArray | null;
+    while ((m = colonRegex.exec(narrative)) !== null) {
+      const alias = m[1].trim();
+      // 서술체 문장 오탐 방지: 별칭이 너무 길면 제외 (20자 초과)
+      if (alias.length > 20) continue;
+      // 별칭이 플레이어 지칭이면 제외
+      if (
+        NpcDialogueMarkerService.PLAYER_ALIASES.has(alias) ||
+        /^(?:당신|그대|플레이어|용병|주인공)/.test(alias)
+      )
+        continue;
+
+      matches.push({
+        fullMatch: m[0],
+        alias,
+        dialogue: m[3],
+        index: m.index,
+      });
+    }
+
+    // 새 형식 대사가 없으면 null → 기존 로직 fallback
+    if (matches.length === 0) return null;
+
+    let result = narrative;
+    let convertedCount = 0;
+    let unmatchedCount = 0;
+
+    // 뒤에서부터 치환하여 index 유지
+    for (let i = matches.length - 1; i >= 0; i--) {
+      const { alias, index, fullMatch } = matches[i];
+      const npcId = this.resolveNpcIdFromAlias(alias, candidates);
+
+      if (npcId) {
+        // "NPC별칭: \"대사\"" → "@NPC_ID \"대사\""
+        // 별칭 + 콜론 + 공백 부분만 교체, 따옴표와 대사는 유지
+        const aliasColonPart = fullMatch.slice(
+          0,
+          fullMatch.indexOf('"') >= 0
+            ? fullMatch.indexOf('"')
+            : fullMatch.indexOf('\u201C'),
+        );
+        const dialoguePart = fullMatch.slice(aliasColonPart.length);
+        const replacement = `@${npcId} ${dialoguePart}`;
+        result =
+          result.slice(0, index) +
+          replacement +
+          result.slice(index + fullMatch.length);
+        convertedCount++;
+      } else {
+        // NPC 매칭 실패 → 마커 없이 유지
+        unmatchedCount++;
+      }
+    }
+
+    return { text: result, convertedCount, unmatchedCount };
+  }
+
+  /**
+   * 별칭 문자열로 NPC ID를 탐색.
+   * 1) 정확한 이름/별칭 매칭
+   * 2) 부분 포함 매칭 (별칭이 NPC name/unknownAlias에 포함되거나 역으로)
+   */
+  private resolveNpcIdFromAlias(
+    alias: string,
+    candidates: NpcCandidate[],
+  ): string | null {
+    // 1) 정확 매칭: candidate.names에 alias가 포함
+    for (const c of candidates) {
+      for (const name of c.names) {
+        if (name === alias) return c.npcId;
+      }
+    }
+
+    // 2) 부분 포함 매칭 (양방향)
+    let bestMatch: { npcId: string; score: number } | null = null;
+    for (const c of candidates) {
+      for (const name of c.names) {
+        if (name.length < 2) continue;
+        // alias가 name을 포함하거나 name이 alias를 포함
+        if (alias.includes(name) || name.includes(alias)) {
+          // 더 긴 매칭이 높은 점수
+          const score = Math.min(alias.length, name.length);
+          if (!bestMatch || score > bestMatch.score) {
+            bestMatch = { npcId: c.npcId, score };
+          }
+        }
+      }
+    }
+    if (bestMatch && bestMatch.score >= 2) return bestMatch.npcId;
+
+    // 3) role 매칭: alias에 NPC role 키워드가 포함
+    for (const c of candidates) {
+      const def = this.content.getNpc(c.npcId);
+      if (!def) continue;
+      if (def.role && alias.includes(def.role)) return c.npcId;
+      if (def.unknownAlias && alias.includes(def.unknownAlias)) return c.npcId;
+    }
+
+    return null;
   }
 
   /** A: 대명사 → 직전 NPC 역추적 */
@@ -208,13 +421,16 @@ export class NpcDialogueMarkerService {
     const ctx = before + ' ' + after;
 
     for (const [noun, gender] of Object.entries(NOUN_GENDER_MAP)) {
-      const pattern = new RegExp(`${noun}[이가은는]?\\s{0,2}(?:말|입|목|속삭|외|중얼|물|답|고개|낮|내뱉|한마디)`);
+      const pattern = new RegExp(
+        `${noun}[이가은는]?\\s{0,2}(?:말|입|목|속삭|외|중얼|물|답|고개|낮|내뱉|한마디)`,
+      );
       if (!pattern.test(ctx)) continue;
 
       // 성별 필터링
-      const filtered = gender === 'any'
-        ? candidates
-        : candidates.filter((c) => c.gender === gender || !c.gender);
+      const filtered =
+        gender === 'any'
+          ? candidates
+          : candidates.filter((c) => c.gender === gender || !c.gender);
 
       if (filtered.length === 1) {
         return { npcId: filtered[0].npcId };
@@ -338,18 +554,23 @@ export class NpcDialogueMarkerService {
       // 필터 A: rawInput 유사도 — 플레이어 행동 텍스트 인용이면 skip
       if (rawInput && rawInput.length >= 4) {
         // rawInput이 대사에 80%+ 포함되어 있으면 플레이어 행동 인용
-        const overlap = rawInput.length <= quoteContent.length
-          ? quoteContent.includes(rawInput)
-          : rawInput.includes(quoteContent);
+        const overlap =
+          rawInput.length <= quoteContent.length
+            ? quoteContent.includes(rawInput)
+            : rawInput.includes(quoteContent);
         if (overlap) continue;
       }
 
       // 필터 C: 인용 조사 — 대사 뒤에 "라는/라고/란/이라는" 있으면 인용문
-      const afterQuote = text.slice(m.index + m[0].length, m.index + m[0].length + 6);
-      if (/^(?:라는|라고|란|이라는|이라고|라며|라면서)/.test(afterQuote)) continue;
+      const afterQuote = text.slice(
+        m.index + m[0].length,
+        m.index + m[0].length + 6,
+      );
+      if (/^(?:라는|라고|란|이라는|이라고|라며|라면서)/.test(afterQuote))
+        continue;
 
-      const isConsecutive = lastPreMarkedEnd > 0
-        && (m.index - lastPreMarkedEnd) < 50;
+      const isConsecutive =
+        lastPreMarkedEnd > 0 && m.index - lastPreMarkedEnd < 50;
 
       dialogues.push({
         start: m.index,
@@ -363,7 +584,8 @@ export class NpcDialogueMarkerService {
 
     // 보조 감지: 따옴표 없는 하오체 대사 (독립 문장, ~소/~오/~지 종결)
     // 이미 @마커가 붙어있거나 따옴표 대사 범위 안이면 skip
-    const haoRegex = /(?:^|\n)\s*([^@"\u201C\n]{8,}?(?:[소오지])\.\s*)(?:\n|$)/g;
+    const haoRegex =
+      /(?:^|\n)\s*([^@"\u201C\n]{8,}?(?:[소오지])\.\s*)(?:\n|$)/g;
     let hm: RegExpExecArray | null;
     while ((hm = haoRegex.exec(text)) !== null) {
       const sentence = hm[1].trim();
@@ -372,7 +594,7 @@ export class NpcDialogueMarkerService {
       // 이미 추출된 따옴표 대사 범위와 겹치면 skip
       const sStart = hm.index;
       const sEnd = hm.index + hm[0].length;
-      const overlaps = dialogues.some(d => sStart < d.end && sEnd > d.start);
+      const overlaps = dialogues.some((d) => sStart < d.end && sEnd > d.start);
       if (overlaps) continue;
       // 이미 @마커가 앞에 있으면 skip
       const before30 = text.slice(Math.max(0, sStart - 30), sStart);
@@ -423,13 +645,18 @@ export class NpcDialogueMarkerService {
         // "마이렐 단 경" 속에서 "마이렐" 찾기, "하를런 보스" 속에서 "하를런" 찾기
         if (name.length >= 3 && beforeIdx < 0) {
           // before에서 이 이름을 포함하는 더 긴 문자열 찾기
-          const fuzzyRegex = new RegExp(`[가-힣\\s]{0,6}${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[가-힣\\s]{0,6}`);
+          const fuzzyRegex = new RegExp(
+            `[가-힣\\s]{0,6}${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[가-힣\\s]{0,6}`,
+          );
           const fuzzyMatch = before.match(fuzzyRegex);
           if (fuzzyMatch && fuzzyMatch.index != null) {
-            let distance = before.length - fuzzyMatch.index - fuzzyMatch[0].length;
+            let distance =
+              before.length - fuzzyMatch.index - fuzzyMatch[0].length;
             if (distance > 100) continue;
             distance += 10; // 부분 매칭이므로 정확 매칭보다 낮은 우선순위
-            const afterName = before.slice(fuzzyMatch.index + fuzzyMatch[0].length);
+            const afterName = before.slice(
+              fuzzyMatch.index + fuzzyMatch[0].length,
+            );
             if (speechVerb.test(afterName)) {
               distance = Math.max(0, distance - 20);
             }
@@ -454,7 +681,11 @@ export class NpcDialogueMarkerService {
 
   // 플레이어 지칭은 NPC 마커 대상이 아님
   private static readonly PLAYER_ALIASES = new Set([
-    '당신', '그대', '플레이어', '용병', '주인공',
+    '당신',
+    '그대',
+    '플레이어',
+    '용병',
+    '주인공',
   ]);
 
   private extractSpeakerAlias(before: string, after: string): string | null {
@@ -462,19 +693,31 @@ export class NpcDialogueMarkerService {
     const beforeMatch = before.match(
       new RegExp(`([가-힣]{2,6})[이가은는]\\s*(?:${SPEECH_VERBS})\\S{0,10}`),
     );
-    if (beforeMatch && !NpcDialogueMarkerService.PLAYER_ALIASES.has(beforeMatch[1])) return beforeMatch[1];
+    if (
+      beforeMatch &&
+      !NpcDialogueMarkerService.PLAYER_ALIASES.has(beforeMatch[1])
+    )
+      return beforeMatch[1];
 
     // 대사→발화자 패턴: 대사 뒤에 "XX가 말했다"
     const afterMatch = after.match(
       new RegExp(`^[,.]\\s*([가-힣]{2,6})[이가은는]\\s*(?:${SPEECH_VERBS})`),
     );
-    if (afterMatch && !NpcDialogueMarkerService.PLAYER_ALIASES.has(afterMatch[1])) return afterMatch[1];
+    if (
+      afterMatch &&
+      !NpcDialogueMarkerService.PLAYER_ALIASES.has(afterMatch[1])
+    )
+      return afterMatch[1];
 
     // 수식어+명사 패턴
     const descriptiveMatch = before.match(
       /(?:한|낯선|젊은|늙은|나이 든|거친|날카로운|무뚝뚝한|두건\s?쓴|망토\s?걸친|수상한|키\s?큰|마른|덩치\s?큰|눈매의|얼굴의|제복의|갑옷의)\s*([가-힣]{2,6})[이가은는]\s*$/,
     );
-    if (descriptiveMatch && !NpcDialogueMarkerService.PLAYER_ALIASES.has(descriptiveMatch[1])) return descriptiveMatch[1];
+    if (
+      descriptiveMatch &&
+      !NpcDialogueMarkerService.PLAYER_ALIASES.has(descriptiveMatch[1])
+    )
+      return descriptiveMatch[1];
 
     return null;
   }
