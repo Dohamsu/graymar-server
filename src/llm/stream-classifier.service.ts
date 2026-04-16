@@ -176,30 +176,39 @@ export class StreamClassifierService {
   private classifySentence(sentence: string): SegmentEvent[] {
     const events: SegmentEvent[] = [];
 
+    // 안전망: 시스템 태그 필터 (프롬프트 위반 시)
+    if (/^\[(?:CHOICES|\/CHOICES|THREAD|\/THREAD|MEMORY|\/MEMORY)/.test(sentence.trim())) {
+      return []; // 시스템 태그 → 무시
+    }
+    // [MEMORY:...] 태그 제거
+    const cleaned = sentence.replace(/\[MEMORY:[^\]]*\][^[]*\[\/MEMORY\]/g, '').trim();
+    if (!cleaned) return [];
+    const sentenceToProcess = cleaned;
+
     // 큰따옴표 대사 추출
     const quoteRegex = /(["\u201C])([^"\u201D]{3,}?)(["\u201D])/g;
     let match: RegExpExecArray | null;
     let lastEnd = 0;
 
-    while ((match = quoteRegex.exec(sentence)) !== null) {
+    while ((match = quoteRegex.exec(sentenceToProcess)) !== null) {
       const quoteContent = match[2];
       const quoteStart = match.index;
       const quoteEnd = match.index + match[0].length;
 
       // 인용 조사 필터
-      const afterQuote = sentence.slice(quoteEnd, quoteEnd + 8);
+      const afterQuote = sentenceToProcess.slice(quoteEnd, quoteEnd + 8);
       if (QUOTE_SUFFIX_RE.test(afterQuote)) {
         continue; // 인용문 → narration으로 처리
       }
 
       // 대사 전 서술 부분
-      const beforeText = sentence.slice(lastEnd, quoteStart).trim();
+      const beforeText = sentenceToProcess.slice(lastEnd, quoteStart).trim();
       if (beforeText.length > 0) {
         events.push({ type: 'narration', text: beforeText });
       }
 
       // NPC 식별
-      const before60 = sentence.slice(Math.max(0, quoteStart - 60), quoteStart);
+      const before60 = sentenceToProcess.slice(Math.max(0, quoteStart - 60), quoteStart);
       const npc = this.identifySpeaker(before60);
 
       events.push({
@@ -217,7 +226,7 @@ export class StreamClassifierService {
     }
 
     // 대사 이후 남은 서술
-    const remainingText = sentence.slice(lastEnd).trim();
+    const remainingText = sentenceToProcess.slice(lastEnd).trim();
     if (remainingText.length > 0) {
       // 대사가 하나도 없었으면 전체가 narration
       events.push({ type: 'narration', text: remainingText });
