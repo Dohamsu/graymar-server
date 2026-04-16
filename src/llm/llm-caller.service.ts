@@ -5,6 +5,7 @@ import { LlmProviderRegistryService } from './providers/llm-provider-registry.se
 import { LlmConfigService } from './llm-config.service.js';
 import type {
   LlmProviderRequest,
+  LlmProviderResponse,
   LlmCallResult,
   ErrorCategory,
 } from './types/index.js';

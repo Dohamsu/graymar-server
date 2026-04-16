@@ -702,19 +702,19 @@ export class RunsService {
               '',
               '그때, 초라한 행색의 사내가 조심스럽게 다가와 테이블 건너편에 앉았다. 끊임없이 문 쪽을 훔쳐보는 눈동자가 불안을 감추지 못했다.',
               '',
-              `@[로넨|/npc-portraits/ronen.png] "실례합니다. 항만 노동 길드 서기관 로넨이라고 합니다."`,
+              `@[로넨|/npc-portraits/ronen.webp] "실례합니다. 항만 노동 길드 서기관 로넨이라고 합니다."`,
               '',
               '당신은 잔을 내려놓고 사내를 살폈다. 길드 서기라기엔 너무 핏기 없는 얼굴이었다.',
               '',
-              `@[로넨|/npc-portraits/ronen.png] "${hook}"`,
+              `@[로넨|/npc-portraits/ronen.webp] "${hook}"`,
               '',
               '로넨이 목소리를 한층 낮췄다.',
               '',
-              '@[로넨|/npc-portraits/ronen.png] "장부가 사라졌습니다. 이틀 전 밤에 사무실을 털렸는데… 공물 내역만이 아닙니다. 뒷거래 기록이 전부 들어 있습니다."',
+              '@[로넨|/npc-portraits/ronen.webp] "장부가 사라졌습니다. 이틀 전 밤에 사무실을 털렸는데… 공물 내역만이 아닙니다. 뒷거래 기록이 전부 들어 있습니다."',
               '',
               '당신의 눈이 좁아졌다.',
               '',
-              '@[로넨|/npc-portraits/ronen.png] "길드 간부들이 해관청에 흘린 뇌물 목록입니다. 그 장부를 찾아주십시오. 보수는… 넉넉히 치르겠습니다."',
+              '@[로넨|/npc-portraits/ronen.webp] "길드 간부들이 해관청에 흘린 뇌물 목록입니다. 그 장부를 찾아주십시오. 보수는… 넉넉히 치르겠습니다."',
               '',
               '로넨의 손이 잔 위에서 미세하게 떨렸다.',
             ].join('\n');
@@ -772,7 +772,7 @@ export class RunsService {
         (enterResult.ui as any).speakingNpc = {
           npcId: 'NPC_RONEN',
           displayName: '로넨',
-          imageUrl: '/npc-portraits/ronen.png',
+          imageUrl: '/npc-portraits/ronen.webp',
         };
       }
 
