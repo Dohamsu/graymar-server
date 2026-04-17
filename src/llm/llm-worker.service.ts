@@ -1959,6 +1959,23 @@ ${npcList}`,
         narrative = this.deduplicateAliases(narrative);
       }
 
+      // 5.10.5. 대사 내부 raw 마커 잔해 제거 (이중 마커 버그 대응 — bug fc14ed2b)
+      //   원인: LLM이 @[이름|URL] "@[이름|URL] 대사" 같은 이중 마커 생성 시, 외부
+      //   마커는 B-2/B-2.5 regex가 처리하지만 큰따옴표 내부 잔해는 뒤에 "가 아닌
+      //   일반 텍스트가 와서 어떤 regex에도 매칭되지 않아 DialogueBubble 안에 그대로
+      //   노출됨. 큰따옴표 쌍 내부에서 @?[이름|URL] / @[이름] 패턴을 제거.
+      if (narrative) {
+        narrative = narrative.replace(
+          /(["\u201C])([^"\u201D]*?)(["\u201D])/g,
+          (_match, q1: string, inner: string, q2: string) => {
+            const cleaned = inner
+              .replace(/@?\[[^\]|]*\|[^\]]+\]\s*/g, '')
+              .replace(/@\[[^\]]+\]\s*/g, '');
+            return `${q1}${cleaned}${q2}`;
+          },
+        );
+      }
+
       // 5.11. NPC 소개 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
       {
         const uiData = serverResult.ui as Record<string, unknown>;
