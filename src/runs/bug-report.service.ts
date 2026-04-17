@@ -49,6 +49,7 @@ export class BugReportService {
         uiDebugLog: body.uiDebugLog ?? null,
         clientSnapshot: body.clientSnapshot ?? null,
         networkLog: body.networkLog ?? null,
+        clientVersion: body.clientVersion ?? null,
         serverVersion: SERVER_VERSION,
       })
       .returning();
