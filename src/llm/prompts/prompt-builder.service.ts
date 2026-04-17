@@ -1367,9 +1367,33 @@ export class PromptBuilderService {
       // 이번 턴 등장 NPC만 필터링 (말투 오염 방지)
       const relevantNpcIds =
         targetNpcIds.size > 0
-          ? targetNpcIds
+          ? new Set(targetNpcIds)
           : new Set(Object.keys(ctx.npcPostures)); // fallback: 전체
-      const postureLines = Object.entries(ctx.npcPostures)
+
+      // 실제 발화자(primaryNpcId / speakingNpc)를 반드시 포함 — BACKGROUND NPC가
+      // targetNpcIds / npcPostures 에서 제외되어도 어체 규칙을 확보해 오염을 막는다.
+      // BG NPC 는 NPC_LOCATION_AFFINITY 에 미등록이라 postures 계산에서 빠지므로
+      // 발화자 기준으로 강제 추가 + 기본 posture(CAUTIOUS)를 보조 주입한다.
+      const actualSpeaker =
+        ((sr.ui as Record<string, unknown>)?.speakingNpc as
+          | { npcId?: string }
+          | undefined)?.npcId ??
+        ((sr.ui as Record<string, unknown>)?.actionContext as
+          | { primaryNpcId?: string }
+          | undefined)?.primaryNpcId;
+      const speakerExtraPosture: Record<string, string> = {};
+      if (actualSpeaker) {
+        relevantNpcIds.add(actualSpeaker);
+        if (!ctx.npcPostures?.[actualSpeaker]) {
+          speakerExtraPosture[actualSpeaker] = 'CAUTIOUS';
+        }
+      }
+      // 기존 npcPostures 와 발화자 보조 posture 를 합쳐 반복 대상 구성
+      const effectivePostures: Record<string, string> = {
+        ...(ctx.npcPostures ?? {}),
+        ...speakerExtraPosture,
+      };
+      const postureLines = Object.entries(effectivePostures)
         .filter(([npcId]) => relevantNpcIds.has(npcId))
         .map(([npcId, posture]) => {
           const baseline = POSTURE_BASELINE[posture] ?? '';
