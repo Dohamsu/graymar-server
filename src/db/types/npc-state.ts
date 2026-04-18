@@ -60,6 +60,9 @@ export interface NPCState {
   introduced: boolean;
   introducedAtTurn?: number; // 소개가 발생한 턴 번호 (다음 턴부터 실명 표시)
   encounterCount: number;
+  // LLM 서술에 @마커로 등장한 누적 횟수 — encounterCount와 별개로
+  // 반복 호칭 고착 방지용. 임계치 이상이면 posture 무관 강제 소개.
+  appearanceCount?: number;
   agenda: string;
   currentGoal: string;
   currentStage: string;
@@ -332,6 +335,11 @@ export function shouldIntroduce(
 
   // BACKGROUND 티어 NPC는 소개하지 않음 (배경 인물은 별칭 유지)
   if (npcTier === 'BACKGROUND') return false;
+
+  // 반복 호칭 고착 방지: LLM 서술에 5회 이상 등장했으면 posture 무관 강제 소개.
+  //   encounterCount(primaryNpcId 기준)와 별개로 동작 — 같은 LOCATION 세션에서는
+  //   encounterCount가 증가하지 않지만 LLM 서술에는 반복 등장하는 경우 구제.
+  if ((npcState.appearanceCount ?? 0) >= 5) return true;
 
   const count = npcState.encounterCount ?? 0;
   switch (posture) {
