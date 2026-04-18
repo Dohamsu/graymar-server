@@ -2036,6 +2036,23 @@ ${npcList}`,
         }
       }
 
+      // 5.10.8. 화폐 단위 규칙 강제 (bug 4607)
+      //   프롬프트 규칙: "은화/금화/동전/닢" 금지, "골드"만 사용. LLM 누수 시 치환.
+      //   - "동전 주머니" → "가죽 주머니" (관용 표현 유지)
+      //   - "동전을/동전이/동전 한" 등 단독 "동전" → "골드" 치환
+      //   - "은화/금화/닢" 동일 치환
+      if (narrative) {
+        narrative = narrative.replace(/동전\s*주머니/g, '가죽 주머니');
+        narrative = narrative.replace(
+          /(?<![가-힣])(동전|은화|금화)(?![가-힣])/g,
+          '골드',
+        );
+        narrative = narrative.replace(
+          /(\d+)\s*닢(?![가-힣])/g,
+          '$1골드',
+        );
+      }
+
       // 5.11. NPC 소개 롤백 + appearanceCount 증가
       //   - 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
       //   - appearanceCount: LLM 서술에 @마커로 등장한 NPC 카운터 +1 (반복 호칭 고착 방지)
