@@ -1976,6 +1976,35 @@ ${npcList}`,
         );
       }
 
+      // 5.10.6. 중첩 @마커 정리 (bug ca038140)
+      //   원인: LLM이 `@[@[로넨|URL]]` 같이 외부 @[...] 안에 또 다른 @[...]를
+      //   중첩해 출력하는 케이스. 이 경우 파서가 외부 마커 안의 내부 마커를
+      //   별도 개체로 인식해 dialogue 매칭이 꼬여 서술이 말풍선에 들어가는
+      //   오탐이 발생. 반복 치환으로 N단계 중첩도 해소.
+      if (narrative) {
+        let guard = 0;
+        while (/@\[@\[/.test(narrative) && guard < 5) {
+          narrative = narrative.replace(/@\[@\[([^\]]+)\]\]/g, '@[$1]');
+          guard += 1;
+        }
+      }
+
+      // 5.10.7. 비대칭 큰따옴표 정리 (bug ca038140)
+      //   원인: LLM 이 홀수 개수의 `"` 를 생성하면 마지막 orphan `"` 가 뒤
+      //   서술 전체를 대사로 확장시켜 DialogueBubble 에 들어감. orphan 을
+      //   찾아 제거해 쌍이 맞도록 조정.
+      if (narrative) {
+        const dqCount = (narrative.match(/"/g) || []).length;
+        if (dqCount % 2 === 1) {
+          // 마지막 `"` 한 개를 제거 (뒤 서술이 대사로 흡수되는 것 방지)
+          const lastIdx = narrative.lastIndexOf('"');
+          if (lastIdx >= 0) {
+            narrative =
+              narrative.slice(0, lastIdx) + narrative.slice(lastIdx + 1);
+          }
+        }
+      }
+
       // 5.11. NPC 소개 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
       {
         const uiData = serverResult.ui as Record<string, unknown>;
