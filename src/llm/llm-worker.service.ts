@@ -2036,39 +2036,87 @@ ${npcList}`,
         }
       }
 
-      // 5.11. NPC 소개 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
+      // 5.11. NPC 소개 롤백 + appearanceCount 증가
+      //   - 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
+      //   - appearanceCount: LLM 서술에 @마커로 등장한 NPC 카운터 +1 (반복 호칭 고착 방지)
       {
         const uiData = serverResult.ui as Record<string, unknown>;
         const newlyIntroduced =
           (uiData?.newlyIntroducedNpcIds as string[]) ?? [];
-        if (newlyIntroduced.length > 0 && narrative && runSession?.runState) {
-          const rs = runSession.runState as unknown as Record<string, unknown>;
-          const npcStatesForRollback = rs.npcStates as
+        const hasNarrative = !!narrative && !!runSession?.runState;
+        const hasRollbackCandidates = newlyIntroduced.length > 0 && hasNarrative;
+        const hasAppearances = _appearedNpcIds.size > 0 && hasNarrative;
+
+        if (hasRollbackCandidates || hasAppearances) {
+          const rs = runSession!.runState as unknown as Record<string, unknown>;
+          const npcStatesRef = rs.npcStates as
             | Record<
                 string,
-                { introduced?: boolean; introducedAtTurn?: number }
+                {
+                  introduced?: boolean;
+                  introducedAtTurn?: number;
+                  appearanceCount?: number;
+                }
               >
             | undefined;
-          let rollbackNeeded = false;
+          let changed = false;
 
-          for (const npcId of newlyIntroduced) {
-            const npcDef = this.content.getNpc(npcId);
-            if (!npcDef?.name) continue;
-            // LLM 서술에 NPC 실명이 있는지 확인
-            if (!narrative.includes(npcDef.name)) {
-              // 실명 미언급 → introduced 롤백
-              if (npcStatesForRollback?.[npcId]) {
-                npcStatesForRollback[npcId].introduced = false;
-                npcStatesForRollback[npcId].introducedAtTurn = undefined;
-                rollbackNeeded = true;
-                this.logger.debug(
-                  `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백`,
+          if (hasRollbackCandidates && npcStatesRef) {
+            for (const npcId of newlyIntroduced) {
+              const npcDef = this.content.getNpc(npcId);
+              if (!npcDef?.name) continue;
+              if (!narrative.includes(npcDef.name)) {
+                if (npcStatesRef[npcId]) {
+                  npcStatesRef[npcId].introduced = false;
+                  npcStatesRef[npcId].introducedAtTurn = undefined;
+                  changed = true;
+                  this.logger.debug(
+                    `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백`,
+                  );
+                }
+              }
+            }
+          }
+
+          if (hasAppearances && npcStatesRef) {
+            const { shouldIntroduce } = await import(
+              '../db/types/npc-state.js'
+            );
+            for (const npcId of _appearedNpcIds) {
+              const npcDef = this.content.getNpc(npcId) as
+                | Record<string, unknown>
+                | undefined;
+              // BACKGROUND 티어는 소개 대상이 아니므로 appearance 카운팅 스킵
+              if (npcDef?.tier === 'BACKGROUND') continue;
+              if (!npcStatesRef[npcId]) continue;
+              const prev = npcStatesRef[npcId].appearanceCount ?? 0;
+              npcStatesRef[npcId].appearanceCount = prev + 1;
+              changed = true;
+
+              // appearanceCount 임계값 도달 시 즉시 introduced 전환
+              //   turns.service의 shouldIntroduce 호출은 primaryNpcId 대상에만 실행되므로,
+              //   LLM 서술에만 반복 등장하는 NPC는 여기서 강제 소개 트리거.
+              const npcStateFull = npcStatesRef[npcId] as unknown as import(
+                '../db/types/npc-state.js'
+              ).NPCState;
+              if (
+                !npcStateFull.introduced &&
+                shouldIntroduce(
+                  npcStateFull,
+                  npcStateFull.posture,
+                  (npcDef?.tier as string | undefined) ?? undefined,
+                )
+              ) {
+                npcStatesRef[npcId].introduced = true;
+                npcStatesRef[npcId].introducedAtTurn = pending.turnNo;
+                this.logger.log(
+                  `[AppearanceIntro] turn=${pending.turnNo} ${npcId} appearanceCount=${prev + 1} → introduced=true`,
                 );
               }
             }
           }
 
-          if (rollbackNeeded) {
+          if (changed) {
             await this.db
               .update(runSessions)
               .set({ runState: rs as any })

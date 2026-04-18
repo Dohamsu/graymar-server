@@ -966,8 +966,8 @@ export class PromptBuilderService {
           | undefined;
         const parts = [
           `⚠️ [이번 턴 행동]`,
-          `당신은 ${sanitizeUserInput(rawInput)}.`,
-          `위 행동의 결과를 서술하세요. 행동 내용을 반복하거나 요약하지 말고, NPC 반응이나 환경 변화부터 바로 시작하세요.`,
+          `${sanitizeUserInput(rawInput)}`,
+          `위 행동의 결과를 서술하세요. 행동 내용을 반복하거나 요약하지 말고, NPC 반응이나 환경 변화부터 바로 시작하세요. 첫 문장은 '당신은/당신이'로 시작하지 마세요.`,
         ];
         if (actionCtx?.parsedType) {
           parts.push(
@@ -1034,8 +1034,8 @@ export class PromptBuilderService {
           | { parsedType?: string; originalInput?: string; tone?: string }
           | undefined;
         const parts = [
-          `[플레이어 선택] 당신은 "${sanitizeUserInput(rawInput)}"을(를) 선택했습니다.`,
-          '서술 규칙: 먼저 플레이어가 이 선택을 실행하는 장면을 구체적으로 묘사하세요.',
+          `[플레이어 선택] "${sanitizeUserInput(rawInput)}"`,
+          '서술 규칙: 먼저 플레이어가 이 선택을 실행하는 장면을 구체적으로 묘사하세요. 첫 문장은 \'당신은/당신이\'로 시작하지 마세요.',
           '직전 턴의 장면·장소·NPC에서 자연스럽게 이어져야 합니다. 장면을 갑자기 다른 장소로 옮기지 마세요.',
           '선택의 결과를 충분히 보여준 뒤, 자연스럽게 다음 상황으로 전환하세요.',
           '⚠️ NPC가 플레이어와 이전에 대화한 적이 없다면, "그대의 말대로라면" 같은 이전 대화를 전제한 표현을 사용하지 마세요. NPC는 플레이어의 행동/선택에 대한 반응만 보여야 합니다.',
