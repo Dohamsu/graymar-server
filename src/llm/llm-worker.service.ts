@@ -1607,15 +1607,16 @@ ${npcList}`,
             },
           );
 
-          // B-1.5: `NPC별칭: "/npc-portraits/xxx.webp" "대사"` 형식 구제 (bug 4579)
+          // B-1.5: `NPC별칭: "/npc-portraits/xxx.webp" "대사"` 형식 구제 (bug 4579, 4584)
           //   LLM 이 @마커 대신 `별칭: URL "대사"` 로 출력하는 경우 → @[별칭|URL] "대사" 로 변환.
           //   URL 이 없는 `별칭: "대사"` 변형도 함께 처리.
+          //   상한 20자 — "단정한 제복의 장교 하위크" / "무표정한 창고 여인" 같은 수식어+실명 조합 커버.
           narrative = narrative.replace(
-            /([가-힣][가-힣 ]{0,12}):\s*"(\/npc-portraits\/[^"]+)"\s*(["\u201C])/g,
+            /([가-힣][가-힣 ]{0,20}):\s*"(\/npc-portraits\/[^"]+)"\s*(["\u201C])/g,
             '@[$1|$2] $3',
           );
           narrative = narrative.replace(
-            /(^|[\n.!?])\s*([가-힣][가-힣 ]{0,12}):\s*(["\u201C])/g,
+            /(^|[\n.!?,])\s*([가-힣][가-힣 ]{0,20}):\s*(["\u201C])/g,
             (_m, pre, alias, q) => `${pre}@[${alias}] ${q}`,
           );
 
@@ -1679,7 +1680,7 @@ ${npcList}`,
             (_match, alias: string, trailing: string) => {
               const allNpcs = this.content.getAllNpcs();
               const cleanAlias = alias.split('|')[0].trim(); // @[이름|URL]에서 이름만
-              const found = allNpcs.find(
+              let found = allNpcs.find(
                 (n) =>
                   n.unknownAlias === cleanAlias ||
                   n.name === cleanAlias ||
@@ -1688,6 +1689,24 @@ ${npcList}`,
                   n.unknownAlias?.endsWith(cleanAlias) ||
                   (n.name && cleanAlias.includes(n.name)),
               );
+              // Last-token fallback: "수식어+姓" / "잘못된이름+姓" 조합 구제 (bug 4584)
+              //   예: "단정한 제복의 장교 하위크" / "토그 하위크" → lastToken "하위크" → NPC_TOBREN aliases 매칭
+              if (!found) {
+                const tokens = cleanAlias.split(/\s+/).filter(Boolean);
+                const lastToken = tokens[tokens.length - 1];
+                if (lastToken && lastToken.length >= 2 && tokens.length >= 2) {
+                  found = allNpcs.find((n) => {
+                    const candidates = [
+                      n.name,
+                      n.shortAlias,
+                      ...(n.aliases ?? []),
+                    ].filter(Boolean) as string[];
+                    return candidates.some(
+                      (c) => c === lastToken || c.endsWith(lastToken),
+                    );
+                  });
+                }
+              }
               if (!found) return `@[${alias}]${trailing}`; // 매칭 실패 → 유지
               appearedNpcIds.add(found.npcId);
               const npcState = npcStates[found.npcId];
