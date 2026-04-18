@@ -1607,6 +1607,18 @@ ${npcList}`,
             },
           );
 
+          // B-1.5: `NPC별칭: "/npc-portraits/xxx.webp" "대사"` 형식 구제 (bug 4579)
+          //   LLM 이 @마커 대신 `별칭: URL "대사"` 로 출력하는 경우 → @[별칭|URL] "대사" 로 변환.
+          //   URL 이 없는 `별칭: "대사"` 변형도 함께 처리.
+          narrative = narrative.replace(
+            /([가-힣][가-힣 ]{0,12}):\s*"(\/npc-portraits\/[^"]+)"\s*(["\u201C])/g,
+            '@[$1|$2] $3',
+          );
+          narrative = narrative.replace(
+            /(^|[\n.!?])\s*([가-힣][가-힣 ]{0,12}):\s*(["\u201C])/g,
+            (_m, pre, alias, q) => `${pre}@[${alias}] ${q}`,
+          );
+
           // B-2: @[NPC_ID] "대사" 또는 @[RONEN] "대사" → @[표시이름|초상화URL] "대사"
           // nano가 대괄호 안에 ID를 넣는 경우 처리
           narrative = narrative.replace(
