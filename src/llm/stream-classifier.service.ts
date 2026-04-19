@@ -202,18 +202,31 @@ export class StreamClassifierService {
       }
 
       // 대사 전 서술 부분
-      const beforeText = sentenceToProcess.slice(lastEnd, quoteStart).trim();
+      let beforeText = sentenceToProcess.slice(lastEnd, quoteStart).trim();
+
+      // V9 Pre-Normalization: NPC prefix 제거 (bug 4721, architecture/39)
+      //   "날카로운 눈매의 회계사: " 같은 발화자 표기를 narration 에서 제외.
+      //   Phase 2 후처리(B-2.5)가 @마커로 변환하므로 Phase 1 에서도 제거해
+      //   Phase 1/2 일치 유지. "...:" 로 끝나는 NPC 이름 패턴만 매칭.
+      beforeText = beforeText.replace(/[가-힣][가-힣 ]{0,20}:\s*$/, '').trim();
+
+      // V1/V2/V4 Pre-Normalization: 문장 단위 정규화 적용
+      beforeText = this.normalizeText(beforeText);
+
       if (beforeText.length > 0) {
         events.push({ type: 'narration', text: beforeText });
       }
 
-      // NPC 식별
+      // NPC 식별 (prefix 제거 전 원본 컨텍스트 60자 사용)
       const before60 = sentenceToProcess.slice(Math.max(0, quoteStart - 60), quoteStart);
       const npc = this.identifySpeaker(before60);
 
+      // 대사 자체도 정규화 (화폐 등)
+      const normalizedQuoteContent = this.normalizeText(quoteContent);
+
       events.push({
         type: 'dialogue',
-        text: quoteContent,
+        text: normalizedQuoteContent,
         npcName: npc?.displayName,
         npcImage: npc?.portraitUrl ?? undefined,
       });
@@ -226,14 +239,55 @@ export class StreamClassifierService {
     }
 
     // 대사 이후 남은 서술
-    const remainingText = sentenceToProcess.slice(lastEnd).trim();
+    let remainingText = sentenceToProcess.slice(lastEnd).trim();
     if (remainingText.length > 0) {
+      // Pre-Normalization 적용
+      remainingText = this.normalizeText(remainingText);
       // 대사가 하나도 없었으면 전체가 narration
-      events.push({ type: 'narration', text: remainingText });
+      if (remainingText.length > 0) {
+        events.push({ type: 'narration', text: remainingText });
+      }
     }
 
     // 대사도 서술도 없으면 (빈 문장) → 스킵
     return events;
+  }
+
+  /**
+   * Pre-Normalization (bug 4721, architecture/39 Phase A)
+   *   Phase 2 후처리 중 문맥 불필요한 변환을 Phase 1 에 미리 적용.
+   *   Phase 1/2 렌더 일치를 위해 필수.
+   *   V1 화폐 / V2 복합호칭 / V4 중첩 @마커 해소.
+   *   V5 비대칭 따옴표 / V6 반복구문 / V7 NPC 이름 교정은 전체 문맥 필요로 Phase 2 전용.
+   */
+  private normalizeText(text: string): string {
+    if (!text) return text;
+    // V1: 화폐 치환 (동전 → 가죽 주머니 / 골드)
+    text = text.replace(/동전\s*주머니/g, '가죽 주머니');
+    text = text.replace(
+      /(?<![가-힣])(동전|은화|금화)(?![가-힣])/g,
+      '골드',
+    );
+    text = text.replace(/(\d+)\s*닢(?![가-힣])/g, '$1골드');
+
+    // V2: 복합 호칭 hallucination ("토단정한 제복의 장교 수상한 무표정한 창고 여인")
+    text = text.replace(
+      /(?:[가-힣]{2,6}한\s+){2,}[가-힣]{2,6}(?:\s+[가-힣]{2,6})*/g,
+      (match) => {
+        const parts = match.trim().split(/\s+/);
+        if (parts.length < 4) return match;
+        return parts.slice(-2).join(' ');
+      },
+    );
+
+    // V4: 중첩 @마커 해소
+    let guard = 0;
+    while (/@\[@\[/.test(text) && guard < 5) {
+      text = text.replace(/@\[@\[([^\]]+)\]\]/g, '@[$1]');
+      guard += 1;
+    }
+
+    return text;
   }
 
   /**
