@@ -25,6 +25,7 @@ import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
+import { StreamClassifierService } from './stream-classifier.service.js';
 import {
   NanoDirectorService,
   type DirectorHint,
@@ -414,13 +415,71 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         const streamModel = alternateModel ?? lightConfig?.model;
         let streamResponse: import('./types/index.js').LlmProviderResponse | null = null;
 
+        // StreamClassifier 준비 (bug 4687, architecture/35 Dual-Track)
+        //   문장 단위로 token 을 buffering → narration/dialogue 분류해 SSE 이벤트 emit.
+        //   LLM_STREAM_CLASSIFIER=false 로 옛 token 방식 롤백 가능.
+        const useClassifier =
+          (process.env.LLM_STREAM_CLASSIFIER ?? 'true') !== 'false';
+        let classifier: StreamClassifierService | null = null;
+        if (useClassifier) {
+          const rs = runSession?.runState as Record<string, unknown> | undefined;
+          const npcStates = (rs?.npcStates ?? {}) as Record<
+            string,
+            import('../db/types/npc-state.js').NPCState
+          >;
+          const eventNpcIdsRaw = (
+            (serverResult.ui as Record<string, unknown>)?.actionContext as
+              | Record<string, unknown>
+              | undefined
+          )?.targetNpcId as string | undefined;
+          const eventNpcIds = eventNpcIdsRaw ? [eventNpcIdsRaw] : undefined;
+          const candidates = StreamClassifierService.buildCandidates(
+            npcStates,
+            this.content,
+            pending.turnNo,
+            eventNpcIds,
+          );
+          const primaryNpcId =
+            ((
+              (serverResult.ui as Record<string, unknown>)?.actionContext as
+                | Record<string, unknown>
+                | undefined
+            )?.primaryNpcId as string | null) ?? null;
+          classifier = new StreamClassifierService(candidates, primaryNpcId);
+        }
+
         try {
           for await (const chunk of this.llmCaller.callStream(llmRequest, streamModel)) {
             if (chunk.type === 'token') {
-              // 통합 스트리밍: narration/dialogue 분류 없이 token만 전송
-              this.streamBroker.emit(pending.runId, pending.turnNo, 'token', { text: chunk.text });
+              if (classifier) {
+                // classifier 경로: 문장 단위로 narration/dialogue 분류 후 emit
+                const events = classifier.feed(chunk.text);
+                for (const ev of events) {
+                  this.streamBroker.emit(
+                    pending.runId,
+                    pending.turnNo,
+                    ev.type,
+                    ev,
+                  );
+                }
+              } else {
+                // 레거시: 토큰 원문 그대로 emit
+                this.streamBroker.emit(pending.runId, pending.turnNo, 'token', { text: chunk.text });
+              }
             } else if (chunk.type === 'done') {
               streamResponse = chunk.response;
+            }
+          }
+          // 스트리밍 종료 시 classifier 잔여 flush
+          if (classifier) {
+            const tail = classifier.flush();
+            for (const ev of tail) {
+              this.streamBroker.emit(
+                pending.runId,
+                pending.turnNo,
+                ev.type,
+                ev,
+              );
             }
           }
         } catch (err) {
@@ -2116,6 +2175,14 @@ ${npcList}`,
             narrative = result;
           }
         }
+      }
+
+      // 5.10.9b. @마커 앞 개행 강제 정규화 (bug 4687 Phase 2 대응)
+      //   LLM이 "...말한다.@[NPC|URL] "대사""처럼 서술 문장 바로 뒤에 공백/개행
+      //   없이 마커를 붙이는 경우, 클라 analyzeText 가 한 줄로 인식해 서술/대사
+      //   섞임 발생. 마커 앞에 공백/개행이 없으면 개행 2개 삽입 (Canonical Form).
+      if (narrative) {
+        narrative = narrative.replace(/([^\s\n])(@\[)/g, '$1\n\n$2');
       }
 
       // 5.10.10. 복합 호칭 hallucination 제거 (bug 4636, 4655 JSON 외부화)
