@@ -540,6 +540,38 @@ export class PromptBuilderService {
             return phaseEntry?.locationId === locId;
           });
         }
+
+        // 배경 NPC 로테이션 풀 (bug 4671): 세션 내 3회+ 등장한 BG NPC 제외
+        //   LLM이 익숙한 BG NPC를 반복 선호하는 고착 방지 (CLAUDE.md LLM 원칙 3: 선택지 축소).
+        //   CORE/SUB NPC는 예외 — 스토리 연속성 위해 유지.
+        const bgCounts = this.countBgNpcAppearances(
+          ctx.locationSessionTurns ?? [],
+        );
+        const BG_QUOTA = 3; // 세션당 BG NPC 최대 등장 횟수
+        const beforeFilter = allNpcs.length;
+        allNpcs = allNpcs.filter((npc) => {
+          const def = npc as Record<string, unknown>;
+          const tier = def.tier as string | undefined;
+          if (tier !== 'BACKGROUND') return true; // CORE/SUB 항상 유지
+          const count = bgCounts.get(npc.npcId) ?? 0;
+          return count < BG_QUOTA;
+        });
+        // 가드: BG 풀이 너무 줄면 (2명 미만) 필터 롤백
+        const bgRemaining = allNpcs.filter((n) => {
+          const def = n as Record<string, unknown>;
+          return def.tier === 'BACKGROUND';
+        }).length;
+        if (bgRemaining < 2 && beforeFilter !== allNpcs.length) {
+          // 필터 결과 BG 2명 미만 → 롤백 (장면 빈약 방지)
+          allNpcs = fullList.filter((npc) => {
+            const scheduleDefault = npc.schedule?.default;
+            if (!scheduleDefault) return false;
+            const phaseEntry =
+              scheduleDefault[phase as keyof typeof scheduleDefault] ??
+              scheduleDefault['DAY' as keyof typeof scheduleDefault];
+            return phaseEntry?.locationId === locId;
+          });
+        }
       }
 
       // 예외: 플레이어가 등록되지 않은 NPC를 언급한 경우 (매칭 실패 + NPC명 포함)
@@ -1108,6 +1140,52 @@ export class PromptBuilderService {
       );
     }
 
+    // [이번 턴 감각 초점] 블록 — 감각 다양성 강제 (bug 4671, 제안 E)
+    //   LLM이 시각 묘사에 치우치는 경향(안경테/시선/고개) 방지를 위해
+    //   턴 번호 기반 rotation 으로 매 턴 다른 감각 카테고리 권장.
+    //   CLAUDE.md LLM 원칙 2 (Positive framing — "다음 중 선택").
+    {
+      const turnNo = (sr.turnNo as number) ?? 0;
+      const SENSE_POOL: { name: string; examples: string[] }[] = [
+        {
+          name: '청각 + 촉각',
+          examples: [
+            '발소리, 옷자락 스치는 소리, 숨결, 속삭임',
+            '차가운 돌바닥, 거친 나무 결, 끈적한 공기',
+          ],
+        },
+        {
+          name: '후각 + 촉각',
+          examples: [
+            '갓 구운 빵 냄새, 젖은 흙, 생선 비린내, 술 냄새',
+            '어깨에 닿는 찬 바람, 손끝에 닿는 서늘한 금속',
+          ],
+        },
+        {
+          name: '시각 (디테일 중심)',
+          examples: [
+            '먼지가 빛줄기 속에 떠다닌다',
+            '문틈으로 새어 나온 불빛',
+            '거리에 길게 늘어진 그림자',
+          ],
+        },
+        {
+          name: '청각 + 후각',
+          examples: [
+            '멀리서 들리는 종소리, 수레바퀴 굴러가는 소리',
+            '향신료의 매콤한 향, 파도 냄새, 먹구름이 몰고 온 비 냄새',
+          ],
+        },
+      ];
+      const chosen = SENSE_POOL[turnNo % SENSE_POOL.length];
+      factsParts.push(
+        `[이번 턴 감각 초점] ${chosen.name}\n` +
+          `- 서술에 위 감각 카테고리를 1~2개 자연스럽게 포함하세요.\n` +
+          `- 예시: ${chosen.examples.join(' / ')}\n` +
+          `- 시각 묘사(시선/고개/눈)에만 치우치지 않도록 균형을 맞춥니다.`,
+      );
+    }
+
     // [이번 턴 지목 대상 NPC] 블록 — Player-First 강화 (bug 4624)
     //   플레이어가 특정 NPC를 지목한 경우, 해당 NPC가 장면 중심이 되어야 함.
     if (ctx.playerTargetNpcId) {
@@ -1122,6 +1200,39 @@ export class PromptBuilderService {
             `- 이 NPC가 반응의 중심입니다. 다른 NPC가 첫 대사를 하거나 장면을 가로채게 만들지 마세요.\n` +
             `- 주변 NPC는 배경으로만 등장 가능하며, 대사는 지목 대상 이후에만.`,
         );
+
+        // [NPC 최근 제스처] — 제스처 다양화 (bug 4671, 제안 C)
+        //   해당 NPC 가 이미 사용한 제스처를 명시하고, 다음 턴엔 새 제스처 선택 유도.
+        //   CLAUDE.md LLM 원칙 1 (명시적 주입) + 원칙 2 (Positive pool).
+        const recent = (
+          targetState as unknown as {
+            recentGestures?: { text: string; turnNo: number }[];
+          }
+        )?.recentGestures;
+        if (recent && recent.length > 0) {
+          const uniqueTexts = Array.from(new Set(recent.map((g) => g.text)));
+          const used = uniqueTexts.slice(-5).join(' / ');
+          // posture 기반 권장 풀 (간단 버전 — 모두에게 공통 pool)
+          const recommendPool = [
+            '땀을 훔치다',
+            '헛기침을 하다',
+            '손가락을 까딱거리다',
+            '어깨를 움츠리다',
+            '목덜미를 만지다',
+            '호흡을 가다듬다',
+            '무릎을 살짝 굽히다',
+            '옷깃을 매만지다',
+            '팔짱을 끼다',
+            '주먹을 쥐었다 펴다',
+          ];
+          factsParts.push(
+            `[${displayName}의 최근 사용 제스처 — 반복 금지]\n` +
+              `- 이미 사용: ${used}\n` +
+              `- 이번 턴엔 다른 제스처로 감정을 드러내세요. 권장 예시:\n` +
+              `  ${recommendPool.join(', ')}\n` +
+              `- 위 예시 중 성격에 맞는 것을 골라 자연스럽게 녹이세요.`,
+          );
+        }
       }
     }
 
@@ -1987,6 +2098,44 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * 배경 NPC 세션 내 등장 횟수 집계 (bug 4671 로테이션 풀용).
+   *   locationSessionTurns 각 narrative 에서 @[NPC별칭|URL] 또는 @[NPC별칭] 마커를 찾아
+   *   해당 별칭을 content.getAllNpcs() name/unknownAlias 와 매칭 → npcId 집계.
+   *   CLAUDE.md LLM 원칙 1 (명시적 주입 데이터 축적).
+   */
+  private countBgNpcAppearances(
+    sessionTurns: { narrative?: string | null }[],
+  ): Map<string, number> {
+    const counts = new Map<string, number>();
+    const allNpcs = this.content.getAllNpcs();
+    // NPC 별칭 → npcId 역매핑 (한 번만 구축)
+    const aliasToId = new Map<string, string>();
+    for (const npc of allNpcs) {
+      const def = npc as Record<string, unknown>;
+      if (def.tier !== 'BACKGROUND') continue;
+      if (npc.name) aliasToId.set(npc.name, npc.npcId);
+      if (npc.unknownAlias) aliasToId.set(npc.unknownAlias, npc.npcId);
+      const shortAlias = def.shortAlias as string | undefined;
+      if (shortAlias) aliasToId.set(shortAlias, npc.npcId);
+    }
+
+    for (const t of sessionTurns) {
+      const txt = t.narrative ?? '';
+      if (!txt) continue;
+      // @[별칭|URL] 또는 @[별칭] 추출
+      const markers = [...txt.matchAll(/@\[([^\]|]+)(?:\|[^\]]+)?\]/g)];
+      for (const m of markers) {
+        const alias = m[1].trim();
+        const npcId = aliasToId.get(alias);
+        if (npcId) {
+          counts.set(npcId, (counts.get(npcId) ?? 0) + 1);
+        }
+      }
+    }
+    return counts;
   }
 
   /**
