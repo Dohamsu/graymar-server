@@ -33,9 +33,7 @@ export const partyVotes = pgTable(
       .references(() => users.id),
     voteType: text('vote_type').notNull().default('MOVE_LOCATION'),
     targetLocationId: text('target_location_id'),
-    status: text('status', { enum: VOTE_STATUS })
-      .notNull()
-      .default('PENDING'),
+    status: text('status', { enum: VOTE_STATUS }).notNull().default('PENDING'),
     yesVotes: integer('yes_votes').notNull().default(1), // 제안자 자동 찬성
     noVotes: integer('no_votes').notNull().default(0),
     totalMembers: integer('total_members').notNull(),

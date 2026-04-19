@@ -177,7 +177,8 @@ export class PartyRewardService {
 
       const rs = soloRun.runState as unknown as Record<string, unknown>;
       const updatedGold = ((rs.gold as number) ?? 0) + gold;
-      const existingInv = (rs.inventory as Array<{ itemId: string; qty: number }>) ?? [];
+      const existingInv =
+        (rs.inventory as Array<{ itemId: string; qty: number }>) ?? [];
 
       // 아이템 합산
       const invMap = new Map<string, number>();
@@ -250,15 +251,11 @@ export class PartyRewardService {
    * seed + cursor 기반 결정론적 1d6 (1~6).
    */
   private seededRoll1d6(seed: string, cursor: number): number {
-    const hash = createHash('sha256')
-      .update(`${seed}:${cursor}`)
-      .digest();
+    const hash = createHash('sha256').update(`${seed}:${cursor}`).digest();
     return (hash[0] % 6) + 1;
   }
 
-  private async getNicknames(
-    userIds: string[],
-  ): Promise<Map<string, string>> {
+  private async getNicknames(userIds: string[]): Promise<Map<string, string>> {
     const map = new Map<string, string>();
     for (const userId of userIds) {
       const user = await this.db.query.users.findFirst({

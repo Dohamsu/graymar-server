@@ -187,13 +187,18 @@ export class WorldTickService {
 
     // NPC agenda 진행
     if (this.npcAgenda) {
-      const agendaResults = this.npcAgenda.tickAgendas(updated, updated.globalClock);
+      const agendaResults = this.npcAgenda.tickAgendas(
+        updated,
+        updated.globalClock,
+      );
       // 진행된 아젠다를 ws에 저장 (LLM 목격 힌트용)
       if (agendaResults.length > 0) {
-        (updated as any).recentAgendaEvents = agendaResults.map(r => ({
-          npcId: r.npcId,
-          signal: r.signalEmitted,
-        })).filter(r => r.signal);
+        (updated as any).recentAgendaEvents = agendaResults
+          .map((r) => ({
+            npcId: r.npcId,
+            signal: r.signalEmitted,
+          }))
+          .filter((r) => r.signal);
       }
     }
 

@@ -124,7 +124,7 @@ export class RunParticipantsService {
       });
 
       const presetId = memberRun?.presetId ?? soloRun.presetId ?? 'DOCKWORKER';
-      const gender = (memberRun?.gender ?? 'male') as 'male' | 'female';
+      const gender = memberRun?.gender ?? 'male';
 
       // 참가자 개별 상태 (HP는 소유자 런에서 가져옴)
       const rs = soloRun.runState as unknown as Record<string, unknown> | null;
@@ -157,7 +157,10 @@ export class RunParticipantsService {
     }
 
     // 7. runState.partyMembers 갱신
-    const currentRunState = soloRun.runState as unknown as Record<string, unknown>;
+    const currentRunState = soloRun.runState as unknown as Record<
+      string,
+      unknown
+    >;
     const updatedRunState = {
       ...currentRunState,
       partyMembers: memberProfiles,
@@ -231,7 +234,7 @@ export class RunParticipantsService {
     });
 
     const presetId = memberRun?.presetId ?? 'DOCKWORKER';
-    const gender = (memberRun?.gender ?? 'male') as 'male' | 'female';
+    const gender = memberRun?.gender ?? 'male';
 
     // 런의 현재 HP 조회
     const run = await this.db.query.runSessions.findFirst({
@@ -288,9 +291,7 @@ export class RunParticipantsService {
         .where(eq(runSessions.id, runId));
     }
 
-    this.logger.log(
-      `Mid-join: run=${runId} user=${userId} preset=${presetId}`,
-    );
+    this.logger.log(`Mid-join: run=${runId} user=${userId} preset=${presetId}`);
   }
 
   /**
@@ -350,12 +351,17 @@ export class RunParticipantsService {
       if (soloRun?.runState) {
         const rs = soloRun.runState as unknown as Record<string, unknown>;
         const newGold = ((rs.gold as number) ?? 0) + (ps.gold ?? 0);
-        const existingInv = (rs.inventory as Array<{ itemId: string; qty: number }>) ?? [];
+        const existingInv =
+          (rs.inventory as Array<{ itemId: string; qty: number }>) ?? [];
         const mergedInv = [...existingInv, ...(ps.inventory ?? [])];
         await this.db
           .update(runSessions)
           .set({
-            runState: { ...rs, gold: newGold, inventory: mergedInv } as unknown as RunState,
+            runState: {
+              ...rs,
+              gold: newGold,
+              inventory: mergedInv,
+            } as unknown as RunState,
           })
           .where(eq(runSessions.id, soloRun.id));
         this.logger.log(

@@ -17,7 +17,10 @@ export const TOKEN_BUDGET = {
   PARTY_TOTAL: 4000,
 } as const;
 
-export type BudgetBlock = keyof Omit<typeof TOKEN_BUDGET, 'TOTAL' | 'PARTY_TOTAL'>;
+export type BudgetBlock = keyof Omit<
+  typeof TOKEN_BUDGET,
+  'TOTAL' | 'PARTY_TOTAL'
+>;
 
 /** 블록 우선순위 — 높을수록 보호됨 */
 export enum BlockPriority {

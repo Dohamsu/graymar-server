@@ -314,9 +314,7 @@ export class PartyTurnService {
 
     // 미제출자 확인
     const submitted = await this.getSubmittedUserIds(runId, turnNo);
-    const pending = timer.memberUserIds.filter(
-      (id) => !submitted.includes(id),
-    );
+    const pending = timer.memberUserIds.filter((id) => !submitted.includes(id));
 
     // 미제출자에 자동 행동 삽입
     for (const userId of pending) {
@@ -384,7 +382,7 @@ export class PartyTurnService {
     // runState에서 현재 노드 타입 추론
     const state = runState as Record<string, unknown> | null;
     if (state && typeof state === 'object') {
-      const nodeType = (state as Record<string, unknown>)['currentNodeType'];
+      const nodeType = state['currentNodeType'];
       if (nodeType === 'COMBAT') return '방어 자세를 취한다';
     }
     return '주변을 관찰한다'; // LOCATION 기본
@@ -434,7 +432,9 @@ export class PartyTurnService {
     turnNo: number,
     partyId: string,
   ): Promise<{ success: boolean; turnResult?: unknown }> {
-    this.logger.log(`[resolveTurn] START run=${runId} turn=${turnNo} party=${partyId}`);
+    this.logger.log(
+      `[resolveTurn] START run=${runId} turn=${turnNo} party=${partyId}`,
+    );
 
     // 1. 전체 행동 조회
     const actions = await this.getSubmittedActions(runId, turnNo);
@@ -442,7 +442,9 @@ export class PartyTurnService {
       this.logger.warn(`[resolveTurn] No actions: run=${runId} turn=${turnNo}`);
       return { success: false };
     }
-    this.logger.log(`[resolveTurn] actions=${actions.length} users=${actions.map(a => a.userId.slice(0,8)).join(',')}`);
+    this.logger.log(
+      `[resolveTurn] actions=${actions.length} users=${actions.map((a) => a.userId.slice(0, 8)).join(',')}`,
+    );
 
     // 2. 닉네임 조회
     const nicknames = new Map<string, string>();
@@ -469,16 +471,14 @@ export class PartyTurnService {
     const combinedInput = [
       leaderAction?.rawInput ?? actions[0].rawInput,
       ...otherActions.map(
-        (a) =>
-          `(${nicknames.get(a.userId) ?? '동료'}: ${a.rawInput})`,
+        (a) => `(${nicknames.get(a.userId) ?? '동료'}: ${a.rawInput})`,
       ),
     ].join(' / ');
 
     // 4. partyActions 데이터 구성 (LLM 서술용 — presetId 포함)
-    const partyMembersData = (run.runState as unknown as Record<string, unknown>)
-      ?.partyMembers as
-      | { userId: string; presetId: string }[]
-      | undefined;
+    const partyMembersData = (
+      run.runState as unknown as Record<string, unknown>
+    )?.partyMembers as { userId: string; presetId: string }[] | undefined;
     const partyActionsData = actions.map((a) => {
       const memberProfile = partyMembersData?.find(
         (m) => m.userId === a.userId,
@@ -493,32 +493,26 @@ export class PartyTurnService {
     });
 
     // 5. 리더 계정으로 기존 엔진에 턴 제출
-    this.logger.log(`[resolveTurn] submitting: leader=${leaderId.slice(0,8)} turnNo=${turnNo} input="${combinedInput.slice(0,60)}"`);
+    this.logger.log(
+      `[resolveTurn] submitting: leader=${leaderId.slice(0, 8)} turnNo=${turnNo} input="${combinedInput.slice(0, 60)}"`,
+    );
     try {
-      const turnResult = await this.turnsService.submitTurn(
-        runId,
-        leaderId,
-        {
-          input: { type: 'ACTION' as const, text: combinedInput },
-          expectedNextTurnNo: turnNo,
-          idempotencyKey: `party-${runId}-${turnNo}`,
-        },
-      );
+      const turnResult = await this.turnsService.submitTurn(runId, leaderId, {
+        input: { type: 'ACTION' as const, text: combinedInput },
+        expectedNextTurnNo: turnNo,
+        idempotencyKey: `party-${runId}-${turnNo}`,
+      });
 
       // 6. 턴 레코드에 partyActions 저장 (LLM Worker가 참조)
       await this.db
         .update(turns)
         .set({
           actionPlan: {
-            ...(typeof turnResult.serverResult === 'object'
-              ? {}
-              : {}),
+            ...(typeof turnResult.serverResult === 'object' ? {} : {}),
             partyActions: partyActionsData,
           } as unknown as import('../db/types/index.js').ActionPlan[],
         })
-        .where(
-          and(eq(turns.runId, runId), eq(turns.turnNo, turnNo)),
-        );
+        .where(and(eq(turns.runId, runId), eq(turns.turnNo, turnNo)));
 
       // 7. SSE 브로드캐스트: 턴 결과
       this.streamService.broadcast(partyId, 'dungeon:turn_resolved', {
@@ -550,7 +544,11 @@ export class PartyTurnService {
         const currentMaxHp = (urs.maxHp as number) ?? 100;
 
         // 개별 HP 상태 (partyMemberHp가 있으면 사용, 없으면 공유 HP)
-        const memberHpMap = (urs.partyMemberHp as Record<string, { hp: number; maxHp: number }>) ?? {};
+        const memberHpMap =
+          (urs.partyMemberHp as Record<
+            string,
+            { hp: number; maxHp: number }
+          >) ?? {};
 
         this.streamService.broadcast(partyId, 'party:member_hp_update', {
           members: partyActionsData.map((a) => {
@@ -567,7 +565,8 @@ export class PartyTurnService {
 
       // 9. 전투 종료(VICTORY) 시 보상 분배
       const sr = turnResult.serverResult as Record<string, unknown> | undefined;
-      const events = (sr?.events as Array<{ kind: string; text: string }>) ?? [];
+      const events =
+        (sr?.events as Array<{ kind: string; text: string }>) ?? [];
       const victoryEvent = events.find(
         (e) => e.kind === 'SYSTEM' && e.text?.includes('승리'),
       );
@@ -622,9 +621,13 @@ export class PartyTurnService {
           // 보상 솔로 동기화
           const rs = runCheck.runState as unknown as Record<string, unknown>;
           const memberGold = new Map<string, number>();
-          const memberItems = new Map<string, Array<{ itemId: string; qty: number }>>();
+          const memberItems = new Map<
+            string,
+            Array<{ itemId: string; qty: number }>
+          >();
           const totalGold = (rs?.gold as number) ?? 0;
-          const totalInv = (rs?.inventory as Array<{ itemId: string; qty: number }>) ?? [];
+          const totalInv =
+            (rs?.inventory as Array<{ itemId: string; qty: number }>) ?? [];
           const memberIds = actions.map((a) => a.userId);
           // 골드 균등 분배
           const perMember = Math.floor(totalGold / memberIds.length);

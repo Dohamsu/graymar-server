@@ -66,7 +66,11 @@ export class PartyStreamService {
   /**
    * 파티의 모든 연결에 이벤트를 브로드캐스트한다.
    */
-  broadcast(partyId: string, eventType: string, data: Record<string, unknown>): void {
+  broadcast(
+    partyId: string,
+    eventType: string,
+    data: Record<string, unknown>,
+  ): void {
     const partyMap = this.connections.get(partyId);
     if (!partyMap || partyMap.size === 0) return;
 
@@ -130,11 +134,7 @@ export class PartyStreamService {
   /**
    * 파티에 에러 이벤트를 브로드캐스트한다.
    */
-  broadcastError(
-    partyId: string,
-    code: string,
-    message: string,
-  ): void {
+  broadcastError(partyId: string, code: string, message: string): void {
     this.broadcast(partyId, 'party:error', { code, message });
   }
 

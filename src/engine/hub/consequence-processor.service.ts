@@ -27,7 +27,7 @@ export interface ConsequenceOutput {
   factsCreated: WorldFact[];
   locationEffects: string[];
   npcWitnesses: string[];
-  triggeredConditions: string[];   // 임계값 돌파로 발동된 조건 ID
+  triggeredConditions: string[]; // 임계값 돌파로 발동된 조건 ID
 }
 
 @Injectable()
@@ -82,7 +82,10 @@ export class ConsequenceProcessorService {
         );
 
         // 장소 상태 급변 시그널 (security/unrest ±10 이상)
-        if (Math.abs(locationEffect.securityDelta) >= 10 || Math.abs(locationEffect.unrestDelta) >= 10) {
+        if (
+          Math.abs(locationEffect.securityDelta) >= 10 ||
+          Math.abs(locationEffect.unrestDelta) >= 10
+        ) {
           const locName = input.locationId; // 장소 ID (nano가 변환 시 컨텍스트로 활용)
           let sigText: string;
           if (locationEffect.securityDelta <= -10) {
@@ -108,7 +111,10 @@ export class ConsequenceProcessorService {
 
         // === 임계값 트리거: 장소 수치 → 조건 자동 발동 ===
         const triggered = this.checkThresholdTriggers(
-          ws, input.locationId, state, input.turnNo,
+          ws,
+          input.locationId,
+          state,
+          input.turnNo,
         );
         output.triggeredConditions.push(...triggered);
       }
@@ -207,28 +213,46 @@ export class ConsequenceProcessorService {
     if (state.security < 15 && !activeIds.has('LOCKDOWN')) {
       // LOCKDOWN이 더 강하므로 INCREASED_PATROLS 제거
       this.locationState.removeCondition(ws, locationId, 'INCREASED_PATROLS');
-      this.locationState.addCondition(ws, locationId, {
-        id: 'LOCKDOWN',
-        source: 'threshold:security<15',
-        duration: 8, // 8턴 지속
-        effects: {
-          securityMod: 10, prosperityMod: -5, unrestMod: 5,
-          blockedActions: ['STEAL', 'SNEAK'],
-          boostedActions: ['OBSERVE', 'TALK'],
+      this.locationState.addCondition(
+        ws,
+        locationId,
+        {
+          id: 'LOCKDOWN',
+          source: 'threshold:security<15',
+          duration: 8, // 8턴 지속
+          effects: {
+            securityMod: 10,
+            prosperityMod: -5,
+            unrestMod: 5,
+            blockedActions: ['STEAL', 'SNEAK'],
+            boostedActions: ['OBSERVE', 'TALK'],
+          },
         },
-      }, turnNo);
+        turnNo,
+      );
       triggered.push('LOCKDOWN');
-    } else if (state.security < 30 && !activeIds.has('INCREASED_PATROLS') && !activeIds.has('LOCKDOWN')) {
-      this.locationState.addCondition(ws, locationId, {
-        id: 'INCREASED_PATROLS',
-        source: 'threshold:security<30',
-        duration: 6, // 6턴 지속
-        effects: {
-          securityMod: 5, prosperityMod: 0, unrestMod: 2,
-          blockedActions: [],
-          boostedActions: ['OBSERVE'],
+    } else if (
+      state.security < 30 &&
+      !activeIds.has('INCREASED_PATROLS') &&
+      !activeIds.has('LOCKDOWN')
+    ) {
+      this.locationState.addCondition(
+        ws,
+        locationId,
+        {
+          id: 'INCREASED_PATROLS',
+          source: 'threshold:security<30',
+          duration: 6, // 6턴 지속
+          effects: {
+            securityMod: 5,
+            prosperityMod: 0,
+            unrestMod: 2,
+            blockedActions: [],
+            boostedActions: ['OBSERVE'],
+          },
         },
-      }, turnNo);
+        turnNo,
+      );
       triggered.push('INCREASED_PATROLS');
     }
 
@@ -243,28 +267,46 @@ export class ConsequenceProcessorService {
     // 불안 임계값 → 소문 / 폭동
     if (state.unrest > 80 && !activeIds.has('RIOT')) {
       this.locationState.removeCondition(ws, locationId, 'UNREST_RUMORS');
-      this.locationState.addCondition(ws, locationId, {
-        id: 'RIOT',
-        source: 'threshold:unrest>80',
-        duration: 5,
-        effects: {
-          securityMod: -10, prosperityMod: -10, unrestMod: 0,
-          blockedActions: ['TRADE', 'SHOP'],
-          boostedActions: ['FIGHT', 'STEAL'],
+      this.locationState.addCondition(
+        ws,
+        locationId,
+        {
+          id: 'RIOT',
+          source: 'threshold:unrest>80',
+          duration: 5,
+          effects: {
+            securityMod: -10,
+            prosperityMod: -10,
+            unrestMod: 0,
+            blockedActions: ['TRADE', 'SHOP'],
+            boostedActions: ['FIGHT', 'STEAL'],
+          },
         },
-      }, turnNo);
+        turnNo,
+      );
       triggered.push('RIOT');
-    } else if (state.unrest > 60 && !activeIds.has('UNREST_RUMORS') && !activeIds.has('RIOT')) {
-      this.locationState.addCondition(ws, locationId, {
-        id: 'UNREST_RUMORS',
-        source: 'threshold:unrest>60',
-        duration: 8,
-        effects: {
-          securityMod: -2, prosperityMod: -3, unrestMod: 0,
-          blockedActions: [],
-          boostedActions: ['INVESTIGATE', 'PERSUADE'],
+    } else if (
+      state.unrest > 60 &&
+      !activeIds.has('UNREST_RUMORS') &&
+      !activeIds.has('RIOT')
+    ) {
+      this.locationState.addCondition(
+        ws,
+        locationId,
+        {
+          id: 'UNREST_RUMORS',
+          source: 'threshold:unrest>60',
+          duration: 8,
+          effects: {
+            securityMod: -2,
+            prosperityMod: -3,
+            unrestMod: 0,
+            blockedActions: [],
+            boostedActions: ['INVESTIGATE', 'PERSUADE'],
+          },
         },
-      }, turnNo);
+        turnNo,
+      );
       triggered.push('UNREST_RUMORS');
     }
 

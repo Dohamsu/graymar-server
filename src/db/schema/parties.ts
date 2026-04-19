@@ -31,9 +31,7 @@ export const parties = pgTable(
     leaderId: uuid('leader_id')
       .notNull()
       .references(() => users.id),
-    status: text('status', { enum: PARTY_STATUS })
-      .notNull()
-      .default('OPEN'),
+    status: text('status', { enum: PARTY_STATUS }).notNull().default('OPEN'),
     maxMembers: integer('max_members').notNull().default(4),
     inviteCode: text('invite_code').notNull().unique(), // 6자리 영숫자
     createdAt: timestamp('created_at').defaultNow().notNull(),

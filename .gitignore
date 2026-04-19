@@ -6,6 +6,15 @@ dist/
 
 # Environment
 .env
+.env.bak
+.env.*.bak
+.env.local
+
+# User uploaded portraits (런타임 사용자 업로드 — git 추적 안 함)
+public/portraits/uploaded/
+
+# Dev docs dump
+docs/system-prompt-current.md
 
 # IDE
 .idea/

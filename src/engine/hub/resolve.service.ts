@@ -113,8 +113,14 @@ export class ResolveService {
     }
 
     // Living World: 장소 활성 조건(activeConditions)에 의한 판정 보정
-    const locState = ws.locationDynamicStates?.[ws.currentLocationId as string] as
-      | { activeConditions?: Array<{ effects: { blockedActions?: string[]; boostedActions?: string[] } }> }
+    const locState = ws.locationDynamicStates?.[
+      ws.currentLocationId as string
+    ] as
+      | {
+          activeConditions?: Array<{
+            effects: { blockedActions?: string[]; boostedActions?: string[] };
+          }>;
+        }
       | undefined;
     if (locState?.activeConditions) {
       for (const cond of locState.activeConditions) {

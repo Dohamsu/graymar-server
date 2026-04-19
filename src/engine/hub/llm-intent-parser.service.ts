@@ -360,9 +360,15 @@ export class LlmIntentParserService implements OnModuleInit {
     } else {
       // 불일치 시: 고위험 행동 키워드는 KW 우선 (명확한 의도)
       const HIGH_RISK_KW_PRIORITY = new Set<IntentActionType>([
-        'FIGHT', 'STEAL', 'THREATEN', 'BRIBE',
+        'FIGHT',
+        'STEAL',
+        'THREATEN',
+        'BRIBE',
       ]);
-      if (HIGH_RISK_KW_PRIORITY.has(keywordResult.actionType) && keywordResult.confidence >= 1) {
+      if (
+        HIGH_RISK_KW_PRIORITY.has(keywordResult.actionType) &&
+        keywordResult.confidence >= 1
+      ) {
         // "때리다/훔치다/위협하다/뇌물" 등은 키워드가 매우 명확 → KW 우선
         actionType = keywordResult.actionType;
         mergeSource = 'KW_OVERRIDE';

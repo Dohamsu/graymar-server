@@ -183,22 +183,22 @@ export interface VisitContextCache {
 // ─── EntityFact (Memory v4: entity_facts 테이블 타입) ───
 
 export const ENTITY_FACT_TYPE = [
-  'APPEARANCE',       // 외모: 옷차림, 흉터, 체형
-  'BEHAVIOR',         // 행동: 습관, 버릇, 말투 특징
-  'KNOWLEDGE',        // 정보: NPC가 알려준 단서, 비밀
-  'RELATIONSHIP',     // 관계: NPC 간 관계, 플레이어와의 관계 변화
-  'LOCATION_DETAIL',  // 장소: 환경 변화, 발견한 물건
-  'PLOT_CLUE',        // 줄거리: 퀘스트 진행 관련 단서
+  'APPEARANCE', // 외모: 옷차림, 흉터, 체형
+  'BEHAVIOR', // 행동: 습관, 버릇, 말투 특징
+  'KNOWLEDGE', // 정보: NPC가 알려준 단서, 비밀
+  'RELATIONSHIP', // 관계: NPC 간 관계, 플레이어와의 관계 변화
+  'LOCATION_DETAIL', // 장소: 환경 변화, 발견한 물건
+  'PLOT_CLUE', // 줄거리: 퀘스트 진행 관련 단서
 ] as const;
 export type EntityFactType = (typeof ENTITY_FACT_TYPE)[number];
 
 export interface EntityFactEntry {
-  entity: string;             // NPC_ID | LOC_ID | PLOT
+  entity: string; // NPC_ID | LOC_ID | PLOT
   factType: EntityFactType;
-  key: string;                // 사실 식별 키 (같은 entity+key → UPSERT)
-  value: string;              // 구체적 내용 (30자)
-  importance: number;         // 0.5~1.0
-  turnNo: number;             // 발견 턴
+  key: string; // 사실 식별 키 (같은 entity+key → UPSERT)
+  value: string; // 구체적 내용 (30자)
+  importance: number; // 0.5~1.0
+  turnNo: number; // 발견 턴
   source: 'LLM_EXTRACT';
 }
 

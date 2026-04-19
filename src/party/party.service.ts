@@ -92,11 +92,7 @@ export class PartyService {
   /**
    * 파티를 검색한다 (OPEN 상태만).
    */
-  async searchParties(
-    query: string,
-    cursor?: string,
-    limit = 20,
-  ) {
+  async searchParties(query: string, cursor?: string, limit = 20) {
     const conditions = [
       sql`${parties.status} IN ('OPEN', 'FULL', 'IN_DUNGEON')`,
     ];

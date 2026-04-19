@@ -99,9 +99,15 @@ export class PortraitController {
       let msg = '이미지 처리에 실패했습니다.';
       if (err instanceof Error) {
         // multer/sharp 영어 에러를 한국어로 변환
-        if (err.message.includes('File too large') || err.message.includes('too large')) {
+        if (
+          err.message.includes('File too large') ||
+          err.message.includes('too large')
+        ) {
           msg = '파일 크기가 너무 큽니다. 최대 20MB까지 허용됩니다.';
-        } else if (err.message.includes('Unsupported') || err.message.includes('unsupported')) {
+        } else if (
+          err.message.includes('Unsupported') ||
+          err.message.includes('unsupported')
+        ) {
           msg = '지원하지 않는 이미지 형식입니다.';
         } else {
           msg = err.message;

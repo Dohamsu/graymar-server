@@ -21,7 +21,10 @@ import { UseItemBodySchema } from './dto/use-item.dto.js';
 
 @Controller('v1/runs')
 @UseGuards(AuthGuard)
-@Throttle({ short: { ttl: 1000, limit: 15 }, medium: { ttl: 60000, limit: 200 } })
+@Throttle({
+  short: { ttl: 1000, limit: 15 },
+  medium: { ttl: 60000, limit: 200 },
+})
 export class RunsController {
   constructor(private readonly runsService: RunsService) {}
 
