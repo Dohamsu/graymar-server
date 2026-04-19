@@ -125,10 +125,33 @@ const INTENT_GUIDES: Record<DialogueIntent, string> = {
   TRADE: '거래를 제안하거나 대가를 요구',
 };
 
-/** 어체별 어미 검증 */
+/** 어체별 어미 검증
+ *  - 전체 문장의 어미를 검사 (기존엔 마지막 문장만)
+ *  - 한 대사 내 다른 register 혼용 감지 (bug 4636)
+ *    예) HAOCHE 인데 첫 문장이 "입니다"로 끝나면 HAPSYO 혼용 → false
+ */
 function validateSpeechRegister(text: string, register: string): boolean {
   const sentences = text.split(/[.!?…]+/).filter((s) => s.trim().length > 3);
   if (sentences.length === 0) return false;
+
+  // 다른 register 의 어미 패턴 — 혼용 감지용
+  const FOREIGN_ENDINGS: Record<string, RegExp[]> = {
+    HAOCHE: [/(?:합니다|입니다|습니다|겠습니다)\s*$/], // HAPSYO 혼용 금지
+    HAEYO: [/(?:합니다|입니다|습니다|겠습니다)\s*$/], // HAPSYO 혼용 금지
+    HAPSYO: [/(?:[소오]|이오|하오|시오|겠소)\s*$/], // HAOCHE 혼용 금지
+    BANMAL: [/(?:합니다|입니다|이오|하오)\s*$/],
+    HAECHE: [/(?:합니다|입니다|이오|하오)\s*$/],
+  };
+
+  // 각 문장의 어미를 검사하여 혼용 감지
+  const foreign = FOREIGN_ENDINGS[register] ?? [];
+  for (const s of sentences) {
+    const trimmed = s.trim();
+    for (const pat of foreign) {
+      if (pat.test(trimmed)) return false; // 다른 register 어미 감지
+    }
+  }
+
   const last = sentences[sentences.length - 1].trim();
 
   switch (register) {
