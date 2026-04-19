@@ -148,14 +148,20 @@ export interface LlmContext {
   currentLocationId: string | null;
   currentTimePhase: string | null;
   // Phase 2: 파티 모드 — 4인분 행동 통합
-  partyActions: {
-    userId: string;
-    nickname: string;
-    presetId?: string;
-    rawInput: string;
-    isAutoAction: boolean;
-    resolveOutcome?: string;
-  }[] | null;
+  partyActions:
+    | {
+        userId: string;
+        nickname: string;
+        presetId?: string;
+        rawInput: string;
+        isAutoAction: boolean;
+        resolveOutcome?: string;
+      }[]
+    | null;
+  // 반복 구문 방지 (bug 4624): 직전 3턴에 2회+ 등장한 빈출 어구 — 이번 턴 자제
+  overusedPhrases: string[];
+  // Player-First 지목 대상 (bug 4624): extractTargetNpcFromInput 결과 NPC
+  playerTargetNpcId: string | null;
 }
 
 @Injectable()
@@ -210,6 +216,7 @@ export class ContextBuilderService {
     runState?: Record<string, unknown> | null,
     gender?: 'male' | 'female',
     presetId?: string | null,
+    playerTargetNpcId?: string | null,
   ): Promise<LlmContext> {
     // L0 + L1: run_memories
     const memory = await this.db.query.runMemories.findFirst({
@@ -363,9 +370,16 @@ export class ContextBuilderService {
 
           // Living World v2: 장소 활성 조건
           const locFullState = locDynamic?.[ws.currentLocationId as string] as
-            | { activeConditions?: Array<{ id: string }> ; security?: number; unrest?: number }
+            | {
+                activeConditions?: Array<{ id: string }>;
+                security?: number;
+                unrest?: number;
+              }
             | undefined;
-          if (locFullState?.activeConditions && locFullState.activeConditions.length > 0) {
+          if (
+            locFullState?.activeConditions &&
+            locFullState.activeConditions.length > 0
+          ) {
             const condDescs: Record<string, string> = {
               INCREASED_PATROLS: '경비 순찰 강화 중',
               LOCKDOWN: '지역 봉쇄 중',
@@ -374,11 +388,15 @@ export class ContextBuilderService {
               CURFEW: '야간 통금 중',
               FESTIVAL: '축제 진행 중',
             };
-            const condTexts = locFullState.activeConditions.map((c: { id: string }) => condDescs[c.id] ?? c.id);
+            const condTexts = locFullState.activeConditions.map(
+              (c: { id: string }) => condDescs[c.id] ?? c.id,
+            );
             locationContext += ` [${condTexts.join(', ')}]`;
           }
           if (locFullState?.security != null) {
-            snapshotParts.push(`장소 치안: ${locFullState.security}/100, 불안: ${locFullState.unrest ?? 0}/100`);
+            snapshotParts.push(
+              `장소 치안: ${locFullState.security}/100, 불안: ${locFullState.unrest ?? 0}/100`,
+            );
           }
         }
 
@@ -623,16 +641,26 @@ export class ContextBuilderService {
       const encounterNpcIds = structured.npcJournal.map((e) => e.npcId);
       try {
         // 로어북 키워드 연동: rawInput에서 키워드 추출하여 entity_facts 필터링
-        const rawInputForFacts = ((serverResult as Record<string, unknown>)?.summary as Record<string, unknown>)?.short as string ?? '';
-        const factKeywords = (rawInputForFacts.match(/[가-힣]{2,}/g) ?? []).slice(0, 10);
-        const entityFactRows = await this.factExtractor.getRelevantFactsByKeywords(
-          runId,
-          factKeywords,
-          encounterNpcIds,
-          currentLocationId ?? '',
-        );
+        const rawInputForFacts =
+          ((
+            (serverResult as Record<string, unknown>)?.summary as Record<
+              string,
+              unknown
+            >
+          )?.short as string) ?? '';
+        const factKeywords = (
+          rawInputForFacts.match(/[가-힣]{2,}/g) ?? []
+        ).slice(0, 10);
+        const entityFactRows =
+          await this.factExtractor.getRelevantFactsByKeywords(
+            runId,
+            factKeywords,
+            encounterNpcIds,
+            currentLocationId ?? '',
+          );
         if (entityFactRows.length > 0) {
-          const summary = await this.factExtractor.summarizeFacts(entityFactRows);
+          const summary =
+            await this.factExtractor.summarizeFacts(entityFactRows);
           llmFactsText = summary
             ? `${summary}\n이 정보는 참고용입니다. 같은 표현을 반복하지 말고 새로운 관찰로 발전시키세요.`
             : null;
@@ -654,15 +682,30 @@ export class ContextBuilderService {
     let lorebookContext: string | null = null;
     {
       const uiData = serverResult.ui as Record<string, unknown>;
-      const actionCtx = uiData?.actionContext as Record<string, unknown> | undefined;
-      const rawInput = ((serverResult as Record<string, unknown>)?.summary as Record<string, unknown>)?.short as string ?? '';
+      const actionCtx = uiData?.actionContext as
+        | Record<string, unknown>
+        | undefined;
+      const rawInput =
+        ((
+          (serverResult as Record<string, unknown>)?.summary as Record<
+            string,
+            unknown
+          >
+        )?.short as string) ?? '';
       const actionType = (actionCtx?.parsedType as string) ?? '';
       const ws = runState?.worldState as Record<string, unknown> | undefined;
-      const currentLocationId = ws?.currentLocationId as string ?? '';
-      const npcStates = (runState?.npcStates ?? {}) as Record<string, import('../db/types/npc-state.js').NPCState>;
-      const lorebookState = (runState?.lorebook ?? {}) as Record<string, unknown>;
-      const discoveredFacts = lorebookState.discoveredFacts as string[] ?? [];
-      const discoveredSecrets = lorebookState.discoveredSecrets as string[] ?? [];
+      const currentLocationId = (ws?.currentLocationId as string) ?? '';
+      const npcStates = (runState?.npcStates ?? {}) as Record<
+        string,
+        import('../db/types/npc-state.js').NPCState
+      >;
+      const lorebookState = (runState?.lorebook ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const discoveredFacts = (lorebookState.discoveredFacts as string[]) ?? [];
+      const discoveredSecrets =
+        (lorebookState.discoveredSecrets as string[]) ?? [];
 
       // 현재 턴에 등장하는 NPC IDs
       const currentNpcIds: string[] = [];
@@ -683,7 +726,11 @@ export class ContextBuilderService {
         npcStates,
         discoveredFacts,
         discoveredSecrets,
-        activeIncidents: ((ws as Record<string, unknown>)?.activeIncidents as Array<{ incidentId: string; stage: number }>) ?? [],
+        activeIncidents:
+          ((ws as Record<string, unknown>)?.activeIncidents as Array<{
+            incidentId: string;
+            stage: number;
+          }>) ?? [],
       });
 
       if (result.contextText) {
@@ -971,60 +1018,82 @@ export class ContextBuilderService {
           bgParts.push(`특기: ${bonusDesc}`);
         }
         // 프리셋별 행동 묘사 키워드 — LLM이 행동 서술에 자연스럽게 반영
-        const PRESET_MANNERISMS: Record<string, { base: string; actions: Record<string, string> }> = {
+        const PRESET_MANNERISMS: Record<
+          string,
+          { base: string; actions: Record<string, string> }
+        > = {
           DOCKWORKER: {
             base: '행동 특징: 거친 손, 무거운 것에 익숙한 어깨, 투박하지만 믿음직한 몸짓, 부두 노동자 특유의 직선적 화법',
             actions: {
-              SNEAK: '부두에서 야간 하역할 때 익힌 은밀한 발놀림, 어둠 속 짐 나르기에 익숙한 몸',
+              SNEAK:
+                '부두에서 야간 하역할 때 익힌 은밀한 발놀림, 어둠 속 짐 나르기에 익숙한 몸',
               TALK: '투박하고 직설적인 말투, 허세를 싫어하는 솔직함, 노동자끼리 통하는 의리',
-              FIGHT: '무거운 화물을 다루며 단련된 완력, 즉흥적이지만 파괴적인 근접 격투',
-              OBSERVE: '항구에서 수상한 화물을 골라내던 경험, 물건의 무게와 크기를 눈대중으로 파악',
+              FIGHT:
+                '무거운 화물을 다루며 단련된 완력, 즉흥적이지만 파괴적인 근접 격투',
+              OBSERVE:
+                '항구에서 수상한 화물을 골라내던 경험, 물건의 무게와 크기를 눈대중으로 파악',
             },
           },
           DESERTER: {
             base: '행동 특징: 군인 특유의 절도 있는 움직임, 본능적으로 퇴로를 확인하는 습관, 전장의 긴장감이 배어있는 자세',
             actions: {
-              SNEAK: '군대 정찰 훈련으로 익힌 은밀 이동, 보초 교대 시간을 본능적으로 파악, 그림자와 벽을 이용한 침투',
+              SNEAK:
+                '군대 정찰 훈련으로 익힌 은밀 이동, 보초 교대 시간을 본능적으로 파악, 그림자와 벽을 이용한 침투',
               TALK: '군인다운 간결한 말투, 상관에게 보고하듯 핵심만 전달, 불필요한 말을 아끼는 습관',
-              FIGHT: '수비대에서 단련된 정석 검술, 방패와 대열 전투 경험, 상대의 빈틈을 찌르는 훈련된 눈',
-              OBSERVE: '초소 근무에서 길러진 경계심, 인원 배치와 순찰 패턴을 읽는 군사적 시선',
-              STEAL: '보급품 관리 경험으로 물건의 가치를 빠르게 판단, 군 시절 필요한 것을 확보하던 요령',
+              FIGHT:
+                '수비대에서 단련된 정석 검술, 방패와 대열 전투 경험, 상대의 빈틈을 찌르는 훈련된 눈',
+              OBSERVE:
+                '초소 근무에서 길러진 경계심, 인원 배치와 순찰 패턴을 읽는 군사적 시선',
+              STEAL:
+                '보급품 관리 경험으로 물건의 가치를 빠르게 판단, 군 시절 필요한 것을 확보하던 요령',
             },
           },
           SMUGGLER: {
             base: '행동 특징: 어둠에 익숙한 눈, 은밀하고 재빠른 손놀림, 상대를 살피는 날카로운 시선, 뒷골목을 잘 아는 발걸음',
             actions: {
-              SNEAK: '밀수 루트를 오가며 체득한 은신술, 감시의 사각지대를 본능적으로 찾아내는 능력',
+              SNEAK:
+                '밀수 루트를 오가며 체득한 은신술, 감시의 사각지대를 본능적으로 찾아내는 능력',
               TALK: '거래에 능숙한 화술, 상대의 약점을 파고드는 달변, 필요하면 거짓도 자연스럽게',
-              FIGHT: '뒷골목 난투에서 익힌 비정규 전투, 칼보다 기습과 속임수를 선호',
-              OBSERVE: '밀수품 거래에서 길러진 관찰력, 위조품과 진품을 구별하는 눈, 미행 감지 본능',
+              FIGHT:
+                '뒷골목 난투에서 익힌 비정규 전투, 칼보다 기습과 속임수를 선호',
+              OBSERVE:
+                '밀수품 거래에서 길러진 관찰력, 위조품과 진품을 구별하는 눈, 미행 감지 본능',
             },
           },
           HERBALIST: {
             base: '행동 특징: 풀과 약초 냄새가 배어있는 손, 식물을 다루듯 섬세한 손길, 관찰력 있는 시선, 차분하고 신중한 태도',
             actions: {
-              SNEAK: '숲에서 약초를 채집하며 익힌 조용한 발걸음, 동물을 놀라게 하지 않는 느린 움직임',
+              SNEAK:
+                '숲에서 약초를 채집하며 익힌 조용한 발걸음, 동물을 놀라게 하지 않는 느린 움직임',
               TALK: '환자를 대하듯 차분하고 다정한 말투, 상대의 상태를 살피며 대화하는 습관',
-              OBSERVE: '약초의 미세한 차이를 구별하는 섬세한 관찰력, 냄새와 색으로 상황을 파악',
-              INVESTIGATE: '약리학적 지식으로 독이나 약물 흔적을 간파, 상처와 질병에서 원인을 추론',
+              OBSERVE:
+                '약초의 미세한 차이를 구별하는 섬세한 관찰력, 냄새와 색으로 상황을 파악',
+              INVESTIGATE:
+                '약리학적 지식으로 독이나 약물 흔적을 간파, 상처와 질병에서 원인을 추론',
             },
           },
           FALLEN_NOBLE: {
             base: '행동 특징: 무의식적인 귀족 예법, 교양이 묻어나는 말투, 격식 있는 자세, 과거의 품격이 남아있는 행동거지',
             actions: {
-              SNEAK: '궁정 암투에서 배운 정치적 은신, 존재감을 지우기보다 자연스럽게 녹아드는 기술',
+              SNEAK:
+                '궁정 암투에서 배운 정치적 은신, 존재감을 지우기보다 자연스럽게 녹아드는 기술',
               TALK: '사교계에서 연마된 화술, 상대의 지위에 맞춘 적절한 격식, 은유와 암시를 활용한 설득',
-              OBSERVE: '궁정에서 길러진 정치적 통찰, 권력 관계와 파벌을 읽는 눈, 예절 뒤에 숨겨진 의도 간파',
-              BRIBE: '귀족 사회의 뒷거래에 익숙, 돈과 인맥의 가치를 정확히 파악, 품위를 유지한 제안',
+              OBSERVE:
+                '궁정에서 길러진 정치적 통찰, 권력 관계와 파벌을 읽는 눈, 예절 뒤에 숨겨진 의도 간파',
+              BRIBE:
+                '귀족 사회의 뒷거래에 익숙, 돈과 인맥의 가치를 정확히 파악, 품위를 유지한 제안',
             },
           },
           GLADIATOR: {
             base: '행동 특징: 투기장에서 단련된 본능, 위험을 두려워하지 않는 당당한 자세, 전투적 시선, 거칠고 직접적인 행동',
             actions: {
-              SNEAK: '투기장의 지하 통로에서 익힌 어둠 속 이동, 덩치에 비해 의외로 민첩한 몸놀림',
+              SNEAK:
+                '투기장의 지하 통로에서 익힌 어둠 속 이동, 덩치에 비해 의외로 민첩한 몸놀림',
               TALK: '관중 앞에서 단련된 배짱, 허세와 위압으로 상대를 제압하는 직선적 화법',
-              FIGHT: '다양한 무기와 맨손 격투에 통달, 관중을 사로잡는 과감한 전투 스타일, 고통에 익숙한 몸',
-              THREATEN: '투기장에서 갈고닦은 위압감, 눈빛만으로 상대를 압도하는 존재감',
+              FIGHT:
+                '다양한 무기와 맨손 격투에 통달, 관중을 사로잡는 과감한 전투 스타일, 고통에 익숙한 몸',
+              THREATEN:
+                '투기장에서 갈고닦은 위압감, 눈빛만으로 상대를 압도하는 존재감',
             },
           },
         };
@@ -1032,11 +1101,17 @@ export class ContextBuilderService {
         if (presetData) {
           bgParts.push(presetData.base);
           // 이번 턴 행동에 맞는 세부 묘사 추가
-          const actionType = (serverResult.ui as Record<string, unknown>)?.actionContext
-            ? ((serverResult.ui as Record<string, unknown>).actionContext as Record<string, unknown>)?.parsedType as string | undefined
+          const actionType = (serverResult.ui as Record<string, unknown>)
+            ?.actionContext
+            ? ((
+                (serverResult.ui as Record<string, unknown>)
+                  .actionContext as Record<string, unknown>
+              )?.parsedType as string | undefined)
             : undefined;
           if (actionType && presetData.actions[actionType]) {
-            bgParts.push(`이번 행동(${actionType}) 묘사: ${presetData.actions[actionType]}`);
+            bgParts.push(
+              `이번 행동(${actionType}) 묘사: ${presetData.actions[actionType]}`,
+            );
           }
         }
         protagonistBackground = bgParts.join('\n');
@@ -1294,9 +1369,10 @@ export class ContextBuilderService {
       questFactHint: this.buildQuestFactHint(serverResult, runState),
       // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
       questDirectionHint: this.buildQuestDirectionHint(serverResult, runState),
-      questEndingApproach: (runState?.questState === 'S5_RESOLVE')
-        ? '이야기가 마무리에 접어들고 있다. 서술의 톤을 클라이맥스로 고조시키세요. 플레이어의 행동이 최종 결과를 결정합니다.'
-        : null,
+      questEndingApproach:
+        runState?.questState === 'S5_RESOLVE'
+          ? '이야기가 마무리에 접어들고 있다. 서술의 톤을 클라이맥스로 고조시키세요. 플레이어의 행동이 최종 결과를 결정합니다.'
+          : null,
       agendaWitnessHint: this.buildAgendaWitnessHint(runState, serverResult),
       // 대화 잠금 상태
       conversationLock: this.buildConversationLock(runState),
@@ -1311,7 +1387,44 @@ export class ContextBuilderService {
           ?.timePhase as string) ??
         null,
       partyActions: null, // 파티 모드 시 PartyTurnService에서 주입
+      // 반복 구문 방지 — 직전 3턴 narrative 에서 2회+ 등장한 빈출 bigram top 5
+      overusedPhrases: this.extractOverusedPhrases(finalLocationSessionTurns),
+      // Player-First — turns.service에서 extractTargetNpcFromInput 결과 전달
+      playerTargetNpcId: playerTargetNpcId ?? null,
     };
+  }
+
+  /**
+   * 전체 run 누적 narrative 에서 3회+ 등장한 빈출 어구 추출 (bug 4624).
+   * 한글 2어절 bigram 빈도 집계 → top 8 반환. 프롬프트에 "이번 턴 자제" 블록으로 주입.
+   * 직전 3턴 window 에선 누적 반복이 밀려나가 재사용 — 전체 세션 누적으로 강화.
+   */
+  private extractOverusedPhrases(
+    recentTurns: RecentTurnEntry[],
+  ): string[] {
+    if (recentTurns.length === 0) return [];
+
+    const bigramCount = new Map<string, number>();
+    for (const t of recentTurns) {
+      const txt = t.narrative ?? '';
+      if (!txt) continue;
+      // 대사 제외 — 서술 영역에서만 집계
+      const narrOnly = txt.replace(/"[^"]*"/g, '');
+      // [가-힣]+ 로 1음절 단어도 포함 (예: "둔다" 2자지만 다른 1자 조사 뒤)
+      const words = narrOnly.match(/[가-힣]+/g) ?? [];
+      for (let i = 0; i < words.length - 1; i++) {
+        // 한 쪽이 단일 조사(1자) 면 스킵
+        if (words[i].length < 2 && words[i + 1].length < 2) continue;
+        const key = `${words[i]} ${words[i + 1]}`;
+        bigramCount.set(key, (bigramCount.get(key) ?? 0) + 1);
+      }
+    }
+    const top = [...bigramCount.entries()]
+      .filter(([, n]) => n >= 3) // 3회+ 등장한 것만
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([k]) => k);
+    return top;
   }
 
   /**
@@ -1769,7 +1882,14 @@ export class ContextBuilderService {
     if (!actionHistory || actionHistory.length === 0) return null;
 
     const SOCIAL_ACTIONS = new Set([
-      'TALK', 'PERSUADE', 'BRIBE', 'THREATEN', 'HELP', 'INVESTIGATE', 'OBSERVE', 'TRADE',
+      'TALK',
+      'PERSUADE',
+      'BRIBE',
+      'THREATEN',
+      'HELP',
+      'INVESTIGATE',
+      'OBSERVE',
+      'TRADE',
     ]);
 
     // 마지막부터 역순으로 같은 NPC + 대화 행동 연속 카운트
@@ -1780,7 +1900,10 @@ export class ContextBuilderService {
     let count = 0;
     for (let i = actionHistory.length - 1; i >= 0; i--) {
       const entry = actionHistory[i];
-      if (entry.primaryNpcId === targetNpcId && SOCIAL_ACTIONS.has(entry.actionType)) {
+      if (
+        entry.primaryNpcId === targetNpcId &&
+        SOCIAL_ACTIONS.has(entry.actionType)
+      ) {
         count++;
       } else {
         break;
@@ -1789,12 +1912,15 @@ export class ContextBuilderService {
 
     if (count < 2) return null; // 2턴 이상 연속이어야 잠금 상태
 
-    const npcStates = runState.npcStates as Record<string, NPCState> | undefined;
+    const npcStates = runState.npcStates as
+      | Record<string, NPCState>
+      | undefined;
     const npcState = npcStates?.[targetNpcId];
     const npcDef = this.content.getNpc(targetNpcId);
-    const displayName = npcState && npcDef
-      ? getNpcDisplayName(npcState, npcDef)
-      : (npcDef?.unknownAlias ?? '상대');
+    const displayName =
+      npcState && npcDef
+        ? getNpcDisplayName(npcState, npcDef)
+        : (npcDef?.unknownAlias ?? '상대');
 
     return { npcDisplayName: displayName, consecutiveTurns: count };
   }
@@ -1806,7 +1932,9 @@ export class ContextBuilderService {
   ): string | null {
     if (!runState?.worldState) return null;
     const ws = runState.worldState as Record<string, unknown>;
-    const agendaEvents = ws.recentAgendaEvents as Array<{ npcId: string; signal: string }> | undefined;
+    const agendaEvents = ws.recentAgendaEvents as
+      | Array<{ npcId: string; signal: string }>
+      | undefined;
     if (!agendaEvents || agendaEvents.length === 0) return null;
 
     const playerLocation = ws.currentLocationId as string | undefined;
@@ -1819,13 +1947,18 @@ export class ContextBuilderService {
       if (!npcDef) continue;
 
       // NPC의 스케줄 장소 확인
-      const schedule = (npcDef as Record<string, unknown>).schedule as { default?: string } | undefined;
+      const schedule = (npcDef as Record<string, unknown>).schedule as
+        | { default?: string }
+        | undefined;
       const npcLocation = schedule?.default;
 
       // 플레이어와 같은 장소이거나, 장소 정보가 없으면 포함
       if (npcLocation && npcLocation !== playerLocation) continue;
 
-      const npcName = (npcDef as Record<string, unknown>).unknownAlias as string ?? (npcDef as Record<string, unknown>).name as string ?? event.npcId;
+      const npcName =
+        ((npcDef as Record<string, unknown>).unknownAlias as string) ??
+        ((npcDef as Record<string, unknown>).name as string) ??
+        event.npcId;
       witnessHints.push(`${npcName}: ${event.signal}`);
     }
 
