@@ -67,6 +67,25 @@ export class ContentLoaderService implements OnModuleInit {
   private questData: unknown = null;
   // Traits
   private traits = new Map<string, TraitDefinition>();
+  // Text Replacements — LLM 후처리 치환 규칙
+  private textReplacements: {
+    npcApproach: { pattern: string; replacement: string }[];
+    currency: { pattern: string; replacement: string; flags?: string }[];
+    repeatKillAll: string[];
+    repeatSecondPlus: string[];
+    compoundTitleFix: {
+      pattern: string;
+      flags?: string;
+      minPartsToFix: number;
+      keepTailWords: number;
+    } | null;
+  } = {
+    npcApproach: [],
+    currency: [],
+    repeatKillAll: [],
+    repeatSecondPlus: [],
+    compoundTitleFix: null,
+  };
 
   async onModuleInit() {
     await this.loadAll();
@@ -95,6 +114,7 @@ export class ContentLoaderService implements OnModuleInit {
       scenarioMetaRaw,
       questRaw,
       traitsRaw,
+      textReplacementsRaw,
     ] = await Promise.all([
       readFile(join(this.contentDir, 'enemies.json'), 'utf-8'),
       readFile(join(this.contentDir, 'encounters.json'), 'utf-8'),
@@ -146,6 +166,10 @@ export class ContentLoaderService implements OnModuleInit {
       ),
       // Traits
       readFile(join(this.contentDir, 'traits.json'), 'utf-8').catch(() => '[]'),
+      // LLM 후처리 치환 규칙 (bug 4655)
+      readFile(join(this.contentDir, 'text_replacements.json'), 'utf-8').catch(
+        () => '{}',
+      ),
     ]);
 
     const enemiesList = JSON.parse(enemiesRaw) as EnemyDefinition[];
@@ -236,6 +260,43 @@ export class ContentLoaderService implements OnModuleInit {
     const traitsList = JSON.parse(traitsRaw) as TraitDefinition[];
     this.traits.clear();
     for (const t of traitsList) this.traits.set(t.traitId, t);
+
+    // Text Replacements 로드 (bug 4655)
+    try {
+      const tr = JSON.parse(textReplacementsRaw) as {
+        npcApproach?: { rules?: { pattern: string; replacement: string }[] };
+        currency?: {
+          rules?: { pattern: string; replacement: string; flags?: string }[];
+        };
+        repeatKillAll?: { patterns?: string[] };
+        repeatSecondPlus?: { patterns?: string[] };
+        compoundTitleFix?: {
+          pattern: string;
+          flags?: string;
+          minPartsToFix: number;
+          keepTailWords: number;
+        };
+      };
+      this.textReplacements = {
+        npcApproach: tr.npcApproach?.rules ?? [],
+        currency: tr.currency?.rules ?? [],
+        repeatKillAll: tr.repeatKillAll?.patterns ?? [],
+        repeatSecondPlus: tr.repeatSecondPlus?.patterns ?? [],
+        compoundTitleFix: tr.compoundTitleFix ?? null,
+      };
+      this.logger.log(
+        `[TextReplacements] loaded: approach=${this.textReplacements.npcApproach.length}, currency=${this.textReplacements.currency.length}, killAll=${this.textReplacements.repeatKillAll.length}, secondPlus=${this.textReplacements.repeatSecondPlus.length}, compound=${this.textReplacements.compoundTitleFix ? 1 : 0}`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[TextReplacements] load failed, using empty rules: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /** LLM 후처리 치환 규칙 조회 (bug 4655 JSON 외부화) */
+  getTextReplacements() {
+    return this.textReplacements;
   }
 
   getPlayerDefaults(): PlayerDefaults {

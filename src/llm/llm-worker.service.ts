@@ -888,24 +888,13 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         // 4-a-3. 서술 품질 후처리 필터: 위반 패턴 감지 및 자동 수정
         const violations: string[] = [];
 
-        // P1. NPC 다가오기 패턴 자동 치환
-        const approachReplacements: [RegExp, string][] = [
-          [/조심스레 다가왔다/g, '멀찍이 서서 당신을 지켜보고 있었다'],
-          [/조심스럽게 다가왔다/g, '멀찍이 서서 당신을 주시하고 있었다'],
-          [/천천히 다가왔다/g, '멀찍이 서 있었다'],
-          [/다가와 낮은 목소리로/g, '멀찍이 서서 낮은 목소리로'],
-          [/다가와 말했다/g, '서서 말했다'],
-          [/다가와 조심스레/g, '서서 조심스레'],
-          [/다가오는 모습이/g, '서 있는 모습이'],
-          [/걸어왔다/g, '서 있었다'],
-          [/다가왔다/g, '서 있었다'],
-          [/다가오며/g, '서서'],
-          [/다가와/g, '서서'],
-        ];
+        // P1. NPC 다가오기 패턴 자동 치환 (bug 4655: JSON 외부화)
+        //   규칙은 content/graymar_v1/text_replacements.json 에서 로드.
         let approachFixCount = 0;
-        for (const [pattern, replacement] of approachReplacements) {
+        const approachRules = this.content.getTextReplacements().npcApproach;
+        for (const rule of approachRules) {
           const before = narrative;
-          narrative = narrative.replace(pattern, replacement);
+          narrative = narrative.replace(new RegExp(rule.pattern, 'g'), rule.replacement);
           if (narrative !== before) approachFixCount++;
         }
         if (approachFixCount > 0) {
@@ -2088,40 +2077,29 @@ ${npcList}`,
         }
       }
 
-      // 5.10.8. 화폐 단위 규칙 강제 (bug 4607)
-      //   프롬프트 규칙: "은화/금화/동전/닢" 금지, "골드"만 사용. LLM 누수 시 치환.
-      //   - "동전 주머니" → "가죽 주머니" (관용 표현 유지)
-      //   - "동전을/동전이/동전 한" 등 단독 "동전" → "골드" 치환
-      //   - "은화/금화/닢" 동일 치환
+      // 5.10.8. 화폐 단위 규칙 강제 (bug 4607, 4655 JSON 외부화)
+      //   규칙은 content/graymar_v1/text_replacements.json 에서 로드.
       if (narrative) {
-        narrative = narrative.replace(/동전\s*주머니/g, '가죽 주머니');
-        narrative = narrative.replace(
-          /(?<![가-힣])(동전|은화|금화)(?![가-힣])/g,
-          '골드',
-        );
-        narrative = narrative.replace(
-          /(\d+)\s*닢(?![가-힣])/g,
-          '$1골드',
-        );
+        const currencyRules = this.content.getTextReplacements().currency;
+        for (const rule of currencyRules) {
+          narrative = narrative.replace(
+            new RegExp(rule.pattern, rule.flags ?? 'g'),
+            rule.replacement,
+          );
+        }
       }
 
-      // 5.10.9. 반복 구문 블랙리스트 (bug 4620/4630)
-      //   LLM이 "표현 다양성" 규칙을 어기고 특정 관용구를 반복 사용.
-      //   "약속이라도 한 듯" 류 관용구는 세션 내 반복이 심해 전량 제거.
-      //   - KILL: 매 턴 첫 등장부터 제거 (관용구 남용 차단)
-      //   - SECOND: 한 턴 내 2회+ 재등장 시 2번째부터 제거
+      // 5.10.9. 반복 구문 블랙리스트 (bug 4620/4630, 4655 JSON 외부화)
+      //   규칙은 content/graymar_v1/text_replacements.json 에서 로드.
+      //   - killAll: 첫 등장부터 전부 제거 (관용구 남용 차단)
+      //   - secondPlus: 한 턴 내 2회+ 재등장 시 2번째부터 제거
       if (narrative) {
-        const KILL_ALL_PATTERNS = [
-          /(?:약속이라도\s*한\s*듯이?|약속이라도\s*한\s*것처럼)\s*/g,
-        ];
-        for (const pat of KILL_ALL_PATTERNS) {
-          narrative = narrative.replace(pat, '');
+        const tr = this.content.getTextReplacements();
+        for (const patStr of tr.repeatKillAll) {
+          narrative = narrative.replace(new RegExp(patStr, 'g'), '');
         }
-
-        const SECOND_PLUS_PATTERNS = [
-          /신경질적으로\s*밀어\s*올리며/g,
-        ];
-        for (const pat of SECOND_PLUS_PATTERNS) {
+        for (const patStr of tr.repeatSecondPlus) {
+          const pat = new RegExp(patStr, 'g');
           const matches = [...narrative.matchAll(pat)];
           if (matches.length >= 2) {
             let result = '';
@@ -2140,22 +2118,18 @@ ${npcList}`,
         }
       }
 
-      // 5.10.10. 복합 호칭 hallucination 제거 (bug 4636)
-      //   LLM 이 이전 턴의 별칭 2~3개를 합성해 비정상 긴 호칭을 생성하는 경우:
-      //     예) "토단정한 제복의 장교 수상한 무표정한 창고 여인"
-      //   정상 한국어 서술에서 "[수식어한] [수식어한] [명사] [명사]..." 3어절+
-      //   연속은 거의 없음. 마지막 2어절만 유지해 호칭 형태로 정규화.
+      // 5.10.10. 복합 호칭 hallucination 제거 (bug 4636, 4655 JSON 외부화)
+      //   규칙은 content/graymar_v1/text_replacements.json 에서 로드.
       if (narrative) {
-        narrative = narrative.replace(
-          /(?:[가-힣]{2,6}한\s+){2,}[가-힣]{2,6}(?:\s+[가-힣]{2,6})*/g,
-          (match) => {
+        const compound = this.content.getTextReplacements().compoundTitleFix;
+        if (compound) {
+          const pat = new RegExp(compound.pattern, compound.flags ?? 'g');
+          narrative = narrative.replace(pat, (match) => {
             const parts = match.trim().split(/\s+/);
-            if (parts.length < 4) return match; // 안전 가드
-            // 마지막 2~3어절만 유지 (호칭으로 추정)
-            const tail = parts.slice(-2).join(' ');
-            return tail;
-          },
-        );
+            if (parts.length < compound.minPartsToFix) return match;
+            return parts.slice(-compound.keepTailWords).join(' ');
+          });
+        }
       }
 
       // 5.11. NPC 소개 롤백 + appearanceCount 증가
