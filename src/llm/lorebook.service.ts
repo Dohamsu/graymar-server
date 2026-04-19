@@ -8,18 +8,19 @@ import type { NPCState } from '../db/types/npc-state.js';
 /** 매칭된 로어북 항목 */
 export interface LorebookEntry {
   type: 'NPC_FACT' | 'LOCATION_SECRET' | 'INCIDENT_HINT';
-  source: string;          // NPC_ID or LOC_ID
-  text: string;            // 주입할 텍스트
-  importance: number;      // 0.0~1.0
+  source: string; // NPC_ID or LOC_ID
+  text: string; // 주입할 텍스트
+  importance: number; // 0.0~1.0
   factId: string;
   matchedKeywords: string[];
 }
 
 /** 로어북 조회 결과 */
 export interface LorebookResult {
-  contextText: string;                     // 프롬프트 주입용
-  matchedEntries: LorebookEntry[];         // 디버깅/로깅
-  factToReveal?: {                         // Stage B 대사에 전달할 fact
+  contextText: string; // 프롬프트 주입용
+  matchedEntries: LorebookEntry[]; // 디버깅/로깅
+  factToReveal?: {
+    // Stage B 대사에 전달할 fact
     factId: string;
     detail: string;
     npcId: string;
@@ -45,9 +46,7 @@ const ACTION_KEYWORDS: Record<string, string[]> = {
 export class LorebookService {
   private readonly logger = new Logger(LorebookService.name);
 
-  constructor(
-    private readonly content: ContentLoaderService,
-  ) {}
+  constructor(private readonly content: ContentLoaderService) {}
 
   /**
    * 플레이어 행동에서 키워드를 추출하고 관련 NPC 지식을 매칭
@@ -85,11 +84,13 @@ export class LorebookService {
 
     // 4. factToReveal 선택 (가장 중요한 매칭 항목)
     const topEntry = selected[0];
-    const factToReveal = topEntry ? {
-      factId: topEntry.factId,
-      detail: topEntry.text,
-      npcId: topEntry.source,
-    } : undefined;
+    const factToReveal = topEntry
+      ? {
+          factId: topEntry.factId,
+          detail: topEntry.text,
+          npcId: topEntry.source,
+        }
+      : undefined;
 
     // 5. 프롬프트 텍스트 조립
     const lines = selected.map((e) => {
@@ -98,15 +99,16 @@ export class LorebookService {
       return `- [${label}] ${e.text}`;
     });
 
-    const contextText = selected.length > 0
-      ? [
-          '[관련 세계 지식]',
-          '플레이어의 행동과 관련된 단서입니다. 서술에 자연스럽게 녹여내되, 직접 인용하지 마세요.',
-          '가장 관련 있는 1개만 암시적으로 반영하세요.',
-          '',
-          ...lines,
-        ].join('\n')
-      : '';
+    const contextText =
+      selected.length > 0
+        ? [
+            '[관련 세계 지식]',
+            '플레이어의 행동과 관련된 단서입니다. 서술에 자연스럽게 녹여내되, 직접 인용하지 마세요.',
+            '가장 관련 있는 1개만 암시적으로 반영하세요.',
+            '',
+            ...lines,
+          ].join('\n')
+        : '';
 
     const tokensEstimate = Math.ceil(contextText.length / 4);
 
@@ -114,7 +116,12 @@ export class LorebookService {
       `[Lorebook] keywords=[${keywords.slice(0, 5).join(',')}] matched=${selected.length} tokens~${tokensEstimate}`,
     );
 
-    return { contextText, matchedEntries: selected, factToReveal, tokensEstimate };
+    return {
+      contextText,
+      matchedEntries: selected,
+      factToReveal,
+      tokensEstimate,
+    };
   }
 
   /**
@@ -155,7 +162,9 @@ export class LorebookService {
     const allNpcs = this.content.getAllNpcs();
     for (const npc of allNpcs) {
       if (npc.schedule?.default) {
-        const phases = Object.values(npc.schedule.default) as Array<{ locationId?: string }>;
+        const phases = Object.values(npc.schedule.default) as Array<{
+          locationId?: string;
+        }>;
         if (phases.some((p) => p.locationId === params.locationId)) {
           candidateNpcIds.add(npc.npcId);
         }
@@ -174,10 +183,11 @@ export class LorebookService {
         if (params.discoveredFacts.includes(fact.factId)) continue;
 
         // trust 체크
-        if (fact.minTrust !== undefined && trust < (fact.minTrust as number)) continue;
+        if (fact.minTrust !== undefined && trust < fact.minTrust) continue;
 
         // 키워드 매칭
-        const factKeywords: string[] = (fact as Record<string, unknown>).keywords as string[] ?? [];
+        const factKeywords: string[] =
+          ((fact as Record<string, unknown>).keywords as string[]) ?? [];
         if (factKeywords.length === 0) continue;
 
         const matched = factKeywords.filter((kw) =>
@@ -214,20 +224,26 @@ export class LorebookService {
     const locationDef = this.content.getLocation(params.locationId);
     if (!locationDef) return [];
 
-    const secrets = (locationDef as Record<string, unknown>).secrets as Array<{
-      secretId: string;
-      detail: string;
-      keywords: string[];
-      importance: number;
-      requiresAction?: string[];
-    }> | undefined;
+    const secrets = (locationDef as Record<string, unknown>).secrets as
+      | Array<{
+          secretId: string;
+          detail: string;
+          keywords: string[];
+          importance: number;
+          requiresAction?: string[];
+        }>
+      | undefined;
 
     if (!secrets) return [];
 
     return secrets
       .filter((secret) => {
         if (params.discoveredSecrets.includes(secret.secretId)) return false;
-        if (secret.requiresAction && !secret.requiresAction.includes(params.actionType)) return false;
+        if (
+          secret.requiresAction &&
+          !secret.requiresAction.includes(params.actionType)
+        )
+          return false;
         return secret.keywords.some((kw) =>
           keywords.some((k) => k.includes(kw) || kw.includes(k)),
         );
@@ -261,12 +277,14 @@ export class LorebookService {
       const incidentDef = this.content.getIncident(active.incidentId);
       if (!incidentDef) continue;
 
-      const stages = (incidentDef as Record<string, unknown>).stages as Array<{
-        stage: number;
-        keywords?: string[];
-        hintOnMatch?: string;
-        description?: string;
-      }> | undefined;
+      const stages = (incidentDef as Record<string, unknown>).stages as
+        | Array<{
+            stage: number;
+            keywords?: string[];
+            hintOnMatch?: string;
+            description?: string;
+          }>
+        | undefined;
 
       if (!stages) continue;
 

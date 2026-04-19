@@ -25,6 +25,12 @@ import { TurnsModule } from '../turns/turns.module.js';
     PartyRewardService,
     RunParticipantsService,
   ],
-  exports: [PartyService, PartyStreamService, PartyTurnService, LobbyService, RunParticipantsService],
+  exports: [
+    PartyService,
+    PartyStreamService,
+    PartyTurnService,
+    LobbyService,
+    RunParticipantsService,
+  ],
 })
 export class PartyModule {}

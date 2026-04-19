@@ -167,18 +167,26 @@ export class QuestProgressionService {
         if (!discoveredFactIds.has(f)) {
           const hint = this.getFactNextHint(f);
           const npcId = this.findFactNpc(f);
-          return { factId: f, hint: hint ?? `${f}와 관련된 단서가 근처에 있다`, targetNpcId: npcId ?? undefined };
+          return {
+            factId: f,
+            hint: hint ?? `${f}와 관련된 단서가 근처에 있다`,
+            targetNpcId: npcId ?? undefined,
+          };
         }
       }
 
       // requiredAnyOf 중 미발견 그룹의 첫 번째
       for (const group of transition.requiredAnyOf ?? []) {
-        const missing = group.filter(f => !discoveredFactIds.has(f));
+        const missing = group.filter((f) => !discoveredFactIds.has(f));
         if (missing.length > 0) {
           const f = missing[0];
           const hint = this.getFactNextHint(f);
           const npcId = this.findFactNpc(f);
-          return { factId: f, hint: hint ?? `${f}와 관련된 단서가 근처에 있다`, targetNpcId: npcId ?? undefined };
+          return {
+            factId: f,
+            hint: hint ?? `${f}와 관련된 단서가 근처에 있다`,
+            targetNpcId: npcId ?? undefined,
+          };
         }
       }
 
@@ -187,7 +195,11 @@ export class QuestProgressionService {
         if (!discoveredFactIds.has(f)) {
           const hint = this.getFactNextHint(f);
           const npcId = this.findFactNpc(f);
-          return { factId: f, hint: hint ?? `${f}와 관련된 단서가 근처에 있다`, targetNpcId: npcId ?? undefined };
+          return {
+            factId: f,
+            hint: hint ?? `${f}와 관련된 단서가 근처에 있다`,
+            targetNpcId: npcId ?? undefined,
+          };
         }
       }
     }

@@ -241,8 +241,14 @@ export class PartyController {
           });
           if (activeRun) {
             this.partyTurnService.setAiControlled(activeRun.id, userId);
-            this.streamService.broadcast(partyId, 'party:member_ai_controlled', { userId });
-            this.logger.log(`AI control activated after 30s: user=${userId} run=${activeRun.id}`);
+            this.streamService.broadcast(
+              partyId,
+              'party:member_ai_controlled',
+              { userId },
+            );
+            this.logger.log(
+              `AI control activated after 30s: user=${userId} run=${activeRun.id}`,
+            );
           }
         } catch {
           // 비정상 상태 무시
@@ -342,7 +348,8 @@ export class PartyController {
       await this.db
         .update(runSessions)
         .set({
-          runState: updatedRunState as unknown as import('../db/types/index.js').RunState,
+          runState:
+            updatedRunState as unknown as import('../db/types/index.js').RunState,
         })
         .where(eq(runSessions.id, runId));
     }
@@ -421,7 +428,8 @@ export class PartyController {
       columns: { currentTurnNo: true, partyId: true, currentLocationId: true },
     });
     if (!run) throw new NotFoundError('런을 찾을 수 없습니다.');
-    if (run.partyId !== partyId) throw new BadRequestError('이 파티의 런이 아닙니다.');
+    if (run.partyId !== partyId)
+      throw new BadRequestError('이 파티의 런이 아닙니다.');
 
     // HUB CHOICE → 이동 투표 자동 생성 (다수결)
     if (inputType === 'CHOICE' && rawInput.startsWith('go_')) {
@@ -434,7 +442,8 @@ export class PartyController {
         go_temple: 'LOC_TEMPLE',
         go_tavern: 'LOC_TAVERN',
       };
-      const targetLocationId = locationMap[rawInput] ?? rawInput.replace('go_', 'LOC_').toUpperCase();
+      const targetLocationId =
+        locationMap[rawInput] ?? rawInput.replace('go_', 'LOC_').toUpperCase();
 
       // 투표 생성 (제안자 자동 찬성)
       const vote = await this.voteService.createVote(
@@ -472,8 +481,10 @@ export class PartyController {
     const turnNo = parseInt(turnNoStr, 10);
 
     // 파티 행동 목록 (party_turn_actions)
-    const partyActions =
-      await this.partyTurnService.getSubmittedActions(runId, turnNo);
+    const partyActions = await this.partyTurnService.getSubmittedActions(
+      runId,
+      turnNo,
+    );
 
     // 솔로 턴 결과 (turns 테이블)
     const run = await this.db.query.runSessions.findFirst({
@@ -496,9 +507,7 @@ export class PartyController {
     const turnData = (turnResult as Record<string, unknown> | null)?.turns as
       | Array<Record<string, unknown>>
       | undefined;
-    const matchedTurn = turnData?.find(
-      (t) => (t.turnNo as number) === turnNo,
-    );
+    const matchedTurn = turnData?.find((t) => (t.turnNo as number) === turnNo);
 
     return {
       turnNo,

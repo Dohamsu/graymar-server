@@ -7,7 +7,10 @@ import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { entityFacts } from '../db/schema/index.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
-import type { EntityFactEntry, EntityFactType } from '../db/types/structured-memory.js';
+import type {
+  EntityFactEntry,
+  EntityFactType,
+} from '../db/types/structured-memory.js';
 import { ENTITY_FACT_TYPE } from '../db/types/structured-memory.js';
 
 const FACT_TYPE_SET = new Set<string>(ENTITY_FACT_TYPE);
@@ -135,7 +138,9 @@ export class FactExtractorService {
           importance: Math.max(0.5, Math.min(1.0, Number(f.importance) || 0.7)),
         }));
     } catch {
-      this.logger.warn(`[FactExtractor] JSON parse failed: ${raw.slice(0, 100)}`);
+      this.logger.warn(
+        `[FactExtractor] JSON parse failed: ${raw.slice(0, 100)}`,
+      );
       return [];
     }
   }
@@ -227,12 +232,19 @@ export class FactExtractorService {
     }
 
     // 먼저 전체 관련 facts를 조회
-    const allFacts = await this.getRelevantFacts(runId, relevantNpcIds, locationId);
+    const allFacts = await this.getRelevantFacts(
+      runId,
+      relevantNpcIds,
+      locationId,
+    );
 
     // 키워드 매칭으로 필터링 + 점수 가중
     const scored = allFacts.map((fact) => {
-      const matchCount = keywords.filter((kw) =>
-        fact.key.includes(kw) || fact.value.includes(kw) || kw.includes(fact.key),
+      const matchCount = keywords.filter(
+        (kw) =>
+          fact.key.includes(kw) ||
+          fact.value.includes(kw) ||
+          kw.includes(fact.key),
       ).length;
       return { fact, matchCount };
     });
@@ -277,7 +289,9 @@ export class FactExtractorService {
           : entity.startsWith('LOC_')
             ? entity.replace(/^LOC_/, '').toLowerCase()
             : entity;
-        lines.push(`[${label}] ${items.map((i) => i.split(': ')[1]).join(', ')}`);
+        lines.push(
+          `[${label}] ${items.map((i) => i.split(': ')[1]).join(', ')}`,
+        );
       }
       return lines.join('\n');
     }
@@ -299,9 +313,7 @@ export class FactExtractorService {
     ].join('\n');
 
     const text = await this.llmCaller.callLight({
-      messages: [
-        { role: 'user', content: userMsg },
-      ],
+      messages: [{ role: 'user', content: userMsg }],
       maxTokens: 200,
       temperature: 0.5,
     });
@@ -315,7 +327,12 @@ export class FactExtractorService {
       const label = entity.startsWith('NPC_')
         ? entity.replace(/^NPC_/, '').toLowerCase()
         : entity;
-      lines.push(`[${label}] ${items.slice(0, 3).map((i) => i.split(': ')[1]).join(', ')}`);
+      lines.push(
+        `[${label}] ${items
+          .slice(0, 3)
+          .map((i) => i.split(': ')[1])
+          .join(', ')}`,
+      );
     }
     return lines.join('\n');
   }

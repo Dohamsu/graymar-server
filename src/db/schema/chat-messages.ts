@@ -1,10 +1,4 @@
-import {
-  index,
-  pgTable,
-  text,
-  timestamp,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { users } from './users.js';
 import { parties } from './parties.js';
 
@@ -25,9 +19,7 @@ export const chatMessages = pgTable(
       .notNull()
       .references(() => parties.id),
     senderId: uuid('sender_id').references(() => users.id), // null = SYSTEM
-    type: text('type', { enum: MESSAGE_TYPE })
-      .notNull()
-      .default('TEXT'),
+    type: text('type', { enum: MESSAGE_TYPE }).notNull().default('TEXT'),
     content: text('content').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },

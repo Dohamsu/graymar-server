@@ -10,12 +10,12 @@ import type { ServerResultV1 } from '../db/types/index.js';
 export type SenseCategory = string; // 하위 호환용 (순환 시스템 폐기됨)
 
 export interface DirectorHint {
-  opening: string;            // 첫 문장 (환경/감각 시작)
+  opening: string; // 첫 문장 (환경/감각 시작)
   senseCategory: SenseCategory; // 하위 호환용 (미사용)
-  npcEntrance: string;        // NPC 등장 방식
-  npcGesture: string;         // NPC 제스처
-  avoid: string[];            // 반복 금지 표현
-  mood: string;               // 장면 분위기
+  npcEntrance: string; // NPC 등장 방식
+  npcGesture: string; // NPC 제스처
+  avoid: string[]; // 반복 금지 표현
+  mood: string; // 장면 분위기
 }
 
 // fallback opening (감각 카테고리 없이 다양한 환경 묘사)
@@ -81,7 +81,9 @@ export class NanoDirectorService {
         .filter(Boolean)
         .join('\n');
 
-      const resolve = (serverResult.ui as Record<string, unknown>)?.resolveOutcome as string ?? '';
+      const resolve =
+        ((serverResult.ui as Record<string, unknown>)
+          ?.resolveOutcome as string) ?? '';
       const eventId = serverResult.events?.[0]?.id ?? '';
 
       const userMsg = [
@@ -92,7 +94,9 @@ export class NanoDirectorService {
         `판정: ${resolve || '없음'}`,
         `이벤트: ${eventId}`,
         npcDisplayName ? `등장NPC: ${npcDisplayName}` : '등장NPC: 없음',
-      ].filter(Boolean).join('\n');
+      ]
+        .filter(Boolean)
+        .join('\n');
 
       const lightConfig = this.configService.getLightModelConfig();
       const result = await this.llmCaller.call({
@@ -121,17 +125,27 @@ export class NanoDirectorService {
 
       // 검증 + 기본값 (감각 카테고리 순환 폐기 — nano가 자유롭게 선택)
       const hint: DirectorHint = {
-        opening: typeof parsed.opening === 'string' && parsed.opening.length > 5
-          ? parsed.opening : '',
+        opening:
+          typeof parsed.opening === 'string' && parsed.opening.length > 5
+            ? parsed.opening
+            : '',
         senseCategory: '', // 폐기됨
-        npcEntrance: typeof parsed.npcEntrance === 'string' ? parsed.npcEntrance : '',
-        npcGesture: typeof parsed.npcGesture === 'string' ? parsed.npcGesture : '',
-        avoid: Array.isArray(parsed.avoid) ? parsed.avoid.filter((a) => typeof a === 'string').slice(0, 5) : [],
+        npcEntrance:
+          typeof parsed.npcEntrance === 'string' ? parsed.npcEntrance : '',
+        npcGesture:
+          typeof parsed.npcGesture === 'string' ? parsed.npcGesture : '',
+        avoid: Array.isArray(parsed.avoid)
+          ? parsed.avoid.filter((a) => typeof a === 'string').slice(0, 5)
+          : [],
         mood: typeof parsed.mood === 'string' ? parsed.mood : '',
       };
 
       // opening이 "당신은/당신이"로 시작하면 fallback opening으로 교체
-      if (hint.opening.startsWith('당신은') || hint.opening.startsWith('당신이') || !hint.opening) {
+      if (
+        hint.opening.startsWith('당신은') ||
+        hint.opening.startsWith('당신이') ||
+        !hint.opening
+      ) {
         hint.opening = this.pickFallbackOpening();
       }
 
@@ -141,7 +155,9 @@ export class NanoDirectorService {
 
       return hint;
     } catch (err) {
-      this.logger.warn(`[NanoDirector] 실패 (graceful skip): ${err instanceof Error ? err.message : err}`);
+      this.logger.warn(
+        `[NanoDirector] 실패 (graceful skip): ${err instanceof Error ? err.message : err}`,
+      );
       return null;
     }
   }
@@ -180,6 +196,8 @@ export class NanoDirectorService {
    * fallback opening 중 랜덤 선택
    */
   private pickFallbackOpening(): string {
-    return FALLBACK_OPENINGS[Math.floor(Math.random() * FALLBACK_OPENINGS.length)];
+    return FALLBACK_OPENINGS[
+      Math.floor(Math.random() * FALLBACK_OPENINGS.length)
+    ];
   }
 }

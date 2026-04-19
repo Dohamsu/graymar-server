@@ -257,9 +257,7 @@ export class VoteService {
       );
     }
 
-    this.logger.log(
-      `Vote resolved: id=${voteId} status=${status}`,
-    );
+    this.logger.log(`Vote resolved: id=${voteId} status=${status}`);
 
     return result;
   }
@@ -302,7 +300,9 @@ export class VoteService {
         LOC_TEMPLE: 'go_temple',
         LOC_TAVERN: 'go_tavern',
       };
-      const choiceId = choiceMap[targetLocationId] ?? `go_${targetLocationId.toLowerCase().replace('loc_', '')}`;
+      const choiceId =
+        choiceMap[targetLocationId] ??
+        `go_${targetLocationId.toLowerCase().replace('loc_', '')}`;
 
       // HUB 턴 자동 제출 (리더 계정으로)
       await this.turnsService.submitTurn(run.id, run.userId, {

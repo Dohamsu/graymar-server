@@ -268,13 +268,16 @@ export class TurnOrchestrationService {
     // trust 기반 NPC 주도 행동 단계 (posture보다 우선)
     let seed: string;
     if (trust >= 40) {
-      seed = 'NPC가 먼저 다가와 은밀히 중요한 정보를 귓속말한다. 주변을 살피며 목소리를 극도로 낮춘다';
+      seed =
+        'NPC가 먼저 다가와 은밀히 중요한 정보를 귓속말한다. 주변을 살피며 목소리를 극도로 낮춘다';
     } else if (trust >= 20) {
-      seed = 'NPC가 자연스럽게 대화를 시작한다. 마치 우연히 마주친 듯하지만 할 말이 있는 기색이다';
+      seed =
+        'NPC가 자연스럽게 대화를 시작한다. 마치 우연히 마주친 듯하지만 할 말이 있는 기색이다';
     } else if (trust <= -30) {
       seed = 'NPC가 길을 막아서며 경고한다. 적대감을 숨기지 않는다';
     } else if (suspicion >= 50) {
-      seed = 'NPC가 의심스러운 눈초리로 플레이어를 붙잡는다. 추궁하듯 질문을 던진다';
+      seed =
+        'NPC가 의심스러운 눈초리로 플레이어를 붙잡는다. 추궁하듯 질문을 던진다';
     } else {
       // 기존 posture 기반 톤 (trust가 중립적일 때)
       const toneMap: Record<NpcPosture, string> = {

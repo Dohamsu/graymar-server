@@ -137,7 +137,9 @@ export class PortraitService {
     // 이미지 생성 비활성화 — API 과금 방지 (재활성화: 아래 조건을 false로 변경)
     const IMAGE_GENERATION_DISABLED = true;
     if (IMAGE_GENERATION_DISABLED) {
-      this.logger.log('Portrait generation SKIPPED (disabled to prevent API billing)');
+      this.logger.log(
+        'Portrait generation SKIPPED (disabled to prevent API billing)',
+      );
       return {
         imageUrl: `/${presetId.toLowerCase()}_${gender === 'female' ? 'f' : 'm'}.png`,
         promptUsed: '[SKIPPED]',
@@ -233,7 +235,9 @@ export class PortraitService {
 
     if (
       !metadata.format ||
-      !['jpeg', 'png', 'webp', 'jpg', 'gif', 'heif', 'heic', 'avif'].includes(metadata.format)
+      !['jpeg', 'png', 'webp', 'jpg', 'gif', 'heif', 'heic', 'avif'].includes(
+        metadata.format,
+      )
     ) {
       throw new Error(
         '지원하지 않는 이미지 형식입니다. JPEG, PNG, WebP, GIF, HEIC 파일을 사용해주세요.',
