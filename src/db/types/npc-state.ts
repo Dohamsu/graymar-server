@@ -63,6 +63,13 @@ export interface NPCState {
   // LLM 서술에 @마커로 등장한 누적 횟수 — encounterCount와 별개로
   // 반복 호칭 고착 방지용. 임계치 이상이면 posture 무관 강제 소개.
   appearanceCount?: number;
+  // 최근 사용 제스처 이력 (bug 4671, CLAUDE.md LLM 원칙 1: 명시적 주입)
+  //   서버가 NPC별로 사용된 제스처 구문을 추적해 프롬프트에 주입하면
+  //   LLM이 중복 사용을 스스로 피할 수 있음. 최대 5개 유지 (FIFO).
+  recentGestures?: {
+    text: string; // 추출된 제스처 구문 (예: "안경테를 신경질적으로 밀어")
+    turnNo: number;
+  }[];
   agenda: string;
   currentGoal: string;
   currentStage: string;

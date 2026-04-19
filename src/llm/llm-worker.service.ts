@@ -2178,36 +2178,104 @@ ${npcList}`,
             const { shouldIntroduce } = await import(
               '../db/types/npc-state.js'
             );
+            // 제스처 추출 regex (bug 4671, CLAUDE.md LLM 원칙 1)
+            const GESTURE_PATTERNS = [
+              /안경테를\s+\S+\s*(?:\S+)?/g,
+              /서류\s*뭉치를\s+\S+/g,
+              /손을\s+\S+\s+\S+/g,
+              /손끝을?\s+\S+/g,
+              /손가락을?\s+\S+/g,
+              /시선을\s+\S+/g,
+              /눈을\s+\S+/g,
+              /고개를\s+\S+/g,
+              /입술을\s+\S+/g,
+              /어깨를\s+\S+/g,
+              /미간을\s+\S+/g,
+              /턱을\s+\S+/g,
+            ];
             for (const npcId of _appearedNpcIds) {
               const npcDef = this.content.getNpc(npcId) as
                 | Record<string, unknown>
                 | undefined;
-              // BACKGROUND 티어는 소개 대상이 아니므로 appearance 카운팅 스킵
-              if (npcDef?.tier === 'BACKGROUND') continue;
               if (!npcStatesRef[npcId]) continue;
-              const prev = npcStatesRef[npcId].appearanceCount ?? 0;
-              npcStatesRef[npcId].appearanceCount = prev + 1;
-              changed = true;
 
-              // appearanceCount 임계값 도달 시 즉시 introduced 전환
-              //   turns.service의 shouldIntroduce 호출은 primaryNpcId 대상에만 실행되므로,
-              //   LLM 서술에만 반복 등장하는 NPC는 여기서 강제 소개 트리거.
-              const npcStateFull = npcStatesRef[npcId] as unknown as import(
-                '../db/types/npc-state.js'
-              ).NPCState;
-              if (
-                !npcStateFull.introduced &&
-                shouldIntroduce(
-                  npcStateFull,
-                  npcStateFull.posture,
-                  (npcDef?.tier as string | undefined) ?? undefined,
-                )
-              ) {
-                npcStatesRef[npcId].introduced = true;
-                npcStatesRef[npcId].introducedAtTurn = pending.turnNo;
-                this.logger.log(
-                  `[AppearanceIntro] turn=${pending.turnNo} ${npcId} appearanceCount=${prev + 1} → introduced=true`,
-                );
+              // BACKGROUND 티어는 appearanceCount 증가 스킵
+              if (npcDef?.tier !== 'BACKGROUND') {
+                const prev = npcStatesRef[npcId].appearanceCount ?? 0;
+                npcStatesRef[npcId].appearanceCount = prev + 1;
+                changed = true;
+
+                const npcStateFull = npcStatesRef[npcId] as unknown as import(
+                  '../db/types/npc-state.js'
+                ).NPCState;
+                if (
+                  !npcStateFull.introduced &&
+                  shouldIntroduce(
+                    npcStateFull,
+                    npcStateFull.posture,
+                    (npcDef?.tier as string | undefined) ?? undefined,
+                  )
+                ) {
+                  npcStatesRef[npcId].introduced = true;
+                  npcStatesRef[npcId].introducedAtTurn = pending.turnNo;
+                  this.logger.log(
+                    `[AppearanceIntro] turn=${pending.turnNo} ${npcId} appearanceCount=${prev + 1} → introduced=true`,
+                  );
+                }
+              }
+
+              // 제스처 이력 축적 (CORE/SUB NPC만 — 캐릭터 다양화 대상)
+              if (npcDef?.tier === 'CORE' || npcDef?.tier === 'SUB') {
+                const aliasSet = new Set<string>();
+                const npcDefTyped = npcDef as {
+                  name?: string;
+                  unknownAlias?: string;
+                  shortAlias?: string;
+                };
+                if (npcDefTyped.name) aliasSet.add(npcDefTyped.name);
+                if (npcDefTyped.unknownAlias)
+                  aliasSet.add(npcDefTyped.unknownAlias);
+                if (npcDefTyped.shortAlias)
+                  aliasSet.add(npcDefTyped.shortAlias);
+
+                // NPC 마커 주변 서술 윈도우 (마커 앞 200자 + 뒤 100자)
+                let npcWindow = '';
+                for (const alias of aliasSet) {
+                  const marker = `@[${alias}`;
+                  let searchFrom = 0;
+                  while (searchFrom < narrative.length) {
+                    const idx = narrative.indexOf(marker, searchFrom);
+                    if (idx < 0) break;
+                    const start = Math.max(0, idx - 200);
+                    const end = Math.min(narrative.length, idx + 100);
+                    npcWindow += narrative.slice(start, end) + '\n';
+                    searchFrom = idx + marker.length;
+                  }
+                }
+
+                if (npcWindow) {
+                  const foundGestures: string[] = [];
+                  for (const pat of GESTURE_PATTERNS) {
+                    const matches = npcWindow.match(pat) ?? [];
+                    for (const m of matches) {
+                      foundGestures.push(m.trim());
+                    }
+                  }
+                  if (foundGestures.length > 0) {
+                    type GestureEntry = { text: string; turnNo: number };
+                    const existing: GestureEntry[] = (npcStatesRef[npcId] as unknown as {
+                      recentGestures?: GestureEntry[];
+                    }).recentGestures ?? [];
+                    const newEntries = foundGestures.map((g) => ({
+                      text: g,
+                      turnNo: pending.turnNo,
+                    }));
+                    (npcStatesRef[npcId] as unknown as {
+                      recentGestures: GestureEntry[];
+                    }).recentGestures = [...existing, ...newEntries].slice(-5);
+                    changed = true;
+                  }
+                }
               }
             }
           }
