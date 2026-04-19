@@ -3551,17 +3551,29 @@ export class TurnsService {
       (result.ui as any).newlyEncounteredNpcIds = newlyEncounteredNpcIds;
     }
     // Portrait card: 첫 만남(encountered) 또는 첫 소개(introduced)인 NPC에게 초상화 표시
+    // bug 4737 — 복합 카드: 한 턴에 여러 NPC 신규 등장 시 모두 한 카드에 표시
     const portraitCandidates = [
       ...new Set([...newlyEncounteredNpcIds, ...newlyIntroducedNpcIds]),
     ];
     if (portraitCandidates.length > 0) {
-      const portraitNpcId = portraitCandidates.find((id) => NPC_PORTRAITS[id]);
-      if (portraitNpcId) {
+      const portraitNpcIds = portraitCandidates
+        .filter((id) => NPC_PORTRAITS[id])
+        .slice(0, 3); // 최대 3명 (과다 방지)
+      if (portraitNpcIds.length > 0) {
+        const firstId = portraitNpcIds[0];
         (result.ui as any).npcPortrait = {
-          npcId: portraitNpcId,
-          npcName: npcNames[portraitNpcId] ?? portraitNpcId,
-          imageUrl: NPC_PORTRAITS[portraitNpcId],
-          isNewlyIntroduced: newlyIntroducedNpcIds.includes(portraitNpcId),
+          // 레거시 호환 (첫 번째 NPC)
+          npcId: firstId,
+          npcName: npcNames[firstId] ?? firstId,
+          imageUrl: NPC_PORTRAITS[firstId],
+          isNewlyIntroduced: newlyIntroducedNpcIds.includes(firstId),
+          // 확장: 모든 신규 NPC 목록 (복합 카드)
+          npcs: portraitNpcIds.map((id) => ({
+            npcId: id,
+            npcName: npcNames[id] ?? id,
+            imageUrl: NPC_PORTRAITS[id],
+            isNewlyIntroduced: newlyIntroducedNpcIds.includes(id),
+          })),
         };
       }
     }
