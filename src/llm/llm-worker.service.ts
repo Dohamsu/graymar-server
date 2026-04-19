@@ -2140,6 +2140,24 @@ ${npcList}`,
         }
       }
 
+      // 5.10.10. 복합 호칭 hallucination 제거 (bug 4636)
+      //   LLM 이 이전 턴의 별칭 2~3개를 합성해 비정상 긴 호칭을 생성하는 경우:
+      //     예) "토단정한 제복의 장교 수상한 무표정한 창고 여인"
+      //   정상 한국어 서술에서 "[수식어한] [수식어한] [명사] [명사]..." 3어절+
+      //   연속은 거의 없음. 마지막 2어절만 유지해 호칭 형태로 정규화.
+      if (narrative) {
+        narrative = narrative.replace(
+          /(?:[가-힣]{2,6}한\s+){2,}[가-힣]{2,6}(?:\s+[가-힣]{2,6})*/g,
+          (match) => {
+            const parts = match.trim().split(/\s+/);
+            if (parts.length < 4) return match; // 안전 가드
+            // 마지막 2~3어절만 유지 (호칭으로 추정)
+            const tail = parts.slice(-2).join(' ');
+            return tail;
+          },
+        );
+      }
+
       // 5.11. NPC 소개 롤백 + appearanceCount 증가
       //   - 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
       //   - appearanceCount: LLM 서술에 @마커로 등장한 NPC 카운터 +1 (반복 호칭 고착 방지)
