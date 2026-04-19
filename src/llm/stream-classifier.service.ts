@@ -24,6 +24,8 @@ export interface SegmentEvent {
   text: string;
   npcName?: string;
   npcImage?: string;
+  /** 이 세그먼트가 새 문단의 시작인지 (bug 4751 문단 정리) */
+  paragraphStart?: boolean;
 }
 
 /** 발화동사 패턴 */
@@ -148,18 +150,32 @@ export class StreamClassifierService {
           // 닫는 따옴표+뒤 공백까지를 문장으로
           const nextSpace = i + 1;
           if (nextSpace < this.buffer.length && /[\s\n]/.test(this.buffer[nextSpace])) {
-            const sentence = this.buffer.slice(lastBoundary, nextSpace + 1).trim();
+            const rawSentence = this.buffer.slice(lastBoundary, nextSpace + 1);
+            // 문단 경계 감지 (bug 4751): 원본 앞에 \n\n 있으면 paragraphStart
+            const paragraphStart = /^[\s]*\n[\s]*\n/.test(rawSentence);
+            const sentence = rawSentence.trim();
             if (sentence.length > 0) {
-              events.push(...this.classifySentence(sentence));
+              const segEvents = this.classifySentence(sentence);
+              if (paragraphStart && segEvents.length > 0) {
+                segEvents[0].paragraphStart = true;
+              }
+              events.push(...segEvents);
             }
             lastBoundary = nextSpace + 1;
           }
         }
       } else if (!inQuote && (ch === '\n' || ((ch === '.' || ch === '!' || ch === '?') && i + 1 < this.buffer.length && /[\s\n"]/.test(this.buffer[i + 1])))) {
         // 따옴표 밖에서 문장 끝
-        const sentence = this.buffer.slice(lastBoundary, i + 1).trim();
+        const rawSentence = this.buffer.slice(lastBoundary, i + 1);
+        // 문단 경계 감지 (bug 4751): 원본 앞에 \n\n 있으면 paragraphStart
+        const paragraphStart = /^[\s]*\n[\s]*\n/.test(rawSentence);
+        const sentence = rawSentence.trim();
         if (sentence.length > 0) {
-          events.push(...this.classifySentence(sentence));
+          const segEvents = this.classifySentence(sentence);
+          if (paragraphStart && segEvents.length > 0) {
+            segEvents[0].paragraphStart = true;
+          }
+          events.push(...segEvents);
         }
         lastBoundary = i + 1;
       }
