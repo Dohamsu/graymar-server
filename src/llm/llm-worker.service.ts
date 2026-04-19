@@ -232,6 +232,13 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       ]);
 
       // 1.1. LLM 컨텍스트 구축
+      // Player-First: serverResult.ui.actionContext.targetNpcId 를 컨텍스트에 전달 (bug 4624)
+      const actionCtxForTarget = (serverResult.ui as Record<string, unknown>)
+        ?.actionContext as Record<string, unknown> | undefined;
+      const playerTargetNpcId =
+        (actionCtxForTarget?.targetNpcId as string | undefined) ??
+        (actionCtxForTarget?.primaryNpcId as string | undefined) ??
+        null;
       const llmContext = await this.contextBuilder.build(
         pending.runId,
         pending.nodeInstanceId,
@@ -239,6 +246,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         runSession?.runState as Record<string, unknown> | null,
         runSession?.gender as 'male' | 'female' | undefined,
         runSession?.presetId,
+        playerTargetNpcId,
       );
 
       // 1.5. 파티 모드: partyActions 주입
@@ -1839,6 +1847,50 @@ ${npcList}`,
 
           // Step F: primaryNpcId 또는 speakingNpc와 LLM 출력 NPC 불일치 교정
           // 서버가 배정한 NPC와 LLM이 등장시킨 NPC가 다르면 마커+서술을 교정
+          //
+          // Step F-0: 플레이어 지목 대상(targetNpcId) 우선 — 첫 @마커가 지목 NPC와
+          //   무관하면 해당 대사 블록을 통째 삭제 (bug 4624 Player-First 강화).
+          //   LLM 이 프롬프트 "[이번 턴 지목 대상]" 블록을 무시하고 다른 NPC 끼워넣기
+          //   방지.
+          {
+            const actionCtx = (serverResult.ui as Record<string, unknown>)
+              ?.actionContext as Record<string, unknown> | undefined;
+            const targetNpcId = actionCtx?.targetNpcId as string | undefined;
+            if (targetNpcId) {
+              const targetDef = this.content.getNpc(targetNpcId);
+              const targetNames: string[] = [];
+              if (targetDef?.name) targetNames.push(targetDef.name);
+              if (targetDef?.unknownAlias) targetNames.push(targetDef.unknownAlias);
+              const targetAny = targetDef as Record<string, unknown> | undefined;
+              if (targetAny?.shortAlias) targetNames.push(targetAny.shortAlias as string);
+              const aliases = targetAny?.aliases as string[] | undefined;
+              if (aliases) targetNames.push(...aliases);
+
+              // 서술 앞부분에서 첫 @마커 찾기
+              const firstMarker = narrative.match(/@\[([^\]|]+)(?:\|[^\]]+)?\]/);
+              if (firstMarker && targetNames.length > 0) {
+                const markerName = firstMarker[1].trim();
+                const matchesTarget = targetNames.some(
+                  (nm) => markerName === nm || markerName.includes(nm),
+                );
+                if (!matchesTarget) {
+                  // 첫 @마커가 지목 대상과 무관 → 마커 + 뒤 대사 삭제.
+                  //   패턴: @[이름|URL]? + 공백 + "대사..." (따옴표 쌍)
+                  const killPat = /@\[[^\]]+\]\s*["\u201C][^"\u201D]*["\u201D]\s*/;
+                  const killMatch = narrative.match(killPat);
+                  if (killMatch) {
+                    narrative =
+                      narrative.slice(0, killMatch.index!) +
+                      narrative.slice(killMatch.index! + killMatch[0].length);
+                    this.logger.log(
+                      `[NpcMismatch:Kill] target=${targetNpcId}, LLM이 ${markerName} 대사로 시작 → 해당 대사 블록 삭제`,
+                    );
+                  }
+                }
+              }
+            }
+          }
+
           {
             const primaryNpcId = (
               ((serverResult.ui as Record<string, unknown>)?.actionContext as Record<string, unknown>)?.primaryNpcId
@@ -2051,6 +2103,41 @@ ${npcList}`,
           /(\d+)\s*닢(?![가-힣])/g,
           '$1골드',
         );
+      }
+
+      // 5.10.9. 반복 구문 블랙리스트 (bug 4620/4630)
+      //   LLM이 "표현 다양성" 규칙을 어기고 특정 관용구를 반복 사용.
+      //   "약속이라도 한 듯" 류 관용구는 세션 내 반복이 심해 전량 제거.
+      //   - KILL: 매 턴 첫 등장부터 제거 (관용구 남용 차단)
+      //   - SECOND: 한 턴 내 2회+ 재등장 시 2번째부터 제거
+      if (narrative) {
+        const KILL_ALL_PATTERNS = [
+          /(?:약속이라도\s*한\s*듯이?|약속이라도\s*한\s*것처럼)\s*/g,
+        ];
+        for (const pat of KILL_ALL_PATTERNS) {
+          narrative = narrative.replace(pat, '');
+        }
+
+        const SECOND_PLUS_PATTERNS = [
+          /신경질적으로\s*밀어\s*올리며/g,
+        ];
+        for (const pat of SECOND_PLUS_PATTERNS) {
+          const matches = [...narrative.matchAll(pat)];
+          if (matches.length >= 2) {
+            let result = '';
+            let lastIdx = 0;
+            matches.forEach((m, i) => {
+              if (i === 0) return;
+              result += narrative.slice(lastIdx, m.index!);
+              lastIdx = m.index! + m[0].length;
+              while (lastIdx < narrative.length && /[\s,]/.test(narrative[lastIdx])) {
+                lastIdx += 1;
+              }
+            });
+            result += narrative.slice(lastIdx);
+            narrative = result;
+          }
+        }
       }
 
       // 5.11. NPC 소개 롤백 + appearanceCount 증가

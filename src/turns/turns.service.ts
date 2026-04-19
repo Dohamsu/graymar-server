@@ -3404,11 +3404,20 @@ export class TurnsService {
         eventSceneFrame: resolvedSceneFrame,
         eventMatchPolicy: event.matchPolicy,
         eventId: event.eventId,
-        primaryNpcId: event.payload.primaryNpcId ?? null,
+        // Player-First: 텍스트 매칭(extractTargetNpcFromInput)이 성공하면 intentV3 오파싱 override
+        //   (bug 4624) IntentParserV2가 "하위크의 소매" 같은 구를 NPC_BG_FISHMONGER로
+        //   오인식하는 경우 방지. LOCATION 분기의 earlyTargetNpcId는 스코프가 다르므로 재계산.
+        primaryNpcId:
+          this.extractTargetNpcFromInput(rawInput, body.input.type) ??
+          event.payload.primaryNpcId ??
+          null,
         goalCategory: intentV3.goalCategory,
         approachVector: intentV3.approachVector,
         goalText: intentV3.goalText,
-        targetNpcId: intentV3.targetNpcId ?? undefined,
+        targetNpcId:
+          this.extractTargetNpcFromInput(rawInput, body.input.type) ??
+          intentV3.targetNpcId ??
+          undefined,
         turnMode: event.eventId.startsWith('FREE_PLAYER_')
           ? 'PLAYER_DIRECTED'
           : event.eventId.startsWith('FREE_CONV_')
@@ -5976,7 +5985,9 @@ export class TurnsService {
     const inputLower = rawInput.toLowerCase();
     const allNpcs = this.content.getAllNpcs();
 
-    // Pass 1: 실명 또는 별칭 전체 매칭
+    // Pass 1: 실명/unknownAlias/aliases/shortAlias 전체 매칭 (bug 4620)
+    //   이전엔 name/unknownAlias만 검사 — aliases/shortAlias 누락으로 "하위크"
+    //   같은 단독 별칭 입력 시 타깃 NPC 식별 실패했음.
     for (const npc of allNpcs) {
       if (npc.name && inputLower.includes(npc.name.toLowerCase()))
         return npc.npcId;
@@ -5985,6 +5996,22 @@ export class TurnsService {
         inputLower.includes(npc.unknownAlias.toLowerCase())
       )
         return npc.npcId;
+      if (
+        (npc as Record<string, unknown>).shortAlias &&
+        inputLower.includes(
+          ((npc as Record<string, unknown>).shortAlias as string).toLowerCase(),
+        )
+      )
+        return npc.npcId;
+      const aliases = (npc as Record<string, unknown>).aliases as
+        | string[]
+        | undefined;
+      if (aliases && aliases.length > 0) {
+        for (const al of aliases) {
+          if (al && al.length >= 2 && inputLower.includes(al.toLowerCase()))
+            return npc.npcId;
+        }
+      }
     }
 
     // Pass 2: "~에게" 패턴
@@ -6002,6 +6029,16 @@ export class TurnsService {
           )
         )
           return npc.npcId;
+        // aliases도 "에게" 패턴 타겟 비교
+        const aliases = (npc as Record<string, unknown>).aliases as
+          | string[]
+          | undefined;
+        if (aliases && aliases.length > 0) {
+          for (const al of aliases) {
+            if (al && al.length >= 2 && targetWord.includes(al.toLowerCase()))
+              return npc.npcId;
+          }
+        }
       }
     }
 

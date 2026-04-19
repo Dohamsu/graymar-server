@@ -1072,6 +1072,59 @@ export class PromptBuilderService {
       factsParts.push(`[현재 장소] ${locName}`);
     }
 
+    // [현재 시간대] 블록 — 서술 시간대 일관성 유지용 (bug 4620 시간대 급전환)
+    //   WorldTick의 4상시간(DAWN/DAY/DUSK/NIGHT)을 한국어로 매핑해 프롬프트 주입.
+    //   LLM이 "햇살/밤공기/새벽" 자의적 선택하지 않도록 강제.
+    if (ctx.currentTimePhase) {
+      const timePhaseKr: Record<string, string> = {
+        DAWN: '새벽',
+        DAY: '낮',
+        DUSK: '황혼',
+        NIGHT: '밤',
+      };
+      const phase = ctx.currentTimePhase as string;
+      const phaseKr = timePhaseKr[phase] ?? '낮';
+      const phaseHint: Record<string, string> = {
+        DAWN: '아침 빛이 번지기 시작함. 공기가 서늘하고 거리가 조용함.',
+        DAY: '해가 밝게 비치고 시장/거리가 활기참.',
+        DUSK: '해가 기울어 그림자가 길어짐. 가로등이 하나둘 켜짐.',
+        NIGHT: '어둠이 내려앉음. 달빛/가로등/등불이 주조명.',
+      };
+      factsParts.push(
+        `[현재 시간대] ${phaseKr} (${phase})\n` +
+          `- ${phaseHint[phase] ?? ''}\n` +
+          `- 서술에 이 시간대와 모순되는 단서(예: 밤에 "햇살", 낮에 "달빛") 사용 금지.\n` +
+          `- 시간 전환이 필요하면 "시간이 흘러", "해가 기울어" 같은 전환 문구를 먼저 명시.`,
+      );
+    }
+
+    // [최근 사용 표현 — 자제] 블록 — 반복 구문 고착 방지 (bug 4624)
+    //   직전 3턴에서 2회+ 사용된 빈출 bigram 을 프롬프트에 주입, LLM이 재사용을 자제하도록 유도.
+    if (ctx.overusedPhrases && ctx.overusedPhrases.length > 0) {
+      const list = ctx.overusedPhrases.map((p) => `"${p}"`).join(', ');
+      factsParts.push(
+        `[최근 사용 표현 — 이번 턴 자제] ${list}\n` +
+          `- 위 표현들은 최근 3턴에서 이미 사용되었습니다. 같은 어휘·구문 반복을 피하고 다른 동사/묘사로 바꾸세요.`,
+      );
+    }
+
+    // [이번 턴 지목 대상 NPC] 블록 — Player-First 강화 (bug 4624)
+    //   플레이어가 특정 NPC를 지목한 경우, 해당 NPC가 장면 중심이 되어야 함.
+    if (ctx.playerTargetNpcId) {
+      const targetDef = this.content.getNpc(ctx.playerTargetNpcId);
+      if (targetDef?.name) {
+        const targetState = ctx.npcStates?.[ctx.playerTargetNpcId];
+        const displayName = targetState?.introduced
+          ? targetDef.name
+          : (targetDef.unknownAlias ?? targetDef.name);
+        factsParts.push(
+          `[이번 턴 플레이어 지목 대상] ${displayName} (${ctx.playerTargetNpcId})\n` +
+            `- 이 NPC가 반응의 중심입니다. 다른 NPC가 첫 대사를 하거나 장면을 가로채게 만들지 마세요.\n` +
+            `- 주변 NPC는 배경으로만 등장 가능하며, 대사는 지목 대상 이후에만.`,
+        );
+      }
+    }
+
     // summary.short
     factsParts.push(`[상황 요약]\n${sr.summary.short}`);
 
