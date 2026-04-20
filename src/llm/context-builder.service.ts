@@ -84,6 +84,7 @@ export interface LlmContext {
   hubSafety: string; // HUB 안전도 (NPC 감정 블록 mood 계산용)
   narrativeMarkContext: string | null; // Narrative Mark 요약
   signalContext: string | null; // Signal Feed 요약
+  deadlineContext: string | null; // mainArcClock 임박/초과 시 톤 가이드 (조건부)
   // NPC 소개 시스템
   introducedNpcIds: string[]; // 이미 소개된 NPC
   newlyIntroducedNpcIds: string[]; // 이번 턴 이름 공개되는 NPC
@@ -175,6 +176,34 @@ export class ContextBuilderService {
     private readonly factExtractor: FactExtractorService,
     private readonly lorebook: LorebookService,
   ) {}
+
+  /**
+   * mainArcClock + day → LLM 프롬프트용 deadline 톤 가이드.
+   * 조건 미충족 시 null 반환 (평소 제로 오버헤드).
+   *  - triggered=true 또는 daysLeft < 0 → EXCEEDED 톤
+   *  - daysLeft ≤ 2 → URGENT 톤 (남은 일수 명시)
+   *  - daysLeft === 3 → NEAR 톤 (직접 언급 금지)
+   *  - daysLeft ≥ 4 → null
+   */
+  static buildDeadlineContext(
+    mainArcClock:
+      | { softDeadlineDay: number; triggered: boolean }
+      | undefined,
+    day: number,
+  ): string | null {
+    if (!mainArcClock) return null;
+    const daysLeft = mainArcClock.softDeadlineDay - day;
+    if (mainArcClock.triggered || daysLeft < 0) {
+      return '그레이마르의 시한이 이미 지났다. 도시는 변화의 한복판에 있다. 서술 톤을 긴박·체념·가속으로 조정하고, NPC들은 "이제 늦었다/돌아갈 수 없다"는 인식을 자연스럽게 드러낸다.';
+    }
+    if (daysLeft <= 2) {
+      return `그레이마르의 결말이 ${daysLeft}일 앞으로 다가왔다. 긴박감을 서술에 녹이되 과장은 금지. NPC 대사에 초조함·망설임·결단의 뉘앙스를 자연스럽게 반영.`;
+    }
+    if (daysLeft === 3) {
+      return '도시의 공기가 무거워지고 있다. 결말이 가까워지는 낌새를 장면 묘사(하늘, 군중, 소음)와 NPC 짧은 대사에 은근히 담는다. 직접적 언급은 피한다.';
+    }
+    return null;
+  }
 
   /** 텍스트에 포함된 NPC 실명을 introduced 상태에 따라 displayName으로 치환 */
   private sanitizeNpcNames(
@@ -579,6 +608,17 @@ export class ContextBuilderService {
           .map((s) => `- [${s.channel}/${s.severity}] ${s.text}`);
         signalContext = `주요 시그널:\n${sigLines.join('\n')}`;
       }
+    }
+
+    // Deadline 컨텍스트 (조건 충족 시에만 — 평소 제로 오버헤드)
+    let deadlineContext: string | null = null;
+    if (runState) {
+      const ws = runState.worldState as Record<string, unknown> | undefined;
+      const mac = ws?.mainArcClock as
+        | { softDeadlineDay: number; triggered: boolean }
+        | undefined;
+      const day = (ws?.day as number | undefined) ?? 1;
+      deadlineContext = ContextBuilderService.buildDeadlineContext(mac, day);
     }
 
     // NPC 소개 시스템: 소개 상태 수집
@@ -1313,6 +1353,7 @@ export class ContextBuilderService {
           ?.hubSafety as string) ?? 'SAFE',
       narrativeMarkContext: sanitize(narrativeMarkContext),
       signalContext: sanitize(signalContext),
+      deadlineContext: sanitize(deadlineContext),
       // NPC 소개 시스템
       introducedNpcIds,
       newlyIntroducedNpcIds,

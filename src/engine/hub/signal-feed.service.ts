@@ -4,6 +4,7 @@ import type {
   IncidentDef,
   SignalFeedItem,
   SignalChannel,
+  MainArcClock,
 } from '../../db/types/index.js';
 
 const MAX_SIGNALS = 20;
@@ -248,6 +249,53 @@ export class SignalFeedService {
       text,
       createdAtClock: currentClock,
       expiresAtClock: currentClock + 12, // 1일 후 만료
+    };
+  }
+
+  /**
+   * Soft deadline 근접 시그널 생성.
+   * daysLeft ≤ 2 → severity 5 (긴박), daysLeft === 3 → severity 4.
+   * triggered=true (시한 초과) → severity 5.
+   * 중복 생성 방지: 같은 daysLeft 구간에서는 한 번만 생성.
+   */
+  generateSoftDeadlineSignal(
+    mainArcClock: MainArcClock | undefined,
+    day: number,
+    currentClock: number,
+    existingSignals: SignalFeedItem[],
+  ): SignalFeedItem | null {
+    if (!mainArcClock) return null;
+    const daysLeft = mainArcClock.softDeadlineDay - day;
+
+    let bucket: 'EXCEEDED' | 'URGENT' | 'NEAR' | null = null;
+    let severity: 1 | 2 | 3 | 4 | 5 = 3;
+    let text = '';
+    if (mainArcClock.triggered || daysLeft < 0) {
+      bucket = 'EXCEEDED';
+      severity = 5;
+      text = '소문이 파도처럼 번진다. 그레이마르의 시간이 다 됐다고.';
+    } else if (daysLeft <= 2) {
+      bucket = 'URGENT';
+      severity = 5;
+      text = `마지막 종이 울리기 전까지 ${daysLeft}일. 거리에 긴장이 감돈다.`;
+    } else if (daysLeft === 3) {
+      bucket = 'NEAR';
+      severity = 4;
+      text = '장부를 쥔 자들이 움직이기 시작했다. 결말이 가까워온다.';
+    } else {
+      return null;
+    }
+
+    const signalId = `sig_softdeadline_${bucket}`;
+    if (existingSignals.some((s) => s.id === signalId)) return null;
+
+    return {
+      id: signalId,
+      channel: 'RUMOR',
+      severity,
+      text,
+      createdAtClock: currentClock,
+      expiresAtClock: currentClock + 24,
     };
   }
 

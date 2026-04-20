@@ -67,12 +67,26 @@ export type EventEffect = {
   value: number | string | boolean;
 };
 
+/**
+ * 이벤트 보상 아이템 (대화·상호작용 경로의 NPC 선물 등).
+ * resolveOutcome이 condition에 매칭되면 inventory에 추가된다.
+ * rewards.service.ts의 LOCATION_DROP_TABLE과 별개 경로 — payload 기반 명시적 지급.
+ */
+export type EventItemReward = {
+  itemId: string;
+  qty?: number; // 기본 1
+  /** SUCCESS만 허용, 또는 SUCCESS+PARTIAL 모두 허용 */
+  condition: 'SUCCESS' | 'SUCCESS_OR_PARTIAL';
+};
+
 export type EventPayload = {
   sceneFrame: string;
   primaryNpcId?: string;
   choices: EventChoice[];
   effectsOnEnter: EventEffect[];
   tags: string[];
+  /** 판정 결과에 따라 지급되는 아이템 보상 (0~N개). */
+  itemRewards?: EventItemReward[];
 };
 
 export type EventDefV2 = {

@@ -18,6 +18,8 @@ import { OperationSessionService } from './operation-session.service.js';
 import { NpcEmotionalService } from './npc-emotional.service.js';
 import { NarrativeMarkService } from './narrative-mark.service.js';
 import { EndingGeneratorService } from './ending-generator.service.js';
+// Journey Archive Phase 1
+import { SummaryBuilderService } from './summary-builder.service.js';
 // User-Driven System v3
 import { IntentV3BuilderService } from './intent-v3-builder.service.js';
 import { IncidentRouterService } from './incident-router.service.js';
@@ -64,6 +66,8 @@ const providers = [
   NpcEmotionalService,
   NarrativeMarkService,
   EndingGeneratorService,
+  // Journey Archive Phase 1
+  SummaryBuilderService,
   // User-Driven System v3
   IntentV3BuilderService,
   IncidentRouterService,

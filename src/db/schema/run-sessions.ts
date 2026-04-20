@@ -9,6 +9,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { RUN_STATUS, RUN_TYPE } from '../types/index.js';
 import type { RunState } from '../types/index.js';
+import type { EndingSummary } from '../types/ending.js';
 import { users } from './users.js';
 import { campaigns } from './campaigns.js';
 import { parties } from './parties.js';
@@ -47,6 +48,9 @@ export const runSessions = pgTable(
     partyRunMode: text('party_run_mode', { enum: RUN_MODE })
       .notNull()
       .default('SOLO'),
+    // 여정 아카이브 Phase 1 — RUN_ENDED 시점에 생성된 EndingSummary JSON 캐싱.
+    // nullable: 구버전 런/솔로 비엔딩 런에는 없음 (listUserEndings lazy-fallback).
+    endingSummary: jsonb('ending_summary').$type<EndingSummary>(),
     startedAt: timestamp('started_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

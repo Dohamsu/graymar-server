@@ -86,7 +86,11 @@ import { WorldTickService } from '../engine/hub/world-tick.service.js';
 import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
 import { NpcEmotionalService } from '../engine/hub/npc-emotional.service.js';
 import { NarrativeMarkService } from '../engine/hub/narrative-mark.service.js';
-import { EndingGeneratorService } from '../engine/hub/ending-generator.service.js';
+import {
+  EndingGeneratorService,
+  MIN_TURNS_FOR_NATURAL,
+} from '../engine/hub/ending-generator.service.js';
+import { SummaryBuilderService } from '../engine/hub/summary-builder.service.js';
 import {
   MemoryCollectorService,
   TAG_TO_NPC,
@@ -188,6 +192,8 @@ export class TurnsService {
     private readonly npcEmotional: NpcEmotionalService,
     private readonly narrativeMarkService: NarrativeMarkService,
     private readonly endingGenerator: EndingGeneratorService,
+    // Journey Archive Phase 1
+    private readonly summaryBuilder: SummaryBuilderService,
     // Structured Memory v2
     private readonly memoryCollector: MemoryCollectorService,
     private readonly memoryIntegration: MemoryIntegrationService,
@@ -658,6 +664,9 @@ export class TurnsService {
         currentNode,
         '더 이상 버틸 수 없다...',
       );
+      let endingSummaryHp: ReturnType<
+        SummaryBuilderService['buildEndingSummary']
+      > | null = null;
       try {
         const ws =
           runState.worldState ?? this.worldStateService.initWorldState();
@@ -682,6 +691,7 @@ export class TurnsService {
           'DEFEAT',
           turnNo,
         );
+        (result.ui as any).endingResult = endingResult;
         result.events.push({
           id: `ending_${turnNo}`,
           kind: 'SYSTEM',
@@ -689,13 +699,35 @@ export class TurnsService {
           tags: ['RUN_ENDED'],
           data: { endingResult },
         });
+        // Journey Archive: summary 조립
+        try {
+          endingSummaryHp = this.summaryBuilder.buildEndingSummary(
+            {
+              id: run.id,
+              presetId: run.presetId ?? null,
+              gender: (run.gender as 'male' | 'female' | null) ?? null,
+              updatedAt: new Date(),
+              currentTurnNo: turnNo,
+            },
+            runState,
+            endingResult,
+          );
+        } catch (se) {
+          this.logger.warn(
+            `EndingSummary build failed (HP<=0) runId=${run.id}: ${String(se)}`,
+          );
+        }
       } catch (e) {
         this.logger.warn(`HP≤0 DEFEAT ending generation failed: ${e}`);
       }
 
       await this.db
         .update(runSessions)
-        .set({ status: 'RUN_ENDED', updatedAt: new Date() })
+        .set({
+          status: 'RUN_ENDED',
+          updatedAt: new Date(),
+          ...(endingSummaryHp ? { endingSummary: endingSummaryHp } : {}),
+        })
         .where(eq(runSessions.id, run.id));
 
       // Campaign: 시나리오 결과 저장
@@ -2578,6 +2610,45 @@ export class TurnsService {
         });
     }
 
+    // 이벤트 payload.itemRewards 지급 (대화·상호작용 계열 NPC 선물 등)
+    // DropTable은 GOLD_ACTIONS(STEAL/FIGHT/SEARCH/…)만 대상이라 대화에선 아이템이 안 나옴 →
+    // 콘텐츠가 명시적으로 선언한 itemRewards만 여기서 처리.
+    // 실제 지급은 locationReward.items에 병합해서 buildLocationResult가 diff를 만들도록 위임.
+    const payloadItemRewards: import('../db/types/event-def.js').EventItemReward[] =
+      (event.payload as unknown as { itemRewards?: import('../db/types/event-def.js').EventItemReward[] })
+        .itemRewards ?? [];
+    const pendingItemRewardEvents: Array<{
+      id: string;
+      kind: 'LOOT';
+      text: string;
+      tags: string[];
+      data?: Record<string, unknown>;
+    }> = [];
+    for (const reward of payloadItemRewards) {
+      const pass =
+        reward.condition === 'SUCCESS'
+          ? resolveResult.outcome === 'SUCCESS'
+          : resolveResult.outcome === 'SUCCESS' ||
+            resolveResult.outcome === 'PARTIAL';
+      if (!pass) continue;
+      const qty = reward.qty ?? 1;
+      const existing = updatedRunState.inventory.find(
+        (i) => i.itemId === reward.itemId,
+      );
+      if (existing) existing.qty += qty;
+      else updatedRunState.inventory.push({ itemId: reward.itemId, qty });
+      // locationReward.items에 병합 → buildLocationResult가 diff.inventory.itemsAdded로 반영
+      locationReward.items.push({ itemId: reward.itemId, qty });
+      const itemDef = this.content.getItem(reward.itemId);
+      pendingItemRewardEvents.push({
+        id: `item_reward_${reward.itemId}`,
+        kind: 'LOOT',
+        text: `[아이템] ${itemDef?.name ?? reward.itemId} 획득`,
+        tags: ['LOOT', 'ITEM_REWARD'],
+        data: { itemId: reward.itemId, qty },
+      });
+    }
+
     // Phase 4a: LOCATION 장비 드랍 (GOLD_ACTIONS + SUCCESS/PARTIAL)
     const locationEquipDropEvents: Array<{
       id: string;
@@ -3130,7 +3201,9 @@ export class TurnsService {
           }
         }
 
-        // Part B: S5_RESOLVE + 5턴 → 미해결 Incident resolved (엔딩 트리거)
+        // Part B: S5_RESOLVE + 5턴 + 최소 턴 수 충족 → 미해결 Incident resolved (엔딩 마킹)
+        // MIN_TURNS_FOR_NATURAL 가드를 Part B에도 적용: 15턴 미만에 마킹되면
+        // checkEndingConditions가 조기 엔딩을 막아 영구 누락된다.
         {
           const qs = updatedRunState.questState ?? '';
           if (qs === 'S5_RESOLVE') {
@@ -3138,7 +3211,11 @@ export class TurnsService {
               updatedRunState as unknown as Record<string, unknown>
             ).questStateSinceTurn as number | undefined;
             const s5Turns = sinceTurn ? turnNo - sinceTurn : 0;
-            if (s5Turns >= 5 && updatedRunState.worldState) {
+            if (
+              s5Turns >= 5 &&
+              turnNo >= MIN_TURNS_FOR_NATURAL &&
+              updatedRunState.worldState
+            ) {
               const activeIncidents = (updatedRunState.worldState
                 .activeIncidents ?? []) as Array<{
                 incidentId: string;
@@ -3443,6 +3520,11 @@ export class TurnsService {
     // Posture 변화 이벤트 반영
     for (const pe of pendingPostureEvents) {
       result.events.push(pe);
+    }
+
+    // 이벤트 payload.itemRewards 이벤트 반영 (아이템 자체는 이미 locationReward.items 경유)
+    for (const ire of pendingItemRewardEvents) {
+      result.events.push(ire);
     }
 
     // 고집 2회째 경고 이벤트 — 다음 반복 시 에스컬레이션 예고
@@ -3911,18 +3993,8 @@ export class TurnsService {
         : undefined,
     };
 
-    await this.commitTurnRecord(
-      run,
-      currentNode,
-      turnNo,
-      body,
-      rawInput,
-      result,
-      postTickRunState,
-      body.options?.skipLlm,
-      intent,
-    );
-
+    // 엔딩 조건 충족 시 — commitTurnRecord 이전에 endingResult를 result.ui에 주입해야
+    // DB에 저장되고 이후 재조회·재접속에서도 EndingScreen 데이터가 복원 가능함.
     if (shouldEnd && endReason) {
       // Fixplan3-P1: RUN_ENDED 전 structuredMemory 통합 (go_hub 없이 런 종료 시 누락 방지)
       try {
@@ -3961,19 +4033,8 @@ export class TurnsService {
         turnNo,
       );
 
-      // RUN_ENDED로 상태 변경
-      await this.db
-        .update(runSessions)
-        .set({
-          status: 'RUN_ENDED',
-          updatedAt: new Date(),
-        })
-        .where(eq(runSessions.id, run.id));
-
-      // Campaign: 시나리오 결과 저장
-      await this.saveCampaignResultIfNeeded(run.id);
-
-      // 엔딩 결과를 이벤트에 추가
+      // 엔딩 결과를 UI + 이벤트에 노출 (commitTurnRecord 이전에 수행)
+      (result.ui as any).endingResult = endingResult;
       result.events.push({
         id: `ending_${turnNo}`,
         kind: 'SYSTEM',
@@ -3981,6 +4042,52 @@ export class TurnsService {
         tags: ['RUN_ENDED'],
         data: { endingResult },
       });
+
+      // Journey Archive Phase 1: EndingSummary 조립 (템플릿 기반, 실패해도 엔딩 진행)
+      let endingSummary: ReturnType<
+        SummaryBuilderService['buildEndingSummary']
+      > | null = null;
+      try {
+        const now = new Date();
+        endingSummary = this.summaryBuilder.buildEndingSummary(
+          {
+            id: run.id,
+            presetId: run.presetId ?? null,
+            gender: (run.gender as 'male' | 'female' | null) ?? null,
+            updatedAt: now,
+            currentTurnNo: turnNo,
+          },
+          postTickRunState,
+          endingResult,
+        );
+      } catch (e) {
+        this.logger.warn(
+          `EndingSummary build failed (NATURAL/DEADLINE) runId=${run.id}: ${String(e)}`,
+        );
+      }
+
+      await this.commitTurnRecord(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        rawInput,
+        result,
+        postTickRunState,
+        body.options?.skipLlm,
+        intent,
+      );
+
+      // RUN_ENDED로 상태 변경 + Campaign 저장 (commit 후 side-effect만 남김)
+      await this.db
+        .update(runSessions)
+        .set({
+          status: 'RUN_ENDED',
+          updatedAt: new Date(),
+          ...(endingSummary ? { endingSummary } : {}),
+        })
+        .where(eq(runSessions.id, run.id));
+      await this.saveCampaignResultIfNeeded(run.id);
 
       return {
         accepted: true,
@@ -3993,6 +4100,19 @@ export class TurnsService {
         meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
       };
     }
+
+    // 일반(non-ending) 경로 — commitTurnRecord 호출
+    await this.commitTurnRecord(
+      run,
+      currentNode,
+      turnNo,
+      body,
+      rawInput,
+      result,
+      postTickRunState,
+      body.options?.skipLlm,
+      intent,
+    );
 
     return {
       accepted: true,
@@ -4519,6 +4639,9 @@ export class TurnsService {
         }
 
         // 패배 엔딩 생성
+        let endingSummaryCombat: ReturnType<
+          SummaryBuilderService['buildEndingSummary']
+        > | null = null;
         try {
           const endingThreads = (ws.playerThreads ?? []).map((t) => ({
             approachVector: t.approachVector,
@@ -4541,20 +4664,47 @@ export class TurnsService {
             'DEFEAT',
             turnNo,
           );
-          (response as any).serverResult.events.push({
+          const sr = (response as any).serverResult;
+          sr.ui = sr.ui ?? {};
+          sr.ui.endingResult = endingResult;
+          sr.events.push({
             id: `ending_${turnNo}`,
             kind: 'SYSTEM',
             text: `[엔딩] ${endingResult.closingLine}`,
             tags: ['RUN_ENDED'],
             data: { endingResult },
           });
+          // Journey Archive: summary 조립
+          try {
+            endingSummaryCombat = this.summaryBuilder.buildEndingSummary(
+              {
+                id: run.id,
+                presetId: run.presetId ?? null,
+                gender: (run.gender as 'male' | 'female' | null) ?? null,
+                updatedAt: new Date(),
+                currentTurnNo: turnNo,
+              },
+              updatedRunState,
+              endingResult,
+            );
+          } catch (se) {
+            this.logger.warn(
+              `EndingSummary build failed (COMBAT DEFEAT) runId=${run.id}: ${String(se)}`,
+            );
+          }
         } catch (e) {
           this.logger.warn(`DEFEAT ending generation failed: ${e}`);
         }
 
         await this.db
           .update(runSessions)
-          .set({ status: 'RUN_ENDED', updatedAt: new Date() })
+          .set({
+            status: 'RUN_ENDED',
+            updatedAt: new Date(),
+            ...(endingSummaryCombat
+              ? { endingSummary: endingSummaryCombat }
+              : {}),
+          })
           .where(eq(runSessions.id, run.id));
 
         // Campaign: 시나리오 결과 저장

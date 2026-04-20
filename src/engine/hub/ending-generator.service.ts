@@ -15,6 +15,9 @@ import type {
   CityStatus,
 } from '../../db/types/ending.js';
 
+/** ALL_RESOLVED 엔딩 최소 턴 수 — Fixplan3-P7 */
+export const MIN_TURNS_FOR_NATURAL = 15;
+
 /** 한국어 조사 자동 판별 — 받침 유무에 따라 은/는, 이/가 등 선택 */
 function korParticle(
   word: string,
@@ -40,8 +43,6 @@ export class EndingGeneratorService {
     day: number,
     totalTurns?: number,
   ): { shouldEnd: boolean; reason: 'ALL_RESOLVED' | 'DEADLINE' | null } {
-    const MIN_TURNS_FOR_NATURAL = 15;
-
     // 1. 모든 critical Incident가 해결(resolved)되었는지 확인
     const unresolved = activeIncidents.filter((inc) => !inc.resolved);
     if (activeIncidents.length > 0 && unresolved.length === 0) {
@@ -263,6 +264,32 @@ export class EndingGeneratorService {
         ? '시야가 어두워진다. 이름 없는 용병의 이야기는 여기서 끝났다.'
         : this.adjustClosingLine(cityStatus.summary, input.dominantVectors);
 
+    // Arc Route 분기 엔딩 (arcRouteEndings: EXPOSE_CORRUPTION/PROFIT_FROM_CHAOS/ALLY_GUARD/NONE)
+    const arcRouteKey = this.resolveArcRouteKey(input.arcRoute);
+    const arcRouteEndings = endingsData?.arcRouteEndings as
+      | Record<
+          string,
+          Record<
+            string,
+            {
+              title?: string;
+              epilogue?: string;
+              rewards?: { gold?: number; reputation?: Record<string, number> };
+            }
+          >
+        >
+      | undefined;
+    const arcBranch = arcRouteEndings?.[arcRouteKey]?.[stability];
+
+    // 플레이어 통계 기반 개인화 마지막 서술
+    const personalClosing = this.buildPersonalClosing(
+      input,
+      containedCount,
+      escalatedCount,
+      expiredCount,
+      totalTurns,
+    );
+
     return {
       endingType,
       npcEpilogues,
@@ -279,7 +306,24 @@ export class EndingGeneratorService {
       playstyleSummary,
       dominantVectors: input.dominantVectors,
       threadSummary,
+      arcRoute: arcRouteKey,
+      arcTitle: arcBranch?.title,
+      arcEpilogue: arcBranch?.epilogue,
+      arcRewards: arcBranch?.rewards,
+      personalClosing,
     };
+  }
+
+  /** arcRoute(EXPOSE_CORRUPTION/PROFIT_FROM_CHAOS/ALLY_GUARD/null) → arcRouteEndings 키 매핑 */
+  private resolveArcRouteKey(arcRoute: string | null | undefined): string {
+    if (
+      arcRoute === 'EXPOSE_CORRUPTION' ||
+      arcRoute === 'PROFIT_FROM_CHAOS' ||
+      arcRoute === 'ALLY_GUARD'
+    ) {
+      return arcRoute;
+    }
+    return 'NONE';
   }
 
   // --- User-Driven System v3 확장 헬퍼 ---
@@ -402,6 +446,67 @@ export class EndingGeneratorService {
 
     const suffix = suffixes[primary];
     return suffix ? baseLine + suffix : baseLine;
+  }
+
+  /**
+   * 플레이어의 여정 통계를 바탕으로 2~3문장 개인화 마지막 서술을 조립한다.
+   * LLM 없이 템플릿 조합 — 엔딩 실패 리스크 제로.
+   */
+  private buildPersonalClosing(
+    input: EndingInput,
+    containedCount: number,
+    escalatedCount: number,
+    expiredCount: number,
+    totalTurns: number,
+  ): string | undefined {
+    const parts: string[] = [];
+
+    // 1. 여정 길이
+    parts.push(`${input.daysSpent}일간 이 도시를 걸었다. ${totalTurns}번의 선택이 당신의 길을 만들었다.`);
+
+    // 2. 사건 결과 요약 (절반 이상 처리 or 악화)
+    if (containedCount >= escalatedCount + expiredCount && containedCount > 0) {
+      parts.push(`${containedCount}건의 사건을 당신의 손으로 매듭지었다.`);
+    } else if (escalatedCount >= 2) {
+      parts.push(`${escalatedCount}건의 사건이 당신의 앞에서 걷잡을 수 없이 번졌다.`);
+    } else if (expiredCount >= 2) {
+      parts.push(`${expiredCount}건의 사건은 당신이 닿기도 전에 시효가 지나버렸다.`);
+    }
+
+    // 3. 가장 신뢰가 높거나 가장 적대적이었던 NPC — content에 정의 있는 NPC만 후보
+    const npcs = (input.npcEpilogues ?? []).filter((n) => {
+      const def = this.content.getNpc(n.npcId);
+      return !!def && !!def.name;
+    });
+    if (npcs.length > 0) {
+      const sortedByTrust = [...npcs].sort((a, b) => b.trust - a.trust);
+      const topTrust = sortedByTrust[0];
+      const bottomTrust = sortedByTrust[sortedByTrust.length - 1];
+      if (topTrust && topTrust.trust >= 30) {
+        const name = topTrust.npcName;
+        const p = korParticle(name, '은', '는');
+        parts.push(`${name}${p} 당신의 이름을 오래도록 기억할 것이다.`);
+      } else if (bottomTrust && bottomTrust.trust <= -30) {
+        parts.push(`${bottomTrust.npcName}의 눈빛을 당신은 쉽게 지우지 못할 것이다.`);
+      }
+    }
+
+    // 4. 행동 성향의 여운
+    const primaryVec = input.dominantVectors?.[0];
+    const vecTrail: Record<string, string> = {
+      SOCIAL: '사람들 사이에 섞여 걸었던 발자국이 도시 곳곳에 남았다.',
+      STEALTH: '당신이 지나간 자리를 아는 이는 많지 않았다.',
+      VIOLENT: '당신의 검이 만든 정적이 아직 공기 속에 남아 있었다.',
+      ECONOMIC: '주머니 속 금화가 당신의 증언이 되었다.',
+      PRESSURE: '당신이 드리운 그림자를 두려워하는 이들이 있었다.',
+      OBSERVATIONAL: '당신이 보아온 것들은 도시의 비밀이 되었다.',
+    };
+    if (primaryVec && vecTrail[primaryVec]) {
+      parts.push(vecTrail[primaryVec]);
+    }
+
+    if (parts.length <= 1) return undefined;
+    return parts.join(' ');
   }
 
   /**

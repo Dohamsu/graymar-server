@@ -160,6 +160,30 @@ export class WorldTickService {
           : 'NIGHT',
     };
 
+    // Soft deadline 근접 시그널 (mainArcClock이 있을 때만)
+    const softDeadlineSig = this.signalFeed.generateSoftDeadlineSignal(
+      updated.mainArcClock,
+      updated.day,
+      updated.globalClock,
+      updated.signalFeed,
+    );
+    if (softDeadlineSig) {
+      // mainArcClock.triggered 플래그 동기화
+      if (!updated.mainArcClock?.triggered && updated.mainArcClock) {
+        const daysLeft = updated.mainArcClock.softDeadlineDay - updated.day;
+        if (daysLeft < 0) {
+          updated = {
+            ...updated,
+            mainArcClock: { ...updated.mainArcClock, triggered: true },
+          };
+        }
+      }
+      updated = {
+        ...updated,
+        signalFeed: [...updated.signalFeed, softDeadlineSig],
+      };
+    }
+
     // 만료된 시그널 정리
     updated = {
       ...updated,
