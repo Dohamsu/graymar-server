@@ -1,7 +1,7 @@
 // 정본: specs/HUB_system.md — HUB 기반 런 생성
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, count, desc, eq, lt } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import {
@@ -25,6 +25,7 @@ import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { AgendaService } from '../engine/hub/agenda.service.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
+import { SummaryBuilderService } from '../engine/hub/summary-builder.service.js';
 import {
   type ServerResultV1,
   type RunState,
@@ -45,6 +46,11 @@ import { ShopService } from '../engine/hub/shop.service.js';
 import { EquipmentService } from '../engine/rewards/equipment.service.js';
 import type { EquipmentSlot } from '../db/types/equipment.js';
 import type { RegionEconomy } from '../db/types/region-state.js';
+import type {
+  EndingResult,
+  EndingSummary,
+  EndingSummaryCard,
+} from '../db/types/ending.js';
 
 @Injectable()
 export class RunsService {
@@ -64,6 +70,7 @@ export class RunsService {
     private readonly affixService: AffixService,
     private readonly shopService: ShopService,
     private readonly equipmentService: EquipmentService,
+    private readonly summaryBuilder: SummaryBuilderService,
   ) {}
 
   async createRun(
@@ -865,7 +872,19 @@ export class RunsService {
         }
       : undefined;
 
-    if (!run) return { lastCharacter };
+    // Journey Archive Phase 1: RUN_ENDED 카운트 (간략 배지용)
+    const endingsCountRows = await this.db
+      .select({ value: count() })
+      .from(runSessions)
+      .where(
+        and(
+          eq(runSessions.userId, userId),
+          eq(runSessions.status, 'RUN_ENDED'),
+        ),
+      );
+    const endingsCount = Number(endingsCountRows[0]?.value ?? 0);
+
+    if (!run) return { lastCharacter, endingsCount };
     return {
       runId: run.id,
       presetId: run.presetId,
@@ -874,7 +893,208 @@ export class RunsService {
       currentNodeIndex: run.currentNodeIndex,
       startedAt: run.startedAt,
       lastCharacter,
+      endingsCount,
     };
+  }
+
+  // ── Journey Archive Phase 1 ──
+
+  /** 카드 형태로 요약 변환 */
+  private toEndingCard(
+    run: { id: string; gender: 'male' | 'female' | null },
+    summary: EndingSummary,
+  ): EndingSummaryCard {
+    return {
+      runId: summary.runId ?? run.id,
+      characterName: summary.characterName,
+      presetId: summary.presetId,
+      presetLabel: summary.presetLabel,
+      gender: summary.gender ?? run.gender ?? 'male',
+      completedAt: summary.completedAt,
+      arcTitle: summary.finale.arcTitle,
+      stability: summary.finale.stability,
+      daysSpent: summary.stats.daysSpent,
+      totalTurns: summary.stats.totalTurns,
+    };
+  }
+
+  /**
+   * Lazy fallback: run_sessions.endingSummary가 NULL인 구버전 런에 대해
+   * turns 테이블에서 endingResult를 찾아 on-the-fly로 EndingSummary를 생성하고
+   * DB에 캐시한다. 실패 시 null 반환 (게임 진행엔 영향 없음).
+   */
+  private async ensureEndingSummary(run: {
+    id: string;
+    presetId: string | null;
+    gender: 'male' | 'female' | null;
+    updatedAt: Date;
+    currentTurnNo: number;
+    runState: unknown;
+    endingSummary: EndingSummary | null;
+  }): Promise<EndingSummary | null> {
+    if (run.endingSummary) return run.endingSummary;
+
+    try {
+      // turns 테이블에서 ui.endingResult가 담긴 최신 턴 찾기
+      const recentTurns = await this.db
+        .select({
+          turnNo: turns.turnNo,
+          serverResult: turns.serverResult,
+        })
+        .from(turns)
+        .where(eq(turns.runId, run.id))
+        .orderBy(desc(turns.turnNo))
+        .limit(25);
+
+      let endingResult: EndingResult | null = null;
+      for (const t of recentTurns) {
+        const ui = (t.serverResult as { ui?: { endingResult?: EndingResult } })
+          ?.ui;
+        if (ui?.endingResult) {
+          endingResult = ui.endingResult;
+          break;
+        }
+      }
+
+      if (!endingResult) {
+        this.logger.warn(
+          `ensureEndingSummary: no endingResult found for runId=${run.id}`,
+        );
+        return null;
+      }
+
+      const summary = this.summaryBuilder.buildEndingSummary(
+        {
+          id: run.id,
+          presetId: run.presetId,
+          gender: run.gender,
+          updatedAt: run.updatedAt,
+          currentTurnNo: run.currentTurnNo,
+        },
+        // runState는 nullable일 수 있어 안전 캐스팅
+        (run.runState as never) ?? {
+          hp: 0,
+          maxHp: 100,
+          stamina: 0,
+          maxStamina: 5,
+          inventory: [],
+          npcRelations: {},
+          eventCooldowns: {},
+        },
+        endingResult,
+      );
+
+      // 캐시 저장 (실패해도 결과는 반환)
+      await this.db
+        .update(runSessions)
+        .set({ endingSummary: summary })
+        .where(eq(runSessions.id, run.id));
+
+      return summary;
+    } catch (e) {
+      this.logger.warn(
+        `ensureEndingSummary failed runId=${run.id}: ${String(e)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * 사용자의 RUN_ENDED 런 목록 조회 (seek pagination).
+   * cursor: runId. cursor 런의 updatedAt 미만인 런들을 조회.
+   */
+  async listUserEndings(
+    userId: string,
+    options: { cursor?: string; limit?: number } = {},
+  ) {
+    const limit = Math.max(1, Math.min(options.limit ?? 20, 50));
+
+    // cursor seek: cursor 런의 updatedAt 조회
+    let cursorUpdatedAt: Date | null = null;
+    if (options.cursor) {
+      const cursorRun = await this.db.query.runSessions.findFirst({
+        where: and(
+          eq(runSessions.id, options.cursor),
+          eq(runSessions.userId, userId),
+        ),
+      });
+      if (cursorRun) cursorUpdatedAt = cursorRun.updatedAt;
+    }
+
+    const whereClause = cursorUpdatedAt
+      ? and(
+          eq(runSessions.userId, userId),
+          eq(runSessions.status, 'RUN_ENDED'),
+          lt(runSessions.updatedAt, cursorUpdatedAt),
+        )
+      : and(
+          eq(runSessions.userId, userId),
+          eq(runSessions.status, 'RUN_ENDED'),
+        );
+
+    const rows = await this.db
+      .select({
+        id: runSessions.id,
+        presetId: runSessions.presetId,
+        gender: runSessions.gender,
+        updatedAt: runSessions.updatedAt,
+        currentTurnNo: runSessions.currentTurnNo,
+        runState: runSessions.runState,
+        endingSummary: runSessions.endingSummary,
+      })
+      .from(runSessions)
+      .where(whereClause)
+      .orderBy(desc(runSessions.updatedAt))
+      .limit(limit);
+
+    const cards: EndingSummaryCard[] = [];
+    for (const row of rows) {
+      const summary = await this.ensureEndingSummary({
+        id: row.id,
+        presetId: row.presetId,
+        gender: row.gender,
+        updatedAt: row.updatedAt,
+        currentTurnNo: row.currentTurnNo,
+        runState: row.runState,
+        endingSummary: row.endingSummary ?? null,
+      });
+      if (!summary) continue;
+      cards.push(this.toEndingCard({ id: row.id, gender: row.gender }, summary));
+    }
+
+    const hasMore = rows.length === limit;
+    const nextCursor = hasMore ? rows[rows.length - 1]?.id : undefined;
+
+    return {
+      items: cards,
+      page: { hasMore, nextCursor },
+    };
+  }
+
+  /** 단일 엔딩 상세 조회 (본인 소유 검증). */
+  async getEndingDetail(userId: string, runId: string): Promise<EndingSummary> {
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+    });
+    if (!run) throw new NotFoundError('Run not found');
+    if (run.userId !== userId) throw new ForbiddenError('Not your run');
+    if (run.status !== 'RUN_ENDED') {
+      throw new BadRequestError('Run is not ended');
+    }
+
+    const summary = await this.ensureEndingSummary({
+      id: run.id,
+      presetId: run.presetId,
+      gender: run.gender,
+      updatedAt: run.updatedAt,
+      currentTurnNo: run.currentTurnNo,
+      runState: run.runState,
+      endingSummary: run.endingSummary ?? null,
+    });
+    if (!summary) {
+      throw new NotFoundError('Ending summary not available');
+    }
+    return summary;
   }
 
   async getRun(runId: string, userId: string, query: GetRunQuery) {
