@@ -305,8 +305,8 @@ export class FactExtractorService {
     }
 
     const userMsg = [
-      '아래 사실 목록을 NPC별/장소별로 1~2문장 요약하세요. 서술자가 참고할 핵심만.',
-      '같은 표현 반복하지 말고, 각 인물의 특징을 구분해서 요약.',
+      '아래 사실을 entity별 한 줄 키워드로 압축하세요. 형식: [이름] 키워드1, 키워드2, 키워드3',
+      '각 줄 최대 40자. 문장 만들지 말고 핵심 단어만. 서술/미사여구 금지.',
       '',
       '사실:',
       ...factLines,
@@ -314,8 +314,8 @@ export class FactExtractorService {
 
     const text = await this.llmCaller.callLight({
       messages: [{ role: 'user', content: userMsg }],
-      maxTokens: 200,
-      temperature: 0.5,
+      maxTokens: 100,
+      temperature: 0.3,
     });
 
     return text || this.fallbackSummary(grouped);
