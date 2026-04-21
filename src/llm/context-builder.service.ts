@@ -205,6 +205,77 @@ export class ContextBuilderService {
     return null;
   }
 
+  /**
+   * A1 — 활성 사건 관련도 필터 + 상위 N개 선별.
+   *  우선순위: (1) 현재 장소 일치 (2) pressure ≥ 70 안전망 (3) stage ≥ 3 진행 중
+   *  정렬: pressure 내림차순 · 최대 3개
+   *  목적: 무관한 타 지역 사건을 프롬프트에서 제외해 토큰 절감
+   */
+  private compressIncidents(
+    incidents: IncidentRuntime[],
+    currentLocationId: string | null,
+    max = 3,
+  ): IncidentRuntime[] {
+    if (incidents.length === 0) return [];
+
+    const scored = incidents.map((inc) => {
+      let score = 0;
+      // ① 현재 장소 일치 (가장 큰 가중치) — incident def에 locationId 있음 (타입은 일부만 노출)
+      const incDef = this.content.getIncident(inc.incidentId) as
+        | { locationId?: string }
+        | undefined;
+      const incLocation = incDef?.locationId;
+      if (incLocation && currentLocationId && incLocation === currentLocationId) {
+        score += 100;
+      }
+      // ② pressure 높을수록 가중치 (안전망: pressure≥70은 장소 무관 포함)
+      score += inc.pressure;
+      if (inc.pressure >= 70) score += 50;
+      // ③ 진행 단계 stage
+      score += (inc.stage ?? 0) * 10;
+      return { inc, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, max).map((s) => s.inc);
+  }
+
+  /**
+   * A1 — 시그널 피드 관련도 필터.
+   *  우선순위:
+   *   (1) sourceIncidentId가 선별된 incident에 속하면 강제 포함
+   *   (2) severity ≥ 5 (긴급)
+   *   (3) 현재 장소 일치
+   *   (4) severity 내림차순
+   *  최대 3개 (기존 5개 → 축소)
+   */
+  private compressSignals(
+    signals: SignalFeedItem[],
+    selectedIncidentIds: Set<string>,
+    currentLocationId: string | null,
+    max = 3,
+  ): SignalFeedItem[] {
+    if (signals.length === 0) return [];
+
+    const scored = signals
+      .filter((s) => s.severity >= 3)
+      .map((s) => {
+        let score = 0;
+        if (s.sourceIncidentId && selectedIncidentIds.has(s.sourceIncidentId)) {
+          score += 100;
+        }
+        if (s.severity >= 5) score += 50;
+        if (s.locationId && currentLocationId && s.locationId === currentLocationId) {
+          score += 30;
+        }
+        score += s.severity * 5;
+        return { s, score };
+      });
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, max).map((x) => x.s);
+  }
+
   /** 텍스트에 포함된 NPC 실명을 introduced 상태에 따라 displayName으로 치환 */
   private sanitizeNpcNames(
     text: string,
@@ -535,16 +606,28 @@ export class ContextBuilderService {
 
     if (runState) {
       const ws = runState.worldState as Record<string, unknown> | undefined;
+      const currentLocationId = (ws?.currentLocationId as string | undefined) ?? null;
 
-      // Incident 요약
+      // Incident 요약 — A1 코드 기반 압축 (장소·pressure·stage 가중치로 상위 3건)
+      // 이전 nano LLM 하이브리드 경로는 실측 결과 그레이마르 콘텐츠에서
+      // 활성 사건이 2~3건을 초과하지 않아 데드 코드였으므로 제거.
       const activeIncidents = (ws?.activeIncidents ?? []) as IncidentRuntime[];
-      if (activeIncidents.length > 0) {
-        const lines = activeIncidents.map((inc) => {
+      const selectedIncidents = this.compressIncidents(
+        activeIncidents,
+        currentLocationId,
+      );
+      if (selectedIncidents.length > 0) {
+        const lines = selectedIncidents.map((inc) => {
+          const def = this.content.getIncident(inc.incidentId);
+          const title = def?.title ?? inc.incidentId;
           const tension =
             inc.pressure >= 70 ? '위기' : inc.pressure >= 40 ? '긴장' : '잠재';
-          return `- ${inc.incidentId} (${inc.kind}): 통제 ${inc.control}/100, 압력 ${inc.pressure}/100 [${tension}], 단계 ${inc.stage}`;
+          return `- ${title}(${inc.kind}): ${tension}/통제${inc.control}/단계${inc.stage}`;
         });
-        incidentContext = `활성 사건 ${activeIncidents.length}건:\n${lines.join('\n')}`;
+        const total = activeIncidents.length;
+        const sel = selectedIncidents.length;
+        const suffix = total > sel ? ` · ${total - sel}건 생략` : '';
+        incidentContext = `활성 사건 ${sel}건${suffix}:\n${lines.join('\n')}`;
       }
 
       // NPC 감정 상태 → prompt-builder에서 targetNpcIds 기반으로 빌드
@@ -599,13 +682,22 @@ export class ContextBuilderService {
         narrativeMarkContext = `서사 표식 ${marks.length}개:\n${markLines.join('\n')}`;
       }
 
-      // Signal Feed 요약 (severity 3 이상만)
+      // Signal Feed 요약 — A1 압축
+      //  · 우선순위: ① 선별된 incident의 sourceIncidentId 일치 ② severity≥5(긴급) ③ 현재 장소 일치
+      //  · 최대 3개 (기존 5개에서 축소)
       const signals = (ws?.signalFeed ?? []) as SignalFeedItem[];
-      const importantSignals = signals.filter((s) => s.severity >= 3);
-      if (importantSignals.length > 0) {
-        const sigLines = importantSignals
-          .slice(0, 5)
-          .map((s) => `- [${s.channel}/${s.severity}] ${s.text}`);
+      const selectedSignalIncidentIds = new Set(
+        selectedIncidents.map((i) => i.incidentId),
+      );
+      const selectedSignals = this.compressSignals(
+        signals,
+        selectedSignalIncidentIds,
+        currentLocationId,
+      );
+      if (selectedSignals.length > 0) {
+        const sigLines = selectedSignals.map(
+          (s) => `- [${s.channel}/${s.severity}] ${s.text}`,
+        );
         signalContext = `주요 시그널:\n${sigLines.join('\n')}`;
       }
     }
@@ -701,9 +793,7 @@ export class ContextBuilderService {
         if (entityFactRows.length > 0) {
           const summary =
             await this.factExtractor.summarizeFacts(entityFactRows);
-          llmFactsText = summary
-            ? `${summary}\n이 정보는 참고용입니다. 같은 표현을 반복하지 말고 새로운 관찰로 발전시키세요.`
-            : null;
+          llmFactsText = summary || null;
         }
       } catch {
         // entity_facts 실패 → 기존 llmExtracted fallback
@@ -1637,13 +1727,19 @@ export class ContextBuilderService {
       lines.push(`플레이어 입장: ${mem.playerStance}${controlInfo}`);
 
       if (mem.playerInvolvements.length > 0) {
-        lines.push('관여 이력:');
-        for (const inv of mem.playerInvolvements.slice(-5)) {
+        const recent = mem.playerInvolvements.slice(-5);
+        const items = recent.map((inv) => {
           const locName = LOCATION_NAMES[inv.locationId] ?? inv.locationId;
-          lines.push(
-            `- T${inv.turnNo} ${locName}: ${inv.action} -> ${inv.impact}`,
-          );
-        }
+          // impact 축약: "control+10, pressure+2" → "c+10p+2"
+          const compactImpact = inv.impact
+            .replace(/control/g, 'c')
+            .replace(/pressure/g, 'p')
+            .replace(/,\s*/g, '');
+          return `T${inv.turnNo}${locName}${inv.action}→${compactImpact}`;
+        });
+        const total = mem.playerInvolvements.length;
+        const suffix = total > recent.length ? ` (총 ${total})` : '';
+        lines.push(`관여${suffix}: ${items.join(' ')}`);
       }
 
       if (mem.knownClues.length > 0) {
@@ -1798,34 +1894,45 @@ export class ContextBuilderService {
       const pm = npc.personalMemory;
 
       if (pm && pm.encounters.length > 0) {
-        // 상세 기록 있음
+        // A2 압축 — 만남 기록은 최근 3개 + 라인 축약
+        //  · outcome 한 글자 기호: SUCCESS○ / PARTIAL△ / FAIL×
+        //  · briefNote 20자 제한 + 빈 값 생략
+        //  · relationSummary 한 번만 (pm.relationSummary 우선)
         const lines: string[] = [];
         lines.push(`[NPC: ${displayName}]`);
         lines.push(
-          `관계: ${pm.relationSummary || generateRelationSummary(posture, npc.emotional.trust)} (trust: ${npc.emotional.trust})`,
+          `관계: ${pm.relationSummary || generateRelationSummary(posture, npc.emotional.trust)} (trust:${npc.emotional.trust})`,
         );
 
-        // 과거 만남 (최근 5개만 렌더링하여 토큰 절약)
-        const recentEnc = pm.encounters.slice(-5);
+        const recentEnc = pm.encounters.slice(-3);
         if (recentEnc.length > 0) {
-          lines.push('과거 만남:');
+          const total = pm.encounters.length;
+          const suffix = total > recentEnc.length ? ` (총 ${total}회)` : '';
+          lines.push(`만남${suffix}:`);
           for (const enc of recentEnc) {
             const locName = LOCATION_NAMES[enc.locationId] ?? enc.locationId;
-            const outcomeKr =
+            const mark =
               enc.outcome === 'SUCCESS'
-                ? '성공'
+                ? '○'
                 : enc.outcome === 'PARTIAL'
-                  ? '부분성공'
-                  : '실패';
+                  ? '△'
+                  : '×';
+            const note =
+              enc.briefNote && enc.briefNote.length > 0
+                ? ` "${enc.briefNote.slice(0, 20)}"`
+                : '';
             lines.push(
-              `- T${enc.turnNo} ${locName}: ${enc.playerAction} -> ${outcomeKr} "${enc.briefNote}"`,
+              `- T${enc.turnNo}${locName} ${enc.playerAction}${mark}${note}`,
             );
           }
         }
 
-        // 알려진 사실
+        // 알려진 사실 (최대 3개)
         if (pm.knownFacts.length > 0) {
-          lines.push(`알려진 사실: ${pm.knownFacts.join('; ')}`);
+          const top = pm.knownFacts.slice(0, 3).join('; ');
+          const more =
+            pm.knownFacts.length > 3 ? ` +${pm.knownFacts.length - 3}` : '';
+          lines.push(`알려진 사실: ${top}${more}`);
         }
 
         blocks.push(lines.join('\n'));

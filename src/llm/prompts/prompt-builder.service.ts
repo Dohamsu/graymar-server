@@ -208,9 +208,7 @@ export class PromptBuilderService {
         factsText = factsLines.join('\n');
       }
       if (factsText.trim()) {
-        memoryParts.push(
-          `[기억된 사실]\n${factsText}\n⚠️ 위 사실들을 서술에 적극 활용하세요. 해당 장소나 NPC 관련 장면에서 이 디테일을 감각적 묘사로 녹여내세요.`,
-        );
+        memoryParts.push(`[기억된 사실]\n${factsText}`);
       }
     }
 
@@ -370,18 +368,6 @@ export class PromptBuilderService {
       memoryParts.push(
         [
           '[이번 방문 대화]',
-          '이 장소에서 있었던 대화와 행동입니다. 서술 텍스트는 참고용이며 복사 대상이 아닙니다.',
-          '',
-          '⚠️ 핵심 규칙:',
-          '1. 직전 턴의 서술 텍스트를 절대 반복/복사하지 마세요. 이미 쓰인 묘사를 다시 쓰면 안 됩니다.',
-          '2. 직전 서술의 마지막 장면에서 자연스럽게 이어지는 새 장면만 작성하세요.',
-          '3. 직전 턴에서 NPC나 인물이 등장했다면, 같은 인물과의 상호작용을 이어가세요. 갑자기 새 인물로 전환하지 마세요.',
-          '4. 직전 턴에서 특정 장소에 있었다면, 같은 장소에서 계속하세요.',
-          '5. [상황 요약]과 [배경 상황]은 이번 턴의 게임 엔진 정보일 뿐, 장면 전환 지시가 아닙니다. 직전 서술의 흐름이 항상 우선합니다.',
-          '6. ⚠️ 이전 턴에서 NPC가 알려준 정보, 획득한 물건, 발견한 단서를 반드시 기억하세요. NPC가 같은 정보를 처음 말하는 것처럼 반복하면 안 됩니다. 예: 이미 종이뭉치를 받았으면, 같은 NPC가 다시 종이뭉치를 주거나 같은 정보를 처음 알려주는 식으로 쓰면 안 됩니다.',
-          '7. ⚠️ 이미 대화한 NPC가 다시 등장할 때는 이전 대화 내용을 알고 있어야 합니다. "그대, 무슨 일로 여기 돌아다니오?" 같은 반응은 이미 그 NPC에게서 허가/정보를 받은 상황에서는 부자연스럽습니다.',
-          '8. ⚠️ 대화 주제 반복 금지: [NPC 감정 상태] 블록에 "이미 다룬 주제"와 "반복 금지 키워드"가 있으면, 해당 키워드와 주제를 이번 턴에서 다시 사용하지 마세요. 같은 정보를 다른 단어로 바꿔 전달하는 것도 반복입니다. 완전히 새로운 화제, 구체적 증거, 감정 반응으로 대화를 전진시키세요.',
-          '',
           sessionLines.join('\n---\n'),
         ].join('\n'),
       );
@@ -614,11 +600,15 @@ export class PromptBuilderService {
         const idTag = `[ID:${npc.npcId}, ${genderTag}, 대명사:${pronoun}]`;
 
         if (isNewlyIntroduced && isNewlyEncountered) {
-          return `- ${npc.name}${title} ${idTag}: ${npc.role} [첫 만남 — 자연스럽게 자기소개(이름 포함)를 하도록 서술하세요]`;
+          return `- ${npc.name}${title} ${idTag}: ${npc.role} [자기소개] — 이번 턴에 "${alias}"로 처음 등장하여 본인이 직접 이름을 밝힙니다. "${alias}"가 먼저 등장한 뒤, 해당 NPC의 대사 안에 "...${npc.name}이오. ..." 식으로 이름을 포함시킨 자기소개 대사 1회를 반드시 넣으세요. 자기소개 이전 서술에서는 "${alias}" 사용, 이후에는 "${npc.name}" 실명 사용.`;
         } else if (isNewlyIntroduced && !isNewlyEncountered) {
-          return `- ${npc.name}${title} ${idTag}: ${npc.role} [이번 장면에서 이름이 자연스럽게 드러납니다 — 다른 인물이 이름을 부르거나, 상황 단서(문서, 간판, 대화)를 통해 알게 되는 식으로 서술하세요. 직접 자기소개하지 않습니다]`;
+          return `- ${npc.name}${title} ${idTag}: ${npc.role} [이번 장면에서 이름이 자연스럽게 드러납니다] — 이전까지 "${alias}"로 등장했고 이번 턴에 실명이 공개됩니다. 아래 3가지 장면 중 **반드시 하나**를 서술에 삽입하세요:
+    (a) 제3자 호명: 다른 NPC가 "${npc.name}! ..." 식으로 이름을 불러주는 대사 장면
+    (b) 단서 발견: 플레이어가 명찰·편지·장부·간판에서 '${npc.name}' 이름을 읽는 장면 (홑따옴표 인용)
+    (c) 본인 우발 노출: ${alias}가 "... 아, 내 이름은 ${npc.name}이오. ..." 식으로 말끝에 흘리는 대사 장면
+    공개 장면 이전 문장에서는 반드시 "${alias}" 또는 "${pronoun}"을 사용하고, 장면 이후에만 "${npc.name}" 실명을 사용하세요. 장면 없이 갑자기 실명을 쓰면 몰입이 깨집니다.`;
         } else if (isNewlyEncountered && !isNewlyIntroduced) {
-          return `- "${alias}" ${idTag}: ${npc.role} [첫 만남 — 이름을 밝히지 않습니다. 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "${pronoun}", "${pronoun} 인물" 등 짧은 대명사로 대체하세요]`;
+          return `- "${alias}" ${idTag}: ${npc.role} [첫 만남 — 이름 미공개] 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "${pronoun}", "${pronoun} 인물" 등 짧은 대명사로 대체하세요. 실명 사용 금지.`;
         } else if (isIntroduced) {
           const knowledgeEntries = (ctx.npcKnowledge ?? {})[npc.npcId];
           const knowledgePart =
@@ -636,21 +626,7 @@ export class PromptBuilderService {
           : '';
       memoryParts.push(
         [
-          '[등장 가능 NPC 목록 — 참조용]',
-          '⚠️ NPC 등장 규칙:',
-          '- **주인공 NPC는 1명**입니다. 플레이어가 특정 NPC에게 행동했으면 그 NPC가 주인공입니다.',
-          '- [이번 턴 NPC가 공개할 정보] 블록이 있으면 → 반드시 해당 NPC가 직접 정보를 전달합니다. 다른 NPC가 대신 전달하면 안 됩니다.',
-          '- 배경 NPC는 등장할 수 있지만, 대사 없이 묘사만 가능합니다 (예: "멀리서 누군가 지나간다", "노점 상인이 물건을 정리한다").',
-          '- 배경 NPC가 플레이어에게 직접 말을 거는 것은 금지합니다. 정보 전달, 조언, 경고 등은 주인공 NPC만 합니다.',
-          '- NPC를 지정하지 않은 행동이면 → 상황에 가장 적합한 1명을 주인공으로 고르세요.',
-          '이 목록에 없는 이름 있는 캐릭터를 만들지 마세요. 배경 인물은 "한 사내", "노점 상인" 등 익명만.',
-          '⚠️ [이름 미공개] NPC 별칭 사용 규칙:',
-          '  - 별칭 전체(예: "권위적인 야간 경비 책임자")는 한 턴에서 최대 1회만 사용하세요.',
-          '  - 첫 등장 이후에는 반드시 "그", "그녀", "그 인물", "그 사내", "책임자" 등 짧은 대명사나 축약 호칭으로 대체하세요.',
-          '  - 나쁜 예: "권위적인 야간 경비 책임자가 말했다... 권위적인 야간 경비 책임자는 고개를 끄덕였다"',
-          '  - 좋은 예: "권위적인 야간 경비 책임자가 말했다... 그는 고개를 끄덕였다"',
-          '  - [이름 미공개] NPC가 자기 이름을 밝히거나 자기소개하는 장면은 쓰지 마세요 — 자기소개는 [자기소개] 태그가 붙은 NPC만 합니다.',
-          '',
+          '[등장 가능 NPC 목록]',
           npcLines.join('\n'),
           relationPart,
         ].join('\n'),
@@ -1615,17 +1591,85 @@ export class PromptBuilderService {
             }
 
             // 어체(speechRegister) 규칙 — Dual-Track: LLM이 직접 대사 생성하므로 필수
+            // CLAUDE.md LLM 설계 원칙: Positive framing 우선 + 경계 강화. 짧은 경고 외에
+            // 관찰·질문·설명 문형 예시로 확장해 긴 대사도 일관된 어미 유지.
             const register = (personality as Record<string, unknown>).speechRegister as string | undefined;
-            const REGISTER_RULES: Record<string, { name: string; endings: string; examples: string; playerRef: string }> = {
-              HAOCHE: { name: '하오체 (중세 경어)', endings: '~소, ~오, ~하오, ~이오, ~겠소', examples: '"조심하시오." "그건 알 수 없소."', playerRef: '당신/그대' },
-              HAEYO: { name: '해요체 (부드러운 존댓말)', endings: '~해요, ~세요, ~죠, ~요', examples: '"조심하세요." "그건 잘 모르겠어요."', playerRef: '당신' },
-              BANMAL: { name: '반말 (비격식)', endings: '~야, ~해, ~지, ~거든, ~잖아', examples: '"조심해." "그건 몰라."', playerRef: '너/자네' },
-              HAPSYO: { name: '합쇼체 (공식)', endings: '~습니다, ~입니다, ~십시오, ~겠습니다', examples: '"조심하십시오." "그건 알 수 없습니다."', playerRef: '당신' },
-              HAECHE: { name: '해체 (노인/느슨한 반말)', endings: '~지, ~거든, ~는데, ~네, ~라네', examples: '"조심하게." "그건 모르겠네."', playerRef: '자네/이보게' },
+            const REGISTER_RULES: Record<
+              string,
+              {
+                name: string;
+                endings: string;
+                examples: string[];
+                forbidHint: string;
+                playerRef: string;
+              }
+            > = {
+              HAOCHE: {
+                name: '하오체 (중세 경어)',
+                endings: '~소, ~오, ~하오, ~이오, ~시오, ~겠소, ~있소, ~없소, ~했소',
+                examples: [
+                  '"조심하시오."',
+                  '"그건 내가 알 수 없소."',
+                  '"이 일은 쉽게 끝날 것 같지 않소."',
+                  '"무엇을 찾고 있는지 말해보시오."',
+                ],
+                forbidHint: '~합니다 / ~입니다 / ~해요 / ~야',
+                playerRef: '당신/그대',
+              },
+              HAEYO: {
+                name: '해요체 (부드러운 존댓말)',
+                endings: '~해요, ~세요, ~죠, ~요, ~네요, ~거예요',
+                examples: [
+                  '"조심하세요."',
+                  '"그건 잘 모르겠어요."',
+                  '"지금 이 얘기는 여기서만 해주세요."',
+                  '"왜 그런 걸 물으시는 거죠?"',
+                ],
+                forbidHint: '~합니다 / ~이오 / ~야 / ~지',
+                playerRef: '당신',
+              },
+              BANMAL: {
+                name: '반말 (비격식)',
+                endings: '~야, ~해, ~지, ~거든, ~잖아, ~어, ~었어',
+                examples: [
+                  '"조심해."',
+                  '"그건 몰라."',
+                  '"어제 이상한 놈이 여기 있었거든."',
+                  '"너는 왜 그걸 신경 써?"',
+                ],
+                forbidHint: '~합니다 / ~이오 / ~해요',
+                playerRef: '너/자네',
+              },
+              HAPSYO: {
+                name: '합쇼체 (공식 존댓말)',
+                endings: '~습니다, ~입니다, ~십시오, ~겠습니다, ~십니까',
+                examples: [
+                  '"조심하십시오."',
+                  '"그것은 제가 알 수 없습니다."',
+                  '"이 일은 규정대로 처리하겠습니다."',
+                  '"무엇을 도와드릴까요?"',
+                ],
+                forbidHint: '~이오 / ~해요 / ~야',
+                playerRef: '당신',
+              },
+              HAECHE: {
+                name: '해체 (노인/느슨한 반말)',
+                endings: '~지, ~거든, ~는데, ~네, ~라네, ~걸',
+                examples: [
+                  '"조심하게."',
+                  '"그건 나도 모르겠네."',
+                  '"여기 온 지 얼마 안 된 모양이지."',
+                  '"그런 게 원래 쉬운 일이 아니라네."',
+                ],
+                forbidHint: '~합니다 / ~이오 / ~해요',
+                playerRef: '자네/이보게',
+              },
             };
             const rule = REGISTER_RULES[register ?? 'HAOCHE'] ?? REGISTER_RULES.HAOCHE;
-            parts.push(`    ⚠️ 어체: ${rule.name} — 어미는 반드시 ${rule.endings}로 끝내세요`);
-            parts.push(`    올바른 예: ${rule.examples}`);
+            parts.push(
+              `    ⚠️ 어체: ${rule.name} — 이 NPC의 모든 문장은 ${rule.endings} 중 하나로 끝납니다. 한 대사 안에 다른 어미(${rule.forbidHint})를 한 문장이라도 섞으면 캐릭터가 깨집니다.`,
+            );
+            parts.push(`    올바른 예: ${rule.examples.join(' ')}`);
             parts.push(`    플레이어 지칭: ${rule.playerRef}`);
 
             if (personality.speechStyle) {
