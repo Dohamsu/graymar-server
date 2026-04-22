@@ -11,6 +11,7 @@ import type {
 } from '../../db/types/index.js';
 import type { TraitEffects } from '../../content/content.types.js';
 import type { Rng } from '../rng/rng.service.js';
+import { SuddenActionDetectorService } from './sudden-action-detector.service.js';
 
 const HEAT_DELTA_CLAMP = 8;
 const MAX_COMBAT_PER_WINDOW = 3;
@@ -44,6 +45,11 @@ const ACTION_STAT_MAP: Record<string, keyof PermanentStats> = {
 @Injectable()
 export class ResolveService {
   private readonly logger = new Logger(ResolveService.name);
+
+  constructor(
+    private readonly suddenActionDetector: SuddenActionDetectorService,
+  ) {}
+
   /**
    * BRIBE/TRADE 골드 비용 계산
    * - specifiedGold가 있으면 플레이어가 명시한 수치 사용
@@ -199,16 +205,33 @@ export class ResolveService {
     if (outcome === 'FAIL') heatDelta = event.matchPolicy === 'BLOCK' ? 5 : 2;
     if (intent.actionType === 'FIGHT' || intent.actionType === 'THREATEN')
       heatDelta += 2;
+
+    // architecture/43: 돌발행동 감지 — severity별 heatDelta 상향
+    const suddenAction = this.suddenActionDetector.detect(
+      intent,
+      intent.inputText ?? '',
+    );
+    if (suddenAction) {
+      if (suddenAction.severity === 'CRITICAL') heatDelta += 6;
+      else if (suddenAction.severity === 'SEVERE') heatDelta += 3;
+      else if (suddenAction.severity === 'MODERATE') heatDelta += 1;
+    }
+
     heatDelta = Math.max(
       -HEAT_DELTA_CLAMP,
       Math.min(HEAT_DELTA_CLAMP, heatDelta),
     );
 
     // 전투 트리거 체크
-    const triggerCombat =
+    // architecture/43: CRITICAL 돌발행동은 outcome 무관 combat 강제
+    const baseTriggerCombat =
       outcome === 'FAIL' &&
       event.matchPolicy === 'BLOCK' &&
       ws.combatWindowCount < MAX_COMBAT_PER_WINDOW;
+    const criticalForceCombat =
+      suddenAction?.severity === 'CRITICAL' &&
+      ws.combatWindowCount < MAX_COMBAT_PER_WINDOW;
+    const triggerCombat = baseTriggerCombat || criticalForceCombat;
 
     // commitment delta
     const commitmentDelta =
@@ -329,6 +352,7 @@ export class ResolveService {
       combatEncounterId: triggerCombat
         ? this.selectCombatEncounter(event)
         : undefined,
+      suddenAction: suddenAction ?? undefined,
     };
   }
 

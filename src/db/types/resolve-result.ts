@@ -38,4 +38,11 @@ export type ResolveResult = {
   // Narrative Engine v1
   incidentPatches?: IncidentImpactPatch[];
   matchedIncidentId?: string;
+  // architecture/43: 돌발행동 감지 결과 (turns.service가 NPC 상태 반영)
+  suddenAction?: {
+    severity: 'CRITICAL' | 'SEVERE' | 'MODERATE' | 'MINOR';
+    type: 'KILL_ATTEMPT' | 'ASSAULT' | 'WEAPON_THREAT' | 'THEFT' | 'VERBAL_THREAT';
+    targetNpcId: string | null;
+    summary: string;
+  };
 };
