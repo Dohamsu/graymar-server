@@ -52,6 +52,7 @@ import {
 import { RuleParserService } from '../engine/input/rule-parser.service.js';
 import { PolicyService } from '../engine/input/policy.service.js';
 import { ActionPlanService } from '../engine/input/action-plan.service.js';
+import { PropMatcherService } from '../engine/combat/prop-matcher.service.js';
 import { NodeResolverService } from '../engine/nodes/node-resolver.service.js';
 import { NodeTransitionService } from '../engine/nodes/node-transition.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
@@ -159,6 +160,7 @@ export class TurnsService {
     private readonly ruleParser: RuleParserService,
     private readonly policyService: PolicyService,
     private readonly actionPlanService: ActionPlanService,
+    private readonly propMatcher: PropMatcherService,
     private readonly nodeResolver: NodeResolverService,
     private readonly nodeTransition: NodeTransitionService,
     private readonly content: ContentLoaderService,
@@ -4464,6 +4466,21 @@ export class TurnsService {
         policyResult,
         battleState.player?.stamina ?? playerStats.maxStamina,
       );
+
+      // 창의 전투 Tier 1~5 분류 (architecture/41)
+      const propMatch = this.propMatcher.classify(
+        rawInput,
+        battleState.environmentProps ?? [],
+      );
+      actionPlan.tier = propMatch.tier;
+      if (propMatch.prop) actionPlan.prop = propMatch.prop;
+      if (propMatch.improvised) actionPlan.improvised = propMatch.improvised;
+      if (propMatch.flags) actionPlan.flags = propMatch.flags;
+      // Tier 4/5 — 성향 추적 제외
+      if (propMatch.tier >= 4) {
+        actionPlan.excludeFromArcRoute = true;
+        actionPlan.excludeFromCommitment = true;
+      }
     }
 
     if (body.input.type === 'CHOICE' && body.input.choiceId) {
