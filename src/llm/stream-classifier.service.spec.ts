@@ -94,7 +94,10 @@ describe('StreamClassifierService — feed() + flush()', () => {
 
   it('시스템 태그 [CHOICES] → 무시 (빈 배열)', () => {
     const svc = makeSvc();
-    const events = feedAll(svc, '[CHOICES]\n1. 대화한다\n2. 떠난다\n[/CHOICES]\n');
+    const events = feedAll(
+      svc,
+      '[CHOICES]\n1. 대화한다\n2. 떠난다\n[/CHOICES]\n',
+    );
     // [CHOICES] 라인 자체는 필터, 나머지는 narration
     const choiceLines = events.filter(
       (e) => e.text.includes('[CHOICES]') || e.text.includes('[/CHOICES]'),
@@ -122,7 +125,8 @@ describe('StreamClassifierService — feed() + flush()', () => {
 
   it('[MEMORY:NPC_DETAIL] 인라인 태그 → 제거 후 narration', () => {
     const svc = makeSvc();
-    const text = '거리가 조용했다. [MEMORY:NPC_DETAIL]에드릭 관련 정보[/MEMORY] 바람이 불었다.\n';
+    const text =
+      '거리가 조용했다. [MEMORY:NPC_DETAIL]에드릭 관련 정보[/MEMORY] 바람이 불었다.\n';
     const events = feedAll(svc, text);
     const allText = events.map((e) => e.text).join(' ');
     expect(allText).not.toContain('[MEMORY:NPC_DETAIL]');

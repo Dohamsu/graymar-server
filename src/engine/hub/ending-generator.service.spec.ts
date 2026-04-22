@@ -50,7 +50,10 @@ function makeEndingsData() {
         COLLAPSED: { title: '철권의 잔해', epilogue: '진압은 폭동이 됐다.' },
       },
       NONE: {
-        STABLE: { title: '스쳐간 이방인', epilogue: '어느 편에도 서지 않았다.' },
+        STABLE: {
+          title: '스쳐간 이방인',
+          epilogue: '어느 편에도 서지 않았다.',
+        },
         UNSTABLE: { title: '방관자의 무게', epilogue: '아무것도 안 했다.' },
         COLLAPSED: { title: '잿더미의 증인', epilogue: '무너짐을 지켜봤다.' },
       },
@@ -70,7 +73,11 @@ function makeContentMock(): Partial<ContentLoaderService> {
     getEndingsData: jest.fn(() => makeEndingsData()) as never,
     getNpc: jest.fn((id: string) =>
       id === 'NPC_TEST'
-        ? ({ id: 'NPC_TEST', name: '테스트 NPC', unknownAlias: '낯선 이' } as never)
+        ? ({
+            id: 'NPC_TEST',
+            name: '테스트 NPC',
+            unknownAlias: '낯선 이',
+          } as never)
         : null,
     ) as never,
   };
@@ -157,12 +164,7 @@ describe('EndingGeneratorService', () => {
     });
 
     it('모든 Incident resolved + totalTurns < 15 → MIN_TURNS 가드로 차단', () => {
-      const r = service.checkEndingConditions(
-        [resolved()],
-        baseClock,
-        5,
-        10,
-      );
+      const r = service.checkEndingConditions([resolved()], baseClock, 5, 10);
       expect(r.shouldEnd).toBe(false);
       expect(r.reason).toBeNull();
     });
@@ -241,7 +243,10 @@ describe('EndingGeneratorService', () => {
   describe('generateEnding — personalClosing', () => {
     it('기본 여정 정보로 2문장 이상 생성', () => {
       const input = makeInput({
-        incidentOutcomes: [makeIncident('CONTAINED'), makeIncident('CONTAINED', 'b')],
+        incidentOutcomes: [
+          makeIncident('CONTAINED'),
+          makeIncident('CONTAINED', 'b'),
+        ],
         daysSpent: 14,
         dominantVectors: ['SOCIAL'],
         arcRoute: 'EXPOSE_CORRUPTION',

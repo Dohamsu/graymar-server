@@ -285,7 +285,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         | undefined;
       if (!nanoEventHint && nanoEventCtx && this.nanoEventDirector) {
         try {
-          const nanoResult = await this.nanoEventDirector.generate(nanoEventCtx);
+          const nanoResult =
+            await this.nanoEventDirector.generate(nanoEventCtx);
           if (nanoResult) {
             nanoEventHint = nanoResult;
             this.logger.log(
@@ -308,7 +309,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               nanoChoices.push({
                 id: 'go_hub',
                 label: '다른 장소로 이동한다',
-                action: { type: 'CHOICE', payload: { affordance: 'MOVE_LOCATION', sourceNpcId: null } },
+                action: {
+                  type: 'CHOICE',
+                  payload: { affordance: 'MOVE_LOCATION', sourceNpcId: null },
+                },
               });
               // llmChoices에 저장 (DB 업데이트는 아래에서 함께)
               (pending as any)._nanoChoices = nanoChoices;
@@ -411,9 +415,13 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       let callResult: import('./types/index.js').LlmCallResult;
       if (this.streamBroker && !isCombat) {
         // 스트리밍 모드: 서술 턴에서만 (COMBAT 제외)
-        this.logger.log(`[Stream] 스트리밍 모드 시작 turn=${pending.turnNo} run=${pending.runId}`);
+        this.logger.log(
+          `[Stream] 스트리밍 모드 시작 turn=${pending.turnNo} run=${pending.runId}`,
+        );
         const streamModel = alternateModel ?? lightConfig?.model;
-        let streamResponse: import('./types/index.js').LlmProviderResponse | null = null;
+        let streamResponse:
+          | import('./types/index.js').LlmProviderResponse
+          | null = null;
 
         // StreamClassifier 준비 (bug 4687, architecture/35 Dual-Track)
         //   문장 단위로 token 을 buffering → narration/dialogue 분류해 SSE 이벤트 emit.
@@ -422,7 +430,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           (process.env.LLM_STREAM_CLASSIFIER ?? 'true') !== 'false';
         let classifier: StreamClassifierService | null = null;
         if (useClassifier) {
-          const rs = runSession?.runState as Record<string, unknown> | undefined;
+          const rs = runSession?.runState as
+            | Record<string, unknown>
+            | undefined;
           const npcStates = (rs?.npcStates ?? {}) as Record<
             string,
             import('../db/types/npc-state.js').NPCState
@@ -449,7 +459,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
 
         try {
-          for await (const chunk of this.llmCaller.callStream(llmRequest, streamModel)) {
+          for await (const chunk of this.llmCaller.callStream(
+            llmRequest,
+            streamModel,
+          )) {
             if (chunk.type === 'token') {
               if (classifier) {
                 // classifier 경로: 문장 단위로 narration/dialogue 분류 후 emit
@@ -464,7 +477,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 }
               } else {
                 // 레거시: 토큰 원문 그대로 emit
-                this.streamBroker.emit(pending.runId, pending.turnNo, 'token', { text: chunk.text });
+                this.streamBroker.emit(pending.runId, pending.turnNo, 'token', {
+                  text: chunk.text,
+                });
               }
             } else if (chunk.type === 'done') {
               streamResponse = chunk.response;
@@ -490,7 +505,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           callResult = {
             success: true,
             response: streamResponse,
-            providerUsed: this.llmCaller['registry']?.getPrimary()?.name ?? 'openai',
+            providerUsed:
+              this.llmCaller['registry']?.getPrimary()?.name ?? 'openai',
             attempts: 1,
           };
         } else {
@@ -953,7 +969,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         const approachRules = this.content.getTextReplacements().npcApproach;
         for (const rule of approachRules) {
           const before = narrative;
-          narrative = narrative.replace(new RegExp(rule.pattern, 'g'), rule.replacement);
+          narrative = narrative.replace(
+            new RegExp(rule.pattern, 'g'),
+            rule.replacement,
+          );
           if (narrative !== before) approachFixCount++;
         }
         if (approachFixCount > 0) {
@@ -1878,7 +1897,9 @@ ${npcList}`,
           {
             const allNpcs = this.content.getAllNpcs();
             const npcNamePatterns = allNpcs
-              .flatMap((n) => [n.name, n.unknownAlias, n.shortAlias].filter(Boolean))
+              .flatMap((n) =>
+                [n.name, n.unknownAlias, n.shortAlias].filter(Boolean),
+              )
               .filter((name) => name && name.length >= 2)
               .sort((a, b) => b!.length - a!.length); // 긴 이름 먼저 매칭
 
@@ -1908,14 +1929,20 @@ ${npcList}`,
               const targetDef = this.content.getNpc(targetNpcId);
               const targetNames: string[] = [];
               if (targetDef?.name) targetNames.push(targetDef.name);
-              if (targetDef?.unknownAlias) targetNames.push(targetDef.unknownAlias);
-              const targetAny = targetDef as Record<string, unknown> | undefined;
-              if (targetAny?.shortAlias) targetNames.push(targetAny.shortAlias as string);
+              if (targetDef?.unknownAlias)
+                targetNames.push(targetDef.unknownAlias);
+              const targetAny = targetDef as
+                | Record<string, unknown>
+                | undefined;
+              if (targetAny?.shortAlias)
+                targetNames.push(targetAny.shortAlias as string);
               const aliases = targetAny?.aliases as string[] | undefined;
               if (aliases) targetNames.push(...aliases);
 
               // 서술 앞부분에서 첫 @마커 찾기
-              const firstMarker = narrative.match(/@\[([^\]|]+)(?:\|[^\]]+)?\]/);
+              const firstMarker = narrative.match(
+                /@\[([^\]|]+)(?:\|[^\]]+)?\]/,
+              );
               if (firstMarker && targetNames.length > 0) {
                 const markerName = firstMarker[1].trim();
                 const matchesTarget = targetNames.some(
@@ -1924,11 +1951,12 @@ ${npcList}`,
                 if (!matchesTarget) {
                   // 첫 @마커가 지목 대상과 무관 → 마커 + 뒤 대사 삭제.
                   //   패턴: @[이름|URL]? + 공백 + "대사..." (따옴표 쌍)
-                  const killPat = /@\[[^\]]+\]\s*["\u201C][^"\u201D]*["\u201D]\s*/;
+                  const killPat =
+                    /@\[[^\]]+\]\s*["\u201C][^"\u201D]*["\u201D]\s*/;
                   const killMatch = narrative.match(killPat);
                   if (killMatch) {
                     narrative =
-                      narrative.slice(0, killMatch.index!) +
+                      narrative.slice(0, killMatch.index) +
                       narrative.slice(killMatch.index! + killMatch[0].length);
                     this.logger.log(
                       `[NpcMismatch:Kill] target=${targetNpcId}, LLM이 ${markerName} 대사로 시작 → 해당 대사 블록 삭제`,
@@ -1940,10 +1968,14 @@ ${npcList}`,
           }
 
           {
-            const primaryNpcId = (
-              ((serverResult.ui as Record<string, unknown>)?.actionContext as Record<string, unknown>)?.primaryNpcId
-              ?? ((serverResult.ui as Record<string, unknown>)?.speakingNpc as Record<string, unknown>)?.npcId
-            ) as string | null;
+            const primaryNpcId = ((
+              (serverResult.ui as Record<string, unknown>)
+                ?.actionContext as Record<string, unknown>
+            )?.primaryNpcId ??
+              (
+                (serverResult.ui as Record<string, unknown>)
+                  ?.speakingNpc as Record<string, unknown>
+              )?.npcId) as string | null;
 
             if (primaryNpcId) {
               const primaryDef = this.content.getNpc(primaryNpcId);
@@ -1952,7 +1984,9 @@ ${npcList}`,
 
               if (primaryAlias) {
                 // 서술의 첫 번째 @마커 NPC 확인
-                const firstMarker = narrative.match(/@\[([^\]|]+)(?:\|([^\]]+))?\]/);
+                const firstMarker = narrative.match(
+                  /@\[([^\]|]+)(?:\|([^\]]+))?\]/,
+                );
                 if (firstMarker) {
                   const markerName = firstMarker[1].trim();
                   // primaryNpcId의 이름/별칭과 다르면 교정 필요
@@ -1978,10 +2012,14 @@ ${npcList}`,
                       : `@[${wrongName}]`;
 
                     // 모든 잘못된 마커 교체
-                    narrative = narrative.split(wrongMarkerPattern).join(correctMarker);
+                    narrative = narrative
+                      .split(wrongMarkerPattern)
+                      .join(correctMarker);
                     // 이미지 없는 버전도 교체
                     if (wrongImg) {
-                      narrative = narrative.split(`@[${wrongName}]`).join(correctMarker);
+                      narrative = narrative
+                        .split(`@[${wrongName}]`)
+                        .join(correctMarker);
                     }
 
                     // 서술 본문에서도 잘못된 NPC 호칭을 교체 (마커 외부)
@@ -2165,9 +2203,12 @@ ${npcList}`,
             let lastIdx = 0;
             matches.forEach((m, i) => {
               if (i === 0) return;
-              result += narrative.slice(lastIdx, m.index!);
-              lastIdx = m.index! + m[0].length;
-              while (lastIdx < narrative.length && /[\s,]/.test(narrative[lastIdx])) {
+              result += narrative.slice(lastIdx, m.index);
+              lastIdx = m.index + m[0].length;
+              while (
+                lastIdx < narrative.length &&
+                /[\s,]/.test(narrative[lastIdx])
+              ) {
                 lastIdx += 1;
               }
             });
@@ -2207,11 +2248,12 @@ ${npcList}`,
         const newlyIntroduced =
           (uiData?.newlyIntroducedNpcIds as string[]) ?? [];
         const hasNarrative = !!narrative && !!runSession?.runState;
-        const hasRollbackCandidates = newlyIntroduced.length > 0 && hasNarrative;
+        const hasRollbackCandidates =
+          newlyIntroduced.length > 0 && hasNarrative;
         const hasAppearances = _appearedNpcIds.size > 0 && hasNarrative;
 
         if (hasRollbackCandidates || hasAppearances) {
-          const rs = runSession!.runState as unknown as Record<string, unknown>;
+          const rs = runSession.runState as unknown as Record<string, unknown>;
           const npcStatesRef = rs.npcStates as
             | Record<
                 string,
@@ -2242,9 +2284,8 @@ ${npcList}`,
           }
 
           if (hasAppearances && npcStatesRef) {
-            const { shouldIntroduce } = await import(
-              '../db/types/npc-state.js'
-            );
+            const { shouldIntroduce } =
+              await import('../db/types/npc-state.js');
             // 제스처 추출 regex (bug 4671, CLAUDE.md LLM 원칙 1)
             const GESTURE_PATTERNS = [
               /안경테를\s+\S+\s*(?:\S+)?/g,
@@ -2272,9 +2313,9 @@ ${npcList}`,
                 npcStatesRef[npcId].appearanceCount = prev + 1;
                 changed = true;
 
-                const npcStateFull = npcStatesRef[npcId] as unknown as import(
-                  '../db/types/npc-state.js'
-                ).NPCState;
+                const npcStateFull = npcStatesRef[
+                  npcId
+                ] as unknown as import('../db/types/npc-state.js').NPCState;
                 if (
                   !npcStateFull.introduced &&
                   shouldIntroduce(
@@ -2330,16 +2371,21 @@ ${npcList}`,
                   }
                   if (foundGestures.length > 0) {
                     type GestureEntry = { text: string; turnNo: number };
-                    const existing: GestureEntry[] = (npcStatesRef[npcId] as unknown as {
-                      recentGestures?: GestureEntry[];
-                    }).recentGestures ?? [];
+                    const existing: GestureEntry[] =
+                      (
+                        npcStatesRef[npcId] as unknown as {
+                          recentGestures?: GestureEntry[];
+                        }
+                      ).recentGestures ?? [];
                     const newEntries = foundGestures.map((g) => ({
                       text: g,
                       turnNo: pending.turnNo,
                     }));
-                    (npcStatesRef[npcId] as unknown as {
-                      recentGestures: GestureEntry[];
-                    }).recentGestures = [...existing, ...newEntries].slice(-5);
+                    (
+                      npcStatesRef[npcId] as unknown as {
+                        recentGestures: GestureEntry[];
+                      }
+                    ).recentGestures = [...existing, ...newEntries].slice(-5);
                     changed = true;
                   }
                 }
@@ -2376,12 +2422,22 @@ ${npcList}`,
         .where(eq(turns.id, pending.id));
 
       // Track 2: 서술 완료 후 선택지 생성 (서술 맥락 포함)
-      if (this.streamBroker && this.nanoEventDirector && pending.nodeType === 'LOCATION') {
+      if (
+        this.streamBroker &&
+        this.nanoEventDirector &&
+        pending.nodeType === 'LOCATION'
+      ) {
         try {
           // choices_loading 이벤트 → 클라이언트에 선택지 로딩 중 알림
-          this.streamBroker.emit(pending.runId, pending.turnNo, 'choices_loading', {});
+          this.streamBroker.emit(
+            pending.runId,
+            pending.turnNo,
+            'choices_loading',
+            {},
+          );
 
-          const nanoCtx2 = (serverResult.ui as Record<string, unknown>)?.nanoEventCtx as
+          const nanoCtx2 = (serverResult.ui as Record<string, unknown>)
+            ?.nanoEventCtx as
             | import('./nano-event-director.service.js').NanoEventContext
             | undefined;
           if (nanoCtx2) {
@@ -2392,18 +2448,32 @@ ${npcList}`,
               const nanoChoices2 = nanoResult2.choices.map((nc, idx) => ({
                 id: `nano_${pending.turnNo}_${idx}`,
                 label: nc.label,
-                action: { type: 'CHOICE' as string, payload: { affordance: nc.affordance, sourceNpcId: nc.npcId ?? nanoResult2.npcId } },
+                action: {
+                  type: 'CHOICE' as string,
+                  payload: {
+                    affordance: nc.affordance,
+                    sourceNpcId: nc.npcId ?? nanoResult2.npcId,
+                  },
+                },
               }));
               nanoChoices2.push({
-                id: 'go_hub', label: '다른 장소로 이동한다',
-                action: { type: 'CHOICE', payload: { affordance: 'MOVE_LOCATION', sourceNpcId: null } },
+                id: 'go_hub',
+                label: '다른 장소로 이동한다',
+                action: {
+                  type: 'CHOICE',
+                  payload: { affordance: 'MOVE_LOCATION', sourceNpcId: null },
+                },
               });
               (pending as any)._nanoChoices = nanoChoices2;
-              this.logger.log(`[Track2:NanoEvent] 서술 기반 선택지 ${nanoResult2.choices.length}개 생성`);
+              this.logger.log(
+                `[Track2:NanoEvent] 서술 기반 선택지 ${nanoResult2.choices.length}개 생성`,
+              );
             }
           }
         } catch (err) {
-          this.logger.warn(`[Track2:NanoEvent] 실패 (기본 선택지 사용): ${err}`);
+          this.logger.warn(
+            `[Track2:NanoEvent] 실패 (기본 선택지 사용): ${err}`,
+          );
         }
       }
 

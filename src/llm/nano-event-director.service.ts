@@ -197,7 +197,11 @@ export class NanoEventDirectorService {
     // 서술 맥락 (Dual-Track: 서술 완료 후 선택지 생성 시)
     if ((ctx as any).narrativeText) {
       const narrativePreview = (ctx as any).narrativeText.slice(0, 300);
-      parts.push(``, `[이번 턴 서술 — 이 내용에 맞는 선택지를 생성하세요]`, narrativePreview);
+      parts.push(
+        ``,
+        `[이번 턴 서술 — 이 내용에 맞는 선택지를 생성하세요]`,
+        narrativePreview,
+      );
     }
 
     // 활성 장소 조건

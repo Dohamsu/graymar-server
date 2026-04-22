@@ -32,10 +32,7 @@ export class EndingsController {
 
   /** 단일 엔딩 상세. */
   @Get(':runId')
-  async getEnding(
-    @UserId() userId: string,
-    @Param('runId') runId: string,
-  ) {
+  async getEnding(@UserId() userId: string, @Param('runId') runId: string) {
     return this.runsService.getEndingDetail(userId, runId);
   }
 }

@@ -356,9 +356,9 @@ export class EventMatcherService {
       if (targetNpcId) {
         const evtNpc = e.payload.primaryNpcId;
         if (evtNpc === targetNpcId) {
-          targetNpcBoost = 50;   // 플레이어 지목 NPC와 일치 → +50
+          targetNpcBoost = 50; // 플레이어 지목 NPC와 일치 → +50
         } else if (evtNpc && evtNpc !== targetNpcId) {
-          targetNpcBoost = -50;  // 다른 NPC 하드코딩 → -50
+          targetNpcBoost = -50; // 다른 NPC 하드코딩 → -50
         }
         // primaryNpcId가 없는 이벤트는 중립 (어떤 NPC와도 호환)
       }

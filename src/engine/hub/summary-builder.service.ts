@@ -74,7 +74,10 @@ const VECTOR_PAIR_JOURNEY: Record<string, string> = {
 };
 
 /** arcRoute × stability 12분기 한 줄 요약 (endings.json arcRouteEndings 압축). */
-const ARC_ROUTE_CLOSING: Record<string, Record<EndingSummaryStability, string>> = {
+const ARC_ROUTE_CLOSING: Record<
+  string,
+  Record<EndingSummaryStability, string>
+> = {
   EXPOSE_CORRUPTION: {
     STABLE: '부패한 자들이 연행되고, 도시는 정의의 이름으로 숨을 돌렸다.',
     UNSTABLE: '진실은 절반만 드러났고, 해결되지 않은 불안이 거리에 남았다.',
@@ -84,7 +87,8 @@ const ARC_ROUTE_CLOSING: Record<string, Record<EndingSummaryStability, string>> 
   PROFIT_FROM_CHAOS: {
     STABLE: '아무도 모르게 양쪽에서 금화를 챙기고 도시를 떠났다.',
     UNSTABLE: '벌어들인 돈만큼의 적을 남기고 그레이마르를 뒤로했다.',
-    COLLAPSED: '도시가 무너지는 와중에도 금화를 셌지만, 거래할 도시가 사라졌다.',
+    COLLAPSED:
+      '도시가 무너지는 와중에도 금화를 셌지만, 거래할 도시가 사라졌다.',
   },
   ALLY_GUARD: {
     STABLE: '경비대와 함께 항만의 질서를 되찾고 명예 휘장을 받았다.',
@@ -241,7 +245,8 @@ export class SummaryBuilderService {
     const characterName =
       (runState.characterName && runState.characterName.trim()) ||
       '이름 없는 용병';
-    const gender: 'male' | 'female' = run.gender === 'female' ? 'female' : 'male';
+    const gender: 'male' | 'female' =
+      run.gender === 'female' ? 'female' : 'male';
 
     const stability: EndingSummaryStability = isStability(
       endingResult.cityStatus?.stability,
@@ -249,7 +254,8 @@ export class SummaryBuilderService {
       ? endingResult.cityStatus.stability
       : 'UNSTABLE';
     const arcRouteKey = this.resolveArcRouteKey(endingResult.arcRoute);
-    const arcTitle = endingResult.arcTitle ?? this.defaultArcTitle(arcRouteKey, stability);
+    const arcTitle =
+      endingResult.arcTitle ?? this.defaultArcTitle(arcRouteKey, stability);
 
     const stats = {
       daysSpent: endingResult.statistics?.daysSpent ?? 1,
@@ -459,7 +465,10 @@ export class SummaryBuilderService {
     const candidates: Candidate[] = [];
 
     // outcome 별 사용된 variant 인덱스를 순환하여 동일 문구 반복 방지
-    const outcomeCounter: Record<'CONTAINED' | 'ESCALATED' | 'EXPIRED', number> = {
+    const outcomeCounter: Record<
+      'CONTAINED' | 'ESCALATED' | 'EXPIRED',
+      number
+    > = {
       CONTAINED: 0,
       ESCALATED: 0,
       EXPIRED: 0,
@@ -469,8 +478,10 @@ export class SummaryBuilderService {
     const resolvedIncidents = activeIncidents
       .filter((inc) => inc.resolved && inc.outcome)
       .sort((a, b) => {
-        const ac = (a.historyLog ?? []).find((h) => h.action === 'RESOLVE')?.clock ?? 0;
-        const bc = (b.historyLog ?? []).find((h) => h.action === 'RESOLVE')?.clock ?? 0;
+        const ac =
+          (a.historyLog ?? []).find((h) => h.action === 'RESOLVE')?.clock ?? 0;
+        const bc =
+          (b.historyLog ?? []).find((h) => h.action === 'RESOLVE')?.clock ?? 0;
         return ac - bc;
       });
 
@@ -625,8 +636,7 @@ export class SummaryBuilderService {
         .filter(([id]) => !seen.has(id))
         .map(([id, s]) => {
           const def = this.content.getNpc(id);
-          const tier =
-            (def as { tier?: string } | undefined)?.tier ?? 'SUB';
+          const tier = (def as { tier?: string } | undefined)?.tier ?? 'SUB';
           return { id, s, tier, appear: s.appearanceCount ?? 0 };
         })
         .filter((e) => e.tier === 'CORE' && e.appear > 0)
@@ -650,7 +660,10 @@ export class SummaryBuilderService {
       const displayName = getNpcDisplayName(
         entry.state,
         def
-          ? { name: def.name, unknownAlias: (def as { unknownAlias?: string }).unknownAlias }
+          ? {
+              name: def.name,
+              unknownAlias: (def as { unknownAlias?: string }).unknownAlias,
+            }
           : undefined,
         currentTurnNo,
       );

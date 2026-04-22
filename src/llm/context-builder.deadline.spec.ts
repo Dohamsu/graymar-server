@@ -8,12 +8,8 @@ describe('ContextBuilderService.buildDeadlineContext', () => {
   });
 
   it('daysLeft ≥ 4 (평소) → null — 프롬프트에 포함 안 됨', () => {
-    expect(
-      build({ softDeadlineDay: 14, triggered: false }, 10),
-    ).toBeNull();
-    expect(
-      build({ softDeadlineDay: 14, triggered: false }, 5),
-    ).toBeNull();
+    expect(build({ softDeadlineDay: 14, triggered: false }, 10)).toBeNull();
+    expect(build({ softDeadlineDay: 14, triggered: false }, 5)).toBeNull();
   });
 
   it('daysLeft === 3 → NEAR 톤 (직접 언급 금지 지침 포함)', () => {

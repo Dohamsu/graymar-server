@@ -75,7 +75,7 @@ export class TurnsController {
     const tn = parseInt(turnNo, 10);
     return this.streamBroker.getChannel(runId, tn).pipe(
       map((event) => ({
-        data: JSON.stringify({ type: event.type, ...event.data as object }),
+        data: JSON.stringify({ type: event.type, ...(event.data as object) }),
       })),
       finalize(() => {
         // 연결 종료 시 정리

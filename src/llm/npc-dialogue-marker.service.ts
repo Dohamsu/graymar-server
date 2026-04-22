@@ -130,10 +130,7 @@ export class NpcDialogueMarkerService {
     }
 
     // ── 새 형식 우선 파싱: "NPC별칭: \"대사\"" 패턴 ──
-    const colonResult = this.parseColonDialogueFormat(
-      narrative,
-      candidateNpcs,
-    );
+    const colonResult = this.parseColonDialogueFormat(narrative, candidateNpcs);
     if (colonResult) {
       this.logger.debug(
         `[ServerMarker:ColonFormat] converted=${colonResult.convertedCount} unmatched=${colonResult.unmatchedCount}`,

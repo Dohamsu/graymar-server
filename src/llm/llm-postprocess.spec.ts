@@ -25,10 +25,7 @@ function stepE_removeNpcPrefixInQuotes(
 
   for (const npcName of npcNamePatterns) {
     const escaped = npcName!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = new RegExp(
-      `(["\\u201C])${escaped}\\s*[:：]\\s*`,
-      'g',
-    );
+    const pattern = new RegExp(`(["\\u201C])${escaped}\\s*[:：]\\s*`, 'g');
     narrative = narrative.replace(pattern, '$1');
   }
   return narrative;
@@ -127,14 +124,23 @@ function stepF_fixNpcMismatch(
 
 describe('Step E: NPC이름 프리픽스 제거', () => {
   const npcs: NpcNameEntry[] = [
-    { name: '에드릭 베일', unknownAlias: '날카로운 눈매의 회계사', shortAlias: '에드릭' },
+    {
+      name: '에드릭 베일',
+      unknownAlias: '날카로운 눈매의 회계사',
+      shortAlias: '에드릭',
+    },
     { name: '로넨', unknownAlias: '근엄한 위병대장' },
     { name: '카이', unknownAlias: '그림자 상인' },
-    { name: '무나 세리프', unknownAlias: '조용한 문서 실무자', shortAlias: '무나' },
+    {
+      name: '무나 세리프',
+      unknownAlias: '조용한 문서 실무자',
+      shortAlias: '무나',
+    },
   ];
 
   it('따옴표 안 "NPC별칭: 대사" 프리픽스를 제거한다', () => {
-    const input = '@[날카로운 눈매의 회계사] "날카로운 눈매의 회계사: 이 서류는 비밀입니다."';
+    const input =
+      '@[날카로운 눈매의 회계사] "날카로운 눈매의 회계사: 이 서류는 비밀입니다."';
     const result = stepE_removeNpcPrefixInQuotes(input, npcs);
     expect(result).toBe('@[날카로운 눈매의 회계사] "이 서류는 비밀입니다."');
   });
@@ -152,7 +158,8 @@ describe('Step E: NPC이름 프리픽스 제거', () => {
   });
 
   it('여러 NPC 이름이 동시에 존재하면 각각 제거한다', () => {
-    const input = '"로넨: 이건 중요한 문서다." 잠시 후 "카이: 그 문서를 넘겨라."';
+    const input =
+      '"로넨: 이건 중요한 문서다." 잠시 후 "카이: 그 문서를 넘겨라."';
     const result = stepE_removeNpcPrefixInQuotes(input, npcs);
     expect(result).toBe('"이건 중요한 문서다." 잠시 후 "그 문서를 넘겨라."');
   });
@@ -229,7 +236,9 @@ describe('Step F: NPC 불일치 교정', () => {
       new Set(),
     );
     // introduced=false (npcStates 비어있음) → unknownAlias 사용
-    expect(result.narrative).toBe('@[날카로운 눈매의 회계사] "서류를 확인해주십시오."');
+    expect(result.narrative).toBe(
+      '@[날카로운 눈매의 회계사] "서류를 확인해주십시오."',
+    );
   });
 
   it('introduced=false → unknownAlias 사용', () => {
@@ -285,7 +294,9 @@ describe('Step F: NPC 불일치 교정', () => {
       new Set(),
     );
     // unknownAlias 사용 (introduced 아님)
-    expect(result.narrative).toContain('날카로운 눈매의 회계사가 고개를 끄덕였다.');
+    expect(result.narrative).toContain(
+      '날카로운 눈매의 회계사가 고개를 끄덕였다.',
+    );
     expect(result.narrative).not.toContain('조용한 문서 실무자');
   });
 

@@ -462,15 +462,21 @@ export class EndingGeneratorService {
     const parts: string[] = [];
 
     // 1. 여정 길이
-    parts.push(`${input.daysSpent}일간 이 도시를 걸었다. ${totalTurns}번의 선택이 당신의 길을 만들었다.`);
+    parts.push(
+      `${input.daysSpent}일간 이 도시를 걸었다. ${totalTurns}번의 선택이 당신의 길을 만들었다.`,
+    );
 
     // 2. 사건 결과 요약 (절반 이상 처리 or 악화)
     if (containedCount >= escalatedCount + expiredCount && containedCount > 0) {
       parts.push(`${containedCount}건의 사건을 당신의 손으로 매듭지었다.`);
     } else if (escalatedCount >= 2) {
-      parts.push(`${escalatedCount}건의 사건이 당신의 앞에서 걷잡을 수 없이 번졌다.`);
+      parts.push(
+        `${escalatedCount}건의 사건이 당신의 앞에서 걷잡을 수 없이 번졌다.`,
+      );
     } else if (expiredCount >= 2) {
-      parts.push(`${expiredCount}건의 사건은 당신이 닿기도 전에 시효가 지나버렸다.`);
+      parts.push(
+        `${expiredCount}건의 사건은 당신이 닿기도 전에 시효가 지나버렸다.`,
+      );
     }
 
     // 3. 가장 신뢰가 높거나 가장 적대적이었던 NPC — content에 정의 있는 NPC만 후보
@@ -487,7 +493,9 @@ export class EndingGeneratorService {
         const p = korParticle(name, '은', '는');
         parts.push(`${name}${p} 당신의 이름을 오래도록 기억할 것이다.`);
       } else if (bottomTrust && bottomTrust.trust <= -30) {
-        parts.push(`${bottomTrust.npcName}의 눈빛을 당신은 쉽게 지우지 못할 것이다.`);
+        parts.push(
+          `${bottomTrust.npcName}의 눈빛을 당신은 쉽게 지우지 못할 것이다.`,
+        );
       }
     }
 

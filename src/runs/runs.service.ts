@@ -1059,7 +1059,9 @@ export class RunsService {
         endingSummary: row.endingSummary ?? null,
       });
       if (!summary) continue;
-      cards.push(this.toEndingCard({ id: row.id, gender: row.gender }, summary));
+      cards.push(
+        this.toEndingCard({ id: row.id, gender: row.gender }, summary),
+      );
     }
 
     const hasMore = rows.length === limit;
