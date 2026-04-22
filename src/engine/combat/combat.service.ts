@@ -161,9 +161,31 @@ export class CombatService {
       itemsRemoved: Array<{ itemId: string; qty: number }>;
     } = { itemsRemoved: [] };
 
-    for (let i = 0; i < maxUnits; i++) {
+    // Tier 5 abstract: 턴 소진 — action 실행 건너뛰고 이벤트만 기록
+    const isAbstractTurn = input.actionPlan.flags?.abstract === true;
+    if (isAbstractTurn) {
+      events.push({
+        id: `abstract_turn_${input.turnNo}`,
+        kind: 'BATTLE',
+        text: '아무 일도 일어나지 않았다',
+        tags: ['ABSTRACT_TURN'],
+      });
+    }
+
+    // Tier 1/2 prop context — 첫 ATTACK에 한 번만 적용
+    const propCtx = input.actionPlan.prop ?? input.actionPlan.improvised ?? null;
+    let propEffectsApplied = false;
+
+    for (let i = 0; i < maxUnits && !isAbstractTurn; i++) {
       const unit = input.actionPlan.units[i];
       const unitStaminaCost = i < 2 ? 1 : 2;
+      // 첫 공격 슬롯에만 prop effects 적용
+      const ctxForUnit =
+        propCtx && !propEffectsApplied && this.isAttackUnit(unit)
+          ? propCtx
+          : null;
+      if (ctxForUnit) propEffectsApplied = true;
+
       this.applyPlayerUnit(
         unit,
         next,
@@ -178,9 +200,32 @@ export class CombatService {
         inventoryItems,
         inventoryDiff,
         unitStaminaCost,
+        ctxForUnit,
       );
       if (unit.type === 'ATTACK_MELEE' || unit.type === 'ATTACK_RANGED') {
         directDamageToEnemy = true;
+      }
+    }
+
+    // Tier 1 oneTimeUse 프롭 소모 — BattleState.environmentProps에서 제거
+    if (
+      propEffectsApplied &&
+      input.actionPlan.prop &&
+      next.environmentProps
+    ) {
+      const propId = input.actionPlan.prop.id;
+      const usedProp = next.environmentProps.find((p) => p.id === propId);
+      if (usedProp?.oneTimeUse) {
+        next.environmentProps = next.environmentProps.filter(
+          (p) => p.id !== propId,
+        );
+        events.push({
+          id: `prop_consumed_${propId}`,
+          kind: 'BATTLE',
+          text: `${input.actionPlan.prop.name}이(가) 부서졌다`,
+          tags: ['PROP_CONSUMED'],
+          data: { propId },
+        });
       }
     }
 
@@ -447,6 +492,18 @@ export class CombatService {
       downed,
       battleEnded,
       nodeTransition: battleEnded,
+      // 창의 전투 Tier 1~5 플래그 전파 (architecture/41)
+      tier: input.actionPlan.tier,
+      propUsed: input.actionPlan.prop
+        ? { id: input.actionPlan.prop.id, name: input.actionPlan.prop.name }
+        : input.actionPlan.improvised
+          ? {
+              name: input.actionPlan.improvised.categoryId,
+              categoryId: input.actionPlan.improvised.categoryId,
+            }
+          : undefined,
+      fantasy: input.actionPlan.flags?.fantasy,
+      abstract: input.actionPlan.flags?.abstract,
     };
 
     // summary 생성
@@ -630,6 +687,125 @@ export class CombatService {
     return '주변 환경을 활용한다';
   }
 
+  /** ATTACK_MELEE / ATTACK_RANGED 여부 확인 (창의 전투 prop effects 적용 대상) */
+  private isAttackUnit(unit: ActionUnit): boolean {
+    return unit.type === 'ATTACK_MELEE' || unit.type === 'ATTACK_RANGED';
+  }
+
+  /**
+   * 창의 전투 prop 상태 효과를 대상 적에게 적용
+   * - stunChance: roll vs chance → STUN 1턴
+   * - bleedStacks: BLEED 누적
+   * - blindTurns / accReduceTarget: WEAKEN (근사)
+   * - restrainTurns: STUN (근사)
+   */
+  private applyPropStatusEffects(
+    effects: import('../../db/types/action-plan.js').PropEffects,
+    target: BattleStateV1['enemies'][number],
+    rng: Rng,
+    events: Event[],
+    enemyDiffMap: Map<
+      string,
+      { hpDelta: ValueDelta; statusDeltas: StatusDelta[] }
+    >,
+    eName: (id: string) => string,
+  ): void {
+    const eDiff = enemyDiffMap.get(target.id);
+    const addStatus = (
+      id: 'STUN' | 'BLEED' | 'WEAKEN',
+      duration: number,
+      stacks: number,
+      label: string,
+      tag: string,
+    ) => {
+      const inst: StatusInstance = {
+        id,
+        sourceId: 'PLAYER',
+        applierId: 'PLAYER',
+        duration,
+        stacks,
+        power: 1,
+      };
+      target.status.push(inst);
+      const delta: StatusDelta = {
+        statusId: id,
+        op: 'APPLIED',
+        stacks,
+        duration,
+      };
+      if (eDiff) eDiff.statusDeltas.push(delta);
+      events.push({
+        id: `prop_${id.toLowerCase()}_${target.id}_${rng.cursor}`,
+        kind: 'STATUS',
+        text: `${eName(target.id)}에게 ${label}`,
+        tags: [tag],
+      });
+    };
+
+    // 상태이상 duration은 현 턴 tick 이후 남아야 하므로 +1 보정
+    if (effects.stunChance && effects.stunChance > 0) {
+      const roll = rng.next() * 100;
+      if (roll < effects.stunChance) {
+        addStatus('STUN', 2, 1, '기절 부여', 'STUN_APPLIED');
+      }
+    }
+    if (effects.bleedStacks && effects.bleedStacks > 0) {
+      addStatus('BLEED', 3, effects.bleedStacks, '출혈 부여', 'BLEED_APPLIED');
+    }
+    if (effects.blindTurns && effects.blindTurns > 0) {
+      addStatus(
+        'WEAKEN',
+        effects.blindTurns + 1,
+        1,
+        '시야 가림',
+        'BLIND_APPLIED',
+      );
+    }
+    if (effects.accReduceTarget && effects.accReduceTarget < 0) {
+      addStatus('WEAKEN', 2, 1, '명중 저하', 'ACC_REDUCE_APPLIED');
+    }
+    if (effects.restrainTurns && effects.restrainTurns > 0) {
+      addStatus(
+        'STUN',
+        effects.restrainTurns + 1,
+        1,
+        '구속',
+        'RESTRAIN_APPLIED',
+      );
+    }
+  }
+
+  /** 플레이어 자기 버프 — defBuffNextTurn → FORTIFY */
+  private applySelfBuff(
+    defBuff: number,
+    playerStatus: StatusInstance[],
+    playerStatusDeltas: StatusDelta[],
+    events: Event[],
+    rng: Rng,
+  ): void {
+    const inst: StatusInstance = {
+      id: 'FORTIFY',
+      sourceId: 'PLAYER',
+      applierId: 'PLAYER',
+      duration: 2,
+      stacks: 1,
+      power: defBuff,
+    };
+    playerStatus.push(inst);
+    playerStatusDeltas.push({
+      statusId: 'FORTIFY',
+      op: 'APPLIED',
+      stacks: 1,
+      duration: 2,
+    });
+    events.push({
+      id: `prop_fortify_${rng.cursor}`,
+      kind: 'STATUS',
+      text: '엄폐로 방어력이 강화되었다',
+      tags: ['FORTIFY_APPLIED'],
+    });
+  }
+
   private applyPlayerUnit(
     unit: ActionUnit,
     next: BattleStateV1,
@@ -647,6 +823,10 @@ export class CombatService {
     inventoryItems: Array<{ itemId: string; qty: number }>,
     inventoryDiff: { itemsRemoved: Array<{ itemId: string; qty: number }> },
     unitStaminaCost: number,
+    propCtx?:
+      | { id: string; name: string; effects: import('../../db/types/action-plan.js').PropEffects }
+      | { categoryId: string; effects: import('../../db/types/action-plan.js').PropEffects }
+      | null,
   ): void {
     switch (unit.type) {
       case 'ATTACK_MELEE':
@@ -716,6 +896,14 @@ export class CombatService {
           finalDmg = Math.max(1, Math.floor(finalDmg * 1.15));
         }
 
+        // 창의 전투 prop.damageBonus 적용 (Tier 1/2)
+        if (propCtx?.effects.damageBonus) {
+          finalDmg = Math.max(
+            1,
+            Math.floor(finalDmg * propCtx.effects.damageBonus),
+          );
+        }
+
         target.hp = Math.max(0, target.hp - finalDmg);
 
         const eDiff = enemyDiffMap.get(target.id);
@@ -734,6 +922,28 @@ export class CombatService {
             targetId: target.id,
           },
         });
+
+        // 창의 전투 prop 상태 효과 적용 (Tier 1/2 → stun/bleed/blind/acc/restrain)
+        if (propCtx?.effects && target.hp > 0) {
+          this.applyPropStatusEffects(
+            propCtx.effects,
+            target,
+            rng,
+            events,
+            enemyDiffMap,
+            eName,
+          );
+        }
+        // Tier 1/2 자기 버프 (defBuffNextTurn → FORTIFY)
+        if (propCtx?.effects.defBuffNextTurn) {
+          this.applySelfBuff(
+            propCtx.effects.defBuffNextTurn,
+            next.player.status,
+            playerStatusDeltas,
+            events,
+            rng,
+          );
+        }
         break;
       }
 

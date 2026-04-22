@@ -786,6 +786,42 @@ export class PromptBuilderService {
       );
     }
 
+    // architecture/41 창의 전투 (Tier 1~5) — 조건부 블록 주입
+    // sr.flags.tier 가 있으면 해당 Tier 블록만 추가 (일반 턴엔 아무것도 추가 안 됨)
+    const crFlags = sr.flags as typeof sr.flags & {
+      tier?: 1 | 2 | 3 | 4 | 5;
+      propUsed?: { name: string; id?: string; categoryId?: string };
+      fantasy?: boolean;
+      abstract?: boolean;
+    };
+    if (crFlags?.propUsed) {
+      memoryParts.push(
+        `[사용한 소품]\n` +
+          `플레이어가 "${crFlags.propUsed.name}"을(를) 활용했습니다. ` +
+          `서술에 반드시 해당 소품의 물리적 상호작용(잡기·던지기·부서짐)을 1회 이상 구체적으로 묘사하세요. ` +
+          `소품 때문에 생긴 결과(기절/출혈/시야 가림 등)가 있다면 적의 반응으로 드러냅니다.`,
+      );
+    }
+    if (crFlags?.fantasy) {
+      memoryParts.push(
+        `[환상 재해석 지시]\n` +
+          `플레이어가 현재 세계관에서 직접 구현 불가능한 능력("${rawInput}")을 시도했습니다. ` +
+          `거부하지 말고 의도를 살려 합리적 동작으로 치환하세요.\n` +
+          `① 합리적 치환: 의도의 불꽃을 살리되 실제 가능한 동작으로 연결 (예: 드래곤 브레스 → 횃불/등불 휘두름, 순간이동 → 반 발짝 옆 측면 파고듦). ` +
+          `② 외침은 홑따옴표 '인용'만 사용(큰따옴표 금지). 4~6자 짧게, 의지·허세 표출로. ` +
+          `③ 비웃음·설교·메타 거부("그런 힘은 없다" 등) 금지. 허세·결의·위트 감정 포착. ` +
+          `④ 짧고 경쾌 — 한 호흡(2~3문장) 안에 자각/치환/결과까지.`,
+      );
+    }
+    if (crFlags?.abstract) {
+      memoryParts.push(
+        `[허공 응시 지시]\n` +
+          `플레이어가 서술 세계 바깥을 건드리는 행동("${rawInput}")을 시도했습니다. ` +
+          `거부하지 말고, 캐릭터의 정지·집중력 이탈·잠깐의 혼란을 서사로 풀어 해당 턴을 "아무 일도 일어나지 않은 한 호흡"으로 만드세요. ` +
+          `전투 긴장감은 유지 — 적의 발소리·기척·다음 동작 예고로 마무리.`,
+      );
+    }
+
     if (memoryParts.length > 0) {
       // PR1: Token Budget — 총합 2500 토큰 예산 내로 트리밍
       // 우선순위: 낮은 인덱스 = 먼저 트리밍 대상 (저우선)

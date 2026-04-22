@@ -6,6 +6,7 @@ import { HitService } from './combat/hit.service.js';
 import { DamageService } from './combat/damage.service.js';
 import { EnemyAiService } from './combat/enemy-ai.service.js';
 import { CombatService } from './combat/combat.service.js';
+import { PropMatcherService } from './combat/prop-matcher.service.js';
 import { RuleParserService } from './input/rule-parser.service.js';
 import { PolicyService } from './input/policy.service.js';
 import { ActionPlanService } from './input/action-plan.service.js';
@@ -35,6 +36,7 @@ const providers = [
   HitService,
   DamageService,
   EnemyAiService,
+  PropMatcherService,
   CombatService,
   // Layer 7
   RuleParserService,

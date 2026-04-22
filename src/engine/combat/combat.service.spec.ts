@@ -912,4 +912,230 @@ describe('CombatService', () => {
       );
     });
   });
+
+  // 정본: architecture/41_creative_combat_actions.md §5 — 창의 전투 통합
+  describe('창의 전투 (Tier 1~5)', () => {
+    const makeBasicInput = (
+      extras: Partial<CombatTurnInput['actionPlan']> = {},
+      battleOverrides: Partial<BattleStateV1> = {},
+    ): CombatTurnInput => ({
+      turnNo: 1,
+      node: { id: 'node_1', type: 'COMBAT', index: 0 },
+      envTags: [],
+      actionPlan: {
+        units: [{ type: 'ATTACK_MELEE', targetId: 'enemy_01' }],
+        consumedSlots: { base: 2, used: 1, bonusUsed: false },
+        staminaCost: 1,
+        policyResult: 'ALLOW',
+        parsedBy: 'RULE',
+        ...extras,
+      },
+      battleState: makeDefaultBattleState({
+        player: { hp: 100, stamina: 5, status: [] },
+        enemies: [
+          {
+            id: 'enemy_01',
+            hp: 100,
+            maxHp: 100,
+            status: [],
+            personality: 'AGGRESSIVE',
+            distance: 'ENGAGED',
+            angle: 'FRONT',
+          },
+        ],
+        ...battleOverrides,
+      }),
+      playerStats: defaultPlayerStats,
+      enemyStats: {
+        enemy_01: { ...defaultEnemyStats.enemy_01, maxHP: 100 },
+      },
+    });
+
+    it('Tier 1 prop damageBonus 1.2 → 기본 공격 대비 더 큰 피해', () => {
+      const baseInput = makeBasicInput();
+      const propInput = makeBasicInput({
+        tier: 1,
+        prop: {
+          id: 'chair_wooden',
+          name: '나무 의자',
+          effects: { damageBonus: 1.2 },
+        },
+      });
+
+      const base = service.resolveCombatTurn(baseInput);
+      const withProp = service.resolveCombatTurn(propInput);
+
+      const baseEnemyHp = base.nextBattleState.enemies[0].hp;
+      const propEnemyHp = withProp.nextBattleState.enemies[0].hp;
+
+      // 같은 seed라 miss 여부는 동일, 피해량만 차이
+      expect(propEnemyHp).toBeLessThan(baseEnemyHp);
+    });
+
+    it('Tier 1 prop stunChance 100% → 적에게 STUN 부여', () => {
+      const input = makeBasicInput({
+        tier: 1,
+        prop: {
+          id: 'chair_wooden',
+          name: '나무 의자',
+          effects: { stunChance: 100 },
+        },
+      });
+
+      const output = service.resolveCombatTurn(input);
+      const enemyStatus = output.nextBattleState.enemies[0].status;
+      const hasStun = enemyStatus.some((s) => s.id === 'STUN');
+      expect(hasStun).toBe(true);
+    });
+
+    it('Tier 2 improvised bleedStacks → 적에게 BLEED 부여', () => {
+      const input = makeBasicInput({
+        tier: 2,
+        improvised: {
+          categoryId: 'sharp',
+          effects: { bleedStacks: 1 },
+        },
+      });
+
+      const output = service.resolveCombatTurn(input);
+      const enemyStatus = output.nextBattleState.enemies[0].status;
+      const hasBleed = enemyStatus.some((s) => s.id === 'BLEED');
+      expect(hasBleed).toBe(true);
+    });
+
+    it('Tier 1 oneTimeUse 프롭 → BattleState.environmentProps에서 제거', () => {
+      const input = makeBasicInput(
+        {
+          tier: 1,
+          prop: {
+            id: 'chair_wooden',
+            name: '나무 의자',
+            effects: { damageBonus: 1.1 },
+          },
+        },
+        {
+          environmentProps: [
+            {
+              id: 'chair_wooden',
+              name: '나무 의자',
+              keywords: ['의자'],
+              effects: { damageBonus: 1.1 },
+              oneTimeUse: true,
+            },
+            {
+              id: 'bottle_glass',
+              name: '유리병',
+              keywords: ['병'],
+              effects: { bleedStacks: 1 },
+              oneTimeUse: true,
+            },
+          ],
+        },
+      );
+
+      const output = service.resolveCombatTurn(input);
+      const remaining = output.nextBattleState.environmentProps ?? [];
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].id).toBe('bottle_glass');
+
+      // PROP_CONSUMED 이벤트 기록 확인
+      const consumed = output.serverResult.events.find((e) =>
+        e.tags?.includes('PROP_CONSUMED'),
+      );
+      expect(consumed).toBeDefined();
+    });
+
+    it('Tier 1 prop NOT oneTimeUse → environmentProps 유지', () => {
+      const input = makeBasicInput(
+        {
+          tier: 1,
+          prop: {
+            id: 'torch',
+            name: '횃불',
+            effects: { blindTurns: 1 },
+          },
+        },
+        {
+          environmentProps: [
+            {
+              id: 'torch',
+              name: '횃불',
+              keywords: ['횃불'],
+              effects: { blindTurns: 1 },
+              oneTimeUse: false,
+            },
+          ],
+        },
+      );
+
+      const output = service.resolveCombatTurn(input);
+      const remaining = output.nextBattleState.environmentProps ?? [];
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].id).toBe('torch');
+    });
+
+    it('Tier 4 fantasyFlag → 보너스 없음, 기본 공격만 (baseline과 동일 피해)', () => {
+      const baseInput = makeBasicInput();
+      const fantasyInput = makeBasicInput({
+        tier: 4,
+        flags: { fantasy: true },
+      });
+
+      const base = service.resolveCombatTurn(baseInput);
+      const fantasy = service.resolveCombatTurn(fantasyInput);
+
+      // 보너스 없음 → 적 HP 동일
+      expect(base.nextBattleState.enemies[0].hp).toBe(
+        fantasy.nextBattleState.enemies[0].hp,
+      );
+    });
+
+    it('Tier 5 abstractFlag → action 건너뛰고 ABSTRACT_TURN 이벤트만', () => {
+      const input = makeBasicInput({
+        tier: 5,
+        flags: { abstract: true },
+      });
+
+      const output = service.resolveCombatTurn(input);
+
+      // ABSTRACT_TURN 이벤트 존재
+      const abstractEv = output.serverResult.events.find((e) =>
+        e.tags?.includes('ABSTRACT_TURN'),
+      );
+      expect(abstractEv).toBeDefined();
+
+      // 플레이어 공격 이벤트(DAMAGE) 없음
+      const dmgEv = output.serverResult.events.find(
+        (e) => e.kind === 'DAMAGE' && e.data?.targetId === 'enemy_01',
+      );
+      expect(dmgEv).toBeUndefined();
+    });
+
+    it('Tier 1/2 미지정 → 일반 공격 (baseline과 동일)', () => {
+      const plain = service.resolveCombatTurn(makeBasicInput());
+      const tier3 = service.resolveCombatTurn(
+        makeBasicInput({ tier: 3 }),
+      );
+
+      expect(plain.nextBattleState.enemies[0].hp).toBe(
+        tier3.nextBattleState.enemies[0].hp,
+      );
+    });
+
+    it('Tier 1 prop defBuffNextTurn → 플레이어에게 FORTIFY', () => {
+      const input = makeBasicInput({
+        tier: 1,
+        prop: {
+          id: 'table_wooden',
+          name: '나무 탁자',
+          effects: { defBuffNextTurn: 2 },
+        },
+      });
+
+      const output = service.resolveCombatTurn(input);
+      const playerStatus = output.nextBattleState.player.status;
+      const hasFortify = playerStatus.some((s) => s.id === 'FORTIFY');
+      expect(hasFortify).toBe(true);
+    });
+  });
 });

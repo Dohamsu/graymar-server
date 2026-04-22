@@ -228,6 +228,11 @@ export type ResultFlags = {
   downed: boolean;
   battleEnded: boolean;
   nodeTransition?: boolean;
+  // architecture/41 창의 전투 (Tier 1~5) 플래그
+  tier?: 1 | 2 | 3 | 4 | 5;
+  propUsed?: { id?: string; name: string; categoryId?: string };
+  fantasy?: boolean;
+  abstract?: boolean;
 };
 
 // --- Root ---
