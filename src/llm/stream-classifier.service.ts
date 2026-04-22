@@ -49,6 +49,10 @@ export class StreamClassifierService {
   private lastMatchedNpcId: string | null = null;
   private candidates: NpcCandidate[];
   private primaryNpcId: string | null;
+  /** bug: \n\n 문단 경계가 개별 \n 분할로 쪼개져 paragraphStart 감지 실패
+   *  해결: 연속 2개 이상의 빈 \n 경계를 만나면 다음 실제 sentence에 paragraphStart 전파 */
+  private pendingParagraphStart = false;
+  private consecutiveEmptyNewlines = 0;
 
   constructor(candidates: NpcCandidate[], primaryNpcId: string | null) {
     this.candidates = candidates;
@@ -155,13 +159,16 @@ export class StreamClassifierService {
           ) {
             const rawSentence = this.buffer.slice(lastBoundary, nextSpace + 1);
             // 문단 경계 감지 (bug 4751): 원본 앞에 \n\n 있으면 paragraphStart
-            const paragraphStart = /^[\s]*\n[\s]*\n/.test(rawSentence);
+            const inlineParagraphStart = /^[\s]*\n[\s]*\n/.test(rawSentence);
             const sentence = rawSentence.trim();
             if (sentence.length > 0) {
               const segEvents = this.classifySentence(sentence);
+              const paragraphStart =
+                inlineParagraphStart || this.pendingParagraphStart;
               if (paragraphStart && segEvents.length > 0) {
                 segEvents[0].paragraphStart = true;
               }
+              this.pendingParagraphStart = false;
               events.push(...segEvents);
             }
             lastBoundary = nextSpace + 1;
@@ -176,15 +183,26 @@ export class StreamClassifierService {
       ) {
         // 따옴표 밖에서 문장 끝
         const rawSentence = this.buffer.slice(lastBoundary, i + 1);
-        // 문단 경계 감지 (bug 4751): 원본 앞에 \n\n 있으면 paragraphStart
-        const paragraphStart = /^[\s]*\n[\s]*\n/.test(rawSentence);
+        // 문단 경계 감지: 원본 앞에 \n\n 있으면 inlineParagraphStart
+        const inlineParagraphStart = /^[\s]*\n[\s]*\n/.test(rawSentence);
         const sentence = rawSentence.trim();
         if (sentence.length > 0) {
           const segEvents = this.classifySentence(sentence);
+          // 이전 연속 \n\n 감지된 경우(pending) 또는 인라인 \n\n 포함
+          const paragraphStart =
+            inlineParagraphStart || this.pendingParagraphStart;
           if (paragraphStart && segEvents.length > 0) {
             segEvents[0].paragraphStart = true;
           }
+          this.pendingParagraphStart = false;
+          this.consecutiveEmptyNewlines = 0;
           events.push(...segEvents);
+        } else if (ch === '\n') {
+          // 빈 \n-only 경계 — 연속 2개 이상일 때만 pending 설정 (문단 구분)
+          this.consecutiveEmptyNewlines++;
+          if (this.consecutiveEmptyNewlines >= 2) {
+            this.pendingParagraphStart = true;
+          }
         }
         lastBoundary = i + 1;
       }
