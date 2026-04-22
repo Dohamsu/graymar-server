@@ -205,6 +205,39 @@ describe('StreamClassifierService — feed() + flush()', () => {
     expect(midEvents.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('문단 경계 감지 — \\n\\n 다음 문장에 paragraphStart 전파 (bug: per-\\n 분할)', () => {
+    const svc = makeSvc();
+    // LLM이 실제 출력하는 패턴: 문장A.\n\n문장B.
+    const text = '첫 문단이다.\n\n두 번째 문단이다.\n';
+    const events = feedAll(svc, text);
+    // 2개 narration 이벤트가 나와야 함
+    const narrations = events.filter((e) => e.type === 'narration');
+    expect(narrations.length).toBeGreaterThanOrEqual(2);
+    // 첫 narration은 paragraphStart 없음, 두 번째는 있음
+    expect(narrations[0].paragraphStart).toBeFalsy();
+    expect(narrations[1].paragraphStart).toBe(true);
+  });
+
+  it('단일 \\n은 paragraphStart 트리거 안 함', () => {
+    const svc = makeSvc();
+    const text = '첫 줄.\n두 번째 줄.\n';
+    const events = feedAll(svc, text);
+    const narrations = events.filter((e) => e.type === 'narration');
+    expect(narrations.length).toBeGreaterThanOrEqual(2);
+    // 둘 다 paragraphStart 없음 (단일 \n은 문단 경계 아님)
+    expect(narrations[0].paragraphStart).toBeFalsy();
+    expect(narrations[1].paragraphStart).toBeFalsy();
+  });
+
+  it('문단 경계 + 대사 — 대사 seg에 paragraphStart', () => {
+    const svc = makeSvc();
+    const text = '바람이 불었다.\n\n에드릭이 말했다. "안녕하시오."\n';
+    const events = feedAll(svc, text);
+    // 두 번째 이벤트가 paragraphStart=true
+    const withPara = events.find((e) => e.paragraphStart === true);
+    expect(withPara).toBeDefined();
+  });
+
   it('따옴표 안의 마침표는 문장 경계 아님', () => {
     const svc = makeSvc(ALL_CANDIDATES, 'NPC_EDRIC');
     const text = '"문장 안의. 마침표는. 무시하오." 그가 말했다.\n';
