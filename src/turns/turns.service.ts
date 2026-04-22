@@ -1859,6 +1859,67 @@ export class TurnsService {
       }
     }
 
+    // architecture/43: 돌발행동 → NPC 감정·기억 자동 갱신 (combat/non-combat 공통)
+    // combat 트리거 분기보다 먼저 실행해 COMBAT 경로에서도 NPC 상태가 반영되도록 한다.
+    if (resolveResult.suddenAction && resolveResult.suddenAction.targetNpcId) {
+      const npcId = resolveResult.suddenAction.targetNpcId;
+      const npcStates = (updatedRunState.npcStates ?? {}) as Record<
+        string,
+        import('../db/types/index.js').NPCState
+      >;
+      const targetNpc = npcStates[npcId];
+      if (targetNpc) {
+        const sa = resolveResult.suddenAction;
+        const fearBoost =
+          sa.severity === 'CRITICAL' ? 40 : sa.severity === 'SEVERE' ? 25 : 15;
+        const trustDrop =
+          sa.severity === 'CRITICAL' ? 30 : sa.severity === 'SEVERE' ? 20 : 10;
+        const suspicionBoost =
+          sa.severity === 'CRITICAL' ? 40 : sa.severity === 'SEVERE' ? 25 : 10;
+        const emo = targetNpc.emotional ?? {
+          trust: 0,
+          fear: 0,
+          respect: 0,
+          suspicion: 0,
+          attachment: 0,
+        };
+        const updatedEmo = {
+          ...emo,
+          suspicion: Math.max(
+            sa.severity === 'CRITICAL' ? 65 : 0,
+            Math.min(100, emo.suspicion + suspicionBoost),
+          ),
+          fear: Math.min(100, emo.fear + fearBoost),
+          trust: Math.max(-100, emo.trust - trustDrop),
+        };
+        const { recordNpcEncounter, addNpcKnownFact } = await import(
+          '../db/types/npc-state.js'
+        );
+        const locationId = (ws.currentLocationId as string) || '';
+        let updated: import('../db/types/index.js').NPCState = {
+          ...targetNpc,
+          emotional: updatedEmo,
+        };
+        updated = recordNpcEncounter(
+          updated,
+          turnNo,
+          locationId,
+          sa.type,
+          'SUCCESS',
+          sa.summary,
+        );
+        updated = addNpcKnownFact(
+          updated,
+          `⚠️ ${sa.summary} (T${turnNo})`,
+        );
+        npcStates[npcId] = updated;
+        updatedRunState.npcStates = npcStates;
+        this.logger.debug(
+          `[SuddenAction] ${sa.severity} ${sa.type} -> ${npcId}: fear+${fearBoost} suspicion+${suspicionBoost} trust-${trustDrop}`,
+        );
+      }
+    }
+
     // 전투 트리거?
     if (resolveResult.triggerCombat && resolveResult.combatEncounterId) {
       // LOCATION 노드 유지, COMBAT 서브노드 삽입
@@ -2000,6 +2061,8 @@ export class TurnsService {
         ],
       };
     }
+
+    // (architecture/43 돌발행동 처리는 전투 트리거 분기보다 앞에서 이미 실행됨)
 
     // === Narrative Engine v1: preStepTick (시간 사이클 + Incident tick + signal) ===
     const incidentDefs = this.content.getIncidentsData() as IncidentDef[];

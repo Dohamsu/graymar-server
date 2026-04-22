@@ -46,6 +46,8 @@ import { SituationGeneratorService } from './situation-generator.service.js';
 import { PlayerGoalService } from './player-goal.service.js';
 // Quest Progression
 import { QuestProgressionService } from './quest-progression.service.js';
+// Sudden Action (architecture/43)
+import { SuddenActionDetectorService } from './sudden-action-detector.service.js';
 
 const providers = [
   WorldStateService,
@@ -94,6 +96,8 @@ const providers = [
   PlayerGoalService,
   // Quest Progression
   QuestProgressionService,
+  // Sudden Action (architecture/43)
+  SuddenActionDetectorService,
 ];
 
 @Module({
