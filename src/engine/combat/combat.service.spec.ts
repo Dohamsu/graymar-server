@@ -1113,9 +1113,7 @@ describe('CombatService', () => {
 
     it('Tier 1/2 미지정 → 일반 공격 (baseline과 동일)', () => {
       const plain = service.resolveCombatTurn(makeBasicInput());
-      const tier3 = service.resolveCombatTurn(
-        makeBasicInput({ tier: 3 }),
-      );
+      const tier3 = service.resolveCombatTurn(makeBasicInput({ tier: 3 }));
 
       expect(plain.nextBattleState.enemies[0].hp).toBe(
         tier3.nextBattleState.enemies[0].hp,

@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
-
 /**
  * Player-First 로직 단위 테스트
  *
@@ -95,10 +93,7 @@ function extractTargetNpcFromInput(
   for (const npc of allNpcs) {
     if (npc.name && inputLower.includes(npc.name.toLowerCase()))
       return npc.npcId;
-    if (
-      npc.unknownAlias &&
-      inputLower.includes(npc.unknownAlias.toLowerCase())
-    )
+    if (npc.unknownAlias && inputLower.includes(npc.unknownAlias.toLowerCase()))
       return npc.npcId;
   }
 
@@ -125,8 +120,7 @@ function extractTargetNpcFromInput(
     const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
     if (
       aliasKw.some(
-        (kw: string) =>
-          kw.length >= 3 && inputLower.includes(kw.toLowerCase()),
+        (kw: string) => kw.length >= 3 && inputLower.includes(kw.toLowerCase()),
       )
     )
       return npc.npcId;
@@ -161,9 +155,9 @@ describe('determineTurnMode', () => {
 
   // ── 1) 플레이어가 NPC 지목 ──
   it('earlyTargetNpcId만 있음 → PLAYER_DIRECTED', () => {
-    expect(
-      determineTurnMode(baseCtx({ earlyTargetNpcId: 'NPC_EDRIC' })),
-    ).toBe(TurnMode.PLAYER_DIRECTED);
+    expect(determineTurnMode(baseCtx({ earlyTargetNpcId: 'NPC_EDRIC' }))).toBe(
+      TurnMode.PLAYER_DIRECTED,
+    );
   });
 
   it('intentV3TargetNpcId만 있음 → PLAYER_DIRECTED', () => {
@@ -329,9 +323,7 @@ describe('determineTurnMode', () => {
   // ── 2b) 맥락 NPC: contextNpcId + SOCIAL_ACTION ──
   it('TALK + contextNpcId (lastNpc 없음) → CONVERSATION_CONT', () => {
     expect(
-      determineTurnMode(
-        baseCtx({ actionType: 'TALK', contextNpcId: 'NPC_C' }),
-      ),
+      determineTurnMode(baseCtx({ actionType: 'TALK', contextNpcId: 'NPC_C' })),
     ).toBe(TurnMode.CONVERSATION_CONT);
   });
 
@@ -365,21 +357,21 @@ describe('determineTurnMode', () => {
 
   // ── 3) 강제 세계 이벤트 ──
   it('isFirstTurnAtLocation만 → WORLD_EVENT', () => {
-    expect(
-      determineTurnMode(baseCtx({ isFirstTurnAtLocation: true })),
-    ).toBe(TurnMode.WORLD_EVENT);
+    expect(determineTurnMode(baseCtx({ isFirstTurnAtLocation: true }))).toBe(
+      TurnMode.WORLD_EVENT,
+    );
   });
 
   it('incidentPressureHigh만 → WORLD_EVENT', () => {
-    expect(
-      determineTurnMode(baseCtx({ incidentPressureHigh: true })),
-    ).toBe(TurnMode.WORLD_EVENT);
+    expect(determineTurnMode(baseCtx({ incidentPressureHigh: true }))).toBe(
+      TurnMode.WORLD_EVENT,
+    );
   });
 
   it('questFactTrigger만 → WORLD_EVENT', () => {
-    expect(
-      determineTurnMode(baseCtx({ questFactTrigger: true })),
-    ).toBe(TurnMode.WORLD_EVENT);
+    expect(determineTurnMode(baseCtx({ questFactTrigger: true }))).toBe(
+      TurnMode.WORLD_EVENT,
+    );
   });
 
   it('incidentPressureHigh + questFactTrigger → WORLD_EVENT', () => {
@@ -448,15 +440,15 @@ describe('determineTurnMode', () => {
 
   // ── 기본값 (비사회적 행동, 조건 전부 false) ──
   it('FIGHT + 모든 조건 false → PLAYER_DIRECTED', () => {
-    expect(
-      determineTurnMode(baseCtx({ actionType: 'FIGHT' })),
-    ).toBe(TurnMode.PLAYER_DIRECTED);
+    expect(determineTurnMode(baseCtx({ actionType: 'FIGHT' }))).toBe(
+      TurnMode.PLAYER_DIRECTED,
+    );
   });
 
   it('SEARCH + 모든 조건 false → PLAYER_DIRECTED', () => {
-    expect(
-      determineTurnMode(baseCtx({ actionType: 'SEARCH' })),
-    ).toBe(TurnMode.PLAYER_DIRECTED);
+    expect(determineTurnMode(baseCtx({ actionType: 'SEARCH' }))).toBe(
+      TurnMode.PLAYER_DIRECTED,
+    );
   });
 });
 
@@ -484,7 +476,9 @@ describe('extractTargetNpcFromInput', () => {
 
   // ── 기본 guard ──
   it('inputType이 CHOICE → null', () => {
-    expect(extractTargetNpcFromInput('에드릭에게 말 건다', 'CHOICE', mockNpcs)).toBeNull();
+    expect(
+      extractTargetNpcFromInput('에드릭에게 말 건다', 'CHOICE', mockNpcs),
+    ).toBeNull();
   });
 
   it('rawInput이 빈 문자열 → null', () => {
@@ -492,26 +486,42 @@ describe('extractTargetNpcFromInput', () => {
   });
 
   it('NPC 언급 없는 일반 행동 → null', () => {
-    expect(extractTargetNpcFromInput('주변을 살펴본다', 'ACTION', mockNpcs)).toBeNull();
+    expect(
+      extractTargetNpcFromInput('주변을 살펴본다', 'ACTION', mockNpcs),
+    ).toBeNull();
   });
 
   // ── Pass 1: 실명 전체 매칭 ──
   it('실명 매칭: "에드릭에게 말 건다" → NPC_A', () => {
-    expect(extractTargetNpcFromInput('에드릭에게 말 건다', 'ACTION', mockNpcs)).toBe('NPC_A');
+    expect(
+      extractTargetNpcFromInput('에드릭에게 말 건다', 'ACTION', mockNpcs),
+    ).toBe('NPC_A');
   });
 
   it('실명 매칭: "로넨을 찾는다" → NPC_B', () => {
-    expect(extractTargetNpcFromInput('로넨을 찾는다', 'ACTION', mockNpcs)).toBe('NPC_B');
+    expect(extractTargetNpcFromInput('로넨을 찾는다', 'ACTION', mockNpcs)).toBe(
+      'NPC_B',
+    );
   });
 
   it('실명 매칭: 문장 중간에 이름 포함 → NPC_A', () => {
-    expect(extractTargetNpcFromInput('저기 있는 에드릭을 부른다', 'ACTION', mockNpcs)).toBe('NPC_A');
+    expect(
+      extractTargetNpcFromInput(
+        '저기 있는 에드릭을 부른다',
+        'ACTION',
+        mockNpcs,
+      ),
+    ).toBe('NPC_A');
   });
 
   // ── Pass 1: 별칭 전체 매칭 ──
   it('별칭 전체 매칭: "날카로운 눈매의 회계사에게" → NPC_A', () => {
     expect(
-      extractTargetNpcFromInput('날카로운 눈매의 회계사에게 다가간다', 'ACTION', mockNpcs),
+      extractTargetNpcFromInput(
+        '날카로운 눈매의 회계사에게 다가간다',
+        'ACTION',
+        mockNpcs,
+      ),
     ).toBe('NPC_A');
   });
 
@@ -524,7 +534,11 @@ describe('extractTargetNpcFromInput', () => {
   // ── Pass 2: "~에게" 패턴 ──
   it('"~에게" 패턴: "구두닦이 소년에게 물어본다" → NPC_C (별칭 키워드)', () => {
     expect(
-      extractTargetNpcFromInput('구두닦이 소년에게 물어본다', 'ACTION', mockNpcs),
+      extractTargetNpcFromInput(
+        '구두닦이 소년에게 물어본다',
+        'ACTION',
+        mockNpcs,
+      ),
     ).toBe('NPC_C');
   });
 
@@ -571,6 +585,8 @@ describe('extractTargetNpcFromInput', () => {
 
   // ── NPC 목록이 비어있으면 null ──
   it('NPC 목록 빈 배열 → null', () => {
-    expect(extractTargetNpcFromInput('에드릭에게 말한다', 'ACTION', [])).toBeNull();
+    expect(
+      extractTargetNpcFromInput('에드릭에게 말한다', 'ACTION', []),
+    ).toBeNull();
   });
 });

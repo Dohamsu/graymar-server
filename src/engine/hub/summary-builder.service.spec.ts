@@ -115,7 +115,10 @@ function makeContentMock(): Partial<ContentLoaderService> {
       title: '빈민가 소요',
     },
   };
-  const npcs: Record<string, { npcId: string; name: string; unknownAlias?: string; tier?: string }> = {
+  const npcs: Record<
+    string,
+    { npcId: string; name: string; unknownAlias?: string; tier?: string }
+  > = {
     NPC_HARLUN: {
       npcId: 'NPC_HARLUN',
       name: '하를런',
@@ -139,9 +142,9 @@ function makeContentMock(): Partial<ContentLoaderService> {
     DOCKWORKER: { presetId: 'DOCKWORKER', name: '항구 노동자' },
   };
   return {
-    getIncident: jest.fn(((id: string) => incidents[id])) as never,
-    getNpc: jest.fn(((id: string) => npcs[id])) as never,
-    getPreset: jest.fn(((id: string) => presets[id])) as never,
+    getIncident: jest.fn((id: string) => incidents[id]) as never,
+    getNpc: jest.fn((id: string) => npcs[id]) as never,
+    getPreset: jest.fn((id: string) => presets[id]) as never,
   };
 }
 

@@ -147,10 +147,14 @@ export class LlmCallerService {
     const primary = this.registry.getPrimary();
     await this.rateLimiter.acquire();
 
-    const actualModel = model ?? request.model ?? this.configService.get().openaiModel;
+    const actualModel =
+      model ?? request.model ?? this.configService.get().openaiModel;
 
     // OpenAI Provider만 스트리밍 지원
-    if ('generateStream' in primary && typeof (primary as any).generateStream === 'function') {
+    if (
+      'generateStream' in primary &&
+      typeof (primary as any).generateStream === 'function'
+    ) {
       try {
         yield* (primary as any).generateStream(request, actualModel);
         return;

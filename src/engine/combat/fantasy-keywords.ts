@@ -10,6 +10,5 @@ export const FANTASY_KEYWORDS: Record<string, string[]> = {
 };
 
 /** 플래튼된 전체 키워드 리스트 (매칭 시 빠른 스캔용) */
-export const FANTASY_KEYWORDS_FLAT: string[] = Object.values(
-  FANTASY_KEYWORDS,
-).flat();
+export const FANTASY_KEYWORDS_FLAT: string[] =
+  Object.values(FANTASY_KEYWORDS).flat();

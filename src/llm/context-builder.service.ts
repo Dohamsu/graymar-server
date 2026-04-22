@@ -186,9 +186,7 @@ export class ContextBuilderService {
    *  - daysLeft ≥ 4 → null
    */
   static buildDeadlineContext(
-    mainArcClock:
-      | { softDeadlineDay: number; triggered: boolean }
-      | undefined,
+    mainArcClock: { softDeadlineDay: number; triggered: boolean } | undefined,
     day: number,
   ): string | null {
     if (!mainArcClock) return null;
@@ -225,7 +223,11 @@ export class ContextBuilderService {
         | { locationId?: string }
         | undefined;
       const incLocation = incDef?.locationId;
-      if (incLocation && currentLocationId && incLocation === currentLocationId) {
+      if (
+        incLocation &&
+        currentLocationId &&
+        incLocation === currentLocationId
+      ) {
         score += 100;
       }
       // ② pressure 높을수록 가중치 (안전망: pressure≥70은 장소 무관 포함)
@@ -265,7 +267,11 @@ export class ContextBuilderService {
           score += 100;
         }
         if (s.severity >= 5) score += 50;
-        if (s.locationId && currentLocationId && s.locationId === currentLocationId) {
+        if (
+          s.locationId &&
+          currentLocationId &&
+          s.locationId === currentLocationId
+        ) {
           score += 30;
         }
         score += s.severity * 5;
@@ -606,7 +612,8 @@ export class ContextBuilderService {
 
     if (runState) {
       const ws = runState.worldState as Record<string, unknown> | undefined;
-      const currentLocationId = (ws?.currentLocationId as string | undefined) ?? null;
+      const currentLocationId =
+        (ws?.currentLocationId as string | undefined) ?? null;
 
       // Incident 요약 — A1 코드 기반 압축 (장소·pressure·stage 가중치로 상위 3건)
       // 이전 nano LLM 하이브리드 경로는 실측 결과 그레이마르 콘텐츠에서
@@ -1530,9 +1537,7 @@ export class ContextBuilderService {
    * 한글 2어절 bigram 빈도 집계 → top 8 반환. 프롬프트에 "이번 턴 자제" 블록으로 주입.
    * 직전 3턴 window 에선 누적 반복이 밀려나가 재사용 — 전체 세션 누적으로 강화.
    */
-  private extractOverusedPhrases(
-    recentTurns: RecentTurnEntry[],
-  ): string[] {
+  private extractOverusedPhrases(recentTurns: RecentTurnEntry[]): string[] {
     if (recentTurns.length === 0) return [];
 
     const bigramCount = new Map<string, number>();

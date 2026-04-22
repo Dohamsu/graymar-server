@@ -5,7 +5,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Subject, Observable } from 'rxjs';
 
 export interface StreamEvent {
-  type: 'token' | 'narration' | 'dialogue' | 'choices_loading' | 'done' | 'error';
+  type:
+    | 'token'
+    | 'narration'
+    | 'dialogue'
+    | 'choices_loading'
+    | 'done'
+    | 'error';
   data: unknown;
 }
 
@@ -28,7 +34,12 @@ export class LlmStreamBrokerService {
   }
 
   /** 토큰/완료/에러 이벤트 전송 */
-  emit(runId: string, turnNo: number, type: StreamEvent['type'], data: unknown): void {
+  emit(
+    runId: string,
+    turnNo: number,
+    type: StreamEvent['type'],
+    data: unknown,
+  ): void {
     const k = this.key(runId, turnNo);
     const subject = this.channels.get(k);
     if (!subject) return;

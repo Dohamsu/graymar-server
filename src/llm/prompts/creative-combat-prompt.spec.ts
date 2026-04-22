@@ -35,7 +35,9 @@ function baseCtx(): LlmContext {
   } as unknown as LlmContext;
 }
 
-function baseResult(flagsOverride: Record<string, unknown> = {}): ServerResultV1 {
+function baseResult(
+  flagsOverride: Record<string, unknown> = {},
+): ServerResultV1 {
   return {
     version: 'server_result_v1',
     turnNo: 1,

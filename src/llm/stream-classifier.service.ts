@@ -50,10 +50,7 @@ export class StreamClassifierService {
   private candidates: NpcCandidate[];
   private primaryNpcId: string | null;
 
-  constructor(
-    candidates: NpcCandidate[],
-    primaryNpcId: string | null,
-  ) {
+  constructor(candidates: NpcCandidate[], primaryNpcId: string | null) {
     this.candidates = candidates;
     this.primaryNpcId = primaryNpcId;
   }
@@ -146,10 +143,16 @@ export class StreamClassifierService {
         inQuote = false;
         // 닫는 따옴표 이후의 문자열 확인 — 인용 조사가 없으면 여기가 경계
         const afterClose = this.buffer.slice(i + 1, i + 8);
-        if (!QUOTE_SUFFIX_RE.test(afterClose) && /^[\s\n.]/.test(afterClose || ' ')) {
+        if (
+          !QUOTE_SUFFIX_RE.test(afterClose) &&
+          /^[\s\n.]/.test(afterClose || ' ')
+        ) {
           // 닫는 따옴표+뒤 공백까지를 문장으로
           const nextSpace = i + 1;
-          if (nextSpace < this.buffer.length && /[\s\n]/.test(this.buffer[nextSpace])) {
+          if (
+            nextSpace < this.buffer.length &&
+            /[\s\n]/.test(this.buffer[nextSpace])
+          ) {
             const rawSentence = this.buffer.slice(lastBoundary, nextSpace + 1);
             // 문단 경계 감지 (bug 4751): 원본 앞에 \n\n 있으면 paragraphStart
             const paragraphStart = /^[\s]*\n[\s]*\n/.test(rawSentence);
@@ -164,7 +167,13 @@ export class StreamClassifierService {
             lastBoundary = nextSpace + 1;
           }
         }
-      } else if (!inQuote && (ch === '\n' || ((ch === '.' || ch === '!' || ch === '?') && i + 1 < this.buffer.length && /[\s\n"]/.test(this.buffer[i + 1])))) {
+      } else if (
+        !inQuote &&
+        (ch === '\n' ||
+          ((ch === '.' || ch === '!' || ch === '?') &&
+            i + 1 < this.buffer.length &&
+            /[\s\n"]/.test(this.buffer[i + 1])))
+      ) {
         // 따옴표 밖에서 문장 끝
         const rawSentence = this.buffer.slice(lastBoundary, i + 1);
         // 문단 경계 감지 (bug 4751): 원본 앞에 \n\n 있으면 paragraphStart
@@ -193,11 +202,17 @@ export class StreamClassifierService {
     const events: SegmentEvent[] = [];
 
     // 안전망: 시스템 태그 필터 (프롬프트 위반 시)
-    if (/^\[(?:CHOICES|\/CHOICES|THREAD|\/THREAD|MEMORY|\/MEMORY)/.test(sentence.trim())) {
+    if (
+      /^\[(?:CHOICES|\/CHOICES|THREAD|\/THREAD|MEMORY|\/MEMORY)/.test(
+        sentence.trim(),
+      )
+    ) {
       return []; // 시스템 태그 → 무시
     }
     // [MEMORY:...] 태그 제거
-    const cleaned = sentence.replace(/\[MEMORY:[^\]]*\][^[]*\[\/MEMORY\]/g, '').trim();
+    const cleaned = sentence
+      .replace(/\[MEMORY:[^\]]*\][^[]*\[\/MEMORY\]/g, '')
+      .trim();
     if (!cleaned) return [];
     const sentenceToProcess = cleaned;
 
@@ -234,7 +249,10 @@ export class StreamClassifierService {
       }
 
       // NPC 식별 (prefix 제거 전 원본 컨텍스트 60자 사용)
-      const before60 = sentenceToProcess.slice(Math.max(0, quoteStart - 60), quoteStart);
+      const before60 = sentenceToProcess.slice(
+        Math.max(0, quoteStart - 60),
+        quoteStart,
+      );
       const npc = this.identifySpeaker(before60);
 
       // 대사 자체도 정규화 (화폐 등)
@@ -280,10 +298,7 @@ export class StreamClassifierService {
     if (!text) return text;
     // V1: 화폐 치환 (동전 → 가죽 주머니 / 골드)
     text = text.replace(/동전\s*주머니/g, '가죽 주머니');
-    text = text.replace(
-      /(?<![가-힣])(동전|은화|금화)(?![가-힣])/g,
-      '골드',
-    );
+    text = text.replace(/(?<![가-힣])(동전|은화|금화)(?![가-힣])/g, '골드');
     text = text.replace(/(\d+)\s*닢(?![가-힣])/g, '$1골드');
 
     // V2: 복합 호칭 hallucination ("토단정한 제복의 장교 수상한 무표정한 창고 여인")
@@ -338,25 +353,30 @@ export class StreamClassifierService {
 
     // 2. 발화자 패턴 추출 (XX가/이/은/는 + 발화동사)
     const speakerMatch = before.match(
-      new RegExp(`([가-힣]{2,6})[이가은는]\\s*(?:${SPEECH_VERBS})`)
+      new RegExp(`([가-힣]{2,6})[이가은는]\\s*(?:${SPEECH_VERBS})`),
     );
     if (speakerMatch && !PLAYER_ALIASES.has(speakerMatch[1])) {
       // 추출된 호칭으로 NPC 후보 매칭
       const alias = speakerMatch[1];
-      const found = this.candidates.find(c =>
-        c.names.some(n => n.includes(alias) || alias.includes(n))
+      const found = this.candidates.find((c) =>
+        c.names.some((n) => n.includes(alias) || alias.includes(n)),
       );
       if (found) return found;
     }
 
     // 3. 대명사 → lastMatchedNpcId 역추적
-    if (/(?:그가|그녀가|그는|그녀는)\s*$/.test(before) && this.lastMatchedNpcId) {
-      return this.candidates.find(c => c.npcId === this.lastMatchedNpcId) ?? null;
+    if (
+      /(?:그가|그녀가|그는|그녀는)\s*$/.test(before) &&
+      this.lastMatchedNpcId
+    ) {
+      return (
+        this.candidates.find((c) => c.npcId === this.lastMatchedNpcId) ?? null
+      );
     }
 
     // 4. fallback → primaryNpcId (턴의 주 NPC)
     if (this.primaryNpcId) {
-      return this.candidates.find(c => c.npcId === this.primaryNpcId) ?? null;
+      return this.candidates.find((c) => c.npcId === this.primaryNpcId) ?? null;
     }
 
     return null;

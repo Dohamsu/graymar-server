@@ -1,6 +1,9 @@
 // 정본: architecture/41_creative_combat_actions.md §1 5-Tier 분류 검증
 
-import { PropMatcherService, type EnvironmentProp } from './prop-matcher.service.js';
+import {
+  PropMatcherService,
+  type EnvironmentProp,
+} from './prop-matcher.service.js';
 
 const CHAIR: EnvironmentProp = {
   id: 'chair_wooden',
@@ -56,7 +59,10 @@ describe('PropMatcherService', () => {
     });
 
     it('여러 프롭 모두 매칭 시 첫 프롭 선택 (안정적 결정)', () => {
-      const result = service.classify('의자와 병을 함께 던진다', [CHAIR, BOTTLE]);
+      const result = service.classify('의자와 병을 함께 던진다', [
+        CHAIR,
+        BOTTLE,
+      ]);
       expect(result.tier).toBe(1);
       expect(result.prop?.id).toBe('chair_wooden');
     });

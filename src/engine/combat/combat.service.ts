@@ -15,6 +15,7 @@ import type {
   UIBundle,
   ResultFlags,
   ChoiceItem,
+  PropEffects,
 } from '../../db/types/index.js';
 import type { PermanentStats } from '../../db/types/index.js';
 import type { Distance, Angle, CombatOutcome } from '../../db/types/index.js';
@@ -173,7 +174,8 @@ export class CombatService {
     }
 
     // Tier 1/2 prop context — 첫 ATTACK에 한 번만 적용
-    const propCtx = input.actionPlan.prop ?? input.actionPlan.improvised ?? null;
+    const propCtx =
+      input.actionPlan.prop ?? input.actionPlan.improvised ?? null;
     let propEffectsApplied = false;
 
     for (let i = 0; i < maxUnits && !isAbstractTurn; i++) {
@@ -208,11 +210,7 @@ export class CombatService {
     }
 
     // Tier 1 oneTimeUse 프롭 소모 — BattleState.environmentProps에서 제거
-    if (
-      propEffectsApplied &&
-      input.actionPlan.prop &&
-      next.environmentProps
-    ) {
+    if (propEffectsApplied && input.actionPlan.prop && next.environmentProps) {
       const propId = input.actionPlan.prop.id;
       const usedProp = next.environmentProps.find((p) => p.id === propId);
       if (usedProp?.oneTimeUse) {
@@ -700,7 +698,7 @@ export class CombatService {
    * - restrainTurns: STUN (근사)
    */
   private applyPropStatusEffects(
-    effects: import('../../db/types/action-plan.js').PropEffects,
+    effects: PropEffects,
     target: BattleStateV1['enemies'][number],
     rng: Rng,
     events: Event[],
@@ -824,8 +822,15 @@ export class CombatService {
     inventoryDiff: { itemsRemoved: Array<{ itemId: string; qty: number }> },
     unitStaminaCost: number,
     propCtx?:
-      | { id: string; name: string; effects: import('../../db/types/action-plan.js').PropEffects }
-      | { categoryId: string; effects: import('../../db/types/action-plan.js').PropEffects }
+      | {
+          id: string;
+          name: string;
+          effects: PropEffects;
+        }
+      | {
+          categoryId: string;
+          effects: PropEffects;
+        }
       | null,
   ): void {
     switch (unit.type) {

@@ -366,10 +366,7 @@ export class PromptBuilderService {
         return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
       });
       memoryParts.push(
-        [
-          '[이번 방문 대화]',
-          sessionLines.join('\n---\n'),
-        ].join('\n'),
+        ['[이번 방문 대화]', sessionLines.join('\n---\n')].join('\n'),
       );
 
       // 장기 체류 소재 리프레시: 5턴 이상 같은 장소 → 새로운 관점 강제
@@ -625,11 +622,7 @@ export class PromptBuilderService {
           ? `\n\n현재 관계:\n${ctx.npcRelationFacts.join('\n')}`
           : '';
       memoryParts.push(
-        [
-          '[등장 가능 NPC 목록]',
-          npcLines.join('\n'),
-          relationPart,
-        ].join('\n'),
+        ['[등장 가능 NPC 목록]', npcLines.join('\n'), relationPart].join('\n'),
       );
     } else if (ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0) {
       memoryParts.push(
@@ -738,8 +731,12 @@ export class PromptBuilderService {
       const name = def?.name ?? a.itemId;
       acquiredLines.push(`- ${name} × ${a.qty}`);
     }
-    const equipmentAdded = (sr.diff as { equipmentAdded?: Array<{ displayName: string; baseItemId: string }> })
-      .equipmentAdded ?? [];
+    const equipmentAdded =
+      (
+        sr.diff as {
+          equipmentAdded?: Array<{ displayName: string; baseItemId: string }>;
+        }
+      ).equipmentAdded ?? [];
     for (const e of equipmentAdded) {
       acquiredLines.push(`- [장비] ${e.displayName}`);
     }
@@ -1083,7 +1080,8 @@ export class PromptBuilderService {
           );
         }
         // Player-First: 턴 모드별 프롬프트 보강
-        const turnMode = (actionCtx as Record<string, unknown> | undefined)?.turnMode as string | undefined;
+        const turnMode = (actionCtx as Record<string, unknown> | undefined)
+          ?.turnMode as string | undefined;
         if (turnMode === 'PLAYER_DIRECTED') {
           parts.push(
             '\n⚠️ [플레이어 주도 장면]',
@@ -1108,7 +1106,7 @@ export class PromptBuilderService {
           | undefined;
         const parts = [
           `[플레이어 선택] "${sanitizeUserInput(rawInput)}"`,
-          '서술 규칙: 먼저 플레이어가 이 선택을 실행하는 장면을 구체적으로 묘사하세요. 첫 문장은 \'당신은/당신이\'로 시작하지 마세요.',
+          "서술 규칙: 먼저 플레이어가 이 선택을 실행하는 장면을 구체적으로 묘사하세요. 첫 문장은 '당신은/당신이'로 시작하지 마세요.",
           '직전 턴의 장면·장소·NPC에서 자연스럽게 이어져야 합니다. 장면을 갑자기 다른 장소로 옮기지 마세요.',
           '선택의 결과를 충분히 보여준 뒤, 자연스럽게 다음 상황으로 전환하세요.',
           '⚠️ NPC가 플레이어와 이전에 대화한 적이 없다면, "그대의 말대로라면" 같은 이전 대화를 전제한 표현을 사용하지 마세요. NPC는 플레이어의 행동/선택에 대한 반응만 보여야 합니다.',
@@ -1155,7 +1153,7 @@ export class PromptBuilderService {
         DUSK: '황혼',
         NIGHT: '밤',
       };
-      const phase = ctx.currentTimePhase as string;
+      const phase = ctx.currentTimePhase;
       const phaseKr = timePhaseKr[phase] ?? '낮';
       const phaseHint: Record<string, string> = {
         DAWN: '아침 빛이 번지기 시작함. 공기가 서늘하고 거리가 조용함.',
@@ -1186,7 +1184,7 @@ export class PromptBuilderService {
     //   턴 번호 기반 rotation 으로 매 턴 다른 감각 카테고리 권장.
     //   CLAUDE.md LLM 원칙 2 (Positive framing — "다음 중 선택").
     {
-      const turnNo = (sr.turnNo as number) ?? 0;
+      const turnNo = sr.turnNo ?? 0;
       const SENSE_POOL: { name: string; examples: string[] }[] = [
         {
           name: '청각 + 촉각',
@@ -1580,12 +1578,16 @@ export class PromptBuilderService {
       // BG NPC 는 NPC_LOCATION_AFFINITY 에 미등록이라 postures 계산에서 빠지므로
       // 발화자 기준으로 강제 추가 + 기본 posture(CAUTIOUS)를 보조 주입한다.
       const actualSpeaker =
-        ((sr.ui as Record<string, unknown>)?.speakingNpc as
-          | { npcId?: string }
-          | undefined)?.npcId ??
-        ((sr.ui as Record<string, unknown>)?.actionContext as
-          | { primaryNpcId?: string }
-          | undefined)?.primaryNpcId;
+        (
+          (sr.ui as Record<string, unknown>)?.speakingNpc as
+            | { npcId?: string }
+            | undefined
+        )?.npcId ??
+        (
+          (sr.ui as Record<string, unknown>)?.actionContext as
+            | { primaryNpcId?: string }
+            | undefined
+        )?.primaryNpcId;
       const speakerExtraPosture: Record<string, string> = {};
       if (actualSpeaker) {
         relevantNpcIds.add(actualSpeaker);
@@ -1629,7 +1631,8 @@ export class PromptBuilderService {
             // 어체(speechRegister) 규칙 — Dual-Track: LLM이 직접 대사 생성하므로 필수
             // CLAUDE.md LLM 설계 원칙: Positive framing 우선 + 경계 강화. 짧은 경고 외에
             // 관찰·질문·설명 문형 예시로 확장해 긴 대사도 일관된 어미 유지.
-            const register = (personality as Record<string, unknown>).speechRegister as string | undefined;
+            const register = (personality as Record<string, unknown>)
+              .speechRegister as string | undefined;
             const REGISTER_RULES: Record<
               string,
               {
@@ -1642,7 +1645,8 @@ export class PromptBuilderService {
             > = {
               HAOCHE: {
                 name: '하오체 (중세 경어)',
-                endings: '~소, ~오, ~하오, ~이오, ~시오, ~겠소, ~있소, ~없소, ~했소',
+                endings:
+                  '~소, ~오, ~하오, ~이오, ~시오, ~겠소, ~있소, ~없소, ~했소',
                 examples: [
                   '"조심하시오."',
                   '"그건 내가 알 수 없소."',
@@ -1701,7 +1705,8 @@ export class PromptBuilderService {
                 playerRef: '자네/이보게',
               },
             };
-            const rule = REGISTER_RULES[register ?? 'HAOCHE'] ?? REGISTER_RULES.HAOCHE;
+            const rule =
+              REGISTER_RULES[register ?? 'HAOCHE'] ?? REGISTER_RULES.HAOCHE;
             parts.push(
               `    ⚠️ 어체: ${rule.name} — 이 NPC의 모든 문장은 ${rule.endings} 중 하나로 끝납니다. 한 대사 안에 다른 어미(${rule.forbidHint})를 한 문장이라도 섞으면 캐릭터가 깨집니다.`,
             );
@@ -2475,9 +2480,10 @@ export class PromptBuilderService {
 
       // Player-First: BG NPC 전용 서술 가이드
       const npcTier = npcDef?.tier ?? 'SUB';
-      const bgGuide = npcTier === 'BACKGROUND'
-        ? `\n    ⚠️ [배경 인물] 이 인물은 ${npcDef?.role ?? '일반인'}입니다. 직업과 일상에 맞는 소소한 정보만 전달합니다. 핵심 비밀이나 퀘스트 정보는 모릅니다. 개성과 말투를 자연스럽게 표현하되, 대화가 길어지면 "잘 모르겠다"며 자연스럽게 마무리하세요.`
-        : '';
+      const bgGuide =
+        npcTier === 'BACKGROUND'
+          ? `\n    ⚠️ [배경 인물] 이 인물은 ${npcDef?.role ?? '일반인'}입니다. 직업과 일상에 맞는 소소한 정보만 전달합니다. 핵심 비밀이나 퀘스트 정보는 모릅니다. 개성과 말투를 자연스럽게 표현하되, 대화가 길어지면 "잘 모르겠다"며 자연스럽게 마무리하세요.`
+          : '';
       emotionalLines.push(
         `- ${displayName} [${posture}]${depthGuide}${hintText}${behaviorText}${moodText}${bgGuide}`,
       );

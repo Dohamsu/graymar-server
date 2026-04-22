@@ -1266,7 +1266,8 @@ export class TurnsService {
             };
 
             // Player-First: WORLD_EVENT에서도 targetNpcId를 전달하여 호환 이벤트 우선
-            const earlyTarget = earlyTargetNpcId ?? intentV3.targetNpcId ?? null;
+            const earlyTarget =
+              earlyTargetNpcId ?? intentV3.targetNpcId ?? null;
             const directorResult = this.eventDirector.select(
               allEvents,
               locationId,
@@ -1493,7 +1494,7 @@ export class TurnsService {
     );
 
     // === NanoEventDirector: 비동기 분리 — nanoCtx만 빌드, LLM Worker에서 호출 ===
-    let nanoEventResult: NanoEventResult | null = null;
+    const nanoEventResult: NanoEventResult | null = null;
     let nanoEventCtx: NanoEventContext | null = null;
     if (this.nanoEventDirector) {
       try {
@@ -2617,8 +2618,11 @@ export class TurnsService {
     // 콘텐츠가 명시적으로 선언한 itemRewards만 여기서 처리.
     // 실제 지급은 locationReward.items에 병합해서 buildLocationResult가 diff를 만들도록 위임.
     const payloadItemRewards: import('../db/types/event-def.js').EventItemReward[] =
-      (event.payload as unknown as { itemRewards?: import('../db/types/event-def.js').EventItemReward[] })
-        .itemRewards ?? [];
+      (
+        event.payload as unknown as {
+          itemRewards?: import('../db/types/event-def.js').EventItemReward[];
+        }
+      ).itemRewards ?? [];
     const pendingItemRewardEvents: Array<{
       id: string;
       kind: 'LOOT';

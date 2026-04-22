@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { NanoEventDirectorService } from './nano-event-director.service.js';
 import type {
   NanoEventResult,
@@ -186,7 +186,10 @@ describe('NanoEventDirectorService', () => {
     });
 
     it('invalid fact -> set to null', () => {
-      const result = makeResult({ fact: 'FACT_NONEXISTENT', factRevealed: true });
+      const result = makeResult({
+        fact: 'FACT_NONEXISTENT',
+        factRevealed: true,
+      });
       const ctx = makeCtx();
       const v = callValidate(service, result, ctx);
       expect(v.fact).toBeNull();
