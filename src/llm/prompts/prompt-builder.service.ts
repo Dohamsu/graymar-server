@@ -18,6 +18,11 @@ import {
 } from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { TokenBudgetService } from '../token-budget.service.js';
+import {
+  aggregateRecentThemes,
+  getSaturatedThemes,
+  type NarrativeThemeTag,
+} from '../../db/types/narrative-theme.js';
 
 /** 사용자 입력을 프롬프트에 삽입할 때 구조 파괴를 방지하는 sanitizer */
 function sanitizeUserInput(text: string): string {
@@ -670,6 +675,10 @@ export class PromptBuilderService {
           `[NPC 감정 상태]\n${npcEmotionalBlock}\n⚠️ NPC의 현재 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요. 위 행동 힌트를 반드시 반영하세요.`,
         );
       }
+
+      // architecture/44 §이슈② — 크로스 NPC 테마 반복 차단
+      const themeGuardBlock = this.buildThemeGuard(ctx, sr.turnNo);
+      if (themeGuardBlock) memoryParts.push(themeGuardBlock);
 
       // NPC 대사 호칭 매핑 — 마커 정확도 향상을 위해 구체적 호칭 + 짧은 호칭 제공
       if (sceneNpcIds.size > 0) {
@@ -2250,6 +2259,58 @@ export class PromptBuilderService {
       }
     }
     return counts;
+  }
+
+  /**
+   * architecture/44 §이슈② — 크로스 NPC 대사 테마 반복 차단.
+   * 최근 3턴 내 동일 테마가 2회 이상 등장하면 프롬프트에 포화 경고 + 대체 테마 제시.
+   * Negative("금지") 대신 Positive("다음 중 선택") framing 으로 준수율 향상.
+   */
+  private buildThemeGuard(ctx: LlmContext, currentTurnNo: number): string | null {
+    const entries = ctx.narrativeThemes;
+    if (!entries?.length) return null;
+
+    const windowTurns = 3;
+    const minTurn = currentTurnNo - windowTurns + 1;
+    const recent = entries.filter((e) => e.turnNo >= minTurn);
+    if (recent.length === 0) return null;
+
+    const counts = aggregateRecentThemes(entries, currentTurnNo, windowTurns);
+    const saturated = getSaturatedThemes(entries, currentTurnNo, windowTurns, 2);
+    if (saturated.length === 0) return null;
+
+    const ALL_THEMES: NarrativeThemeTag[] = [
+      'WARNING',
+      'SUSPICION',
+      'REASSURE',
+      'THREAT',
+      'INFO_REQUEST',
+      'GOSSIP',
+      'ROMANCE',
+      'FAREWELL',
+    ];
+    const alternatives = ALL_THEMES.filter((t) => !saturated.includes(t));
+
+    const recentLog = recent
+      .slice(-6)
+      .map(
+        (e) =>
+          `  T${e.turnNo} ${e.npcId}: ${e.theme} "${e.snippet.replace(/"/g, '')}..."`,
+      )
+      .join('\n');
+
+    const saturatedCounts = saturated
+      .map((t) => `${t}×${counts.get(t) ?? 0}`)
+      .join(', ');
+
+    return [
+      '[대화 테마 분포 — 최근 3턴]',
+      recentLog,
+      '',
+      `⚠️ ${saturatedCounts} 테마가 포화 상태입니다. 이번 턴 NPC 대사는 위 테마 대신 아래 중 하나를 선택하세요:`,
+      `  ${alternatives.join(' / ')}`,
+      '같은 의미를 다른 단어로 표현하는 것도 반복입니다. 테마 자체를 바꾸세요.',
+    ].join('\n');
   }
 
   /**

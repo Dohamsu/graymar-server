@@ -130,7 +130,11 @@ export class NpcDialogueMarkerService {
     }
 
     // ── 새 형식 우선 파싱: "NPC별칭: \"대사\"" 패턴 ──
-    const colonResult = this.parseColonDialogueFormat(narrative, candidateNpcs);
+    const colonResult = this.parseColonDialogueFormat(
+      narrative,
+      candidateNpcs,
+      fallbackNpcId,
+    );
     if (colonResult) {
       this.logger.debug(
         `[ServerMarker:ColonFormat] converted=${colonResult.convertedCount} unmatched=${colonResult.unmatchedCount}`,
@@ -250,6 +254,7 @@ export class NpcDialogueMarkerService {
   private parseColonDialogueFormat(
     narrative: string,
     candidates: NpcCandidate[],
+    fallbackNpcId?: string,
   ): { text: string; convertedCount: number; unmatchedCount: number } | null {
     // 줄 시작에서 "NPC별칭: "대사"" 패턴 매칭
     // 별칭: 2자 이상, 콜론/따옴표 불포함
@@ -292,6 +297,48 @@ export class NpcDialogueMarkerService {
     // 뒤에서부터 치환하여 index 유지
     for (let i = matches.length - 1; i >= 0; i--) {
       const { alias, index, fullMatch } = matches[i];
+
+      // architecture/44 §이슈① — 환각 융합 선제 판정
+      // resolveNpcIdFromAlias 도 동일 판정을 하지만, 여기서 먼저 분기해
+      // fallbackNpcId 가 있는 경우 정본으로 귀속 처리한다.
+      const { hitNpcIds, hitFragments } =
+        NpcDialogueMarkerService.detectFusionHits(alias, candidates);
+      const hasConnector =
+        hitFragments.length >= 2 &&
+        NpcDialogueMarkerService.hasMultiNpcConnector(alias, hitFragments);
+      const isMultiSpeaker = hasConnector && hitNpcIds.size >= 2;
+      const isFusion =
+        hitFragments.length >= 2 &&
+        !hasConnector &&
+        NpcDialogueMarkerService.isHallucinatedFusion(alias, hitFragments);
+
+      if (isFusion && fallbackNpcId) {
+        // 환각 융합: 서술 본문의 alias 를 primaryNpc @마커로 교체
+        const aliasColonPart = fullMatch.slice(
+          0,
+          fullMatch.indexOf('"') >= 0
+            ? fullMatch.indexOf('"')
+            : fullMatch.indexOf('\u201C'),
+        );
+        const dialoguePart = fullMatch.slice(aliasColonPart.length);
+        const replacement = `@${fallbackNpcId} ${dialoguePart}`;
+        result =
+          result.slice(0, index) +
+          replacement +
+          result.slice(index + fullMatch.length);
+        this.logger.warn(
+          `[MarkerFusion] "${alias}" → @${fallbackNpcId} (primary 귀속)`,
+        );
+        convertedCount++;
+        continue;
+      }
+
+      if (isMultiSpeaker || isFusion) {
+        // 복수 발화 or fallback 없는 환각: alias 유지, 마커 스킵
+        unmatchedCount++;
+        continue;
+      }
+
       const npcId = this.resolveNpcIdFromAlias(alias, candidates);
 
       if (npcId) {
@@ -333,6 +380,37 @@ export class NpcDialogueMarkerService {
       for (const name of c.names) {
         if (name === alias) return c.npcId;
       }
+    }
+
+    // architecture/44 §이슈① — 환각 융합 감지 가드
+    // alias 안에 NPC 이름 파편이 2개 이상 등장 시:
+    // · 연결어(과/와/그리고/및 등) 있고 서로 다른 NPC → 정당한 복수 표기, 마커 스킵
+    // · 커버율 80% 이상 (파편들이 alias 거의 전체를 덮음) → 환각 융합, 거부
+    // · 사이에 의미 텍스트(예: "의 심복") 충분 → 단일 NPC 파생 표현, 2단계 매칭으로 진행
+    const { hitNpcIds, hitFragments } =
+      NpcDialogueMarkerService.detectFusionHits(alias, candidates);
+    if (hitFragments.length >= 2) {
+      const hasConnector = NpcDialogueMarkerService.hasMultiNpcConnector(
+        alias,
+        hitFragments,
+      );
+      if (hasConnector && hitNpcIds.size >= 2) {
+        this.logger.debug(
+          `[MultiSpeaker] 복수 발화 감지 → 마커 스킵: "${alias}"`,
+        );
+        return null;
+      }
+      const isFusion = NpcDialogueMarkerService.isHallucinatedFusion(
+        alias,
+        hitFragments,
+      );
+      if (isFusion) {
+        this.logger.warn(
+          `[MarkerReject] 환각 융합 의심: "${alias}" hits=${[...hitNpcIds].join(',')}`,
+        );
+        return null;
+      }
+      // 커버율 낮음 → 정당한 파생 표현으로 간주, 아래 fuzzy 매칭으로 진행
     }
 
     // 2) 부분 포함 매칭 (양방향)
@@ -684,6 +762,82 @@ export class NpcDialogueMarkerService {
     '용병',
     '주인공',
   ]);
+
+  // architecture/44 §이슈① — 복수 NPC 표기 연결어 (정당한 복수 발화 신호)
+  // 파편 사이에 이 연결어가 있으면 정당한 복수 표기, 없으면 환각 융합으로 판정
+  private static readonly MULTI_NPC_CONNECTORS =
+    /\s*(?:과|와|그리고|및|랑|하고|또는|·|,)\s*/;
+
+  // 외부 노출: Step F에서 재사용
+  static detectFusionHits(
+    alias: string,
+    candidates: { npcId: string; names: string[] }[],
+  ): {
+    hitNpcIds: Set<string>;
+    hitFragments: Array<{ npcId: string; name: string; pos: number }>;
+  } {
+    const hitNpcIds = new Set<string>();
+    const hitFragments: Array<{ npcId: string; name: string; pos: number }> =
+      [];
+    for (const c of candidates) {
+      for (const name of c.names) {
+        if (name.length < 2) continue;
+        const pos = alias.indexOf(name);
+        if (pos >= 0) {
+          hitNpcIds.add(c.npcId);
+          hitFragments.push({ npcId: c.npcId, name, pos });
+        }
+      }
+    }
+    return { hitNpcIds, hitFragments };
+  }
+
+  static hasMultiNpcConnector(
+    alias: string,
+    hitFragments: Array<{ name: string; pos: number }>,
+  ): boolean {
+    if (hitFragments.length < 2) return false;
+    const sorted = [...hitFragments].sort((a, b) => a.pos - b.pos);
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const betweenStart = sorted[i].pos + sorted[i].name.length;
+      const betweenEnd = sorted[i + 1].pos;
+      if (betweenEnd <= betweenStart) continue;
+      const between = alias.slice(betweenStart, betweenEnd);
+      if (NpcDialogueMarkerService.MULTI_NPC_CONNECTORS.test(between)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 환각 융합 판정: 파편들이 alias의 80% 이상을 덮으면 융합 의심.
+   * 같은 NPC의 여러 name이라도 연결어/의미 텍스트 없이 뭉친 경우 잡힌다.
+   *
+   * 예) "토단정한 제복의 장교 하위크" (len=15)
+   *   파편 "단정한 제복의 장교"(10) + "하위크"(3) = 13 → 13/15 = 87% → fusion
+   *
+   * 예) "토브렌의 심복 하위크" (len=11)
+   *   파편 "토브렌"(3) + "하위크"(3) = 6 → 6/11 = 55% → 파생 표현, fusion 아님
+   */
+  static isHallucinatedFusion(
+    alias: string,
+    hitFragments: Array<{ name: string; pos: number }>,
+  ): boolean {
+    if (hitFragments.length < 2) return false;
+    const sorted = [...hitFragments].sort((a, b) => a.pos - b.pos);
+    let covered = 0;
+    let lastEnd = 0;
+    for (const f of sorted) {
+      const start = Math.max(f.pos, lastEnd);
+      const end = f.pos + f.name.length;
+      if (end > start) covered += end - start;
+      lastEnd = Math.max(lastEnd, end);
+    }
+    const aliasLen = alias.length;
+    if (aliasLen === 0) return false;
+    return covered / aliasLen >= 0.8;
+  }
 
   private extractSpeakerAlias(before: string, after: string): string | null {
     // 발화자→대사 패턴: "XX가/이/은/는 + 발화동사"

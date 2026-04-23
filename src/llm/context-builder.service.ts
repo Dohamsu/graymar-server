@@ -163,6 +163,8 @@ export interface LlmContext {
   overusedPhrases: string[];
   // Player-First 지목 대상 (bug 4624): extractTargetNpcFromInput 결과 NPC
   playerTargetNpcId: string | null;
+  // architecture/44 §이슈② — 런 전역 NPC 대사 테마 이력 (최근 10턴)
+  narrativeThemes: import('../db/types/narrative-theme.js').NarrativeThemeEntry[];
 }
 
 @Injectable()
@@ -1529,6 +1531,11 @@ export class ContextBuilderService {
       overusedPhrases: this.extractOverusedPhrases(finalLocationSessionTurns),
       // Player-First — turns.service에서 extractTargetNpcFromInput 결과 전달
       playerTargetNpcId: playerTargetNpcId ?? null,
+      // architecture/44 §이슈② — 런 전역 테마 이력 (최근 10턴)
+      narrativeThemes:
+        ((runState?.narrativeThemes as
+          | import('../db/types/narrative-theme.js').NarrativeThemeEntry[]
+          | undefined) ?? []) as import('../db/types/narrative-theme.js').NarrativeThemeEntry[],
     };
   }
 
