@@ -127,6 +127,8 @@ export interface RunState {
   traitEffects?: import('../../content/content.types.js').TraitEffects; // 런타임 참조용 특성 효과
   /** 프리셋 + 특성 합산 actionBonuses (런타임 참조용) */
   actionBonuses?: Record<string, number>;
+  /** architecture/44 §이슈② — 런 전역 NPC 대사 테마 이력 (최근 10턴, FIFO) */
+  narrativeThemes?: import('./narrative-theme.js').NarrativeThemeEntry[];
 }
 
 /** 장소별 개인 기록 — 방문 횟수, 체류턴, 주요 사건, 발견한 비밀, 평판 메모 */

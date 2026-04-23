@@ -21,6 +21,7 @@ import { FactExtractorService } from './fact-extractor.service.js';
 import { DialogueGeneratorService } from './dialogue-generator.service.js';
 import { LorebookService } from './lorebook.service.js';
 import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
+import { ThemeClassifierService } from './theme-classifier.service.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
 import { ContentModule } from '../content/content.module.js';
 
@@ -45,6 +46,7 @@ import { ContentModule } from '../content/content.module.js';
     DialogueGeneratorService,
     LorebookService,
     LlmStreamBrokerService,
+    ThemeClassifierService,
   ],
   exports: [
     ContextBuilderService,
@@ -54,6 +56,7 @@ import { ContentModule } from '../content/content.module.js';
     NanoEventDirectorService,
     FactExtractorService,
     LlmStreamBrokerService,
+    ThemeClassifierService,
   ],
 })
 export class LlmModule implements OnModuleInit {

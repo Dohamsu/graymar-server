@@ -34,6 +34,11 @@ import {
 import { FactExtractorService } from './fact-extractor.service.js';
 import { NanoEventDirectorService } from './nano-event-director.service.js';
 import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
+import { ThemeClassifierService } from './theme-classifier.service.js';
+import {
+  pushNarrativeTheme,
+  type NarrativeThemeEntry,
+} from '../db/types/narrative-theme.js';
 import {
   DialogueGeneratorService,
   type DialogueSlot,
@@ -105,6 +110,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly nanoDirector: NanoDirectorService,
     private readonly factExtractor: FactExtractorService,
     private readonly dialogueGenerator: DialogueGeneratorService,
+    private readonly themeClassifier: ThemeClassifierService,
     @Optional() private readonly nanoEventDirector: NanoEventDirectorService,
     @Optional() private readonly streamBroker: LlmStreamBrokerService,
   ) {}
@@ -658,6 +664,26 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 return found?.npcId ?? speakerId;
               };
 
+              // architecture/44 §이슈② — 크로스 NPC 최근 테마 대사 주입
+              // 다른 NPC가 최근 3턴 안에 같거나 비슷한 테마로 말했다면
+              // 이번 NPC는 다른 테마로 응하도록 유도한다.
+              const narrativeThemes =
+                (rs?.narrativeThemes as
+                  | import('../db/types/narrative-theme.js').NarrativeThemeEntry[]
+                  | undefined) ?? [];
+              const crossNpcDialogues = (currentNpcId: string): string[] =>
+                narrativeThemes
+                  .filter(
+                    (e) =>
+                      e.npcId !== currentNpcId &&
+                      e.turnNo >= pending.turnNo - 3,
+                  )
+                  .slice(-3)
+                  .map(
+                    (e) =>
+                      `T${e.turnNo} ${e.npcId}[${e.theme}]: "${e.snippet.replace(/"/g, '')}..."`,
+                  );
+
               const inputs = dialogueSlots.map((slot) => {
                 const npcId = resolveNpcId(slot.speaker_id!);
                 return {
@@ -668,7 +694,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                     tone: slot.tone,
                   },
                   npcState: npcStates[npcId],
-                  previousDialogues: [] as string[],
+                  previousDialogues: crossNpcDialogues(npcId),
                   narrativeContext,
                   turnNo: pending.turnNo,
                 };
@@ -2399,6 +2425,85 @@ ${npcList}`,
               .set({ runState: rs as any })
               .where(eq(runSessions.id, pending.runId));
           }
+        }
+      }
+
+      // architecture/44 §이슈② — 런 전역 narrativeThemes 기록 (독립 블록)
+      // narrative 에서 @NPC_ID "대사" / @[이름|URL] "대사" 패턴을 추출해
+      // 테마 분류 후 runState.narrativeThemes 에 FIFO 저장. NPC 등장/롤백 여부와
+      // 무관하게 항상 실행되어야 한다 (dialogue_split 경로 포함).
+      if (narrative && runSession?.runState) {
+        try {
+          const themeRs = runSession.runState as unknown as Record<
+            string,
+            unknown
+          >;
+          const themeNpcStates =
+            (themeRs.npcStates as Record<string, unknown> | undefined) ?? {};
+          const candidateNpcIds = Object.keys(themeNpcStates);
+
+          const markerToNpcId = (bracketName: string): string | null => {
+            const trimmed = bracketName.trim();
+            for (const npcId of candidateNpcIds) {
+              const def = this.content.getNpc(npcId);
+              if (!def) continue;
+              const short = (def as Record<string, unknown>).shortAlias as
+                | string
+                | undefined;
+              if (
+                def.name === trimmed ||
+                def.unknownAlias === trimmed ||
+                short === trimmed
+              ) {
+                return npcId;
+              }
+            }
+            return null;
+          };
+
+          const dialogueRegex =
+            /@(?:\[([^\]|]+)(?:\|[^\]]+)?\]|([A-Z][A-Z_0-9]+))\s*["\u201C]([^"\u201D]{3,})["\u201D]/g;
+          let themeChanged = false;
+          let themeRecorded = 0;
+          let m: RegExpExecArray | null;
+          while ((m = dialogueRegex.exec(narrative)) !== null) {
+            const bracketName = m[1];
+            const plainId = m[2];
+            const dialogue = m[3];
+            const npcId = plainId ?? (bracketName ? markerToNpcId(bracketName) : null);
+            if (!npcId) continue;
+            const theme = this.themeClassifier.classify(dialogue);
+            if (theme === 'OTHER') continue;
+            const entry: NarrativeThemeEntry = {
+              turnNo: pending.turnNo,
+              npcId,
+              theme,
+              snippet: dialogue.slice(0, 20),
+            };
+            const runStateAny = themeRs as {
+              narrativeThemes?: NarrativeThemeEntry[];
+            };
+            runStateAny.narrativeThemes = pushNarrativeTheme(
+              runStateAny.narrativeThemes,
+              entry,
+            );
+            themeChanged = true;
+            themeRecorded++;
+          }
+
+          if (themeChanged) {
+            await this.db
+              .update(runSessions)
+              .set({ runState: themeRs as any })
+              .where(eq(runSessions.id, pending.runId));
+            this.logger.debug(
+              `[ThemeRecord] turn=${pending.turnNo} recorded=${themeRecorded}`,
+            );
+          }
+        } catch (err) {
+          this.logger.warn(
+            `[ThemeRecord] 분류 실패: ${err instanceof Error ? err.message : err}`,
+          );
         }
       }
 
