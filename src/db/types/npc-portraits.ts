@@ -24,4 +24,13 @@ export const NPC_PORTRAITS: Record<string, string> = {
   // BACKGROUND NPC (프롤로그/시장 조연)
   NPC_BG_FRUIT_VENDOR: '/npc-portraits/fruit_vendor.webp',
   NPC_BG_SHOE_SHINE: '/npc-portraits/shoe_shine.webp',
+  NPC_BG_STREET_KID: '/npc-portraits/street_kid.webp',
+  NPC_BG_DRUNK: '/npc-portraits/drunk.webp',
+  NPC_BG_HERB_CRONE: '/npc-portraits/herb_crone.webp',
+  NPC_BG_BARMAID: '/npc-portraits/barmaid.webp',
+  NPC_BG_DOCKER: '/npc-portraits/docker.webp',
+  NPC_BG_BEGGAR: '/npc-portraits/beggar.webp',
+  NPC_BG_CUSTOMS: '/npc-portraits/customs.webp',
+  NPC_BG_FISHMONGER: '/npc-portraits/fishmonger.webp',
+  NPC_BG_VAGRANT: '/npc-portraits/vagrant.webp',
 };
