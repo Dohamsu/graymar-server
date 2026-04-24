@@ -2266,7 +2266,10 @@ export class PromptBuilderService {
    * 최근 3턴 내 동일 테마가 2회 이상 등장하면 프롬프트에 포화 경고 + 대체 테마 제시.
    * Negative("금지") 대신 Positive("다음 중 선택") framing 으로 준수율 향상.
    */
-  private buildThemeGuard(ctx: LlmContext, currentTurnNo: number): string | null {
+  private buildThemeGuard(
+    ctx: LlmContext,
+    currentTurnNo: number,
+  ): string | null {
     const entries = ctx.narrativeThemes;
     if (!entries?.length) return null;
 
@@ -2276,7 +2279,12 @@ export class PromptBuilderService {
     if (recent.length === 0) return null;
 
     const counts = aggregateRecentThemes(entries, currentTurnNo, windowTurns);
-    const saturated = getSaturatedThemes(entries, currentTurnNo, windowTurns, 2);
+    const saturated = getSaturatedThemes(
+      entries,
+      currentTurnNo,
+      windowTurns,
+      2,
+    );
     if (saturated.length === 0) return null;
 
     const ALL_THEMES: NarrativeThemeTag[] = [

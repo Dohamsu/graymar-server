@@ -176,13 +176,24 @@ export class LobbyService {
     const memberUserIds = state.members.map((m) => m.userId);
 
     // 멤버별 프리셋/성별 프로필 조회
-    const memberProfiles = state.members.map((m) => ({
-      userId: m.userId,
-      nickname: m.nickname,
-      presetId: m.presetId ?? 'DOCKWORKER',
-      gender: (m.gender === 'female' ? 'female' : 'male') as 'male' | 'female',
-      isLeader: m.userId === leaderId,
-    }));
+    type MemberProfile = {
+      userId: string;
+      nickname: string;
+      presetId: string;
+      gender: 'male' | 'female';
+      isLeader: boolean;
+    };
+    const memberProfiles: MemberProfile[] = state.members.map((m) => {
+      const gender: 'male' | 'female' =
+        m.gender === 'female' ? 'female' : 'male';
+      return {
+        userId: m.userId,
+        nickname: m.nickname,
+        presetId: m.presetId ?? 'DOCKWORKER',
+        gender,
+        isLeader: m.userId === leaderId,
+      };
+    });
 
     this.logger.log(
       `Dungeon starting: party=${partyId} leader=${leaderId} members=${memberUserIds.length}`,

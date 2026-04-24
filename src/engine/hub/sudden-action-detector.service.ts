@@ -3,11 +3,7 @@
 import { Injectable } from '@nestjs/common';
 import type { ParsedIntentV2 } from '../../db/types/index.js';
 
-export type SuddenActionSeverity =
-  | 'CRITICAL'
-  | 'SEVERE'
-  | 'MODERATE'
-  | 'MINOR';
+export type SuddenActionSeverity = 'CRITICAL' | 'SEVERE' | 'MODERATE' | 'MINOR';
 
 export type SuddenActionType =
   | 'KILL_ATTEMPT'

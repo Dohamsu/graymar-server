@@ -226,33 +226,38 @@ export class PartyController {
       this.logger.debug(`SSE closed: party=${partyId} user=${userId}`);
 
       // 30초 유예 후 AI 제어 전환 (재연결 여부 확인)
-      setTimeout(async () => {
-        // 해당 유저가 다시 연결되었는지 확인
-        if (this.streamService.isUserConnected(partyId, userId)) return;
-
-        // 파티 런 조회하여 AI 제어 전환
-        try {
-          const activeRun = await this.db.query.runSessions.findFirst({
-            where: and(
-              eq(runSessions.partyId, partyId),
-              eq(runSessions.status, 'RUN_ACTIVE'),
-            ),
-            columns: { id: true },
-          });
-          if (activeRun) {
-            this.partyTurnService.setAiControlled(activeRun.id, userId);
-            this.streamService.broadcast(
-              partyId,
-              'party:member_ai_controlled',
-              { userId },
-            );
-            this.logger.log(
-              `AI control activated after 30s: user=${userId} run=${activeRun.id}`,
+      // P1-S1: setTimeout 콜백 내 async 는 반환 Promise 가 버려지므로
+      //   void IIFE + 명시적 error 로깅으로 누수/무음 실패 방지.
+      setTimeout(() => {
+        void (async () => {
+          if (this.streamService.isUserConnected(partyId, userId)) return;
+          try {
+            const activeRun = await this.db.query.runSessions.findFirst({
+              where: and(
+                eq(runSessions.partyId, partyId),
+                eq(runSessions.status, 'RUN_ACTIVE'),
+              ),
+              columns: { id: true },
+            });
+            if (activeRun) {
+              this.partyTurnService.setAiControlled(activeRun.id, userId);
+              this.streamService.broadcast(
+                partyId,
+                'party:member_ai_controlled',
+                { userId },
+              );
+              this.logger.log(
+                `AI control activated after 30s: user=${userId} run=${activeRun.id}`,
+              );
+            }
+          } catch (err) {
+            // DB 에러는 빈 catch 로 숨기지 않는다.
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.warn(
+              `AI 제어 전환 실패 party=${partyId} user=${userId}: ${msg}`,
             );
           }
-        } catch {
-          // 비정상 상태 무시
-        }
+        })();
       }, 30_000);
     });
 

@@ -92,9 +92,9 @@ describe('NpcDialogueMarkerService — 환각 융합 별칭 차단', () => {
 
     it('파편 1개 — 연결어 검사 불필요 → false', () => {
       const fragments = [{ npcId: 'NPC_TOBREN', name: '하위크', pos: 0 }];
-      expect(NpcDialogueMarkerService.hasMultiNpcConnector('하위크', fragments)).toBe(
-        false,
-      );
+      expect(
+        NpcDialogueMarkerService.hasMultiNpcConnector('하위크', fragments),
+      ).toBe(false);
     });
   });
 
