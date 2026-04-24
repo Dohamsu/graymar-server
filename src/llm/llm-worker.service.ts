@@ -2470,7 +2470,8 @@ ${npcList}`,
             const bracketName = m[1];
             const plainId = m[2];
             const dialogue = m[3];
-            const npcId = plainId ?? (bracketName ? markerToNpcId(bracketName) : null);
+            const npcId =
+              plainId ?? (bracketName ? markerToNpcId(bracketName) : null);
             if (!npcId) continue;
             const theme = this.themeClassifier.classify(dialogue);
             if (theme === 'OTHER') continue;
@@ -3001,15 +3002,28 @@ ${npcList}`,
     // 3. 각 별칭의 본문 내 출현 위치 수집 (마커 밖만)
     let result = narrative;
     for (const [fullAlias, info] of aliasMap) {
+      // P1-S2: 0-length alias 방어 + iteration 상한 (런어웨이 방지)
+      if (!fullAlias) continue;
       const positions: number[] = [];
       let searchFrom = 0;
-      while (true) {
+      const MAX_ITER = 256;
+      let iter = 0;
+      while (iter++ < MAX_ITER) {
         const idx = result.indexOf(fullAlias, searchFrom);
         if (idx === -1) break;
         if (!isInMarker(idx)) {
           positions.push(idx);
         }
-        searchFrom = idx + fullAlias.length;
+        // searchFrom 진전 보장 — fullAlias.length 가 0 이면 break
+        const nextFrom = idx + fullAlias.length;
+        if (nextFrom <= searchFrom) break;
+        searchFrom = nextFrom;
+      }
+      if (iter >= MAX_ITER) {
+        this.logger.warn(
+          `[AliasReplace] iteration cap hit for "${fullAlias}" — skip`,
+        );
+        continue;
       }
 
       // 2회차+만 교체 (첫 출현은 유지)

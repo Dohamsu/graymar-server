@@ -1863,10 +1863,7 @@ export class TurnsService {
     // combat 트리거 분기보다 먼저 실행해 COMBAT 경로에서도 NPC 상태가 반영되도록 한다.
     if (resolveResult.suddenAction && resolveResult.suddenAction.targetNpcId) {
       const npcId = resolveResult.suddenAction.targetNpcId;
-      const npcStates = (updatedRunState.npcStates ?? {}) as Record<
-        string,
-        import('../db/types/index.js').NPCState
-      >;
+      const npcStates = updatedRunState.npcStates ?? {};
       const targetNpc = npcStates[npcId];
       if (targetNpc) {
         const sa = resolveResult.suddenAction;
@@ -1892,9 +1889,8 @@ export class TurnsService {
           fear: Math.min(100, emo.fear + fearBoost),
           trust: Math.max(-100, emo.trust - trustDrop),
         };
-        const { recordNpcEncounter, addNpcKnownFact } = await import(
-          '../db/types/npc-state.js'
-        );
+        const { recordNpcEncounter, addNpcKnownFact } =
+          await import('../db/types/npc-state.js');
         const locationId = (ws.currentLocationId as string) || '';
         let updated: import('../db/types/index.js').NPCState = {
           ...targetNpc,
@@ -1908,10 +1904,7 @@ export class TurnsService {
           'SUCCESS',
           sa.summary,
         );
-        updated = addNpcKnownFact(
-          updated,
-          `⚠️ ${sa.summary} (T${turnNo})`,
-        );
+        updated = addNpcKnownFact(updated, `⚠️ ${sa.summary} (T${turnNo})`);
         npcStates[npcId] = updated;
         updatedRunState.npcStates = npcStates;
         this.logger.debug(

@@ -1533,9 +1533,9 @@ export class ContextBuilderService {
       playerTargetNpcId: playerTargetNpcId ?? null,
       // architecture/44 §이슈② — 런 전역 테마 이력 (최근 10턴)
       narrativeThemes:
-        ((runState?.narrativeThemes as
+        (runState?.narrativeThemes as
           | import('../db/types/narrative-theme.js').NarrativeThemeEntry[]
-          | undefined) ?? []) as import('../db/types/narrative-theme.js').NarrativeThemeEntry[],
+          | undefined) ?? [],
     };
   }
 

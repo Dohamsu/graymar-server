@@ -15,6 +15,17 @@ import { ChatService } from './chat.service.js';
 import { TurnsService } from '../turns/turns.service.js';
 import { PartyRewardService } from './party-reward.service.js';
 import { LobbyService } from './lobby.service.js';
+import type { RunState } from '../db/types/permanent-stats.js';
+
+/**
+ * P1-S3: 파티 런의 runState 부분 타입.
+ * 기본 RunState 에 파티 전용 필드(partyMembers, partyMemberHp) 를 명시해
+ * Record<string, unknown> 캐스팅 대신 런타임 안전한 접근을 보장한다.
+ */
+type PartyRunStateView = RunState & {
+  partyMembers?: Array<{ userId: string; presetId: string }>;
+  partyMemberHp?: Record<string, { hp: number; maxHp: number }>;
+};
 
 /** 턴 타이머: 30초 */
 const TURN_TIMEOUT_MS = 30_000;
@@ -476,9 +487,8 @@ export class PartyTurnService {
     ].join(' / ');
 
     // 4. partyActions 데이터 구성 (LLM 서술용 — presetId 포함)
-    const partyMembersData = (
-      run.runState as unknown as Record<string, unknown>
-    )?.partyMembers as { userId: string; presetId: string }[] | undefined;
+    const partyRunState = run.runState as PartyRunStateView | null | undefined;
+    const partyMembersData = partyRunState?.partyMembers;
     const partyActionsData = actions.map((a) => {
       const memberProfile = partyMembersData?.find(
         (m) => m.userId === a.userId,
@@ -539,16 +549,12 @@ export class PartyTurnService {
         columns: { runState: true },
       });
       if (updatedRun?.runState) {
-        const urs = updatedRun.runState as unknown as Record<string, unknown>;
-        const currentHp = (urs.hp as number) ?? 0;
-        const currentMaxHp = (urs.maxHp as number) ?? 100;
+        const urs = updatedRun.runState as PartyRunStateView;
+        const currentHp = urs.hp ?? 0;
+        const currentMaxHp = urs.maxHp ?? 100;
 
         // 개별 HP 상태 (partyMemberHp가 있으면 사용, 없으면 공유 HP)
-        const memberHpMap =
-          (urs.partyMemberHp as Record<
-            string,
-            { hp: number; maxHp: number }
-          >) ?? {};
+        const memberHpMap = urs.partyMemberHp ?? {};
 
         this.streamService.broadcast(partyId, 'party:member_hp_update', {
           members: partyActionsData.map((a) => {
@@ -619,15 +625,14 @@ export class PartyTurnService {
         });
         if (runCheck?.partyId) {
           // 보상 솔로 동기화
-          const rs = runCheck.runState as unknown as Record<string, unknown>;
+          const rs = runCheck.runState as PartyRunStateView | null | undefined;
           const memberGold = new Map<string, number>();
           const memberItems = new Map<
             string,
             Array<{ itemId: string; qty: number }>
           >();
-          const totalGold = (rs?.gold as number) ?? 0;
-          const totalInv =
-            (rs?.inventory as Array<{ itemId: string; qty: number }>) ?? [];
+          const totalGold = rs?.gold ?? 0;
+          const totalInv = rs?.inventory ?? [];
           const memberIds = actions.map((a) => a.userId);
           // 골드 균등 분배
           const perMember = Math.floor(totalGold / memberIds.length);

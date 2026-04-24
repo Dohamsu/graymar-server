@@ -55,10 +55,7 @@ describe('SuddenActionDetectorService', () => {
 
   describe('SEVERE — 폭행/무력 위협', () => {
     it('"철퇴로 내려친다" → SEVERE ASSAULT', () => {
-      const result = service.detect(
-        makeIntent(['FIGHT']),
-        '철퇴로 내려친다',
-      );
+      const result = service.detect(makeIntent(['FIGHT']), '철퇴로 내려친다');
       expect(result?.severity).toBe('SEVERE');
       expect(result?.type).toBe('ASSAULT');
     });
@@ -101,12 +98,8 @@ describe('SuddenActionDetectorService', () => {
       expect(
         service.detect(makeIntent(['TALK']), '대화를 시도한다'),
       ).toBeNull();
-      expect(
-        service.detect(makeIntent(['PERSUADE']), '설득한다'),
-      ).toBeNull();
-      expect(
-        service.detect(makeIntent(['OBSERVE']), '살펴본다'),
-      ).toBeNull();
+      expect(service.detect(makeIntent(['PERSUADE']), '설득한다')).toBeNull();
+      expect(service.detect(makeIntent(['OBSERVE']), '살펴본다')).toBeNull();
     });
 
     it('빈 입력 → null', () => {
