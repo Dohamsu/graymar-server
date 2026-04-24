@@ -96,6 +96,12 @@ const VALID_CHOICE_AFFORDANCES = new Set([
 export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LlmWorkerService.name);
   private timer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * P3-S6: nano 가 생성한 choices 를 턴 단위로 임시 보관.
+   *   기존 `(pending as any)._nanoChoices` any 주입 패턴 제거.
+   *   key = `${runId}:${turnNo}`. commit 후 delete.
+   */
+  private readonly pendingNanoChoices = new Map<string, ChoiceItem[]>();
 
   constructor(
     @Inject(DB) private readonly db: DrizzleDB,
@@ -301,17 +307,19 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
             // nano 선택지를 llmChoices에 저장 (클라이언트 폴링 시 반환)
             if (nanoResult.choices.length >= 3) {
-              const nanoChoices = nanoResult.choices.map((nc, idx) => ({
-                id: `nano_${pending.turnNo}_${idx}`,
-                label: nc.label,
-                action: {
-                  type: 'CHOICE' as string,
-                  payload: {
-                    affordance: nc.affordance,
-                    sourceNpcId: nc.npcId ?? nanoResult.npcId,
+              const nanoChoices: ChoiceItem[] = nanoResult.choices.map(
+                (nc, idx) => ({
+                  id: `nano_${pending.turnNo}_${idx}`,
+                  label: nc.label,
+                  action: {
+                    type: 'CHOICE',
+                    payload: {
+                      affordance: nc.affordance,
+                      sourceNpcId: nc.npcId ?? nanoResult.npcId,
+                    },
                   },
-                },
-              }));
+                }),
+              );
               nanoChoices.push({
                 id: 'go_hub',
                 label: '다른 장소로 이동한다',
@@ -321,7 +329,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 },
               });
               // llmChoices에 저장 (DB 업데이트는 아래에서 함께)
-              (pending as any)._nanoChoices = nanoChoices;
+              this.pendingNanoChoices.set(
+                `${pending.runId}:${pending.turnNo}`,
+                nanoChoices,
+              );
             }
           }
         } catch (err) {
@@ -354,14 +365,22 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             );
           }
 
+          // P3-S5: null/undefined 명시 가드 + 반복 as 캐스팅 제거
+          const extractNpcId = (
+            data: unknown,
+          ): string | undefined => {
+            if (!data || typeof data !== 'object') return undefined;
+            const id = (data as Record<string, unknown>).npcId;
+            return typeof id === 'string' ? id : undefined;
+          };
           const npcEvt = serverResult.events?.find(
-            (e) => (e.data as Record<string, unknown>)?.npcId,
+            (e) => extractNpcId(e.data) !== undefined,
           );
-          const npcId = (npcEvt?.data as Record<string, unknown>)?.npcId as
-            | string
-            | undefined;
+          const npcId = extractNpcId(npcEvt?.data);
           const npcDef = npcId ? this.content.getNpc(npcId) : null;
-          const npcName = npcDef?.unknownAlias ?? npcDef?.name ?? null;
+          const npcName = npcDef
+            ? (npcDef.unknownAlias ?? npcDef.name ?? null)
+            : null;
 
           directorHint = await this.nanoDirector.generate(
             recentNarratives,
@@ -2522,7 +2541,10 @@ ${npcList}`,
             latencyMs: callResult.response?.latencyMs ?? 0,
           },
           llmCompletedAt: new Date(),
-          llmChoices: (pending as any)._nanoChoices ?? llmChoices,
+          llmChoices:
+            this.pendingNanoChoices.get(
+              `${pending.runId}:${pending.turnNo}`,
+            ) ?? llmChoices,
           llmPrompt: messages as unknown[],
         })
         .where(eq(turns.id, pending.id));
@@ -2551,17 +2573,19 @@ ${npcList}`,
             (nanoCtx2 as any).narrativeText = narrative;
             const nanoResult2 = await this.nanoEventDirector.generate(nanoCtx2);
             if (nanoResult2 && nanoResult2.choices.length >= 3) {
-              const nanoChoices2 = nanoResult2.choices.map((nc, idx) => ({
-                id: `nano_${pending.turnNo}_${idx}`,
-                label: nc.label,
-                action: {
-                  type: 'CHOICE' as string,
-                  payload: {
-                    affordance: nc.affordance,
-                    sourceNpcId: nc.npcId ?? nanoResult2.npcId,
+              const nanoChoices2: ChoiceItem[] = nanoResult2.choices.map(
+                (nc, idx) => ({
+                  id: `nano_${pending.turnNo}_${idx}`,
+                  label: nc.label,
+                  action: {
+                    type: 'CHOICE',
+                    payload: {
+                      affordance: nc.affordance,
+                      sourceNpcId: nc.npcId ?? nanoResult2.npcId,
+                    },
                   },
-                },
-              }));
+                }),
+              );
               nanoChoices2.push({
                 id: 'go_hub',
                 label: '다른 장소로 이동한다',
@@ -2570,7 +2594,10 @@ ${npcList}`,
                   payload: { affordance: 'MOVE_LOCATION', sourceNpcId: null },
                 },
               });
-              (pending as any)._nanoChoices = nanoChoices2;
+              this.pendingNanoChoices.set(
+                `${pending.runId}:${pending.turnNo}`,
+                nanoChoices2,
+              );
               this.logger.log(
                 `[Track2:NanoEvent] 서술 기반 선택지 ${nanoResult2.choices.length}개 생성`,
               );
@@ -2585,12 +2612,17 @@ ${npcList}`,
 
       // 스트리밍 완료 이벤트 전송 (후처리 완료된 최종 서술 + 선택지)
       if (this.streamBroker) {
-        const finalChoices = (pending as any)._nanoChoices ?? llmChoices;
+        const finalChoices =
+          this.pendingNanoChoices.get(
+            `${pending.runId}:${pending.turnNo}`,
+          ) ?? llmChoices;
         this.streamBroker.emit(pending.runId, pending.turnNo, 'done', {
           narrative,
           choices: finalChoices,
         });
       }
+      // P3-S6: 해당 턴의 nano choices 임시 보관 정리
+      this.pendingNanoChoices.delete(`${pending.runId}:${pending.turnNo}`);
 
       // recent_summaries에 요약 저장
       await this.db.insert(recentSummaries).values({
@@ -2650,11 +2682,14 @@ ${npcList}`,
         thread.entries.push({ turnNo: pending.turnNo, summary: threadEntry });
 
         // 예산 관리: 총 1200자 초과 시 가장 오래된 엔트리 삭제
-        while (
-          thread.entries.length > 1 &&
-          JSON.stringify(thread.entries).length > 1200
-        ) {
-          thread.entries.shift();
+        // P3-S4: 매 루프마다 JSON.stringify 반복 호출 회피 — summary 길이 합산 기반.
+        let totalSize = thread.entries.reduce(
+          (sum, e) => sum + (e.summary?.length ?? 0) + 20, // +20 for JSON overhead
+          0,
+        );
+        while (thread.entries.length > 1 && totalSize > 1200) {
+          const removed = thread.entries.shift();
+          totalSize -= (removed?.summary?.length ?? 0) + 20;
         }
 
         const threadJson = JSON.stringify(thread);
@@ -2842,10 +2877,14 @@ ${npcList}`,
 
   private tryParseJson(raw: string): NarrativeJsonOutput | null {
     try {
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) return null;
+      // P3-S3: 기존 /\{[\s\S]*\}/ 는 greedy regex 로 대형 응답에 백트래킹
+      // 폭주 가능. 인덱스 기반 슬라이스로 치환 — O(n) 보장.
+      const first = raw.indexOf('{');
+      const last = raw.lastIndexOf('}');
+      if (first === -1 || last === -1 || last <= first) return null;
+      const candidate = raw.slice(first, last + 1);
       // LLM이 JSON에서 잘못된 이스케이프를 사용하는 경우 정리
-      const cleaned = jsonMatch[0]
+      const cleaned = candidate
         .replace(/\\'/g, "'") // \' → ' (JSON에서 불필요한 이스케이프)
         .replace(/[\x00-\x1F\x7F]/g, (ch) =>
           ch === '\n' || ch === '\t' ? ch : '',

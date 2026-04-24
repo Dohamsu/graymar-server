@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray, desc } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { parties } from '../db/schema/parties.js';
 import { partyMembers } from '../db/schema/party-members.js';
@@ -94,24 +94,44 @@ export class LobbyService {
       .innerJoin(users, eq(users.id, partyMembers.userId))
       .where(eq(partyMembers.partyId, partyId));
 
-    // 각 멤버의 최근 런에서 프리셋/성별 정보 조회
-    const memberStates: LobbyMemberState[] = await Promise.all(
-      members.map(async (m) => {
-        const lastRun = await this.db.query.runSessions.findFirst({
-          where: eq(runSessions.userId, m.userId),
-          columns: { presetId: true, gender: true },
-          orderBy: (rs, { desc }) => [desc(rs.startedAt)],
+    // P3-S1: N+1 쿼리 해소 — 멤버별 findFirst 반복을 IN 쿼리 한 번으로 대체.
+    // 각 유저의 가장 최근 run 을 선택하기 위해 orderBy + 앱 레벨 dedupe.
+    const memberIds = members.map((m) => m.userId);
+    const allRuns = memberIds.length
+      ? await this.db
+          .select({
+            userId: runSessions.userId,
+            presetId: runSessions.presetId,
+            gender: runSessions.gender,
+            startedAt: runSessions.startedAt,
+          })
+          .from(runSessions)
+          .where(inArray(runSessions.userId, memberIds))
+          .orderBy(desc(runSessions.startedAt))
+      : [];
+    const latestRunByUser = new Map<
+      string,
+      { presetId: string | null; gender: string | null }
+    >();
+    for (const run of allRuns) {
+      if (!latestRunByUser.has(run.userId)) {
+        latestRunByUser.set(run.userId, {
+          presetId: run.presetId ?? null,
+          gender: run.gender ?? null,
         });
-        return {
-          userId: m.userId,
-          nickname: m.nickname ?? '알 수 없는 용병',
-          presetId: lastRun?.presetId ?? null,
-          gender: lastRun?.gender ?? null,
-          isReady: m.isReady === 'true',
-          isOnline: m.isOnline === 'true',
-        };
-      }),
-    );
+      }
+    }
+    const memberStates: LobbyMemberState[] = members.map((m) => {
+      const last = latestRunByUser.get(m.userId);
+      return {
+        userId: m.userId,
+        nickname: m.nickname ?? '알 수 없는 용병',
+        presetId: last?.presetId ?? null,
+        gender: last?.gender ?? null,
+        isReady: m.isReady === 'true',
+        isOnline: m.isOnline === 'true',
+      };
+    });
 
     const allReady =
       memberStates.length >= 2 && memberStates.every((m) => m.isReady);
