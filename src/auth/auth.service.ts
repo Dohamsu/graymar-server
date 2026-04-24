@@ -10,7 +10,8 @@ import {
 } from '../common/errors/game-errors.js';
 import type { RegisterBody, LoginBody } from './dto/auth.dto.js';
 
-const BCRYPT_ROUNDS = 10;
+// P2-S1: 10 → 12 (현대 OWASP 권장). 12rounds ≈ 250ms 해싱.
+const BCRYPT_ROUNDS = 12;
 
 @Injectable()
 export class AuthService {

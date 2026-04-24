@@ -150,13 +150,22 @@ export class LlmCallerService {
     const actualModel =
       model ?? request.model ?? this.configService.get().openaiModel;
 
-    // OpenAI Provider만 스트리밍 지원
-    if (
-      'generateStream' in primary &&
-      typeof (primary as any).generateStream === 'function'
-    ) {
+    // OpenAI Provider만 스트리밍 지원 (P2-S2: any 제거 — optional 메서드 타입 가드)
+    type StreamChunk =
+      | { type: 'token'; text: string }
+      | { type: 'done'; response: LlmProviderResponse };
+    type StreamableProvider = {
+      generateStream: (
+        req: typeof request,
+        model?: string,
+      ) => AsyncGenerator<StreamChunk>;
+    };
+    const hasStream = (p: unknown): p is StreamableProvider =>
+      typeof (p as { generateStream?: unknown }).generateStream === 'function';
+
+    if (hasStream(primary)) {
       try {
-        yield* (primary as any).generateStream(request, actualModel);
+        yield* primary.generateStream(request, actualModel);
         return;
       } catch (err) {
         this.logger.warn(`Stream failed, falling back to non-stream: ${err}`);
