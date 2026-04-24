@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { eq, and, ilike, sql, asc } from 'drizzle-orm';
+import { eq, and, ilike, sql, asc, inArray } from 'drizzle-orm';
 import { randomBytes } from 'crypto';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { parties } from '../db/schema/parties.js';
@@ -113,26 +113,34 @@ export class PartyService {
     const hasMore = rows.length > limit;
     const items = hasMore ? rows.slice(0, limit) : rows;
 
+    // P3-S2: N+1 해소 — 파티별 count 개별 쿼리를 group-by 집계 한 번으로.
+    const partyIds = items.map((p) => p.id);
+    const countRows = partyIds.length
+      ? await this.db
+          .select({
+            partyId: partyMembers.partyId,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(partyMembers)
+          .where(inArray(partyMembers.partyId, partyIds))
+          .groupBy(partyMembers.partyId)
+      : [];
+    const countByParty = new Map<string, number>();
+    for (const row of countRows) countByParty.set(row.partyId, row.count);
+
     const results: {
       id: string;
       name: string;
       memberCount: number;
       maxMembers: number;
       status: string;
-    }[] = [];
-    for (const party of items) {
-      const memberCount = await this.db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(partyMembers)
-        .where(eq(partyMembers.partyId, party.id));
-      results.push({
-        id: party.id,
-        name: party.name,
-        memberCount: memberCount[0]?.count ?? 0,
-        maxMembers: party.maxMembers,
-        status: party.status,
-      });
-    }
+    }[] = items.map((party) => ({
+      id: party.id,
+      name: party.name,
+      memberCount: countByParty.get(party.id) ?? 0,
+      maxMembers: party.maxMembers,
+      status: party.status,
+    }));
 
     const nextCursor = hasMore
       ? items[items.length - 1].createdAt.toISOString()

@@ -14,10 +14,7 @@ function sanitizeRawInput(raw: string): string {
   // 제어문자 제거
   s = s.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '');
   // 시스템 태그 모방을 일반 텍스트로 중화 (대괄호 제거)
-  s = s.replace(
-    /\[(SYSTEM|INST|USER|ASSISTANT)\]/gi,
-    '($1)',
-  );
+  s = s.replace(/\[(SYSTEM|INST|USER|ASSISTANT)\]/gi, '($1)');
   return s.trim();
 }
 
@@ -27,10 +24,9 @@ export const SubmitTurnBodySchema = z.object({
     text: z
       .string()
       .max(400)
-      .refine(
-        (v) => !PROMPT_INJECTION_PATTERNS.some((p) => p.test(v)),
-        { message: '허용되지 않는 문자/패턴이 포함되어 있습니다.' },
-      )
+      .refine((v) => !PROMPT_INJECTION_PATTERNS.some((p) => p.test(v)), {
+        message: '허용되지 않는 문자/패턴이 포함되어 있습니다.',
+      })
       .transform((v) => sanitizeRawInput(v))
       .optional(),
     choiceId: z.string().max(80).optional(),

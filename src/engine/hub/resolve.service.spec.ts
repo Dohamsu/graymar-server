@@ -140,7 +140,9 @@ describe('ResolveService', () => {
       (actionType) => {
         const r = service.resolve(
           makeEvent(),
-          makeIntent({ actionType: actionType as ParsedIntentV2['actionType'] }),
+          makeIntent({
+            actionType: actionType as ParsedIntentV2['actionType'],
+          }),
           makeWorld(),
           makeStats(),
           makeRng([1]), // 주사위 소비되지 않아야 함
@@ -750,9 +752,7 @@ describe('ResolveService', () => {
         makeWorld({
           locationDynamicStates: {
             LOC_MARKET: {
-              activeConditions: [
-                { effects: { blockedActions: ['TALK'] } },
-              ],
+              activeConditions: [{ effects: { blockedActions: ['TALK'] } }],
             },
           } as unknown as WorldState['locationDynamicStates'],
         }),
@@ -769,9 +769,7 @@ describe('ResolveService', () => {
         makeWorld({
           locationDynamicStates: {
             LOC_MARKET: {
-              activeConditions: [
-                { effects: { boostedActions: ['TALK'] } },
-              ],
+              activeConditions: [{ effects: { boostedActions: ['TALK'] } }],
             },
           } as unknown as WorldState['locationDynamicStates'],
         }),
