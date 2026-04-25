@@ -224,6 +224,19 @@ export type NpcDefinition = {
   }>;
   /** 이 NPC와 관련된 사건 ID 목록 */
   linkedIncidents?: string[];
+  /**
+   * NPC 일상 화제 풀 — fact 미매칭 시(잡담 모드) 프롬프트에 주입되는 자연 대사 후보.
+   * architecture/45_npc_free_dialogue.md Phase 2.
+   */
+  daily_topics?: Array<{
+    topicId: string;
+    /** WORK / PERSONAL / GOSSIP / OPINION / WORRY 등 카테고리 */
+    category: string;
+    /** NPC 말투로 작성된 1~3 문장 */
+    text: string;
+    /** 잡담 매칭 가중치 (선택) */
+    keywords?: string[];
+  }>;
 };
 
 export type SetDefinitionData = {
