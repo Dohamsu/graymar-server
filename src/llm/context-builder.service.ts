@@ -1338,10 +1338,49 @@ export class ContextBuilderService {
               (runState?.discoveredQuestFacts as string[]) ?? [];
             const revealedFactIds = new Set(discoveredFacts);
 
-            // 첫 번째 미공개 fact 선택 (순서대로 점진적 공개)
-            const unrevealed = npcDef.knownFacts.find(
+            // === Phase 1 (architecture/45): 키워드 매칭 게이팅 ===
+            // 플레이어 입력 + actionType 키워드 ↔ fact.keywords 매칭 시에만 fact 공개.
+            // 매칭 실패 시 unrevealed = undefined → npcRevealableFact = null → 잡담 모드 진입.
+            const rawInputForFact =
+              (((serverResult as Record<string, unknown>)?.summary as
+                | Record<string, unknown>
+                | undefined)?.short as string) ?? '';
+            const actionTypeForFact = (acForFact?.parsedType as string) ?? '';
+            const inputKw = new Set(
+              rawInputForFact.match(/[가-힣]{2,}/g) ?? [],
+            );
+            const ACTION_KW: Record<string, string[]> = {
+              INVESTIGATE: ['조사', '단서', '흔적', '증거', '살펴'],
+              SEARCH: ['찾기', '뒤지기', '살펴', '수색'],
+              TALK: ['대화', '이야기', '소문', '물어'],
+              PERSUADE: ['설득', '부탁', '요청'],
+              OBSERVE: ['관찰', '지켜', '살핀'],
+              STEAL: ['훔치기', '절도'],
+              BRIBE: ['뇌물', '매수'],
+              THREATEN: ['위협', '협박'],
+              TRADE: ['거래', '교환', '구매'],
+              HELP: ['도와', '도움'],
+            };
+            for (const k of ACTION_KW[actionTypeForFact] ?? []) inputKw.add(k);
+
+            const matchFact = (f: { keywords?: string[] }): boolean => {
+              const factKw = f.keywords ?? [];
+              if (factKw.length === 0) return false;
+              for (const kw of factKw) {
+                if (kw.length < 2) continue;
+                if (inputKw.has(kw)) return true;
+                for (const ik of inputKw) {
+                  // 부분 일치: 입력 단어가 fact 키워드를 포함 (조사/어미 변형 대응)
+                  if (ik.length >= 2 && ik.includes(kw)) return true;
+                }
+              }
+              return false;
+            };
+
+            const unrevealedFacts = npcDef.knownFacts.filter(
               (f) => !revealedFactIds.has(f.factId),
             );
+            const unrevealed = unrevealedFacts.find(matchFact);
             if (unrevealed) {
               const npcStatesForFact = runState?.npcStates as
                 | Record<string, NPCState>

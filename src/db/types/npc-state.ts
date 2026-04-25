@@ -18,12 +18,17 @@ export interface NpcEmotionalState {
   attachment: number; // 0~100 (애착)
 }
 
-/** 대화 주제 이력 항목 (최근 5턴) */
+/** 대화 주제 이력 항목 (최근 8턴) */
 export interface NpcTopicEntry {
   turnNo: number;
-  topic: string; // "장부 조작 흔적 관련 대화" (~40자)
+  topic: string; // "장부 조작 흔적 관련 대화" (~40자) 또는 daily_topic.topicId
   factId?: string; // 공개된 quest fact ID (있으면)
   keywords: string[]; // ["빈 시간대", "밀수 조직", "순찰 보고서"] (최대 5개)
+  /**
+   * 항목 종류 (architecture/45 Phase 3) — 'FACT' = quest fact 공개, 'DAILY' = daily_topic 잡담.
+   * 옵셔널 (기존 데이터 호환).
+   */
+  type?: 'FACT' | 'DAILY';
 }
 
 /** NPC LLM 요약: 재등장 시 간소 프롬프트 블록용 (규칙 기반 생성, LLM 호출 없음) */
@@ -595,7 +600,7 @@ export function buildNpcLlmSummary(
 
 // ── 대화 주제 추적 유틸리티 ──
 
-const MAX_RECENT_TOPICS = 5;
+const MAX_RECENT_TOPICS = 8; // architecture/45 Phase 3 — 잡담 회피 윈도우 확장 (기존 5)
 
 /** 불용어 필터 (조사, 어미, 일반 동사 등) */
 const TOPIC_STOPWORDS = new Set([

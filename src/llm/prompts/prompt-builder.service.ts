@@ -2043,6 +2043,50 @@ export class PromptBuilderService {
       // revealMode === 'refuse'인 경우: 서버에서 fact를 발견하지 않으므로 이 블록 자체가 실행 안 됨
     }
 
+    // === Phase 2 (architecture/45): 잡담 모드 — daily_topic 주입 ===
+    // npcRevealableFact가 없을 때(키워드 매칭 실패 또는 SUCCESS/PARTIAL 아님)
+    // NPC 일상 화제 풀에서 1개 선택해 자연 대화 유도.
+    if (!ctx.npcRevealableFact && targetNpcIds.size > 0) {
+      const chatNpcId = [...targetNpcIds][0];
+      const chatNpcDef = this.content.getNpc(chatNpcId);
+      const dailyTopics = chatNpcDef?.daily_topics ?? [];
+      if (dailyTopics.length > 0) {
+        const chatNpcState = ctx.npcStates?.[chatNpcId] as NPCState | undefined;
+        // recentTopics 회피 — 이미 사용한 topicId/factId 제외
+        const usedTopicIds = new Set(
+          (chatNpcState?.llmSummary?.recentTopics ?? []).map((t) => t.topic),
+        );
+        const fresh = dailyTopics.filter((t) => !usedTopicIds.has(t.topicId));
+        const pool = fresh.length > 0 ? fresh : dailyTopics;
+        // 입력 키워드 매칭 우선
+        const inputForTopic = (sr.summary?.short as string | undefined) ?? '';
+        const inputKwForTopic = new Set(
+          inputForTopic.match(/[가-힣]{2,}/g) ?? [],
+        );
+        const matched = pool.filter((t) =>
+          (t.keywords ?? []).some((kw) => {
+            if (kw.length < 2) return false;
+            if (inputKwForTopic.has(kw)) return true;
+            for (const ik of inputKwForTopic) {
+              if (ik.length >= 2 && ik.includes(kw)) return true;
+            }
+            return false;
+          }),
+        );
+        const candidates = matched.length > 0 ? matched : pool;
+        const picked = candidates[Math.floor(Math.random() * candidates.length)];
+        const chatDisplayName = chatNpcDef?.name ?? chatNpcId;
+        factsParts.push(
+          [
+            `[NPC 일상 화제 — 자연 대화 풀]`,
+            `${chatDisplayName}의 평소 화제 (참고): ${picked.text}`,
+            `이 화제를 NPC 말투로 짧게 (1~3문장) 자연스럽게 녹이세요. 강요 금지.`,
+            `※ 단서/사건/임무를 화두로 만들지 마세요. 이번 턴은 일상 대화입니다.`,
+          ].join('\n'),
+        );
+      }
+    }
+
     // P5: FREE 턴 단서 힌트 — 미발견 단서가 있는 장소에서 탐색 동기 부여
     if (ctx.questFactHint) {
       factsParts.push(
