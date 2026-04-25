@@ -239,6 +239,34 @@ export type NpcDefinition = {
   }>;
 };
 
+/**
+ * architecture/46: Fact 일급 객체 정의 (facts.json)
+ * NPC.knownFacts와 quest.facts를 통합한 단일 진실 소스.
+ */
+export type FactDefinition = {
+  factId: string;
+  /** 한 줄 화제 라벨 (사람 가독) */
+  topic: string;
+  /** 일반 서술 (mode C default 텍스트로도 활용) */
+  description: string;
+  /** 통합 키워드 (입력 매칭) */
+  keywords: string[];
+  /** quest stage 진행 정보 (예: "S0→S1") */
+  stage?: string;
+  /** 이 fact가 발견되는 장소 후보 */
+  discoveryLocations?: string[];
+  /** 다음 단계 힌트 */
+  nextHint?: string;
+  /** 이 fact를 직접 아는 NPC 목록 */
+  knownBy: string[];
+  /** NPC별 시각/표현 차이 — knownBy NPC들의 detail 매핑 */
+  versions: Record<string, string>;
+  /** 풍문/소문으로만 들은 NPC (P2 RUMORED 레이어 — 현재 빈 배열) */
+  rumored?: string[];
+  /** 호환: quest.json primarySources */
+  primarySources?: string[];
+};
+
 export type SetDefinitionData = {
   setId: string;
   name: string;

@@ -1366,54 +1366,24 @@ export class ContextBuilderService {
         };
         for (const k of ACTION_KW[actionTypeForFact] ?? []) inputKw.add(k);
 
-        const matchFactKw = (factKw: string[]): boolean => {
-          if (factKw.length === 0) return false;
-          for (const kw of factKw) {
-            if (kw.length < 2) continue;
-            if (inputKw.has(kw)) return true;
-            for (const ik of inputKw) {
-              if (ik.length >= 2 && ik.includes(kw)) return true;
-            }
-          }
-          return false;
-        };
-
         const discoveredFacts =
           (runState?.discoveredQuestFacts as string[]) ?? [];
         const revealedFactIds = new Set(discoveredFacts);
 
-        // === Step A: 모든 NPC 검사 → 키워드 매칭 fact 후보 추출 ===
-        // [factId] → [{ npcId, fact }]
-        const factCandidates = new Map<
-          string,
-          Array<{ npcId: string; fact: { factId: string; detail: string; keywords?: string[] } }>
-        >();
-        const allNpcs = this.content.getAllNpcs();
-        for (const n of allNpcs) {
-          if (!n.knownFacts) continue;
-          for (const f of n.knownFacts) {
-            if (revealedFactIds.has(f.factId)) continue;
-            if (!matchFactKw(f.keywords ?? [])) continue;
-            if (!factCandidates.has(f.factId)) factCandidates.set(f.factId, []);
-            factCandidates.get(f.factId)!.push({ npcId: n.npcId, fact: f });
-          }
-        }
+        // === Step A: facts.json에서 키워드 매칭 fact 후보 추출 (architecture/46) ===
+        const factCandidates = this.content.getFactsByKeywords(
+          inputKw,
+          revealedFactIds,
+        );
 
-        if (factCandidates.size > 0 && factNpcId) {
-          // === Step B: 현재 NPC가 후보 fact 중 하나라도 보유? ===
-          let ownFactId: string | null = null;
-          let ownFact: { factId: string; detail: string } | null = null;
-          for (const [fid, holders] of factCandidates) {
-            const own = holders.find((h) => h.npcId === factNpcId);
-            if (own) {
-              ownFactId = fid;
-              ownFact = own.fact;
-              break; // 첫 매칭 (TODO: stage 우선순위 P1)
-            }
-          }
+        if (factCandidates.length > 0 && factNpcId) {
+          // === Step B: 현재 NPC가 후보 fact 중 하나라도 보유? (knownBy 기반) ===
+          const ownFact = factCandidates.find((f) =>
+            f.knownBy.includes(factNpcId),
+          );
 
-          if (ownFact && ownFactId) {
-            // mode A: 현재 NPC가 보유 → fact 공개
+          if (ownFact) {
+            // mode A: 현재 NPC가 보유 → 그 NPC의 versions[npcId] 사용
             const npcDef = this.content.getNpc(factNpcId);
             const npcStatesForFact = runState?.npcStates as
               | Record<string, NPCState>
@@ -1423,13 +1393,12 @@ export class ContextBuilderService {
               npcState && npcDef
                 ? getNpcDisplayName(npcState, npcDef)
                 : npcDef?.unknownAlias || npcDef?.name || factNpcId;
-            const sanitizedDetail = this.sanitizeNpcNames(
-              ownFact.detail,
-              runState,
-            );
+            const detail =
+              ownFact.versions[factNpcId] ?? ownFact.description ?? '';
+            const sanitizedDetail = this.sanitizeNpcNames(detail, runState);
             npcRevealableFact = {
               npcDisplayName: displayName,
-              factId: ownFactId,
+              factId: ownFact.factId,
               detail: sanitizedDetail,
               resolveOutcome: outcome,
               trust: npcState?.emotional?.trust ?? 0,
@@ -1442,16 +1411,15 @@ export class ContextBuilderService {
             };
           } else {
             // mode B: 현재 NPC 미보유 → 다른 NPC가 알면 인계 가이드
-            const firstFactId = [...factCandidates.keys()][0];
-            const holders = factCandidates.get(firstFactId) ?? [];
+            const firstFact = factCandidates[0];
             const otherAliases: string[] = [];
-            for (const h of holders) {
-              const def = this.content.getNpc(h.npcId);
-              const st = (runState?.npcStates as Record<string, NPCState> | undefined)?.[h.npcId];
+            for (const npcId of firstFact.knownBy) {
+              const def = this.content.getNpc(npcId);
+              const st = (runState?.npcStates as Record<string, NPCState> | undefined)?.[npcId];
               const alias =
                 st && def
                   ? getNpcDisplayName(st, def)
-                  : def?.unknownAlias || def?.name || h.npcId;
+                  : def?.unknownAlias || def?.name || npcId;
               if (alias) otherAliases.push(alias);
             }
             const npcDefCurrent = this.content.getNpc(factNpcId);
@@ -1472,16 +1440,11 @@ export class ContextBuilderService {
               otherNpcAliases: otherAliases.slice(0, 2), // 최대 2명만 (프롬프트 간결)
             };
           }
-        } else if (factCandidates.size > 0 && !factNpcId) {
-          // mode C: NPC 미지정 + fact 매칭 → quest description 활용 (default 텍스트)
-          const firstFactId = [...factCandidates.keys()][0];
-          const questData = this.content.getQuestData() as
-            | { facts?: Record<string, { description?: string }> }
-            | undefined;
-          const desc = questData?.facts?.[firstFactId]?.description;
-          if (desc) factDefaultDescription = desc;
+        } else if (factCandidates.length > 0 && !factNpcId) {
+          // mode C: NPC 미지정 + fact 매칭 → fact.description 활용 (default 텍스트)
+          factDefaultDescription = factCandidates[0].description || null;
         }
-        // mode D: factCandidates.size === 0 → 잡담 모드 (모두 null 유지)
+        // mode D: factCandidates.length === 0 → 잡담 모드 (모두 null 유지)
       }
     }
 
