@@ -2043,10 +2043,48 @@ export class PromptBuilderService {
       // revealMode === 'refuse'인 경우: 서버에서 fact를 발견하지 않으므로 이 블록 자체가 실행 안 됨
     }
 
+    // === architecture/46: 인계 가이드 (fact 매칭됐지만 현재 NPC 미보유) ===
+    if (!ctx.npcRevealableFact && ctx.factHandoffHint) {
+      const { npcDisplayName, topic, otherNpcAliases } = ctx.factHandoffHint;
+      const hintList =
+        otherNpcAliases.length > 0
+          ? otherNpcAliases.map((a) => `"${a}"`).join(' 또는 ')
+          : '다른 누군가';
+      factsParts.push(
+        [
+          `[NPC 모름 — 인계 가이드]`,
+          `${npcDisplayName}은(는) "${topic}"에 대해 잘 모릅니다.`,
+          `직접적인 답을 주지 말고, 자연스럽게 다른 NPC가 더 잘 알 것이라 암시하세요:`,
+          `예: "그건 잘 모르오. ${hintList}한테 물어보면 알 수도 있겠지."`,
+          `톤은 NPC 말투에 맞춰 짧게 (1~2문장). 강요 X, 자연 흘림.`,
+        ].join('\n'),
+      );
+    }
+
+    // === architecture/46: default 텍스트 (NPC 누구도 모를 때, quest description) ===
+    if (
+      !ctx.npcRevealableFact &&
+      !ctx.factHandoffHint &&
+      ctx.factDefaultDescription
+    ) {
+      factsParts.push(
+        [
+          `[일반 정보 — 도시 분위기]`,
+          ctx.factDefaultDescription,
+          `이 정보를 NPC 대사가 아닌 환경 묘사/지나가는 행인 한마디 등으로 자연스럽게 흘려주세요. 강조 X.`,
+        ].join('\n'),
+      );
+    }
+
     // === Phase 2 (architecture/45): 잡담 모드 — daily_topic 주입 ===
-    // npcRevealableFact가 없을 때(키워드 매칭 실패 또는 SUCCESS/PARTIAL 아님)
+    // npcRevealableFact / factHandoffHint / factDefaultDescription 모두 없을 때 (key 매칭 0)
     // NPC 일상 화제 풀에서 1개 선택해 자연 대화 유도.
-    if (!ctx.npcRevealableFact && targetNpcIds.size > 0) {
+    if (
+      !ctx.npcRevealableFact &&
+      !ctx.factHandoffHint &&
+      !ctx.factDefaultDescription &&
+      targetNpcIds.size > 0
+    ) {
       const chatNpcId = [...targetNpcIds][0];
       const chatNpcDef = this.content.getNpc(chatNpcId);
       const dailyTopics = chatNpcDef?.daily_topics ?? [];

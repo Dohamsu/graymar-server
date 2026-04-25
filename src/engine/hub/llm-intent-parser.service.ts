@@ -415,24 +415,13 @@ export class LlmIntentParserService implements OnModuleInit {
     // secondary가 primary와 같으면 제거
     if (secondaryActionType === actionType) secondaryActionType = undefined;
 
-    // targetNpcId: KW가 감지한 경우 우선 (플레이어 명시적 지목), 없으면 LLM 사용
-    let targetNpcId = keywordResult.targetNpcId ?? null;
-    if (!targetNpcId && llmResult.targetNpc && npcsAtLocation?.length) {
-      // KW 미감지 시에만 LLM 결과 사용
-      const llmVal = llmResult.targetNpc.toLowerCase();
-      const match = npcsAtLocation.find(
-        (n) =>
-          n.npcId === llmResult.targetNpc ||
-          n.name.toLowerCase() === llmVal ||
-          (n.unknownAlias && n.unknownAlias.toLowerCase() === llmVal) ||
-          n.name.toLowerCase().includes(llmVal) ||
-          (n.unknownAlias && n.unknownAlias.toLowerCase().includes(llmVal)),
-      );
-      if (match) targetNpcId = match.npcId;
-      else targetNpcId = llmResult.targetNpc; // fallback: 원본 유지
-    } else if (!targetNpcId && llmResult.targetNpc) {
-      targetNpcId = llmResult.targetNpc;
-    }
+    // targetNpcId: KW(텍스트 명시 호명)가 감지한 경우만 신뢰.
+    // architecture/46 §4.1 — LLM 추출 targetNpc는 부분 매칭으로 NPC 점프 유발이 잦아 사용 중단.
+    // (예: "당신은..." 입력에서 LLM이 unknownAlias 부분 매칭으로 다른 NPC 추출 → 매 턴 점프)
+    // conversationLock은 turns.service에서 별도로 처리하므로, 명시적 호명만 NPC 결정에 영향.
+    const targetNpcId = keywordResult.targetNpcId ?? null;
+    // LLM targetNpc 무시 — 정확 일치(npcId 직접 출력 또는 unknownAlias 완전 일치)가 아니면 false positive 위험 큼
+    // 필요 시 P2에서 명시적 호명 검증 강화 후 재도입 검토
 
     return {
       inputText,
