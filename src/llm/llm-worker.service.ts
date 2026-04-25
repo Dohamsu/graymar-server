@@ -25,6 +25,7 @@ import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
+import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 import { StreamClassifierService } from './stream-classifier.service.js';
 import {
   NanoDirectorService,
@@ -2112,12 +2113,40 @@ ${npcList}`,
             actualName.length <= 20 &&
             !actualName.includes('"')
           ) {
+            // npcId 역매핑: name/aliases/unknownAlias/shortAlias/imageUrl 순서로 시도
+            // (bug 322aa1a3 — 마커는 정확한데 npcId가 null이라 conversationLock 작동 안 함)
+            let resolvedNpcId: string | null = null;
+            const allNpcs = this.content.getAllNpcs();
+            for (const n of allNpcs) {
+              if (
+                n.name === actualName ||
+                n.unknownAlias === actualName ||
+                n.shortAlias === actualName ||
+                n.aliases?.includes(actualName)
+              ) {
+                resolvedNpcId = n.npcId;
+                break;
+              }
+            }
+            if (!resolvedNpcId && actualImg) {
+              const matched = Object.entries(NPC_PORTRAITS).find(
+                ([, url]) => url === actualImg,
+              );
+              if (matched) resolvedNpcId = matched[0];
+            }
             ui.speakingNpc = {
-              npcId: null,
+              npcId: resolvedNpcId,
               displayName: actualName,
               imageUrl:
                 actualImg && actualImg.startsWith('/') ? actualImg : undefined,
             };
+            // primaryNpcId carry-over: 다음 턴 conversationLock 시드
+            if (resolvedNpcId) {
+              const ctx = (ui.actionContext ?? {}) as Record<string, unknown>;
+              if (ctx.primaryNpcId == null) {
+                ui.actionContext = { ...ctx, primaryNpcId: resolvedNpcId };
+              }
+            }
             srChanged = true;
           }
         }
