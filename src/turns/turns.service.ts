@@ -2324,19 +2324,25 @@ export class TurnsService {
       SOCIAL_ACTIONS_FOR_LOCK.has(intent.actionType) &&
       !resolvedTargetNpcId
     ) {
-      // 이전 턴의 primaryNpcId를 찾아서 대화 잠금 적용
+      // architecture/46 §4.1 — Continuity Engine 강화:
+      // SYSTEM 턴이나 primary 없는 턴은 skip하고 진짜 마지막 SOCIAL NPC 찾기.
+      // 비-SOCIAL 행동 만나면 잠금 해제 (이동/공격 같은 명시적 전환 신호).
       for (let i = actionHistory.length - 1; i >= 0; i--) {
         const prev = actionHistory[i] as Record<string, unknown>;
         const prevNpc = prev.primaryNpcId as string | undefined;
         const prevAction = prev.actionType as string | undefined;
-        if (prevNpc && SOCIAL_ACTIONS_FOR_LOCK.has(prevAction ?? '')) {
+
+        // primary 없음 (SYSTEM 턴 등) → skip 후 계속 거슬러 검사
+        if (!prevNpc) continue;
+
+        if (SOCIAL_ACTIONS_FOR_LOCK.has(prevAction ?? '')) {
           conversationLockedNpcId = prevNpc;
           this.logger.debug(
-            `[대화잠금] 이전 대화 NPC ${conversationLockedNpcId} 유지 (action=${intent.actionType}, prevAction=${prevAction})`,
+            `[대화잠금] 이전 대화 NPC ${conversationLockedNpcId} 유지 (action=${intent.actionType}, prevAction=${prevAction}, depth=${actionHistory.length - 1 - i})`,
           );
           break;
         }
-        // 비대화 행동이면 잠금 해제
+        // 비-SOCIAL primary 있는 턴 → 의도적 전환 → 잠금 해제
         break;
       }
     }

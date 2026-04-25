@@ -132,6 +132,14 @@ export interface LlmContext {
   } | null;
   // NPC가 이미 플레이어에게 공개한 정보 리스트 (반복 방지용)
   npcAlreadyRevealedFacts: { npcDisplayName: string; facts: string[] } | null;
+  // architecture/46: 현재 NPC가 fact 모를 때 다른 NPC 인계 가이드
+  factHandoffHint: {
+    npcDisplayName: string;          // 현재 대화 NPC
+    topic: string;                   // 입력에서 인지된 화제 (단순 추출)
+    otherNpcAliases: string[];       // 다른 NPC 별칭/이름 (LLM이 인계 시 활용)
+  } | null;
+  // architecture/46: NPC 누구도 fact 모를 때 default 일반 서술 (quest.facts.description)
+  factDefaultDescription: string | null;
   // P5: FREE 턴에서 미발견 단서가 있음을 암시하는 힌트
   questFactHint: string | null;
   // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
@@ -1318,99 +1326,162 @@ export class ContextBuilderService {
       }
     }
 
-    // === NPC knownFacts: SUCCESS/PARTIAL 판정 시 NPC가 공개할 단서 선택 ===
+    // === architecture/46: Fact Pool + NPC Continuity — 4-mode 분기 ===
+    // 1. 입력 키워드 → 모든 NPC fact 풀에서 후보 추출
+    // 2. discoveredQuestFacts 제외
+    // 3. 현재 NPC(primaryNpc=잠금/맥락 NPC) 보유 여부에 따라 4-mode:
+    //    a. 보유 → fact 공개 (npcRevealableFact)
+    //    b. 미보유 + 다른 NPC 보유 → 인계 가이드 (factHandoffHint)
+    //    c. 누구도 미보유 → default 텍스트 (factDefaultDescription)
+    //    d. 키워드 매칭 0 → 잡담 모드 (모두 null, prompt-builder가 daily_topics 주입)
     let npcRevealableFact: LlmContext['npcRevealableFact'] = null;
+    let factHandoffHint: LlmContext['factHandoffHint'] = null;
+    let factDefaultDescription: LlmContext['factDefaultDescription'] = null;
     {
       const outcome = resolveOutcome as string | undefined;
       if (outcome === 'SUCCESS' || outcome === 'PARTIAL') {
-        // primaryNpcId 추출 (actionContext에서)
         const uiForFact = serverResult.ui as Record<string, unknown>;
         const acForFact = uiForFact?.actionContext as
           | Record<string, unknown>
           | undefined;
         const factNpcId = acForFact?.primaryNpcId as string | null | undefined;
 
-        if (factNpcId) {
-          const npcDef = this.content.getNpc(factNpcId);
-          if (npcDef?.knownFacts && npcDef.knownFacts.length > 0) {
-            // 이미 공개된 factId 집합: discoveredQuestFacts 기준 (퀘스트 팩트 추적과 동기화)
-            const discoveredFacts =
-              (runState?.discoveredQuestFacts as string[]) ?? [];
-            const revealedFactIds = new Set(discoveredFacts);
+        const rawInputForFact =
+          (((serverResult as Record<string, unknown>)?.summary as
+            | Record<string, unknown>
+            | undefined)?.short as string) ?? '';
+        const actionTypeForFact = (acForFact?.parsedType as string) ?? '';
+        const inputKw = new Set(rawInputForFact.match(/[가-힣]{2,}/g) ?? []);
+        const ACTION_KW: Record<string, string[]> = {
+          INVESTIGATE: ['조사', '단서', '흔적', '증거', '살펴'],
+          SEARCH: ['찾기', '뒤지기', '살펴', '수색'],
+          TALK: ['대화', '이야기', '소문', '물어'],
+          PERSUADE: ['설득', '부탁', '요청'],
+          OBSERVE: ['관찰', '지켜', '살핀'],
+          STEAL: ['훔치기', '절도'],
+          BRIBE: ['뇌물', '매수'],
+          THREATEN: ['위협', '협박'],
+          TRADE: ['거래', '교환', '구매'],
+          HELP: ['도와', '도움'],
+        };
+        for (const k of ACTION_KW[actionTypeForFact] ?? []) inputKw.add(k);
 
-            // === Phase 1 (architecture/45): 키워드 매칭 게이팅 ===
-            // 플레이어 입력 + actionType 키워드 ↔ fact.keywords 매칭 시에만 fact 공개.
-            // 매칭 실패 시 unrevealed = undefined → npcRevealableFact = null → 잡담 모드 진입.
-            const rawInputForFact =
-              (((serverResult as Record<string, unknown>)?.summary as
-                | Record<string, unknown>
-                | undefined)?.short as string) ?? '';
-            const actionTypeForFact = (acForFact?.parsedType as string) ?? '';
-            const inputKw = new Set(
-              rawInputForFact.match(/[가-힣]{2,}/g) ?? [],
-            );
-            const ACTION_KW: Record<string, string[]> = {
-              INVESTIGATE: ['조사', '단서', '흔적', '증거', '살펴'],
-              SEARCH: ['찾기', '뒤지기', '살펴', '수색'],
-              TALK: ['대화', '이야기', '소문', '물어'],
-              PERSUADE: ['설득', '부탁', '요청'],
-              OBSERVE: ['관찰', '지켜', '살핀'],
-              STEAL: ['훔치기', '절도'],
-              BRIBE: ['뇌물', '매수'],
-              THREATEN: ['위협', '협박'],
-              TRADE: ['거래', '교환', '구매'],
-              HELP: ['도와', '도움'],
-            };
-            for (const k of ACTION_KW[actionTypeForFact] ?? []) inputKw.add(k);
-
-            const matchFact = (f: { keywords?: string[] }): boolean => {
-              const factKw = f.keywords ?? [];
-              if (factKw.length === 0) return false;
-              for (const kw of factKw) {
-                if (kw.length < 2) continue;
-                if (inputKw.has(kw)) return true;
-                for (const ik of inputKw) {
-                  // 부분 일치: 입력 단어가 fact 키워드를 포함 (조사/어미 변형 대응)
-                  if (ik.length >= 2 && ik.includes(kw)) return true;
-                }
-              }
-              return false;
-            };
-
-            const unrevealedFacts = npcDef.knownFacts.filter(
-              (f) => !revealedFactIds.has(f.factId),
-            );
-            const unrevealed = unrevealedFacts.find(matchFact);
-            if (unrevealed) {
-              const npcStatesForFact = runState?.npcStates as
-                | Record<string, NPCState>
-                | undefined;
-              const npcState = npcStatesForFact?.[factNpcId];
-              const displayName = npcState
-                ? getNpcDisplayName(npcState, npcDef)
-                : npcDef.unknownAlias || npcDef.name;
-
-              // fact detail에서 미소개 NPC 실명을 별칭으로 치환
-              const sanitizedDetail = this.sanitizeNpcNames(
-                unrevealed.detail,
-                runState,
-              );
-              npcRevealableFact = {
-                npcDisplayName: displayName,
-                factId: unrevealed.factId,
-                detail: sanitizedDetail,
-                resolveOutcome: outcome,
-                trust: npcState?.emotional?.trust ?? 0,
-                posture: npcState?.posture ?? 'CAUTIOUS',
-                revealMode:
-                  ((runState as Record<string, unknown>)?._npcRevealMode as
-                    | 'direct'
-                    | 'indirect'
-                    | 'observe') ?? 'indirect',
-              };
+        const matchFactKw = (factKw: string[]): boolean => {
+          if (factKw.length === 0) return false;
+          for (const kw of factKw) {
+            if (kw.length < 2) continue;
+            if (inputKw.has(kw)) return true;
+            for (const ik of inputKw) {
+              if (ik.length >= 2 && ik.includes(kw)) return true;
             }
           }
+          return false;
+        };
+
+        const discoveredFacts =
+          (runState?.discoveredQuestFacts as string[]) ?? [];
+        const revealedFactIds = new Set(discoveredFacts);
+
+        // === Step A: 모든 NPC 검사 → 키워드 매칭 fact 후보 추출 ===
+        // [factId] → [{ npcId, fact }]
+        const factCandidates = new Map<
+          string,
+          Array<{ npcId: string; fact: { factId: string; detail: string; keywords?: string[] } }>
+        >();
+        const allNpcs = this.content.getAllNpcs();
+        for (const n of allNpcs) {
+          if (!n.knownFacts) continue;
+          for (const f of n.knownFacts) {
+            if (revealedFactIds.has(f.factId)) continue;
+            if (!matchFactKw(f.keywords ?? [])) continue;
+            if (!factCandidates.has(f.factId)) factCandidates.set(f.factId, []);
+            factCandidates.get(f.factId)!.push({ npcId: n.npcId, fact: f });
+          }
         }
+
+        if (factCandidates.size > 0 && factNpcId) {
+          // === Step B: 현재 NPC가 후보 fact 중 하나라도 보유? ===
+          let ownFactId: string | null = null;
+          let ownFact: { factId: string; detail: string } | null = null;
+          for (const [fid, holders] of factCandidates) {
+            const own = holders.find((h) => h.npcId === factNpcId);
+            if (own) {
+              ownFactId = fid;
+              ownFact = own.fact;
+              break; // 첫 매칭 (TODO: stage 우선순위 P1)
+            }
+          }
+
+          if (ownFact && ownFactId) {
+            // mode A: 현재 NPC가 보유 → fact 공개
+            const npcDef = this.content.getNpc(factNpcId);
+            const npcStatesForFact = runState?.npcStates as
+              | Record<string, NPCState>
+              | undefined;
+            const npcState = npcStatesForFact?.[factNpcId];
+            const displayName =
+              npcState && npcDef
+                ? getNpcDisplayName(npcState, npcDef)
+                : npcDef?.unknownAlias || npcDef?.name || factNpcId;
+            const sanitizedDetail = this.sanitizeNpcNames(
+              ownFact.detail,
+              runState,
+            );
+            npcRevealableFact = {
+              npcDisplayName: displayName,
+              factId: ownFactId,
+              detail: sanitizedDetail,
+              resolveOutcome: outcome,
+              trust: npcState?.emotional?.trust ?? 0,
+              posture: npcState?.posture ?? 'CAUTIOUS',
+              revealMode:
+                ((runState as Record<string, unknown>)?._npcRevealMode as
+                  | 'direct'
+                  | 'indirect'
+                  | 'observe') ?? 'indirect',
+            };
+          } else {
+            // mode B: 현재 NPC 미보유 → 다른 NPC가 알면 인계 가이드
+            const firstFactId = [...factCandidates.keys()][0];
+            const holders = factCandidates.get(firstFactId) ?? [];
+            const otherAliases: string[] = [];
+            for (const h of holders) {
+              const def = this.content.getNpc(h.npcId);
+              const st = (runState?.npcStates as Record<string, NPCState> | undefined)?.[h.npcId];
+              const alias =
+                st && def
+                  ? getNpcDisplayName(st, def)
+                  : def?.unknownAlias || def?.name || h.npcId;
+              if (alias) otherAliases.push(alias);
+            }
+            const npcDefCurrent = this.content.getNpc(factNpcId);
+            const npcStateCurrent = (runState?.npcStates as
+              | Record<string, NPCState>
+              | undefined)?.[factNpcId];
+            const currentDisplay =
+              npcStateCurrent && npcDefCurrent
+                ? getNpcDisplayName(npcStateCurrent, npcDefCurrent)
+                : npcDefCurrent?.unknownAlias ||
+                  npcDefCurrent?.name ||
+                  factNpcId;
+            // 입력에서 가장 두드러진 키워드를 topic으로
+            const topicKw = [...inputKw].find((k) => k.length >= 2) ?? '';
+            factHandoffHint = {
+              npcDisplayName: currentDisplay,
+              topic: topicKw,
+              otherNpcAliases: otherAliases.slice(0, 2), // 최대 2명만 (프롬프트 간결)
+            };
+          }
+        } else if (factCandidates.size > 0 && !factNpcId) {
+          // mode C: NPC 미지정 + fact 매칭 → quest description 활용 (default 텍스트)
+          const firstFactId = [...factCandidates.keys()][0];
+          const questData = this.content.getQuestData() as
+            | { facts?: Record<string, { description?: string }> }
+            | undefined;
+          const desc = questData?.facts?.[firstFactId]?.description;
+          if (desc) factDefaultDescription = desc;
+        }
+        // mode D: factCandidates.size === 0 → 잡담 모드 (모두 null 유지)
       }
     }
 
@@ -1542,6 +1613,10 @@ export class ContextBuilderService {
       ),
       // NPC knownFacts: SUCCESS/PARTIAL 판정 시 공개할 단서
       npcRevealableFact,
+      // architecture/46: 현재 NPC가 fact 모를 때 인계 가이드
+      factHandoffHint,
+      // architecture/46: NPC 누구도 모를 때 default 일반 서술
+      factDefaultDescription,
       // NPC가 이미 공개한 정보 (반복 방지)
       npcAlreadyRevealedFacts,
       // P5: FREE 턴 단서 힌트
