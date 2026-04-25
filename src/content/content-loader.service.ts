@@ -17,6 +17,7 @@ import type {
   ShopDefinition,
   EquipmentDropEntry,
   TraitDefinition,
+  FactDefinition,
 } from './content.types.js';
 import type {
   EventDefV2,
@@ -65,6 +66,13 @@ export class ContentLoaderService implements OnModuleInit {
   private narrativeMarkConditions: unknown[] = [];
   // Quest data
   private questData: unknown = null;
+  // architecture/46: Fact 일급 객체 (facts.json)
+  private factsData: {
+    version: string;
+    facts: Record<string, FactDefinition>;
+  } | null = null;
+  // 키워드 매칭 인덱스 (성능 최적화)
+  private factsByKeyword = new Map<string, Set<string>>(); // keyword → factIds
   // Traits
   private traits = new Map<string, TraitDefinition>();
   // Text Replacements — LLM 후처리 치환 규칙
@@ -113,6 +121,7 @@ export class ContentLoaderService implements OnModuleInit {
       narrativeMarksRaw,
       scenarioMetaRaw,
       questRaw,
+      factsRaw,
       traitsRaw,
       textReplacementsRaw,
     ] = await Promise.all([
@@ -162,6 +171,10 @@ export class ContentLoaderService implements OnModuleInit {
       ),
       // Quest data
       readFile(join(this.contentDir, 'quest.json'), 'utf-8').catch(
+        () => 'null',
+      ),
+      // Facts data (architecture/46 — fact 일급 객체)
+      readFile(join(this.contentDir, 'facts.json'), 'utf-8').catch(
         () => 'null',
       ),
       // Traits
@@ -255,6 +268,28 @@ export class ContentLoaderService implements OnModuleInit {
 
     // Quest data 로드
     this.questData = JSON.parse(questRaw) as unknown;
+
+    // architecture/46: facts.json 로드 + 키워드 인덱스 빌드
+    if (factsRaw && factsRaw !== 'null') {
+      try {
+        this.factsData = JSON.parse(factsRaw) as {
+          version: string;
+          facts: Record<string, FactDefinition>;
+        };
+        this.factsByKeyword.clear();
+        for (const [factId, fact] of Object.entries(this.factsData.facts)) {
+          for (const kw of fact.keywords ?? []) {
+            const lower = kw.toLowerCase();
+            if (!this.factsByKeyword.has(lower)) {
+              this.factsByKeyword.set(lower, new Set());
+            }
+            this.factsByKeyword.get(lower)!.add(factId);
+          }
+        }
+      } catch (e) {
+        this.factsData = null;
+      }
+    }
 
     // Traits 로드
     const traitsList = JSON.parse(traitsRaw) as TraitDefinition[];
@@ -590,6 +625,71 @@ export class ContentLoaderService implements OnModuleInit {
   /** 퀘스트 데이터 반환 (quest.json) */
   getQuestData(): unknown {
     return this.questData;
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // architecture/46: Fact 일급 객체 API
+  // ──────────────────────────────────────────────────────────────
+
+  /** factId로 fact 조회 */
+  getFact(factId: string): FactDefinition | undefined {
+    return this.factsData?.facts[factId];
+  }
+
+  /** 모든 fact 반환 */
+  getAllFacts(): FactDefinition[] {
+    if (!this.factsData) return [];
+    return Object.values(this.factsData.facts);
+  }
+
+  /**
+   * 키워드 매칭 fact 후보 반환.
+   * @param inputKeywords 입력에서 추출한 키워드 (한글 명사 등)
+   * @param excludeFactIds 이미 발견된 factId 제외
+   */
+  getFactsByKeywords(
+    inputKeywords: Iterable<string>,
+    excludeFactIds: Set<string> = new Set(),
+  ): FactDefinition[] {
+    if (!this.factsData) return [];
+    const matched = new Set<string>();
+    for (const ik of inputKeywords) {
+      if (typeof ik !== 'string' || ik.length < 2) continue;
+      const ikLower = ik.toLowerCase();
+      // 정확 일치
+      const direct = this.factsByKeyword.get(ikLower);
+      if (direct) for (const fid of direct) matched.add(fid);
+      // 부분 일치 (입력이 fact 키워드를 포함, 조사/어미 변형 대응)
+      for (const [factKw, factIds] of this.factsByKeyword) {
+        if (factKw.length < 2) continue;
+        if (ikLower.includes(factKw)) {
+          for (const fid of factIds) matched.add(fid);
+        }
+      }
+    }
+    return [...matched]
+      .filter((fid) => !excludeFactIds.has(fid))
+      .map((fid) => this.factsData!.facts[fid])
+      .filter(Boolean);
+  }
+
+  /** 특정 NPC가 아는 fact 목록 (KNOWN) */
+  getFactsKnownBy(npcId: string): FactDefinition[] {
+    if (!this.factsData) return [];
+    return Object.values(this.factsData.facts).filter((f) =>
+      f.knownBy.includes(npcId),
+    );
+  }
+
+  /** 특정 NPC의 fact 시각 (versions[npcId]) */
+  getFactVersion(factId: string, npcId: string): string | undefined {
+    return this.factsData?.facts[factId]?.versions[npcId];
+  }
+
+  /** NPC가 fact를 아는지 검사 */
+  npcKnowsFact(npcId: string, factId: string): boolean {
+    const fact = this.factsData?.facts[factId];
+    return fact ? fact.knownBy.includes(npcId) : false;
   }
 
   /** 현재 로드된 시나리오의 메타 정보 반환 */
