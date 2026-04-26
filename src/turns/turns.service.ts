@@ -2352,6 +2352,11 @@ export class TurnsService {
     if (resolvedTargetNpcId) {
       // 입력 텍스트 키워드 또는 IntentParser가 NPC를 지정 → 최우선
       eventPrimaryNpc = resolvedTargetNpcId;
+      // ⭐ event.payload.primaryNpcId도 동기화 (actionHistory 기록용)
+      // 누락 시: 화면은 매칭 NPC지만 actionHistory에는 원본 EventMatcher NPC가 기록되어
+      // 다음 턴 conversationLock 검사가 잘못된 NPC를 잠금으로 잡음 (이전 미렐라 시나리오 T5 점프 버그)
+      (event.payload as Record<string, unknown>).primaryNpcId =
+        resolvedTargetNpcId;
     } else if (conversationLockedNpcId) {
       // 대화 잠금 NPC → 이벤트 배정 NPC보다 우선 (연속 대화 중 다른 NPC 끼어들기 방지)
       eventPrimaryNpc = conversationLockedNpcId;
