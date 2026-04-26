@@ -2358,6 +2358,55 @@ export class TurnsService {
       (event.payload as Record<string, unknown>).primaryNpcId =
         conversationLockedNpcId;
     }
+
+    // architecture/46: 잠금 NPC + Fact awareness 통합
+    // 잠금 NPC가 입력 키워드 매칭 fact를 보유하면 EventMatcher의 다른 NPC override 무력화.
+    // 잠금 NPC가 fact 모를 때는 EventMatcher 결과 따라가 자연 인계 (다른 NPC 등장).
+    if (
+      !resolvedTargetNpcId &&
+      eventPrimaryNpc &&
+      eventPrimaryNpc !== conversationLockedNpcId
+    ) {
+      // 잠금 NPC 후보를 actionHistory에서 직전 SOCIAL primary로 fallback (강한 모드)
+      let candidateLockNpc = conversationLockedNpcId;
+      if (!candidateLockNpc) {
+        for (let i = actionHistory.length - 1; i >= 0; i--) {
+          const prev = actionHistory[i] as Record<string, unknown>;
+          const prevNpc = prev.primaryNpcId as string | undefined;
+          const prevAction = prev.actionType as string | undefined;
+          if (!prevNpc) continue;
+          if (SOCIAL_ACTIONS_FOR_LOCK.has(prevAction ?? '')) {
+            candidateLockNpc = prevNpc;
+          }
+          break;
+        }
+      }
+      if (
+        candidateLockNpc &&
+        candidateLockNpc !== eventPrimaryNpc &&
+        SOCIAL_ACTIONS_FOR_LOCK.has(intent.actionType)
+      ) {
+        // 입력 키워드 추출 + fact 매칭 검사
+        const inputKwSet = new Set(rawInput.match(/[가-힣]{2,}/g) ?? []);
+        const factCandidates = this.content.getFactsByKeywords(inputKwSet);
+        const lockNpcKnowsFact = factCandidates.some((f) =>
+          f.knownBy.includes(candidateLockNpc!),
+        );
+        if (lockNpcKnowsFact) {
+          this.logger.debug(
+            `[잠금+Fact] ${candidateLockNpc} 잠금 유지 — 매칭 fact 보유 (EventMatcher의 ${eventPrimaryNpc} override)`,
+          );
+          eventPrimaryNpc = candidateLockNpc;
+          (event.payload as Record<string, unknown>).primaryNpcId =
+            candidateLockNpc;
+        } else if (factCandidates.length > 0) {
+          // 잠금 NPC fact 모름 + 다른 NPC가 보유 → EventMatcher 결과 그대로 (자연 인계)
+          this.logger.debug(
+            `[잠금+Fact] ${candidateLockNpc} fact 미보유 → EventMatcher의 ${eventPrimaryNpc}로 자연 인계`,
+          );
+        }
+      }
+    }
     // Posture 변화 이벤트 (result 선언 전이므로 임시 저장)
     const pendingPostureEvents: Array<{
       id: string;
