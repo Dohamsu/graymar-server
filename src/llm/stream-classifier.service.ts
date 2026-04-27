@@ -81,20 +81,11 @@ export class StreamClassifierService {
 
       const names: string[] = [];
       if (def.name) names.push(def.name);
-      if (def.unknownAlias) {
-        names.push(def.unknownAlias);
-        const parts = def.unknownAlias.split(/\s+/);
-        if (parts.length > 1) {
-          const lastPart = parts[parts.length - 1];
-          if (lastPart.length >= 2) names.push(lastPart);
-        }
-      }
-      if (def.role) {
-        const roleParts = def.role.split(/[,\/\s]+/);
-        for (const rp of roleParts) {
-          if (rp.length >= 2 && !names.includes(rp)) names.push(rp);
-        }
-      }
+      if (def.unknownAlias) names.push(def.unknownAlias);
+      // bug 6ba6fd6b — unknownAlias의 마지막 부분(예 "관리인", "실무자")과
+      // role split된 부분("부두", "노동" 등)을 names에 넣지 않는다.
+      // 일반 단어가 본문에 흔히 등장해 NPC 잘못 매칭 → 스트리밍 중 NPC 점프 유발.
+      // displayName 매칭은 정확한 unknownAlias 또는 실명만 신뢰.
 
       const displayName = state
         ? getNpcDisplayName(state, def, turnNo)
