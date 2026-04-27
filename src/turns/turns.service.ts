@@ -886,7 +886,7 @@ export class TurnsService {
       unknownAlias: n.unknownAlias,
       title: n.title,
     }));
-    const intent = await this.llmIntentParser.parseWithInsistence(
+    let intent = await this.llmIntentParser.parseWithInsistence(
       rawInput,
       source,
       choicePayload,
@@ -927,6 +927,47 @@ export class TurnsService {
         updatedRunState,
         intent,
       );
+    }
+
+    // architecture/46 §4.2 — 대화 잠금 중 MOVE_LOCATION 차단 (NPA 검출 NPC_JUMP 회귀 방지)
+    // 직전 턴이 SOCIAL NPC 대화였고 현재 입력이 명시적 이동 의도가 아니라면
+    // INVESTIGATE로 다운그레이드해 같은 NPC와의 대화 흐름을 유지한다.
+    // 예: "장부 사건, 부두 쪽 사람들 의심하시오?" — "부두" 단독으로 강제 이동 차단.
+    if (
+      intent.actionType === 'MOVE_LOCATION' &&
+      body.input.type === 'ACTION' &&
+      !this.hasExplicitMoveIntent(rawInput)
+    ) {
+      let prevSocialNpc: string | null = null;
+      const SOCIAL_FOR_LOCK = new Set([
+        'TALK',
+        'PERSUADE',
+        'BRIBE',
+        'THREATEN',
+        'HELP',
+        'INVESTIGATE',
+        'OBSERVE',
+        'TRADE',
+      ]);
+      for (let i = actionHistory.length - 1; i >= 0; i--) {
+        const prev = actionHistory[i] as Record<string, unknown>;
+        const prevNpc = prev.primaryNpcId as string | undefined;
+        const prevAction = prev.actionType as string | undefined;
+        if (!prevNpc) continue;
+        if (SOCIAL_FOR_LOCK.has(prevAction ?? '')) {
+          prevSocialNpc = prevNpc;
+        }
+        break;
+      }
+      if (prevSocialNpc) {
+        this.logger.log(
+          `[대화잠금] MOVE_LOCATION 차단: 직전 SOCIAL NPC ${prevSocialNpc} 잠금 우선 → INVESTIGATE 다운그레이드 (input="${rawInput.slice(0, 40)}")`,
+        );
+        intent = {
+          ...intent,
+          actionType: 'INVESTIGATE',
+        };
+      }
     }
 
     // MOVE_LOCATION: 자유 텍스트로 다른 LOCATION 이동 요청 시 실제 전환
@@ -5671,6 +5712,65 @@ export class TurnsService {
   }
 
   /** 자유 텍스트에서 목표 위치 추출 */
+  /**
+   * architecture/46 §4.2 — 명시적 이동 의도 감지.
+   * 입력이 "떠나/이동/돌아간/벗어나" 등 강한 동사를 포함하면 true.
+   * "부두/시장" 같은 단독 장소명, "쪽으로" 같은 약한 표현은 false (의문문/대화 맥락 보호).
+   */
+  private hasExplicitMoveIntent(input: string): boolean {
+    const text = input.toLowerCase();
+    const STRONG_MOVE_PATTERNS = [
+      '이동한다',
+      '이동하',
+      '떠난다',
+      '떠나자',
+      '떠나',
+      '가야겠',
+      '가야 겠',
+      '돌아간다',
+      '돌아간',
+      '돌아가자',
+      '돌아갈',
+      '돌아가',
+      '나간다',
+      '나가자',
+      '나가겠',
+      '나가야',
+      '벗어나',
+      '물러나',
+      '철수',
+      '복귀',
+      '끝내자',
+      '끝낸다',
+      '그만하',
+      '여기를 떠나',
+      '여길 떠나',
+      '여기서 떠나',
+      '여기서 나',
+      '이 곳을 떠나',
+      '이곳을 떠나',
+      '다른 곳',
+      '다른 장소',
+      '다른 데',
+      '딴 곳',
+      '딴 데',
+      '자리를 뜨',
+      '자리를 옮',
+      '자리를 피',
+      '발길을 돌',
+      '발길을 옮',
+      '발을 옮',
+      '걸음을 옮',
+      '길을 나서',
+      '작전 종료',
+      '여기까지',
+      '빠져나',
+      '향한다',
+      '갈까',
+    ];
+    return STRONG_MOVE_PATTERNS.some((p) => text.includes(p));
+  }
+
   private extractTargetLocation(
     input: string,
     _currentLocationId: string,
