@@ -1073,6 +1073,72 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           violations.push('AUTO_FIX: 이보게→듣고 계시오');
         }
 
+        // architecture/51 §B (R1) — 회피 어휘 ≤1회/턴 강제.
+        // 2회+ 등장 시 첫 occurrence만 유지 + 나머지는 약한 표현으로 치환.
+        // LLM이 모든 NPC를 동일한 "위험/조심/곤란" 회피 톤으로 수렴시키는 현상 차단.
+        {
+          const AVOID_REPLACEMENTS: Array<{
+            from: RegExp;
+            to: string | ((m: string) => string);
+          }> = [
+            {
+              from: /위험(한|하니|할지|할까|할\s|성|성을|함을|함이)/g,
+              to: (m) => '험'.concat(m.slice(2)),
+            },
+            { from: /위험\b/g, to: '험한 일' },
+            { from: /조심하(시오|시게|십시오|소|게)/g, to: (m) => '신중하' + m.slice(3) },
+            { from: /조심하/g, to: '신중하' },
+            { from: /조심해/g, to: '신중해' },
+            { from: /곤란/g, to: '거북' },
+            { from: /위태/g, to: '아슬한' },
+            { from: /함부로/g, to: '가벼이' },
+            { from: /입을 다물/g, to: '말을 아끼' },
+            { from: /입을 닫/g, to: '말을 아끼' },
+          ];
+          // 1차: 카운트
+          let totalAvoid = 0;
+          for (const r of AVOID_REPLACEMENTS) {
+            const m = narrative.match(r.from);
+            if (m) totalAvoid += m.length;
+          }
+          if (totalAvoid >= 2) {
+            // 첫 번째 occurrence 위치 식별
+            const occurrences: { index: number; rule: number }[] = [];
+            for (let i = 0; i < AVOID_REPLACEMENTS.length; i++) {
+              const r = AVOID_REPLACEMENTS[i];
+              r.from.lastIndex = 0;
+              let m: RegExpExecArray | null;
+              const re = new RegExp(r.from.source, r.from.flags);
+              while ((m = re.exec(narrative)) !== null) {
+                occurrences.push({ index: m.index, rule: i });
+                if (m.index === re.lastIndex) re.lastIndex++;
+              }
+            }
+            occurrences.sort((a, b) => a.index - b.index);
+            const keepIdx = occurrences[0]?.index ?? -1;
+            // 2차: 첫 occurrence 외 나머지 치환 (역순 처리로 인덱스 안정)
+            const sorted = [...occurrences]
+              .filter((o) => o.index !== keepIdx)
+              .sort((a, b) => b.index - a.index);
+            for (const o of sorted) {
+              const r = AVOID_REPLACEMENTS[o.rule];
+              const re = new RegExp(r.from.source, r.from.flags);
+              re.lastIndex = o.index;
+              const m = re.exec(narrative);
+              if (!m || m.index !== o.index) continue;
+              const replaced =
+                typeof r.to === 'function' ? r.to(m[0]) : r.to;
+              narrative =
+                narrative.slice(0, o.index) +
+                replaced +
+                narrative.slice(o.index + m[0].length);
+            }
+            violations.push(
+              `R1(architecture/51): 회피어휘 ${totalAvoid}회 → 1회 유지 + ${totalAvoid - 1}회 약한 표현으로 치환`,
+            );
+          }
+        }
+
         // P4. 미소개 NPC 실명 sanitize (서술 + 선택지 label)
         const rs = runSession?.runState as Record<string, unknown> | undefined;
         if (rs) {
