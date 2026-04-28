@@ -209,6 +209,12 @@ export type NpcDefinition = {
   initialTrust?: number;
   agenda?: string;
   personality?: NpcPersonality;
+  /**
+   * architecture/48 — 사용자 자유 호명 매칭용 역할/직책 키워드.
+   * 예: 하를런 ["두목", "형제단", "복서", "보스"], 미렐라 ["노파", "약초", "약초장수"].
+   * 명시 안 되면 role 필드에서 자동 추출 (turns.service.ts extractRoleKeywords).
+   */
+  roleKeywords?: string[];
   // Living World v2
   tier?: NpcTier; // 기본값: 'SUB'
   schedule?: import('../db/types/npc-schedule.js').NpcSchedule;

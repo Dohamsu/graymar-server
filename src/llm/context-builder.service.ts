@@ -140,6 +140,12 @@ export interface LlmContext {
   } | null;
   // architecture/46: NPC 누구도 fact 모를 때 default 일반 서술 (quest.facts.description)
   factDefaultDescription: string | null;
+  // architecture/48 Layer 4: 사용자가 호명한 NPC가 다른 장소에 있을 때 주변인 안내 hint
+  npcWhereaboutsHint: {
+    searchedNpcDisplay: string;
+    locationLabel: string;
+    activity?: string;
+  } | null;
   // P5: FREE 턴에서 미발견 단서가 있음을 암시하는 힌트
   questFactHint: string | null;
   // Quest nextHint: fact 발견 다음 턴에 방향 힌트 전달
@@ -1580,6 +1586,14 @@ export class ContextBuilderService {
       factHandoffHint,
       // architecture/46: NPC 누구도 모를 때 default 일반 서술
       factDefaultDescription,
+      // architecture/48 Layer 4: 사용자 호명 NPC가 다른 장소일 때 안내 hint
+      npcWhereaboutsHint:
+        ((serverResult.ui as Record<string, unknown> | undefined)
+          ?.npcWhereaboutsHint as {
+          searchedNpcDisplay: string;
+          locationLabel: string;
+          activity?: string;
+        }) ?? null,
       // NPC가 이미 공개한 정보 (반복 방지)
       npcAlreadyRevealedFacts,
       // P5: FREE 턴 단서 힌트

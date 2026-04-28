@@ -105,6 +105,10 @@ import { ConsequenceProcessorService } from '../engine/hub/consequence-processor
 import { PlayerGoalService } from '../engine/hub/player-goal.service.js';
 import { QuestProgressionService } from '../engine/hub/quest-progression.service.js';
 import { ShopService } from '../engine/hub/shop.service.js';
+// NPC Discoverability v1 (architecture/48)
+import { NpcWhereaboutsService } from '../engine/hub/npc-whereabouts.service.js';
+// NPC Resolution Authority v1 (architecture/49)
+import { NpcResolverService } from '../engine/hub/npc-resolver.service.js';
 import { LegendaryRewardService } from '../engine/rewards/legendary-reward.service.js';
 import {
   NanoEventDirectorService,
@@ -215,6 +219,10 @@ export class TurnsService {
     @Optional() private readonly questProgression?: QuestProgressionService,
     @Optional() private readonly nanoEventDirector?: NanoEventDirectorService,
     @Optional() private readonly llmCaller?: LlmCallerService,
+    // architecture/48 Layer 2 — NPC 위치 lookup (Optional: 점진 적용)
+    @Optional() private readonly npcWhereabouts?: NpcWhereaboutsService,
+    // architecture/49 — NPC Resolution Authority (단일 권한자)
+    @Optional() private readonly npcResolver?: NpcResolverService,
   ) {}
 
   /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
@@ -929,14 +937,20 @@ export class TurnsService {
       );
     }
 
-    // architecture/46 §4.2 — 대화 잠금 중 MOVE_LOCATION 차단 (NPA 검출 NPC_JUMP 회귀 방지)
-    // 직전 턴이 SOCIAL NPC 대화였고 현재 입력이 명시적 이동 의도가 아니라면
+    // architecture/46 §4.2 + 48 — 대화 잠금 중 비SOCIAL 행동 차단 (NPA 검출 NPC_JUMP 회귀 방지)
+    // 직전 턴이 SOCIAL NPC 대화였고 현재 입력이 명시적 이동/공격/도둑 의도가 아니라면
     // INVESTIGATE로 다운그레이드해 같은 NPC와의 대화 흐름을 유지한다.
-    // 예: "장부 사건, 부두 쪽 사람들 의심하시오?" — "부두" 단독으로 강제 이동 차단.
+    // 예시:
+    //   - "장부 사건, 부두 쪽 사람들 의심하시오?" — "부두" → MOVE_LOCATION 차단
+    //   - "가장 기억에 남는 싸움이 있소?" — "싸움" → FIGHT 차단 (회상 질문)
     if (
-      intent.actionType === 'MOVE_LOCATION' &&
       body.input.type === 'ACTION' &&
-      !this.hasExplicitMoveIntent(rawInput)
+      ((intent.actionType === 'MOVE_LOCATION' &&
+        !this.hasExplicitMoveIntent(rawInput)) ||
+        (intent.actionType === 'FIGHT' &&
+          !this.hasExplicitFightIntent(rawInput)) ||
+        (intent.actionType === 'STEAL' &&
+          !this.hasExplicitStealIntent(rawInput)))
     ) {
       let prevSocialNpc: string | null = null;
       const SOCIAL_FOR_LOCK = new Set([
@@ -961,7 +975,7 @@ export class TurnsService {
       }
       if (prevSocialNpc) {
         this.logger.log(
-          `[대화잠금] MOVE_LOCATION 차단: 직전 SOCIAL NPC ${prevSocialNpc} 잠금 우선 → INVESTIGATE 다운그레이드 (input="${rawInput.slice(0, 40)}")`,
+          `[대화잠금] ${intent.actionType} 차단: 직전 SOCIAL NPC ${prevSocialNpc} 잠금 우선 → INVESTIGATE 다운그레이드 (input="${rawInput.slice(0, 40)}")`,
         );
         intent = {
           ...intent,
@@ -1653,15 +1667,25 @@ export class TurnsService {
           }
         }
 
-        // Player-First: npcLocked 판정 — FREE_PLAYER_ / FREE_CONV_ 이벤트면 NPC 고정
-        const isNpcLocked =
+        // Player-First + architecture/49: npcLocked 판정 강화
+        // FREE_PLAYER_/FREE_CONV_ 이벤트 외에도 conversationLock(직전 SOCIAL NPC)이
+        // 활성이면 NanoEventDirector가 새 NPC 끼워넣지 않도록 강제.
+        const lockNpcFromHistory =
+          this.npcResolver?.findLockFromHistory(
+            actionHistory,
+            intent.actionType,
+          ) ?? null;
+        const isFreeEvent =
           event.eventId.startsWith('FREE_PLAYER_') ||
           event.eventId.startsWith('FREE_CONV_');
-        const lockedNpcId = isNpcLocked
-          ? ((event.payload as Record<string, unknown>).primaryNpcId as
-              | string
-              | null)
-          : null;
+        const isNpcLocked = !!lockNpcFromHistory || isFreeEvent;
+        const lockedNpcId =
+          lockNpcFromHistory ??
+          (isFreeEvent
+            ? ((event.payload as Record<string, unknown>).primaryNpcId as
+                | string
+                | null)
+            : null);
 
         const nanoCtx: NanoEventContext = {
           locationId,
@@ -2293,100 +2317,61 @@ export class TurnsService {
       'TRADE',
     ]);
 
-    // 입력 텍스트에서 NPC 키워드 직접 매칭 (IntentParser LLM보다 정확)
-    // 우선순위: (1) 실명 전체 매칭 (2) 별칭 전체 매칭 (3) 별칭 키워드 부분 매칭
-    // 부분 키워드("수상한")가 다른 NPC 별칭에 우연히 포함되는 오매칭 방지
+    // === architecture/49 — NpcResolverService 단일 권한자 호출 ===
+    // 기존 7개 path (Pass 1~4 + IntentV3 + EventMatcher + lock + 후처리) 통합.
+    // STRONG/MEDIUM/WEAK 의도 계층 + lock-aware + 위치 안내 hint를 한 번에 결정.
     let textMatchedNpcId: string | null = null;
-    {
-      const inputLower = rawInput.toLowerCase();
-      const allNpcs = this.content.getAllNpcs();
-
-      // Pass 1: 실명 또는 별칭 전체 매칭 (가장 정확)
-      for (const npc of allNpcs) {
-        if (npc.name && inputLower.includes(npc.name.toLowerCase())) {
-          textMatchedNpcId = npc.npcId;
-          break;
-        }
-        if (
-          npc.unknownAlias &&
-          inputLower.includes(npc.unknownAlias.toLowerCase())
-        ) {
-          textMatchedNpcId = npc.npcId;
-          break;
-        }
-      }
-
-      // Pass 2: "~에게" 패턴에서 대상 NPC 추출 (가장 정확한 플레이어 의도)
-      if (!textMatchedNpcId) {
-        const targetMatch = rawInput.match(/(.+?)에게/);
-        if (targetMatch) {
-          const targetWord = targetMatch[1].trim().toLowerCase();
-          this.logger.debug(
-            `[TextNpcMatch] Pass2 에게 패턴: targetWord="${targetWord}"`,
-          );
-          for (const npc of allNpcs) {
-            const nameMatch =
-              npc.name && targetWord.includes(npc.name.toLowerCase());
-            const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
-            const kwMatch = aliasKeywords.some(
-              (kw: string) =>
-                kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
-            );
-            if (nameMatch || kwMatch) {
-              textMatchedNpcId = npc.npcId;
-              break;
-            }
-          }
-        }
-      }
-
-      // Pass 3: 별칭 키워드 부분 매칭 (3자 이상)
-      if (!textMatchedNpcId) {
-        for (const npc of allNpcs) {
-          const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
-          const kwMatch = aliasKeywords.some(
-            (kw: string) =>
-              kw.length >= 3 && inputLower.includes(kw.toLowerCase()),
-          );
-          if (kwMatch) {
-            textMatchedNpcId = npc.npcId;
-            break;
-          }
-        }
-      }
-    }
-
-    // textMatchedNpcId가 있으면 intentV3.targetNpcId보다 우선 (플레이어가 직접 이름을 언급)
-    const resolvedTargetNpcId =
-      textMatchedNpcId ?? intentV3.targetNpcId ?? null;
-
     let conversationLockedNpcId: string | null = null;
-    if (
-      SOCIAL_ACTIONS_FOR_LOCK.has(intent.actionType) &&
-      !resolvedTargetNpcId
-    ) {
-      // architecture/46 §4.1 — Continuity Engine 강화:
-      // SYSTEM 턴이나 primary 없는 턴은 skip하고 진짜 마지막 SOCIAL NPC 찾기.
-      // 비-SOCIAL 행동 만나면 잠금 해제 (이동/공격 같은 명시적 전환 신호).
-      for (let i = actionHistory.length - 1; i >= 0; i--) {
-        const prev = actionHistory[i] as Record<string, unknown>;
-        const prevNpc = prev.primaryNpcId as string | undefined;
-        const prevAction = prev.actionType as string | undefined;
+    let npcWhereaboutsHint: {
+      searchedNpcId: string;
+      searchedNpcDisplay: string;
+      locationLabel: string;
+      activity?: string;
+    } | null = null;
+    let npcResolutionSource: string | null = null;
+    let npcResolutionConfidence = 0;
 
-        // primary 없음 (SYSTEM 턴 등) → skip 후 계속 거슬러 검사
-        if (!prevNpc) continue;
-
-        if (SOCIAL_ACTIONS_FOR_LOCK.has(prevAction ?? '')) {
-          conversationLockedNpcId = prevNpc;
-          this.logger.debug(
-            `[대화잠금] 이전 대화 NPC ${conversationLockedNpcId} 유지 (action=${intent.actionType}, prevAction=${prevAction}, depth=${actionHistory.length - 1 - i})`,
-          );
-          break;
+    if (this.npcResolver) {
+      const resolution = this.npcResolver.resolve({
+        rawInput,
+        intent,
+        currentLocationId: locationId,
+        timePhase: (ws.phaseV2 ?? ws.timePhase) as
+          | 'DAWN'
+          | 'DAY'
+          | 'DUSK'
+          | 'NIGHT',
+        actionHistory,
+        candidateEvent: event as {
+          eventId: string;
+          payload: { primaryNpcId?: string };
+        },
+        nodeType: 'LOCATION',
+        inputType: body.input.type as 'ACTION' | 'CHOICE',
+        runState,
+      });
+      npcResolutionSource = resolution.source;
+      npcResolutionConfidence = resolution.confidence;
+      npcWhereaboutsHint = resolution.whereaboutsHint ?? null;
+      this.logger.log(
+        `[NpcResolver] npcId=${resolution.npcId} source=${resolution.source} conf=${resolution.confidence} lock=${resolution.lockApplied}`,
+      );
+      // resolution source별 변수 매핑 (기존 코드 호환)
+      if (resolution.npcId) {
+        if (resolution.source === 'CONVERSATION_LOCK') {
+          conversationLockedNpcId = resolution.npcId;
+        } else if (resolution.source !== 'EVENT_PRIMARY') {
+          // STRONG_EXPLICIT_NAME / STRONG_PARTICLE / MEDIUM_ROLE_KEYWORD / WEAK_ALIAS_PARTIAL
+          textMatchedNpcId = resolution.npcId;
         }
-        // 비-SOCIAL primary 있는 턴 → 의도적 전환 → 잠금 해제
-        break;
+        // EVENT_PRIMARY는 event.payload.primaryNpcId 그대로 사용 (별도 변수 미설정)
       }
     }
+
+    // architecture/49 — NpcResolverService가 IntentV3.targetNpcId를 흡수.
+    // intentV3.targetNpcId는 IntentParserV2 matchTargetNpc 결과로, "냄새가/젊은" 같은
+    // 환경 명사 부분 매칭 false positive 가능성이 있어 fallback에서 제외.
+    const resolvedTargetNpcId = textMatchedNpcId ?? null;
 
     // effectiveNpcId: (1) 텍스트 매칭 NPC (2) intent.targetNpcId (3) conversationLockedNpcId (4) event.payload.primaryNpcId
     let eventPrimaryNpc = event.payload.primaryNpcId ?? null;
@@ -3663,6 +3648,13 @@ export class TurnsService {
           : event.eventId.startsWith('FREE_CONV_')
             ? 'CONVERSATION_CONT'
             : 'WORLD_EVENT',
+        // architecture/49 — NpcResolver audit trail (NPA 디버깅용)
+        ...(npcResolutionSource
+          ? {
+              npcResolutionSource,
+              npcResolutionConfidence,
+            }
+          : {}),
       },
       isNonChallenge,
       totalGoldDelta,
@@ -3679,6 +3671,12 @@ export class TurnsService {
           },
       allEquipmentAdded.length > 0 ? allEquipmentAdded : undefined,
     );
+
+    // architecture/48 Layer 4 — NPC 위치 안내 hint를 ui에 attach (LLM 프롬프트 주입용)
+    if (npcWhereaboutsHint) {
+      (result.ui as Record<string, unknown>).npcWhereaboutsHint =
+        npcWhereaboutsHint;
+    }
 
     // Posture 변화 이벤트 반영
     for (const pe of pendingPostureEvents) {
@@ -5713,6 +5711,96 @@ export class TurnsService {
 
   /** 자유 텍스트에서 목표 위치 추출 */
   /**
+   * architecture/48 — NPC role 필드에서 자동 키워드 추출.
+   * 명시 roleKeywords가 없는 NPC를 위한 fallback.
+   * 한글 명사 2~4글자 추출 + 일반어 제외.
+   */
+  private extractRoleKeywords(role: string): string[] {
+    if (!role) return [];
+    const matches = role.match(/[가-힣]{2,4}/g) ?? [];
+    const STOP = new Set([
+      '역할',
+      '담당',
+      '관리',
+      '책임자',
+      '경험',
+      '인물',
+      '사람',
+      '도시',
+      '경우',
+      '있다',
+      '한다',
+      '한국',
+      '의뢰',
+      '이다',
+      '없다',
+    ]);
+    return [...new Set(matches)].filter((k) => !STOP.has(k));
+  }
+
+  /**
+   * architecture/48 — 명시적 공격 의도 감지.
+   * "싸운다/공격한다/때린다/친다/찌른다" 등 강한 동사 포함 시 true.
+   * "싸움이 있소?" 같이 명사+의문문 형태는 false (회상 잡담 보호).
+   */
+  private hasExplicitFightIntent(input: string): boolean {
+    const text = input.toLowerCase();
+    const STRONG_FIGHT_PATTERNS = [
+      '싸운다',
+      '싸우자',
+      '싸우겠',
+      '공격한다',
+      '공격하',
+      '때린다',
+      '때린',
+      '때리자',
+      '친다',
+      '치겠',
+      '쳐들어',
+      '찌른다',
+      '찌르',
+      '베다',
+      '벤다',
+      '벤다고',
+      '쏜다',
+      '쏘겠',
+      '달려든다',
+      '달려들',
+      '주먹을 휘두',
+      '검을 휘두',
+      '칼을 뽑',
+      '검을 뽑',
+      '맞붙',
+      '쳐죽',
+      '죽인다',
+    ];
+    return STRONG_FIGHT_PATTERNS.some((p) => text.includes(p));
+  }
+
+  /**
+   * architecture/48 — 명시적 도둑 의도 감지.
+   * "훔친다/빼낸다/꺼내간다/훔쳐서" 등 강한 동사 포함 시 true.
+   */
+  private hasExplicitStealIntent(input: string): boolean {
+    const text = input.toLowerCase();
+    const STRONG_STEAL_PATTERNS = [
+      '훔친다',
+      '훔쳐',
+      '빼낸다',
+      '빼내',
+      '꺼내간',
+      '꺼내가',
+      '슬쩍',
+      '몰래 가져',
+      '도둑질',
+      '소매치기',
+      '주머니를',
+      '품을 뒤',
+    ];
+    return STRONG_STEAL_PATTERNS.some((p) => text.includes(p));
+  }
+
+  /**
    * architecture/46 §4.2 — 명시적 이동 의도 감지.
    * 입력이 "떠나/이동/돌아간/벗어나" 등 강한 동사를 포함하면 true.
    * "부두/시장" 같은 단독 장소명, "쪽으로" 같은 약한 표현은 false (의문문/대화 맥락 보호).
@@ -6007,6 +6095,9 @@ export class TurnsService {
       targetNpcId?: string;
       /** Player-First: 턴 모드 (PLAYER_DIRECTED / CONVERSATION_CONT / WORLD_EVENT) */
       turnMode?: string;
+      /** architecture/49 — NPC Resolver 결정 근거 (NPA 디버깅용) */
+      npcResolutionSource?: string;
+      npcResolutionConfidence?: number;
     },
     hideResolve?: boolean,
     goldDelta?: number,
@@ -6442,12 +6533,38 @@ export class TurnsService {
     }
 
     // Pass 3: 별칭 키워드 부분 매칭 (3자 이상)
+    // architecture/49 — 환경 명사 false positive 방지용 RISKY_FRAGMENTS 제외.
+    // "냄새가" → 향수 냄새가 강한 미망인 같은 매칭은 환경 표현이지 NPC 호명 아님.
+    const RISKY_FRAGMENTS = new Set([
+      '젊은',
+      '늙은',
+      '냄새가',
+      '강한',
+      '약한',
+      '큰',
+      '작은',
+      '조용한',
+      '시끄러운',
+      '빠른',
+      '느린',
+      '뜨거운',
+      '차가운',
+      '날카로운',
+      '풋풋한',
+      '투박한',
+      '거친',
+      '부드러운',
+      '다정한',
+      '향수',
+    ]);
     for (const npc of allNpcs) {
       const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
       if (
         aliasKw.some(
           (kw: string) =>
-            kw.length >= 3 && inputLower.includes(kw.toLowerCase()),
+            kw.length >= 3 &&
+            !RISKY_FRAGMENTS.has(kw) &&
+            inputLower.includes(kw.toLowerCase()),
         )
       )
         return npc.npcId;
