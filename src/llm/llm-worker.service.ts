@@ -1139,6 +1139,53 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
+        // architecture/51 §B (R5) — speechRegister 이탈 후처리.
+        // primary NPC가 HAOCHE인데 narrative 안 따옴표 대사가 ~합니다/~해요/~세요 같은
+        // 다른 register 어미로 끝나면 ~하오/~시오로 강제 치환. dual-track 비활성/혼합
+        // 모드에서 narrative에 직접 인용된 NPC 대사의 어미 일관성 보강.
+        {
+          const rs = runSession?.runState as
+            | Record<string, unknown>
+            | undefined;
+          const primaryNpcId = (
+            (rs?.ui as Record<string, unknown> | undefined)
+              ?.actionContext as Record<string, unknown> | undefined
+          )?.primaryNpcId as string | null | undefined;
+          if (primaryNpcId) {
+            const npcDef = this.content.getNpc(primaryNpcId);
+            const register = (
+              npcDef?.personality as Record<string, unknown> | undefined
+            )?.speechRegister as string | undefined;
+            if (register === 'HAOCHE') {
+              let registerFixCount = 0;
+              narrative = narrative.replace(
+                /"([^"]{4,300})"/g,
+                (_match, body: string) => {
+                  const before = body;
+                  let fixed = body
+                    .replace(/하겠습니다([.!?…\s]|$)/g, '하겠소$1')
+                    .replace(/했습니다([.!?…\s]|$)/g, '했소$1')
+                    .replace(/되었습니다([.!?…\s]|$)/g, '되었소$1')
+                    .replace(/합니다([.!?…\s]|$)/g, '하오$1')
+                    .replace(/입니다([.!?…\s]|$)/g, '이오$1')
+                    .replace(/하십시오([.!?…\s]|$)/g, '하시오$1')
+                    .replace(/이에요([.!?…\s]|$)/g, '이오$1')
+                    .replace(/세요([.!?…\s]|$)/g, '시오$1')
+                    .replace(/하세([.!?…\s]|$)/g, '하시$1')
+                    .replace(/해요([.!?…\s]|$)/g, '하오$1');
+                  if (fixed !== before) registerFixCount++;
+                  return `"${fixed}"`;
+                },
+              );
+              if (registerFixCount > 0) {
+                violations.push(
+                  `R5(architecture/51): HAOCHE 어미 ${registerFixCount}건 치환`,
+                );
+              }
+            }
+          }
+        }
+
         // P4. 미소개 NPC 실명 sanitize (서술 + 선택지 label)
         const rs = runSession?.runState as Record<string, unknown> | undefined;
         if (rs) {

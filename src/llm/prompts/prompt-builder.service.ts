@@ -34,6 +34,32 @@ function sanitizeUserInput(text: string): string {
     .replace(/\t/g, '\\t');
 }
 
+/**
+ * architecture/51 §B (R2) — 사용자 입력에서 핵심 명사 추출.
+ * NPC 답변에 키워드 인용을 권장하기 위한 Positive framing 데이터.
+ */
+const KEYWORD_STOPWORDS = new Set([
+  '안녕', '하시', '하시오', '하세요', '하시는', '있다', '없다', '하다', '되다', '가다', '오다',
+  '보다', '주다', '이다', '있는', '있소', '있어', '있어요', '됩니다', '한다', '하는', '하면',
+  '어떻소', '어떻습', '어떻게', '어떤', '얼마나', '어디', '언제', '왜', '무엇',
+  '오늘', '내일', '어제', '지금', '예전', '뵙소', '드릴', '보시', '주시',
+  '처음', '들었', '들었소', '들었어요', '하시군', '하시는군', '하시는데',
+  '말씀', '말을', '얘기', '이야기', '같소', '같아요', '같다', '같은', '같이',
+  '소이까', '하시오', '들으시', '있으시', '하시면',
+]);
+function extractTopUserKeywords(s: string, max = 3): string[] {
+  if (!s) return [];
+  const matches = (s.match(/[가-힣]{2,}/g) ?? [])
+    .filter((m) => !KEYWORD_STOPWORDS.has(m))
+    .filter((m) => m.length >= 2);
+  const freq = new Map<string, number>();
+  for (const m of matches) freq.set(m, (freq.get(m) ?? 0) + 1);
+  return [...freq.entries()]
+    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
+    .slice(0, max)
+    .map(([w]) => w);
+}
+
 @Injectable()
 export class PromptBuilderService {
   constructor(
@@ -1003,7 +1029,11 @@ export class PromptBuilderService {
           `${npcDisplayName}와(과) ${consecutiveTurns}턴째 연속 대화 중입니다.\n` +
           `⚠️ 이 NPC는 처음 만난 것처럼 행동하면 안 됩니다. ${depth} 단계의 대화를 이어가세요.\n` +
           `- 이전 대화에서 나온 내용을 참조하며 더 깊은 정보/감정을 드러내세요.\n` +
-          `- "다가와서 경고한다" 같은 첫 만남 패턴 금지. 이미 옆에 서서 대화하는 중입니다.`,
+          `- "다가와서 경고한다" 같은 첫 만남 패턴 금지. 이미 옆에 서서 대화하는 중입니다.\n` +
+          `⚠️ 단일 NPC 응답 강제 (architecture/51 §B R6): 이 턴은 ${npcDisplayName}만 말합니다.\n` +
+          `- 다른 NPC(경비, 행인, 점원, 군중, 동료)의 따옴표 대사 절대 금지. 끼어들기 금지.\n` +
+          `- 주변 인물은 서술(narration)로만 묘사 (예: "옆에서 누군가 지나간다"). 그들의 대사를 따옴표로 쓰지 마세요.\n` +
+          `- 특히 "이 시간에 무엇을 하고 계십니까?", "두 분의 대화가..." 같은 일반 끼어들기를 매 턴 반복하면 게임이 깨집니다.`,
       );
     }
 
@@ -1048,6 +1078,14 @@ export class PromptBuilderService {
           `${sanitizeUserInput(rawInput)}`,
           `위 행동의 결과를 서술하세요. 행동 내용을 반복하거나 요약하지 말고, NPC 반응이나 환경 변화부터 바로 시작하세요. 첫 문장은 '당신은/당신이'로 시작하지 마세요.`,
         ];
+        // architecture/51 §B (R2) — 사용자 키워드 응답률 강화.
+        // NPC가 사용자 질문/말의 핵심 단어를 답변에 자연스럽게 인용하도록 Positive framing.
+        const userKeywords = extractTopUserKeywords(rawInput, 3);
+        if (userKeywords.length >= 1) {
+          parts.push(
+            `답변 가이드: 사용자가 언급한 단어 [${userKeywords.join(', ')}] 중 1~2개를 NPC 대사 또는 서술 안에 자연스럽게 인용하시오. 사용자 질문/말의 주제를 답변에서 그대로 반영하세요.`,
+          );
+        }
         if (actionCtx?.parsedType) {
           parts.push(
             `엔진 해석: ${actionCtx.parsedType}${actionCtx.tone && actionCtx.tone !== 'NEUTRAL' ? ` (${actionCtx.tone})` : ''}`,
@@ -1106,6 +1144,7 @@ export class PromptBuilderService {
             '- 같은 NPC와의 대화가 자연스럽게 이어져야 합니다.',
             '- NPC가 첫 만남처럼 행동하면 안 됩니다. 이전 대화 맥락을 이어가세요.',
             '- 대화의 깊이가 점점 깊어져야 합니다. 이전에 다룬 주제를 반복하지 마세요.',
+            '⚠️ 단일 NPC 응답 강제 (architecture/51 §B R6): 이 턴은 잠금된 한 NPC만 말합니다. 다른 NPC(경비, 행인, 점원, 군중, 동료)의 따옴표 대사 절대 금지. 주변 인물은 서술로만 묘사하세요.',
           );
         }
         factsParts.push(parts.join('\n'));
@@ -1284,8 +1323,10 @@ export class PromptBuilderService {
       }
     }
 
-    // summary.short
-    factsParts.push(`[상황 요약]\n${sr.summary.short}`);
+    // summary.short — A52 후보 1: 빈 본문 가드 (헤더만 출력 방지)
+    if (sr.summary?.short && sr.summary.short.trim().length > 0) {
+      factsParts.push(`[상황 요약]\n${sr.summary.short}`);
+    }
 
     // 판정 결과 — 해당 턴의 판정+행동 조합만 동적 주입 (system에서 전체 매트릭스 제거)
     if (sr.ui?.resolveOutcome) {
@@ -2480,6 +2521,29 @@ export class PromptBuilderService {
       const llmSummary = npc.llmSummary;
 
       const behaviorParts: string[] = [];
+
+      // architecture/51 §B (R4) — NPC 권장 호칭 명시 (첫 등장/재등장 공통).
+      // speechStyle/signature 텍스트에서 호칭 단어를 추출, 가장 빈번한 호칭을
+      // "권장 호칭"으로 명시 → LLM이 한 답변 안에 여러 호칭 혼용하지 않도록 유도.
+      if (personality?.speechStyle || personality?.signature?.length) {
+        const pronounSearchText = [
+          personality.speechStyle ?? '',
+          ...(personality.signature ?? []),
+        ].join(' ');
+        const pronounMatch = pronounSearchText.match(
+          /(그대|자네|당신|너희|너|그쪽|손님|친구|형제|동무)/g,
+        );
+        if (pronounMatch && pronounMatch.length > 0) {
+          const counts = new Map<string, number>();
+          for (const m of pronounMatch) counts.set(m, (counts.get(m) ?? 0) + 1);
+          const dominant = [...counts.entries()].sort(
+            (a, b) => b[1] - a[1],
+          )[0][0];
+          behaviorParts.push(
+            `⚠️ 권장 호칭: "${dominant}" — 이 NPC는 사용자를 항상 "${dominant}"(으)로 부른다. 한 답변 안에 여러 호칭(그대/너/당신 등) 혼용 금지.`,
+          );
+        }
+      }
 
       if (isFirstEncounter || !llmSummary) {
         // ── 첫 등장 또는 llmSummary 미생성: 풀 세트 ──
