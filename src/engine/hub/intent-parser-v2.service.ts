@@ -1180,10 +1180,12 @@ export class IntentParserV2Service {
       if (aliasLower && input.includes(aliasLower)) {
         return { npcId: npc.npcId, alias: npc.unknownAlias! };
       }
-      // 별칭 키워드 부분 매칭 (2글자 이상)
+      // 별칭 키워드 부분 매칭 (3글자 이상)
+      // architecture/48: 2글자 부분 매칭은 "젊은/늙은" 같은 형용사가 NPC를 잘못
+      // 매칭하는 부작용 발생 → 3글자 이상만 (turns.service.ts Pass 3과 일치)
       const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
       for (const kw of aliasKeywords) {
-        if (kw.length >= 2 && input.includes(kw.toLowerCase())) {
+        if (kw.length >= 3 && input.includes(kw.toLowerCase())) {
           return { npcId: npc.npcId, alias: kw };
         }
       }

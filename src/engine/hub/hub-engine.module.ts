@@ -48,6 +48,10 @@ import { PlayerGoalService } from './player-goal.service.js';
 import { QuestProgressionService } from './quest-progression.service.js';
 // Sudden Action (architecture/43)
 import { SuddenActionDetectorService } from './sudden-action-detector.service.js';
+// NPC Discoverability v1 (architecture/48)
+import { NpcWhereaboutsService } from './npc-whereabouts.service.js';
+// NPC Resolution Authority v1 (architecture/49)
+import { NpcResolverService } from './npc-resolver.service.js';
 
 const providers = [
   WorldStateService,
@@ -98,6 +102,10 @@ const providers = [
   QuestProgressionService,
   // Sudden Action (architecture/43)
   SuddenActionDetectorService,
+  // NPC Discoverability v1 (architecture/48)
+  NpcWhereaboutsService,
+  // NPC Resolution Authority v1 (architecture/49)
+  NpcResolverService,
 ];
 
 @Module({
