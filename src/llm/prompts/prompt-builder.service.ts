@@ -78,6 +78,9 @@ export class PromptBuilderService {
       | import('../nano-event-director.service.js').NanoEventResult
       | null,
     useJsonMode?: boolean,
+    npcReaction?:
+      | import('../npc-reaction-director.service.js').NpcReactionResult
+      | null,
   ): LlmMessage[] {
     const messages: LlmMessage[] = [];
     const isHub = sr.node.type === 'HUB';
@@ -939,6 +942,72 @@ export class PromptBuilderService {
         );
       }
       factsParts.push(conceptParts.join('\n'));
+    }
+
+    // NpcReactionDirector — 이번 턴 NPC 반응 사전 결정 (서술 LLM이 추측 대신 표현)
+    if (npcReaction) {
+      const reactionTypeKr: Record<string, string> = {
+        WELCOME: '환영/적극 호의',
+        OPEN_UP: '마음을 열기 시작',
+        PROBE: '의도 떠보기/질문 응대',
+        DEFLECT: '회피/주제 전환',
+        DISMISS: '무시/거리두기',
+        THREATEN: '위협/경고',
+        SILENCE: '침묵/자리이탈',
+      };
+      const refusalKr: Record<string, string> = {
+        NONE: '거절 없음',
+        POLITE: '정중한 회피',
+        FIRM: '단호한 거절',
+        HOSTILE: '적대적 격화',
+      };
+      const lines: string[] = [
+        '[NPC 즉시 반응 결정 — 이 결정을 추측하지 말고 그대로 표현하세요]',
+        `반응 유형: ${reactionTypeKr[npcReaction.reactionType] ?? npcReaction.reactionType}`,
+        `거절 강도: ${refusalKr[npcReaction.refusalLevel] ?? npcReaction.refusalLevel}`,
+      ];
+      if (npcReaction.immediateGoal) {
+        lines.push(
+          `이 대화에서 NPC가 원하는 것: ${npcReaction.immediateGoal}`,
+        );
+      }
+      if (npcReaction.openingStance) {
+        lines.push(`NPC 첫 반응 행동: ${npcReaction.openingStance}`);
+      }
+      if (npcReaction.dialogueHint) {
+        lines.push(`NPC 대사 방향: ${npcReaction.dialogueHint}`);
+      }
+      lines.push(
+        '— 위 결정은 서버가 사전 판단한 것입니다. NPC 대사·행동·태도가 위 결정과 일치해야 합니다. WELCOME인데 차갑게 거절하거나, THREATEN인데 친절하게 응대하지 마세요.',
+      );
+
+      // E안 — 추상 톤 3축 (예시 절대 없음, 어휘는 LLM이 자유 선택)
+      const hasToneFields =
+        npcReaction.voiceQuality ||
+        npcReaction.emotionalUndertone ||
+        npcReaction.bodyLanguageMood;
+      if (hasToneFields) {
+        lines.push(
+          '',
+          '[NPC 이번 턴 톤 가이드 — 추상 분위기만, 어휘는 자유롭게 선택]',
+        );
+        if (npcReaction.voiceQuality) {
+          lines.push(`목소리 질감: ${npcReaction.voiceQuality}`);
+        }
+        if (npcReaction.emotionalUndertone) {
+          lines.push(`감정 저류: ${npcReaction.emotionalUndertone}`);
+        }
+        if (npcReaction.bodyLanguageMood) {
+          lines.push(`신체 분위기: ${npcReaction.bodyLanguageMood}`);
+        }
+        lines.push(
+          '⚠️ 위 톤을 외면적 묘사로 표현하되 어휘는 자유롭게 선택하세요.',
+          '⚠️ 정적 시그니처나 직전 사용 어구를 그대로 반복하지 마세요.',
+          '⚠️ 같은 분위기를 매 턴 다른 단어/제스처로 표현하세요.',
+        );
+      }
+
+      factsParts.push(lines.join('\n'));
     }
 
     // NPC 반응 블록 (목격자의 능동 반응)
@@ -1984,9 +2053,10 @@ export class PromptBuilderService {
         if (factNpcState?.llmSummary?.behaviorGuide) {
           factNpcSpeechGuide = factNpcState.llmSummary.behaviorGuide;
         } else if (factNpcDef?.personality?.speechStyle) {
+          // signature 예시 노출 제거 — speechStyle만 가이드로 사용
           factNpcSpeechGuide = condenseSpeechStyle(
             factNpcDef.personality.speechStyle,
-            factNpcDef.personality.signature?.[0],
+            undefined,
           );
         }
       }
@@ -2557,12 +2627,9 @@ export class PromptBuilderService {
           if (personality.innerConflict && (em.trust > 15 || em.respect > 20)) {
             behaviorParts.push(`내면: ${personality.innerConflict}`);
           }
-          // signature 표현 (첫 등장이므로 항상 포함)
-          if (personality.signature?.length) {
-            behaviorParts.push(
-              `가끔 보이는 습관(매 턴 반복 금지, 2~3턴에 1번 정도): ${personality.signature.join(' / ')}`,
-            );
-          }
+          // signature 노출 완전 제거 (사용자 목적: 어조는 고정, 어구는 매번 다르게)
+          // — speechStyle/core가 어조 가이드 역할을 충분히 수행
+          // — 정적 signature 풀을 LLM에 노출하면 positive/negative 무관하게 anchor 발생
           // npcRelations: 현재 장면에 등장한 NPC + introduced NPC만 필터
           if (personality.npcRelations) {
             const relLines = this.buildFilteredNpcRelations(
@@ -2612,17 +2679,7 @@ export class PromptBuilderService {
           behaviorParts.push(`내면: ${personality.innerConflict}`);
         }
 
-        // signature 카운터: lastSignatureTurn 기반 3턴 간격
-        const lastSigTurn = npc.lastSignatureTurn ?? 0;
-        const currentTurnNo = llmSummary.updatedAtTurn;
-        if (
-          personality?.signature?.length &&
-          currentTurnNo - lastSigTurn >= 3
-        ) {
-          behaviorParts.push(
-            `가끔 보이는 습관(이번 턴에 넣어도 됨): ${personality.signature.join(' / ')}`,
-          );
-        }
+        // signature 노출 완전 제거 (재등장 분기) — speechStyle/llmSummary만 어조 가이드
 
         // npcRelations: 재등장에서도 장면 등장 NPC만 필터
         if (personality?.npcRelations) {
