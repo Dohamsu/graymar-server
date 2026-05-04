@@ -23,6 +23,7 @@ import { LorebookService } from './lorebook.service.js';
 import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
 import { ChallengeClassifierService } from './challenge-classifier.service.js';
+import { NpcReactionDirectorService } from './npc-reaction-director.service.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
 import { ContentModule } from '../content/content.module.js';
 
@@ -49,6 +50,7 @@ import { ContentModule } from '../content/content.module.js';
     LlmStreamBrokerService,
     ThemeClassifierService,
     ChallengeClassifierService,
+    NpcReactionDirectorService,
   ],
   exports: [
     ContextBuilderService,
@@ -60,6 +62,7 @@ import { ContentModule } from '../content/content.module.js';
     LlmStreamBrokerService,
     ThemeClassifierService,
     ChallengeClassifierService,
+    NpcReactionDirectorService,
   ],
 })
 export class LlmModule implements OnModuleInit {

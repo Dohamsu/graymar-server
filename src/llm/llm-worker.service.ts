@@ -34,6 +34,10 @@ import {
 } from './nano-director.service.js';
 import { FactExtractorService } from './fact-extractor.service.js';
 import { NanoEventDirectorService } from './nano-event-director.service.js';
+import {
+  NpcReactionDirectorService,
+  type NpcReactionResult,
+} from './npc-reaction-director.service.js';
 import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
 import {
@@ -120,6 +124,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly themeClassifier: ThemeClassifierService,
     @Optional() private readonly nanoEventDirector: NanoEventDirectorService,
     @Optional() private readonly streamBroker: LlmStreamBrokerService,
+    @Optional()
+    private readonly npcReactionDirector?: NpcReactionDirectorService,
   ) {}
 
   onModuleInit(): void {
@@ -392,6 +398,71 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      // 3.4. NpcReactionDirector: NPC가 등장하는 LOCATION 턴에서 NPC 반응/즉시목표/추상톤 사전 결정
+      let npcReaction: NpcReactionResult | null = null;
+      if (
+        this.npcReactionDirector &&
+        pending.nodeType === 'LOCATION' &&
+        pending.inputType !== 'SYSTEM'
+      ) {
+        const reactionNpcId =
+          (nanoEventHint?.npcId as string | undefined) ??
+          (actionCtxForTarget?.primaryNpcId as string | undefined) ??
+          null;
+        if (reactionNpcId) {
+          const npcDef = this.content.getNpc(reactionNpcId);
+          const npcStateMap = (llmContext.npcStates ?? {}) as Record<
+            string,
+            import('../db/types/npc-state.js').NPCState
+          >;
+          const npcState = npcStateMap[reactionNpcId] ?? null;
+          if (npcDef) {
+            const recentDialogue =
+              recentDone
+                .map((t) => t.llmOutput as string | null)
+                .filter((n): n is string => !!n)
+                .reverse()[0] ?? null;
+            try {
+              npcReaction = await this.npcReactionDirector.direct({
+                npcId: reactionNpcId,
+                npcDisplayName:
+                  npcDef.unknownAlias ?? npcDef.name ?? reactionNpcId,
+                npcRole: npcDef.role ?? '',
+                personalityCore: npcDef.personality?.core,
+                speechStyle: npcDef.personality?.speechStyle,
+                signature: npcDef.personality?.signature,
+                softSpot: npcDef.personality?.softSpot,
+                innerConflict: npcDef.personality?.innerConflict,
+                npcState,
+                rawInput: pending.rawInput ?? '',
+                actionType:
+                  ((actionCtxForTarget?.actionType as string) ?? 'TALK'),
+                resolveOutcome:
+                  (((serverResult.ui as Record<string, unknown>)
+                    ?.resolveOutcome as
+                    | 'SUCCESS'
+                    | 'PARTIAL'
+                    | 'FAIL'
+                    | undefined) ?? null),
+                locationName: llmContext.locationContext ?? null,
+                hubHeat: llmContext.hubHeat,
+                recentNpcDialogue: recentDialogue,
+                sceneSummary: llmContext.midSummary as string | undefined,
+              });
+              if (npcReaction) {
+                this.logger.log(
+                  `[NpcReaction] npc=${npcDef.name} type=${npcReaction.reactionType} refuse=${npcReaction.refusalLevel} goal="${npcReaction.immediateGoal}" source=${npcReaction.source}`,
+                );
+              }
+            } catch (err) {
+              this.logger.warn(`[NpcReaction] error: ${err}`);
+            }
+
+            // E안: NpcSignatureGenerator 비활성화 — 톤 3축은 NpcReaction에 통합됨
+          }
+        }
+      }
+
       // 3.5. 프롬프트 메시지 조립
       const config = this.configService.get();
       const isCombat = pending.nodeType === 'COMBAT';
@@ -405,6 +476,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         directorHint,
         nanoEventHint ?? null,
         useJsonMode,
+        npcReaction,
       );
 
       // 4. LLM 호출 (재시도/fallback 포함)
