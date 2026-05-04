@@ -22,6 +22,7 @@ import { DialogueGeneratorService } from './dialogue-generator.service.js';
 import { LorebookService } from './lorebook.service.js';
 import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
+import { ChallengeClassifierService } from './challenge-classifier.service.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
 import { ContentModule } from '../content/content.module.js';
 
@@ -47,6 +48,7 @@ import { ContentModule } from '../content/content.module.js';
     LorebookService,
     LlmStreamBrokerService,
     ThemeClassifierService,
+    ChallengeClassifierService,
   ],
   exports: [
     ContextBuilderService,
@@ -57,6 +59,7 @@ import { ContentModule } from '../content/content.module.js';
     FactExtractorService,
     LlmStreamBrokerService,
     ThemeClassifierService,
+    ChallengeClassifierService,
   ],
 })
 export class LlmModule implements OnModuleInit {

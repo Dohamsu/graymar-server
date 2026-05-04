@@ -356,6 +356,14 @@ export class ResolveService {
     };
   }
 
+  /**
+   * 외부에서 자동 SUCCESS를 강제할 때 호출 (ChallengeClassifier가 FREE 판단한 경우 등).
+   * 주사위 소비 없이 buildAutoSuccess와 동일 결과 반환.
+   */
+  forceAutoSuccess(event: EventDefV2, intent: ParsedIntentV2): ResolveResult {
+    return this.buildAutoSuccess(event, intent);
+  }
+
   /** 비도전 행위 자동 SUCCESS: 주사위 소비 없음, 최소 열기, 전투 트리거 없음 */
   private buildAutoSuccess(
     event: EventDefV2,
