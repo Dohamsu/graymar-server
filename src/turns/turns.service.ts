@@ -71,6 +71,7 @@ import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js';
 import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
 import { LlmCallerService } from '../llm/llm-caller.service.js';
+import { ChallengeClassifierService } from '../llm/challenge-classifier.service.js';
 import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
 // User-Driven System v3
 import { IntentV3BuilderService } from '../engine/hub/intent-v3-builder.service.js';
@@ -223,6 +224,8 @@ export class TurnsService {
     @Optional() private readonly npcWhereabouts?: NpcWhereaboutsService,
     // architecture/49 — NPC Resolution Authority (단일 권한자)
     @Optional() private readonly npcResolver?: NpcResolverService,
+    @Optional()
+    private readonly challengeClassifier?: ChallengeClassifierService,
   ) {}
 
   /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
@@ -1532,18 +1535,55 @@ export class TurnsService {
       ? (this.content.getNpc(primaryNpcIdForResolve)?.faction ?? null)
       : null;
 
-    // ResolveService 판정
-    const resolveResult = this.resolveService.resolve(
-      event,
-      intent,
-      ws,
-      playerStats,
-      rng,
-      activeSpecialEffects,
-      presetActionBonuses,
-      primaryNpcFaction,
-      runState,
-    );
+    // Challenge Classifier 게이트 — 저항/결과분기 없는 자유 행동은 주사위 스킵
+    const primaryNpcDef = primaryNpcIdForResolve
+      ? this.content.getNpc(primaryNpcIdForResolve)
+      : null;
+    const npcStateForChallenge =
+      primaryNpcIdForResolve && runState.npcStates?.[primaryNpcIdForResolve]
+        ? runState.npcStates[primaryNpcIdForResolve]
+        : null;
+    const npcPostureForChallenge = npcStateForChallenge
+      ? this.npcEmotional.computePosture(npcStateForChallenge)
+      : null;
+    const eventTitleForChallenge =
+      ((event.payload as Record<string, unknown>)?.title as string) ?? null;
+    const challengeDecision = this.challengeClassifier
+      ? await this.challengeClassifier.classify({
+          rawInput,
+          actionType: intent.actionType,
+          targetNpcId: primaryNpcIdForResolve ?? null,
+          targetNpcName:
+            primaryNpcDef?.name ?? primaryNpcDef?.unknownAlias ?? null,
+          targetNpcPosture: npcPostureForChallenge,
+          locationName:
+            this.content.getLocation(ws.currentLocationId ?? '')?.name ??
+            ws.currentLocationId ??
+            null,
+          eventTitle: eventTitleForChallenge,
+        })
+      : { result: 'CHECK' as const, reason: 'classifier unavailable', source: 'rule' as const };
+
+    // ResolveService 판정 (FREE면 주사위 스킵하고 자동 SUCCESS)
+    const resolveResult =
+      challengeDecision.result === 'FREE'
+        ? this.resolveService.forceAutoSuccess(event, intent)
+        : this.resolveService.resolve(
+            event,
+            intent,
+            ws,
+            playerStats,
+            rng,
+            activeSpecialEffects,
+            presetActionBonuses,
+            primaryNpcFaction,
+            runState,
+          );
+    if (challengeDecision.result === 'FREE') {
+      this.logger.log(
+        `[Challenge] FREE actionType=${intent.actionType} reason="${challengeDecision.reason}" source=${challengeDecision.source} → dice skipped`,
+      );
+    }
     this.logger.log(
       `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${event.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}${resolveResult.traitBonus ? ` traitBonus=${resolveResult.traitBonus > 0 ? '+' : ''}${resolveResult.traitBonus}` : ''}${resolveResult.gamblerLuckTriggered ? ' GAMBLER_LUCK!' : ''}`,
     );
