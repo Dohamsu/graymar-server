@@ -2270,6 +2270,64 @@ ${npcList}`,
             }
           }
 
+          // === 마커 합쳐짐 감지 + 자동 복구 (substring 병합 버그 방어) ===
+          // 사례) "넉넉한 체구의 선넉넉한 체구의 선술집 주인"
+          //      = "넉넉한 체구의 선" + "넉넉한 체구의 선술집 주인" 합쳐짐
+          // 1단계: 진단 로깅 — @[X|...] 또는 @[X] 별칭 안에 같은 substring(4자+) 2회 등장
+          // 2단계: 알려진 NPC unknownAlias로 자동 복구
+          {
+            const allNpcs = this.content.getAllNpcs();
+            const aliasToNpc = new Map<string, string>();
+            for (const def of allNpcs) {
+              if (def.unknownAlias) aliasToNpc.set(def.unknownAlias, def.npcId);
+              if (def.name) aliasToNpc.set(def.name, def.npcId);
+            }
+
+            narrative = narrative.replace(
+              /@\[([^\]|]+)(\|[^\]]+)?\]/g,
+              (match, alias: string, urlPart: string | undefined) => {
+                // (a) 진단: 별칭 내 동일 substring(8자+) 2회 등장 감지
+                let collision: { dup: string; original: string } | null = null;
+                const minDup = 8;
+                for (let len = Math.floor(alias.length / 2); len >= minDup; len--) {
+                  for (let i = 0; i + len * 2 <= alias.length; i++) {
+                    const sub = alias.substring(i, i + len);
+                    if (alias.indexOf(sub, i + len) !== -1) {
+                      collision = { dup: sub, original: alias };
+                      break;
+                    }
+                  }
+                  if (collision) break;
+                }
+                if (!collision) return match;
+
+                // (b) 자동 복구: 알려진 unknownAlias 중 별칭에 부분 포함된 것을 정상 별칭으로
+                let recovered: string | null = null;
+                for (const [validAlias] of aliasToNpc) {
+                  if (
+                    validAlias.length >= minDup &&
+                    alias.includes(validAlias) &&
+                    validAlias.length < alias.length
+                  ) {
+                    if (!recovered || validAlias.length > recovered.length) {
+                      recovered = validAlias;
+                    }
+                  }
+                }
+                if (recovered) {
+                  this.logger.warn(
+                    `[MarkerCollision] 합쳐짐 감지+복구: "${alias.slice(0, 50)}" → "${recovered}" (dup="${collision.dup}")`,
+                  );
+                  return `@[${recovered}${urlPart ?? ''}]`;
+                }
+                this.logger.warn(
+                  `[MarkerCollision] 합쳐짐 감지 (복구 실패): "${alias.slice(0, 50)}" (dup="${collision.dup}")`,
+                );
+                return match;
+              },
+            );
+          }
+
           // 상위 스코프로 변수 전달 (5.9에서 사용)
           _appearedNpcIds = appearedNpcIds;
           _portraits = portraits;
