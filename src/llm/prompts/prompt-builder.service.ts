@@ -1592,10 +1592,18 @@ export class PromptBuilderService {
         'STEAL',
       ]);
       const COMBAT_ACTIONS = new Set(['FIGHT']);
+      // ⚠️ NPC와 대화 중(conversationLock 또는 targetNpcId)일 때
+      //    INVESTIGATE/SEARCH/OBSERVE는 "NPC에게 묻기"로 해석되어야 함 → 대화 모드.
+      //    SNEAK/STEAL은 NPC 모르게 하는 행동이라 그대로 비대화 모드.
+      const isInConversation = !!ctx.conversationLock || !!npc.npcId;
+      const isInfoActionInConv =
+        isInConversation &&
+        ['INVESTIGATE', 'SEARCH', 'OBSERVE'].includes(actionType);
       const isNonDialogueAction =
-        NON_DIALOGUE_ACTIONS.has(actionType) ||
-        (rawInput &&
-          /관찰|살핀|살펴|지켜|훑|둘러|조사|잠입|숨어|몰래/.test(rawInput));
+        !isInfoActionInConv &&
+        (NON_DIALOGUE_ACTIONS.has(actionType) ||
+          (rawInput &&
+            /관찰|살핀|살펴|지켜|훑|둘러|조사|잠입|숨어|몰래/.test(rawInput)));
       const isCombatAction =
         COMBAT_ACTIONS.has(actionType) ||
         (rawInput && /싸움|공격|던져|때려|기습/.test(rawInput));
@@ -1868,20 +1876,33 @@ export class PromptBuilderService {
     }
 
     // === 작업 1: 직전 NPC 대사 추출 & 반복 방지 지시 (LOCATION only) ===
+    // ⚠️ locationSessionTurns 마지막 entry는 현재 턴(self) — llmOutput이 아직 없을 때
+    //    summary.short(예: '플레이어가 "입력"을 시도하여 성공했다') fallback이 들어가
+    //    raw_input이 큰따옴표로 감싸져 NPC 대사로 잘못 매칭됨.
+    //    → 진짜 직전 턴(length-2)에서만 추출. 추가로 rawInput 포함 매치 안전망 필터.
     if (
       !isHub &&
       ctx.locationSessionTurns &&
-      ctx.locationSessionTurns.length > 0
+      ctx.locationSessionTurns.length >= 2
     ) {
       const lastSessionTurn =
-        ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1];
+        ctx.locationSessionTurns[ctx.locationSessionTurns.length - 2];
+      const currentRawInput =
+        ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]
+          ?.rawInput ?? '';
       if (lastSessionTurn.narrative) {
         const dialogueMatches = lastSessionTurn.narrative.match(
           /\u201c([^\u201d]+)\u201d|"([^"]+)"/g,
         );
         if (dialogueMatches && dialogueMatches.length > 0) {
-          // 마지막 1~2개 대사 추출
-          const recentDialogues = dialogueMatches.slice(-2);
+          // 마지막 1~2개 대사 + rawInput 포함 매치 필터 (안전망: summary.short 회귀 방어)
+          const filteredDialogues = dialogueMatches.filter(
+            (d) =>
+              !currentRawInput ||
+              currentRawInput.length < 5 ||
+              !d.includes(currentRawInput),
+          );
+          const recentDialogues = filteredDialogues.slice(-2);
           // 시작 어구 추출: 각 대사의 첫 5~15자
           const openingPhrases = recentDialogues
             .map((d) => d.replace(/^["\u201c]|["\u201d]$/g, '').trim())
@@ -2160,16 +2181,26 @@ export class PromptBuilderService {
       const hintList =
         otherNpcAliases.length > 0
           ? otherNpcAliases.map((a) => `"${a}"`).join(' 또는 ')
-          : '다른 누군가';
-      factsParts.push(
-        [
-          `[NPC 모름 — 인계 가이드]`,
-          `${npcDisplayName}은(는) "${topic}"에 대해 잘 모릅니다.`,
-          `직접적인 답을 주지 말고, 자연스럽게 다른 NPC가 더 잘 알 것이라 암시하세요:`,
+          : '';
+      // 추상 회피 표현 금지 + 구체 NPC 별칭 강제
+      const lines: string[] = [
+        `[NPC 모름 — 인계 가이드]`,
+        `${npcDisplayName}은(는) "${topic}"에 대해 잘 모릅니다.`,
+      ];
+      if (hintList) {
+        lines.push(
+          `직접적인 답을 주지 말되, 다른 NPC ${hintList}을(를) 반드시 NPC 별칭으로 명시하며 인계하세요.`,
           `예: "그건 잘 모르오. ${hintList}한테 물어보면 알 수도 있겠지."`,
-          `톤은 NPC 말투에 맞춰 짧게 (1~2문장). 강요 X, 자연 흘림.`,
-        ].join('\n'),
-      );
+          `⚠️ 절대 금지 — "다른 곳을 뒤져보시오", "더 확실한 근거를 찾으려면" 같은 모호한 회피 표현. 반드시 위의 구체 NPC 별칭을 직접 언급해야 합니다.`,
+        );
+      } else {
+        lines.push(
+          `이 NPC가 모른다는 것을 자연스럽게 인정하되, 구체적인 다른 인물을 추천할 수 없으니 톤은 "내가 직접 본 건 없소" 정도로 마무리.`,
+          `⚠️ 절대 금지 — "다른 곳을 뒤져보시오", "더 확실한 근거를 찾으려면" 같은 모호한 회피 표현 출력 금지.`,
+        );
+      }
+      lines.push(`톤은 NPC 말투에 맞춰 짧게 (1~2문장). 강요 X, 자연 흘림.`);
+      factsParts.push(lines.join('\n'));
     }
 
     // === architecture/46: default 텍스트 (NPC 누구도 모를 때, quest description) ===
