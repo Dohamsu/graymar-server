@@ -2799,6 +2799,9 @@ ${npcList}`,
         }
       }
 
+      // llmChoices 는 Track 2 (서술 기반 nano 선택지 재생성) 완료 후
+      // 최종 finalChoices 로 한 번만 저장한다. 여기서 미리 저장하면
+      // DB 는 Track 1 결과, stream emit 은 Track 2 결과로 desync 가 발생함.
       await this.db
         .update(turns)
         .set({
@@ -2813,10 +2816,6 @@ ${npcList}`,
             latencyMs: callResult.response?.latencyMs ?? 0,
           },
           llmCompletedAt: new Date(),
-          llmChoices:
-            this.pendingNanoChoices.get(
-              `${pending.runId}:${pending.turnNo}`,
-            ) ?? llmChoices,
           llmPrompt: messages as unknown[],
         })
         .where(eq(turns.id, pending.id));
@@ -2882,12 +2881,19 @@ ${npcList}`,
         }
       }
 
+      // Track 2 완료 후 최종 선택지 결정 — DB 와 stream 이 동일 값을 참조해야
+      // 클라가 클릭한 nano_${turnNo}_${idx} 가 서버 매칭과 일치한다.
+      const finalChoices =
+        this.pendingNanoChoices.get(`${pending.runId}:${pending.turnNo}`) ??
+        llmChoices;
+
+      await this.db
+        .update(turns)
+        .set({ llmChoices: finalChoices })
+        .where(eq(turns.id, pending.id));
+
       // 스트리밍 완료 이벤트 전송 (후처리 완료된 최종 서술 + 선택지)
       if (this.streamBroker) {
-        const finalChoices =
-          this.pendingNanoChoices.get(
-            `${pending.runId}:${pending.turnNo}`,
-          ) ?? llmChoices;
         this.streamBroker.emit(pending.runId, pending.turnNo, 'done', {
           narrative,
           choices: finalChoices,
