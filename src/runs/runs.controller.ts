@@ -12,9 +12,13 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '../common/guards/auth.guard.js';
 import { UserId } from '../common/decorators/user-id.decorator.js';
+import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import { RunsService } from './runs.service.js';
 import { GetRunQuerySchema, type GetRunQuery } from './dto/get-run.dto.js';
-import { CreateRunBodySchema } from './dto/create-run.dto.js';
+import {
+  CreateRunBodySchema,
+  type CreateRunBody,
+} from './dto/create-run.dto.js';
 import { EquipItemBodySchema } from './dto/equip-item.dto.js';
 import { UnequipItemBodySchema } from './dto/equip-item.dto.js';
 import { UseItemBodySchema } from './dto/use-item.dto.js';
@@ -32,7 +36,7 @@ export class RunsController {
   @HttpCode(HttpStatus.CREATED)
   async createRun(
     @UserId() userId: string,
-    @Body() body: Record<string, unknown>,
+    @Body(new ZodValidationPipe(CreateRunBodySchema)) body: CreateRunBody,
   ) {
     const {
       presetId,
@@ -44,7 +48,7 @@ export class RunsController {
       bonusStats,
       traitId,
       portraitUrl,
-    } = CreateRunBodySchema.parse(body);
+    } = body;
     return this.runsService.createRun(
       userId,
       presetId ?? 'DOCKWORKER',
