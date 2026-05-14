@@ -25,9 +25,7 @@ describe('NpcReactionDirectorService', () => {
     );
   });
 
-  function makeNpcState(
-    overrides: Partial<NPCState> = {},
-  ): NPCState {
+  function makeNpcState(overrides: Partial<NPCState> = {}): NPCState {
     return {
       npcId: 'NPC_TEST',
       basePosture: 'CAUTIOUS',
@@ -254,7 +252,7 @@ describe('NpcReactionDirectorService', () => {
           recentNpcDialogue: '"가까이 오지 마시오."',
         }),
       );
-      const userMsg = (mockLlmCaller.call.mock.calls[0][0] as any).messages[1]
+      const userMsg = mockLlmCaller.call.mock.calls[0][0].messages[1]
         .content as string;
       expect(userMsg).toContain('테스트 NPC');
       expect(userMsg).toContain('상인');
@@ -266,6 +264,200 @@ describe('NpcReactionDirectorService', () => {
       expect(userMsg).toContain('가까이 오지 마시오');
       expect(userMsg).toContain('경계심 많은 중년');
       expect(userMsg).toContain('하오체');
+    });
+
+    it('recentNpcDialogues 배열 → 최신순 T-1/T-2/T-3 라벨로 주입', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"reactionType":"PROBE","immediateGoal":"x","refusalLevel":"NONE","openingStance":"y","emotionalShiftHint":{"trust":0,"fear":0,"respect":0,"suspicion":0},"dialogueHint":"z"}',
+        },
+      });
+      await service.direct(
+        makeCtx({
+          recentNpcDialogues: [
+            '직전 턴 NPC가 말하기를 가까이 오지 마시오',
+            '두 턴 전 NPC가 누구신지 묻소',
+            '세 턴 전 NPC가 처음 본 얼굴이라 했소',
+          ],
+        }),
+      );
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const userMsg = mockLlmCaller.call.mock.calls[0][0].messages[1]
+        .content as string;
+      expect(userMsg).toContain('[이 NPC 최근 대화 흐름');
+      expect(userMsg).toContain('T-1:');
+      expect(userMsg).toContain('T-2:');
+      expect(userMsg).toContain('T-3:');
+      expect(userMsg).toContain('가까이 오지 마시오');
+      expect(userMsg).toContain('누구신지 묻소');
+      expect(userMsg).toContain('처음 본 얼굴');
+    });
+
+    it('recentPlayerActions 배열 → 최신순 행동 흐름 주입', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"reactionType":"PROBE","immediateGoal":"x","refusalLevel":"NONE","openingStance":"y","emotionalShiftHint":{"trust":0,"fear":0,"respect":0,"suspicion":0},"dialogueHint":"z"}',
+        },
+      });
+      await service.direct(
+        makeCtx({
+          recentPlayerActions: [
+            { rawInput: '돈을 건넨다', actionType: 'BRIBE', outcome: 'FAIL' },
+            {
+              rawInput: '신분을 묻는다',
+              actionType: 'INVESTIGATE',
+              outcome: 'PARTIAL',
+            },
+          ],
+        }),
+      );
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const userMsg = mockLlmCaller.call.mock.calls[0][0].messages[1]
+        .content as string;
+      expect(userMsg).toContain('[최근 플레이어 행동');
+      expect(userMsg).toContain('[BRIBE/FAIL]');
+      expect(userMsg).toContain('돈을 건넨다');
+      expect(userMsg).toContain('[INVESTIGATE/PARTIAL]');
+      expect(userMsg).toContain('신분을 묻는다');
+    });
+
+    it('recentNpcDialogues 첫 항목 220자 cap, 두 번째 이후 120자 cap', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"reactionType":"PROBE","immediateGoal":"x","refusalLevel":"NONE","openingStance":"y","emotionalShiftHint":{"trust":0,"fear":0,"respect":0,"suspicion":0},"dialogueHint":"z"}',
+        },
+      });
+      const longText = '가'.repeat(400);
+      await service.direct(
+        makeCtx({
+          recentNpcDialogues: [longText, longText],
+        }),
+      );
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const userMsg = mockLlmCaller.call.mock.calls[0][0].messages[1]
+        .content as string;
+      // T-1: 220자 + 말줄임표
+      expect(userMsg).toMatch(/T-1: 가{220}…/);
+      // T-2: 120자 + 말줄임표
+      expect(userMsg).toMatch(/T-2: 가{120}…/);
+    });
+  });
+
+  describe('R2 사후 가드 — 같은 reactionType 4회 연속 차단', () => {
+    function mockResp(type: string, refusal = 'POLITE') {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: `{"reactionType":"${type}","immediateGoal":"x","refusalLevel":"${refusal}","openingStance":"y","emotionalShiftHint":{"trust":0,"fear":0,"respect":0,"suspicion":0},"dialogueHint":"z"}`,
+        },
+      });
+    }
+
+    it('PROBE×3 + THREATEN 행동 → THREATEN 으로 교정, refusalLevel FIRM 이상', async () => {
+      mockResp('PROBE', 'POLITE');
+      const r = await service.direct(
+        makeCtx({
+          actionType: 'THREATEN',
+          resolveOutcome: 'SUCCESS',
+          recentReactionTypes: ['PROBE', 'PROBE', 'PROBE'],
+        }),
+      );
+      expect(r!.reactionType).toBe('THREATEN');
+      // POLITE(1) → FIRM(2) 이상으로 강화
+      expect(['FIRM', 'HOSTILE']).toContain(r!.refusalLevel);
+      expect(r!.source).toBe('llm');
+    });
+
+    it('PROBE×3 + outcome FAIL → DEFLECT 로 교정, refusal 한 단계 강화', async () => {
+      mockResp('PROBE', 'POLITE');
+      const r = await service.direct(
+        makeCtx({
+          actionType: 'INVESTIGATE',
+          resolveOutcome: 'FAIL',
+          recentReactionTypes: ['PROBE', 'PROBE', 'PROBE'],
+        }),
+      );
+      expect(r!.reactionType).toBe('DEFLECT');
+      expect(r!.refusalLevel).toBe('FIRM');
+    });
+
+    it('PROBE×3 + outcome SUCCESS → OPEN_UP 로 교정, refusal 한 단계 완화', async () => {
+      mockResp('PROBE', 'POLITE');
+      const r = await service.direct(
+        makeCtx({
+          actionType: 'TALK',
+          resolveOutcome: 'SUCCESS',
+          recentReactionTypes: ['PROBE', 'PROBE', 'PROBE'],
+        }),
+      );
+      expect(r!.reactionType).toBe('OPEN_UP');
+      expect(r!.refusalLevel).toBe('NONE');
+    });
+
+    it('DEFLECT×3 + FAIL → DISMISS 로 교정', async () => {
+      mockResp('DEFLECT', 'FIRM');
+      const r = await service.direct(
+        makeCtx({
+          actionType: 'INVESTIGATE',
+          resolveOutcome: 'FAIL',
+          recentReactionTypes: ['DEFLECT', 'DEFLECT', 'DEFLECT'],
+        }),
+      );
+      expect(r!.reactionType).toBe('DISMISS');
+      expect(r!.refusalLevel).toBe('HOSTILE');
+    });
+
+    it('직전 3회가 모두 같지 않으면 가드 미작동 (LLM 결과 그대로)', async () => {
+      mockResp('PROBE', 'POLITE');
+      const r = await service.direct(
+        makeCtx({
+          actionType: 'INVESTIGATE',
+          resolveOutcome: 'PARTIAL',
+          recentReactionTypes: ['PROBE', 'PROBE', 'DEFLECT'],
+        }),
+      );
+      expect(r!.reactionType).toBe('PROBE');
+      expect(r!.refusalLevel).toBe('POLITE');
+    });
+
+    it('LLM 결과가 직전 흐름과 다르면 가드 미작동 (자연 변화 존중)', async () => {
+      mockResp('OPEN_UP', 'NONE');
+      const r = await service.direct(
+        makeCtx({
+          actionType: 'TALK',
+          resolveOutcome: 'SUCCESS',
+          recentReactionTypes: ['PROBE', 'PROBE', 'PROBE'],
+        }),
+      );
+      expect(r!.reactionType).toBe('OPEN_UP');
+      expect(r!.refusalLevel).toBe('NONE');
+    });
+
+    it('recentReactionTypes 미설정 → 가드 미작동 (하위 호환)', async () => {
+      mockResp('PROBE', 'POLITE');
+      const r = await service.direct(
+        makeCtx({
+          actionType: 'INVESTIGATE',
+          resolveOutcome: 'FAIL',
+          // recentReactionTypes 미설정
+        }),
+      );
+      expect(r!.reactionType).toBe('PROBE');
+    });
+
+    it('recentReactionTypes 길이 < 3 → 가드 미작동', async () => {
+      mockResp('PROBE', 'POLITE');
+      const r = await service.direct(
+        makeCtx({
+          actionType: 'INVESTIGATE',
+          resolveOutcome: 'FAIL',
+          recentReactionTypes: ['PROBE', 'PROBE'],
+        }),
+      );
+      expect(r!.reactionType).toBe('PROBE');
     });
   });
 });

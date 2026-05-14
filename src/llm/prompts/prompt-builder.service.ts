@@ -39,13 +39,67 @@ function sanitizeUserInput(text: string): string {
  * NPC 답변에 키워드 인용을 권장하기 위한 Positive framing 데이터.
  */
 const KEYWORD_STOPWORDS = new Set([
-  '안녕', '하시', '하시오', '하세요', '하시는', '있다', '없다', '하다', '되다', '가다', '오다',
-  '보다', '주다', '이다', '있는', '있소', '있어', '있어요', '됩니다', '한다', '하는', '하면',
-  '어떻소', '어떻습', '어떻게', '어떤', '얼마나', '어디', '언제', '왜', '무엇',
-  '오늘', '내일', '어제', '지금', '예전', '뵙소', '드릴', '보시', '주시',
-  '처음', '들었', '들었소', '들었어요', '하시군', '하시는군', '하시는데',
-  '말씀', '말을', '얘기', '이야기', '같소', '같아요', '같다', '같은', '같이',
-  '소이까', '하시오', '들으시', '있으시', '하시면',
+  '안녕',
+  '하시',
+  '하시오',
+  '하세요',
+  '하시는',
+  '있다',
+  '없다',
+  '하다',
+  '되다',
+  '가다',
+  '오다',
+  '보다',
+  '주다',
+  '이다',
+  '있는',
+  '있소',
+  '있어',
+  '있어요',
+  '됩니다',
+  '한다',
+  '하는',
+  '하면',
+  '어떻소',
+  '어떻습',
+  '어떻게',
+  '어떤',
+  '얼마나',
+  '어디',
+  '언제',
+  '왜',
+  '무엇',
+  '오늘',
+  '내일',
+  '어제',
+  '지금',
+  '예전',
+  '뵙소',
+  '드릴',
+  '보시',
+  '주시',
+  '처음',
+  '들었',
+  '들었소',
+  '들었어요',
+  '하시군',
+  '하시는군',
+  '하시는데',
+  '말씀',
+  '말을',
+  '얘기',
+  '이야기',
+  '같소',
+  '같아요',
+  '같다',
+  '같은',
+  '같이',
+  '소이까',
+  '하시오',
+  '들으시',
+  '있으시',
+  '하시면',
 ]);
 function extractTopUserKeywords(s: string, max = 3): string[] {
   if (!s) return [];
@@ -540,6 +594,16 @@ export class PromptBuilderService {
         }
       }
 
+      // architecture/57: focused 모드에서는 targetNpcIds 를 메인 NPC 한 명으로 강제 좁힘.
+      //   newlyEncounteredNpcIds / npcInjection 등으로 들어온 BG/SUB NPC 의 별칭이
+      //   [등장 가능 NPC 목록] / [NPC 감정 상태] 블록을 통해 LLM 에 노출되어
+      //   매 턴 끼어들기를 유발하는 회귀 (multi_npc_play 2026-05-14 검증) 해소.
+      if (ctx.focusedNpcId) {
+        const focused = ctx.focusedNpcId;
+        targetNpcIds.clear();
+        targetNpcIds.add(focused);
+      }
+
       // NPC 목록 구성
       if (targetNpcIds.size > 0) {
         allNpcs = fullList.filter((npc) => targetNpcIds.has(npc.npcId));
@@ -698,6 +762,17 @@ export class PromptBuilderService {
       }
       // npcInjection은 항상 포함 (targetNpcIds에 있고 postureKeys에 없을 수 있음)
       if (ctx.npcInjection?.npcId) sceneNpcIds.add(ctx.npcInjection.npcId);
+      // architecture/57: focused 모드에서는 메인 NPC 만 sceneNpcIds 에 남김.
+      //   [NPC 감정 상태] / [NPC 대사 호칭] 블록도 보조 NPC 노출 차단 — 라이라 등의 별칭/감정 상태가
+      //   LLM 에 들어가서 보조 NPC 가 매 턴 끼어드는 회귀 (multi_npc_play 2026-05-14 검증) 해소.
+      if (ctx.focusedNpcId) {
+        const focused = ctx.focusedNpcId;
+        for (const id of [...sceneNpcIds]) {
+          if (id !== focused) sceneNpcIds.delete(id);
+        }
+        // npcPostures 가 비어있어 sceneNpcIds 에서 빠질 수 있으니, focused NPC 는 강제 포함
+        sceneNpcIds.add(focused);
+      }
       const npcEmotionalBlock = this.buildNpcEmotionalBlock(ctx, sceneNpcIds);
       if (npcEmotionalBlock) {
         memoryParts.push(
@@ -962,23 +1037,30 @@ export class PromptBuilderService {
         HOSTILE: '적대적 격화',
       };
       const lines: string[] = [
-        '[NPC 즉시 반응 결정 — 이 결정을 추측하지 말고 그대로 표현하세요]',
-        `반응 유형: ${reactionTypeKr[npcReaction.reactionType] ?? npcReaction.reactionType}`,
-        `거절 강도: ${refusalKr[npcReaction.refusalLevel] ?? npcReaction.refusalLevel}`,
+        '[⚠️ P0 — NPC 즉시 반응 결정 (서버 사전 판단, 절대 위반 금지)]',
+        `▸ 반응 유형: ${reactionTypeKr[npcReaction.reactionType] ?? npcReaction.reactionType}`,
+        `▸ 거절 강도: ${refusalKr[npcReaction.refusalLevel] ?? npcReaction.refusalLevel}`,
       ];
       if (npcReaction.immediateGoal) {
-        lines.push(
-          `이 대화에서 NPC가 원하는 것: ${npcReaction.immediateGoal}`,
-        );
+        lines.push(`▸ 이번 턴 NPC의 속내 목표: ${npcReaction.immediateGoal}`);
       }
       if (npcReaction.openingStance) {
-        lines.push(`NPC 첫 반응 행동: ${npcReaction.openingStance}`);
+        lines.push(`▸ NPC 첫 반응 자세: ${npcReaction.openingStance}`);
       }
       if (npcReaction.dialogueHint) {
-        lines.push(`NPC 대사 방향: ${npcReaction.dialogueHint}`);
+        lines.push(`▸ NPC 대사 방향: ${npcReaction.dialogueHint}`);
       }
       lines.push(
-        '— 위 결정은 서버가 사전 판단한 것입니다. NPC 대사·행동·태도가 위 결정과 일치해야 합니다. WELCOME인데 차갑게 거절하거나, THREATEN인데 친절하게 응대하지 마세요.',
+        '',
+        '⚠️ 이 결정은 서버가 NPC 감정·이전 흐름·판정 결과를 종합해 사전 판단한 것입니다.',
+        '⚠️ NPC 대사·행동·태도·표정이 모두 위 결정과 일치해야 합니다.',
+        '⚠️ 위반 사례 (절대 금지):',
+        '   - WELCOME인데 차갑게 거리를 두는 묘사',
+        '   - THREATEN인데 친절하거나 부드러운 어조',
+        '   - DEFLECT/DISMISS인데 핵심 정보를 그대로 답해주기',
+        '   - SILENCE인데 NPC가 길게 대사',
+        '   - 거절 강도 FIRM/HOSTILE인데 모호하게 동의하는 말투',
+        '   - immediateGoal과 정반대 방향으로 대사 흐름 전개',
       );
 
       // E안 — 추상 톤 3축 (예시 절대 없음, 어휘는 LLM이 자유 선택)
@@ -1104,6 +1186,33 @@ export class PromptBuilderService {
           `- 주변 인물은 서술(narration)로만 묘사 (예: "옆에서 누군가 지나간다"). 그들의 대사를 따옴표로 쓰지 마세요.\n` +
           `- 특히 "이 시간에 무엇을 하고 계십니까?", "두 분의 대화가..." 같은 일반 끼어들기를 매 턴 반복하면 게임이 깨집니다.`,
       );
+    }
+    // architecture/57: focused 모드 directive — conversationLock 과 독립 발화.
+    //   lock 은 "관계 깊이/처음 만남 패턴 금지" 가이드 중심이고,
+    //   focused 는 "보조 NPC 끼어들기 금지 + 직전 끼어든 NPC 침묵" 가이드 중심이라 역할이 다름.
+    //   lock 이 이미 "단일 NPC 응답 강제" 를 포함하지만, recentAuxSpeakers 같은 동적 차단 정보는
+    //   여기서만 전달되므로 두 블록 모두 발화시킨다.
+    if (ctx.focusedNpcId) {
+      const focusedDef = this.content.getNpc(ctx.focusedNpcId);
+      const focusedState = ctx.npcStates?.[ctx.focusedNpcId];
+      const focusedDisplay = focusedDef
+        ? focusedState
+          ? getNpcDisplayName(focusedState, focusedDef)
+          : (focusedDef.unknownAlias ?? focusedDef.name)
+        : '이 NPC';
+      const auxBlockLines = [
+        `[1인 응답 강제 — 보조 NPC 끼어들기 금지]`,
+        `⚠️ 이 턴은 ${focusedDisplay} 한 명만 말합니다.`,
+        `- 다른 NPC(경비, 행인, 점원, 동료, 보조 인물)의 따옴표 대사 절대 금지.`,
+        `- 주변 인물의 행동/시선은 서술 1문장 이내로만 묘사. 대사 금지.`,
+        `- "거기서 무엇을 하고 있소", "두 분 대화가...", "서류를 정리하는 척이라도" 같은 일반 끼어들기는 매 턴 같은 인물이 반복하는 회귀를 일으킵니다 — 절대 사용 금지.`,
+      ];
+      if (ctx.recentAuxSpeakers && ctx.recentAuxSpeakers.length > 0) {
+        auxBlockLines.push(
+          `- 직전 턴에 이미 끼어든 인물(${ctx.recentAuxSpeakers.join(', ')})은 이번 턴 침묵. 같은 보조 NPC 가 2턴 연속 발화하면 안 됩니다.`,
+        );
+      }
+      factsParts.push(auxBlockLines.join('\n'));
     }
 
     // === Phase 2: 파티 모드 4인분 행동 통합 서술 ===
@@ -2231,7 +2340,7 @@ export class PromptBuilderService {
       const chatNpcDef = this.content.getNpc(chatNpcId);
       const dailyTopics = chatNpcDef?.daily_topics ?? [];
       if (dailyTopics.length > 0) {
-        const chatNpcState = ctx.npcStates?.[chatNpcId] as NPCState | undefined;
+        const chatNpcState = ctx.npcStates?.[chatNpcId];
         // recentTopics 회피 — 이미 사용한 topicId/factId 제외
         const usedTopicIds = new Set(
           (chatNpcState?.llmSummary?.recentTopics ?? []).map((t) => t.topic),
@@ -2254,7 +2363,8 @@ export class PromptBuilderService {
           }),
         );
         const candidates = matched.length > 0 ? matched : pool;
-        const picked = candidates[Math.floor(Math.random() * candidates.length)];
+        const picked =
+          candidates[Math.floor(Math.random() * candidates.length)];
         const chatDisplayName = chatNpcDef?.name ?? chatNpcId;
         factsParts.push(
           [

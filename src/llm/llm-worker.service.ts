@@ -234,7 +234,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               columns: { llmChoices: true },
             })
           : Promise.resolve(null),
-        // 최근 서술 (NanoDirector fallback용)
+        // 최근 서술 + 행동 흐름 (NanoDirector fallback + NpcReactionDirector 맥락용)
+        // limit=3으로 늘려 NpcReactionDirector에 직전 흐름을 더 풍부히 전달
         pending.nodeType === 'LOCATION' &&
         pending.inputType !== 'SYSTEM' &&
         pending.nodeInstanceId
@@ -245,11 +246,27 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 lt(turns.turnNo, pending.turnNo),
               ),
               orderBy: desc(turns.turnNo),
-              limit: 2,
-              columns: { llmOutput: true },
+              limit: 3,
+              columns: {
+                llmOutput: true,
+                rawInput: true,
+                parsedIntent: true,
+                serverResult: true,
+              },
             })
           : Promise.resolve([]),
       ]);
+
+      // drizzle partial select 의 jsonb 타입 추론 한계 보완: 명시적 형태로 좁힘
+      type RecentTurnRow = {
+        llmOutput: string | null;
+        rawInput: string;
+        parsedIntent: { actionType?: string } | null;
+        serverResult: {
+          ui?: { resolveOutcome?: 'SUCCESS' | 'PARTIAL' | 'FAIL' };
+        } | null;
+      };
+      const recentRows = recentDone as unknown as RecentTurnRow[];
 
       // 1.1. LLM 컨텍스트 구축
       // Player-First: serverResult.ui.actionContext.targetNpcId 를 컨텍스트에 전달 (bug 4624)
@@ -360,8 +377,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           };
         } else {
           // Fallback: 기존 NanoDirector 사용 (recentDone은 위에서 병렬 조회 완료)
-          const recentNarratives = recentDone
-            .map((t) => t.llmOutput as string | null)
+          const recentNarratives = recentRows
+            .map((t) => t.llmOutput)
             .filter((n): n is string => !!n)
             .reverse();
 
@@ -373,9 +390,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           }
 
           // P3-S5: null/undefined 명시 가드 + 반복 as 캐스팅 제거
-          const extractNpcId = (
-            data: unknown,
-          ): string | undefined => {
+          const extractNpcId = (data: unknown): string | undefined => {
             if (!data || typeof data !== 'object') return undefined;
             const id = (data as Record<string, unknown>).npcId;
             return typeof id === 'string' ? id : undefined;
@@ -411,17 +426,21 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           null;
         if (reactionNpcId) {
           const npcDef = this.content.getNpc(reactionNpcId);
-          const npcStateMap = (llmContext.npcStates ?? {}) as Record<
-            string,
-            import('../db/types/npc-state.js').NPCState
-          >;
+          const npcStateMap = llmContext.npcStates ?? {};
           const npcState = npcStateMap[reactionNpcId] ?? null;
           if (npcDef) {
-            const recentDialogue =
-              recentDone
-                .map((t) => t.llmOutput as string | null)
-                .filter((n): n is string => !!n)
-                .reverse()[0] ?? null;
+            // 최근 NPC 대사 흐름 (최신 → 과거 순). recentRows는 desc(turnNo) 정렬.
+            const recentNpcDialogues = recentRows
+              .map((t) => t.llmOutput)
+              .filter((n): n is string => !!n && n.trim().length > 0);
+
+            // 최근 플레이어 행동 흐름 (최신 → 과거 순)
+            const recentPlayerActions = recentRows.map((t) => ({
+              rawInput: t.rawInput ?? '',
+              actionType: t.parsedIntent?.actionType ?? 'UNKNOWN',
+              outcome: t.serverResult?.ui?.resolveOutcome ?? null,
+            }));
+
             try {
               npcReaction = await this.npcReactionDirector.direct({
                 npcId: reactionNpcId,
@@ -436,17 +455,18 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 npcState,
                 rawInput: pending.rawInput ?? '',
                 actionType:
-                  ((actionCtxForTarget?.actionType as string) ?? 'TALK'),
+                  (actionCtxForTarget?.actionType as string) ?? 'TALK',
                 resolveOutcome:
-                  (((serverResult.ui as Record<string, unknown>)
+                  ((serverResult.ui as Record<string, unknown>)
                     ?.resolveOutcome as
                     | 'SUCCESS'
                     | 'PARTIAL'
                     | 'FAIL'
-                    | undefined) ?? null),
+                    | undefined) ?? null,
                 locationName: llmContext.locationContext ?? null,
                 hubHeat: llmContext.hubHeat,
-                recentNpcDialogue: recentDialogue,
+                recentNpcDialogues,
+                recentPlayerActions,
                 sceneSummary: llmContext.midSummary as string | undefined,
               });
               if (npcReaction) {
@@ -1158,7 +1178,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               to: (m) => '험'.concat(m.slice(2)),
             },
             { from: /위험\b/g, to: '험한 일' },
-            { from: /조심하(시오|시게|십시오|소|게)/g, to: (m) => '신중하' + m.slice(3) },
+            {
+              from: /조심하(시오|시게|십시오|소|게)/g,
+              to: (m) => '신중하' + m.slice(3),
+            },
             { from: /조심하/g, to: '신중하' },
             { from: /조심해/g, to: '신중해' },
             { from: /곤란/g, to: '거북' },
@@ -1198,8 +1221,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               re.lastIndex = o.index;
               const m = re.exec(narrative);
               if (!m || m.index !== o.index) continue;
-              const replaced =
-                typeof r.to === 'function' ? r.to(m[0]) : r.to;
+              const replaced = typeof r.to === 'function' ? r.to(m[0]) : r.to;
               narrative =
                 narrative.slice(0, o.index) +
                 replaced +
@@ -1220,8 +1242,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             | Record<string, unknown>
             | undefined;
           const primaryNpcId = (
-            (rs?.ui as Record<string, unknown> | undefined)
-              ?.actionContext as Record<string, unknown> | undefined
+            (rs?.ui as Record<string, unknown> | undefined)?.actionContext as
+              | Record<string, unknown>
+              | undefined
           )?.primaryNpcId as string | null | undefined;
           if (primaryNpcId) {
             const npcDef = this.content.getNpc(primaryNpcId);
@@ -1234,7 +1257,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 /"([^"]{4,300})"/g,
                 (_match, body: string) => {
                   const before = body;
-                  let fixed = body
+                  const fixed = body
                     .replace(/하겠습니다([.!?…\s]|$)/g, '하겠소$1')
                     .replace(/했습니다([.!?…\s]|$)/g, '했소$1')
                     .replace(/되었습니다([.!?…\s]|$)/g, '되었소$1')
@@ -2198,6 +2221,43 @@ ${npcList}`,
             }
           }
 
+          // Step F-aux (architecture/57): focused 모드 — 메인 NPC 외 @마커+대사 블록 제거.
+          //   프롬프트에서 보조 NPC 정보를 모두 차단해도 LLM 이 학습 기본값으로
+          //   "다정한 보육원 여인" 같은 인물을 hallucinate 하는 회귀를 차단하는 마지막 안전망.
+          //   multi_npc_play 2026-05-14 실측: 프롬프트 정리만으로 매 턴 끼어들기 5/5 → 4/5 부분 개선,
+          //   이 후처리 추가 시 0~1/5 로 떨어질 것으로 기대.
+          if (llmContext.focusedNpcId) {
+            const focusedDef = this.content.getNpc(llmContext.focusedNpcId);
+            if (focusedDef) {
+              const focusedAny = focusedDef as Record<string, unknown>;
+              const focusedNames: string[] = [];
+              if (focusedDef.name) focusedNames.push(focusedDef.name);
+              if (focusedDef.unknownAlias)
+                focusedNames.push(focusedDef.unknownAlias);
+              const shortAlias = focusedAny.shortAlias;
+              if (typeof shortAlias === 'string' && shortAlias.length >= 2)
+                focusedNames.push(shortAlias);
+              // 메인 NPC 의 짧은 호칭(역할 끝 단어) 도 포함 (예: "회계사", "보스")
+              if (focusedDef.unknownAlias) {
+                const words = focusedDef.unknownAlias.split(/\s+/);
+                const tail = words[words.length - 1];
+                if (tail && tail.length >= 2 && !focusedNames.includes(tail)) {
+                  focusedNames.push(tail);
+                }
+              }
+              const stripResult = NpcDialogueMarkerService.stripAuxNpcDialogue(
+                narrative,
+                focusedNames,
+              );
+              narrative = stripResult.narrative;
+              if (stripResult.stripped > 0) {
+                this.logger.log(
+                  `[FocusedAuxStrip] focused=${focusedDef.name ?? llmContext.focusedNpcId} stripped=${stripResult.stripped}`,
+                );
+              }
+            }
+          }
+
           {
             const primaryNpcId = ((
               (serverResult.ui as Record<string, unknown>)
@@ -2289,7 +2349,11 @@ ${npcList}`,
                 // (a) 진단: 별칭 내 동일 substring(8자+) 2회 등장 감지
                 let collision: { dup: string; original: string } | null = null;
                 const minDup = 8;
-                for (let len = Math.floor(alias.length / 2); len >= minDup; len--) {
+                for (
+                  let len = Math.floor(alias.length / 2);
+                  len >= minDup;
+                  len--
+                ) {
                   for (let i = 0; i + len * 2 <= alias.length; i++) {
                     const sub = alias.substring(i, i + len);
                     if (alias.indexOf(sub, i + len) !== -1) {
