@@ -134,9 +134,9 @@ export interface LlmContext {
   npcAlreadyRevealedFacts: { npcDisplayName: string; facts: string[] } | null;
   // architecture/46: 현재 NPC가 fact 모를 때 다른 NPC 인계 가이드
   factHandoffHint: {
-    npcDisplayName: string;          // 현재 대화 NPC
-    topic: string;                   // 입력에서 인지된 화제 (단순 추출)
-    otherNpcAliases: string[];       // 다른 NPC 별칭/이름 (LLM이 인계 시 활용)
+    npcDisplayName: string; // 현재 대화 NPC
+    topic: string; // 입력에서 인지된 화제 (단순 추출)
+    otherNpcAliases: string[]; // 다른 NPC 별칭/이름 (LLM이 인계 시 활용)
   } | null;
   // architecture/46: NPC 누구도 fact 모를 때 default 일반 서술 (quest.facts.description)
   factDefaultDescription: string | null;
@@ -179,6 +179,13 @@ export interface LlmContext {
   playerTargetNpcId: string | null;
   // architecture/44 §이슈② — 런 전역 NPC 대사 테마 이력 (최근 10턴)
   narrativeThemes: import('../db/types/narrative-theme.js').NarrativeThemeEntry[];
+  // 보조 NPC 끼어들기 억제 (architecture/57):
+  //  - 메인 NPC와 사회적 상호작용 중일 때 set
+  //  - 다른 NPC를 npcRelationFacts/locationContext 노출에서 차단
+  focusedNpcId: string | null;
+  //  - 직전 1~2턴 narrative 에서 메인 NPC 외 발화한 보조 NPC 별칭 목록
+  //  - 이번 턴 끼어들기 금지 명단으로 프롬프트에 주입
+  recentAuxSpeakers: string[];
 }
 
 @Injectable()
@@ -192,6 +199,108 @@ export class ContextBuilderService {
     private readonly factExtractor: FactExtractorService,
     private readonly lorebook: LorebookService,
   ) {}
+
+  /**
+   * 보조 NPC 끼어들기 억제 (architecture/57).
+   * 플레이어가 사회적 행동(TALK/PERSUADE/BRIBE/THREATEN/HELP/INVESTIGATE/TRADE)으로
+   * 특정 NPC를 지목한 턴 → focusedNpcId 반환.
+   *
+   * 다음 단계에서 사용:
+   *  - npcRelationFacts 필터 (보조 NPC 별칭 노출 차단)
+   *  - locationContext "이 장소에 있는 인물" 라인 생략
+   *  - prompt-builder 의 1인 응답 강제 블록
+   *
+   * @internal export — context-builder.focused-npc.spec.ts 에서 직접 테스트.
+   */
+  static detectFocusedNpcId(
+    actionCtx:
+      | {
+          primaryNpcId?: string | null;
+          actionType?: string | null;
+          parsedType?: string | null;
+          approachVector?: string | null;
+          turnMode?: string | null;
+        }
+      | null
+      | undefined,
+  ): string | null {
+    if (!actionCtx) return null;
+    const primary = actionCtx.primaryNpcId ?? null;
+    if (!primary) return null;
+    // OBSERVE 는 관찰 행동이라 끼어들기 허용 (장면 분위기 묘사용).
+    // SOCIAL_ACTIONS 와 동일하되 OBSERVE 제외.
+    const SOCIAL_FOCUSED = new Set([
+      'TALK',
+      'PERSUADE',
+      'BRIBE',
+      'THREATEN',
+      'HELP',
+      'INVESTIGATE',
+      'TRADE',
+    ]);
+    // 1차: actionType (legacy), 2차: parsedType (현재 IntentParser/NpcResolver 출력 필드명)
+    const at = actionCtx.actionType ?? '';
+    const pt = actionCtx.parsedType ?? '';
+    if (SOCIAL_FOCUSED.has(at) || SOCIAL_FOCUSED.has(pt)) return primary;
+    // 3차 fallback: approachVector === 'SOCIAL' 또는 turnMode === 'CONVERSATION_CONT'
+    //   대화 잠금 상태에서 actionType/parsedType 누락되어도
+    //   NpcResolver 가 CONVERSATION_LOCK 으로 primary 만 set 한 경우 — 그 자체가 사회적 대화.
+    if (actionCtx.approachVector === 'SOCIAL') return primary;
+    if (actionCtx.turnMode === 'CONVERSATION_CONT') return primary;
+    return null;
+  }
+
+  /**
+   * 직전 2턴 narrative 에서 메인 NPC 외 발화한 보조 NPC 별칭/실명 목록 추출.
+   * `@[별칭|portrait]` 마커 또는 `별칭: "..."` 형식의 dialogue 헤더 매칭.
+   * 같은 별칭은 1회만 (중복 제거), 최대 5개.
+   *
+   * focusedDisplayNames: 메인 NPC 의 모든 이름 변형(실명/별칭/짧은 호칭) — 이 집합에 속한 화자는 제외.
+   *
+   * @internal export — spec 테스트용.
+   */
+  static extractRecentAuxSpeakers(
+    turns: RecentTurnEntry[],
+    focusedDisplayNames: string[],
+  ): string[] {
+    if (!turns || turns.length === 0) return [];
+    const focusSet = new Set(focusedDisplayNames.filter((n) => !!n));
+    const seen = new Set<string>();
+    const aux: string[] = [];
+    // 최근 2턴만 검사 (그 이상은 노이즈)
+    const window = turns.slice(-2);
+    // @[alias|...] OR 줄 시작 "alias: \"...\""
+    const markerRe = /@\[([^\]|]+)(?:\|[^\]]*)?\]/g;
+    const dialogueHeaderRe = /(?:^|\n)\s*([^\s"@[][^\n:"]{0,20})\s*:\s*"/g;
+    for (const t of window) {
+      const txt = t.narrative ?? '';
+      if (!txt) continue;
+      let m: RegExpExecArray | null;
+      markerRe.lastIndex = 0;
+      while ((m = markerRe.exec(txt))) {
+        const alias = m[1].trim();
+        if (!alias || alias.length < 2) continue;
+        if (focusSet.has(alias)) continue;
+        if (seen.has(alias)) continue;
+        seen.add(alias);
+        aux.push(alias);
+        if (aux.length >= 5) return aux;
+      }
+      dialogueHeaderRe.lastIndex = 0;
+      while ((m = dialogueHeaderRe.exec(txt))) {
+        const alias = m[1].trim();
+        if (!alias || alias.length < 2 || alias.length > 20) continue;
+        if (focusSet.has(alias)) continue;
+        if (seen.has(alias)) continue;
+        // 흔한 일반 명사(서술 첫 단어) 오탐 방지: 단어가 "는"/"은"/"이" 같은 조사로 끝나면 스킵
+        if (/(는|은|이|가|을|를|에|의)$/.test(alias)) continue;
+        seen.add(alias);
+        aux.push(alias);
+        if (aux.length >= 5) return aux;
+      }
+    }
+    return aux;
+  }
 
   /**
    * mainArcClock + day → LLM 프롬프트용 deadline 톤 가이드.
@@ -462,6 +571,42 @@ export class ContextBuilderService {
       },
     );
 
+    // architecture/57: 보조 NPC 끼어들기 억제용 focusedNpcId 산출
+    //   사회적 행동(TALK/PERSUADE/BRIBE/THREATEN/HELP/INVESTIGATE/TRADE) +
+    //   특정 NPC 지목 시 set. 메인 LLM 컨텍스트에서 보조 NPC 별칭 노출을 차단해
+    //   "라이라가 매 턴 끼어드는" 류 회귀를 막는다.
+    const focusedActionCtx = (serverResult.ui as Record<string, unknown>)
+      ?.actionContext as
+      | { primaryNpcId?: string | null; actionType?: string | null }
+      | undefined;
+    const focusedNpcId =
+      ContextBuilderService.detectFocusedNpcId(focusedActionCtx);
+
+    // 메인 NPC 의 이름 변형 집합 (recentAuxSpeakers 필터 + npcRelationFacts 필터)
+    const focusedDisplayNames: string[] = [];
+    if (focusedNpcId) {
+      const focusedState = (
+        runState?.npcStates as Record<string, NPCState> | undefined
+      )?.[focusedNpcId];
+      const focusedDef = this.content.getNpc(focusedNpcId);
+      if (focusedDef) {
+        if (focusedDef.name) focusedDisplayNames.push(focusedDef.name);
+        if (focusedDef.unknownAlias)
+          focusedDisplayNames.push(focusedDef.unknownAlias);
+      }
+      if (focusedState && focusedDef) {
+        focusedDisplayNames.push(getNpcDisplayName(focusedState, focusedDef));
+      }
+    }
+
+    // 직전 2턴에 끼어든 보조 NPC 별칭 목록 (메인 LLM 에 "이번 턴 침묵" 가이드로 전달)
+    const recentAuxSpeakers = focusedNpcId
+      ? ContextBuilderService.extractRecentAuxSpeakers(
+          locationSessionTurns,
+          focusedDisplayNames,
+        )
+      : [];
+
     // HUB 확장: WorldState, Location, Agenda/Arc 컨텍스트 구축
     let worldSnapshot: string | null = null;
     let locationContext: string | null = null;
@@ -483,11 +628,18 @@ export class ContextBuilderService {
           const presentNpcs =
             locDynamic?.[ws.currentLocationId as string]?.presentNpcs;
           if (presentNpcs && presentNpcs.length > 0) {
-            const npcNames = presentNpcs.map((id: string) => {
-              const npcDef = this.content.getNpc(id);
-              return npcDef?.name ?? id;
-            });
-            locationContext += ` (이 장소에 있는 인물: ${npcNames.join(', ')})`;
+            // architecture/57: focused 모드에서는 메인 NPC 만 노출.
+            //  보조 NPC 이름을 LLM 에 알려주면 "라이라가 매 턴 끼어드는" 회귀 유발.
+            const visibleNpcs = focusedNpcId
+              ? presentNpcs.filter((id) => id === focusedNpcId)
+              : presentNpcs;
+            if (visibleNpcs.length > 0) {
+              const npcNames = visibleNpcs.map((id: string) => {
+                const npcDef = this.content.getNpc(id);
+                return npcDef?.name ?? id;
+              });
+              locationContext += ` (이 장소에 있는 인물: ${npcNames.join(', ')})`;
+            }
           }
 
           // Living World v2: 장소 활성 조건
@@ -580,6 +732,9 @@ export class ContextBuilderService {
         | undefined;
       if (npcStates && relationships) {
         for (const [npcId, rel] of Object.entries(relationships)) {
+          // architecture/57: focused 모드에서는 메인 NPC 관계만 노출.
+          //  관계 라인이 보조 NPC 별칭을 노출 → 메인 LLM 이 보조 NPC 대사를 매 턴 생성하는 회귀 차단.
+          if (focusedNpcId && npcId !== focusedNpcId) continue;
           const npc = npcStates[npcId];
           if (npc) {
             const npcDef = this.content.getNpc(npcId);
@@ -1288,6 +1443,11 @@ export class ContextBuilderService {
         const primaryNpc = acForNpc?.primaryNpcId as string | null | undefined;
         if (primaryNpc) relevantNpcIds.add(primaryNpc);
 
+        // architecture/57: focused 모드에서는 메인 NPC 만 personalMemory 노출.
+        //   presentNpcs 의 BG NPC 별칭이 [NPC: 별칭] 블록을 통해 LLM 에 들어가
+        //   매 턴 끼어들기를 유발 (multi_npc_play 2026-05-14 검증) — focused 시 step 2~4 스킵.
+        const focusedSkip = !!focusedNpcId;
+
         // 2. 현재 장소에 present하는 NPC
         const wsForNpc = runState.worldState as
           | Record<string, unknown>
@@ -1298,7 +1458,11 @@ export class ContextBuilderService {
         const locDynForNpc = wsForNpc?.locationDynamicStates as
           | Record<string, { presentNpcs?: string[] }>
           | undefined;
-        if (currentLocForNpc && locDynForNpc?.[currentLocForNpc]?.presentNpcs) {
+        if (
+          !focusedSkip &&
+          currentLocForNpc &&
+          locDynForNpc?.[currentLocForNpc]?.presentNpcs
+        ) {
           for (const nid of locDynForNpc[currentLocForNpc].presentNpcs) {
             relevantNpcIds.add(nid);
           }
@@ -1307,13 +1471,13 @@ export class ContextBuilderService {
         // 3. npcInjection의 NPC
         const injNpc = (uiForNpc?.npcInjection as { npcId?: string } | null)
           ?.npcId;
-        if (injNpc) relevantNpcIds.add(injNpc);
+        if (!focusedSkip && injNpc) relevantNpcIds.add(injNpc);
 
         // 4. 이벤트 sceneFrame/태그에 언급된 NPC (이름 매칭)
         const sceneFrameForNpc = acForNpc?.eventSceneFrame as
           | string
           | undefined;
-        if (sceneFrameForNpc) {
+        if (!focusedSkip && sceneFrameForNpc) {
           for (const [npcId] of Object.entries(allNpcStates)) {
             const npcDef = this.content.getNpc(npcId);
             if (npcDef?.name && sceneFrameForNpc.includes(npcDef.name)) {
@@ -1353,9 +1517,11 @@ export class ContextBuilderService {
         const factNpcId = acForFact?.primaryNpcId as string | null | undefined;
 
         const rawInputForFact =
-          (((serverResult as Record<string, unknown>)?.summary as
-            | Record<string, unknown>
-            | undefined)?.short as string) ?? '';
+          ((
+            (serverResult as Record<string, unknown>)?.summary as
+              | Record<string, unknown>
+              | undefined
+          )?.short as string) ?? '';
         const actionTypeForFact = (acForFact?.parsedType as string) ?? '';
         const inputKw = new Set(rawInputForFact.match(/[가-힣]{2,}/g) ?? []);
         const ACTION_KW: Record<string, string[]> = {
@@ -1421,7 +1587,9 @@ export class ContextBuilderService {
             const otherAliases: string[] = [];
             for (const npcId of firstFact.knownBy) {
               const def = this.content.getNpc(npcId);
-              const st = (runState?.npcStates as Record<string, NPCState> | undefined)?.[npcId];
+              const st = (
+                runState?.npcStates as Record<string, NPCState> | undefined
+              )?.[npcId];
               const alias =
                 st && def
                   ? getNpcDisplayName(st, def)
@@ -1429,9 +1597,9 @@ export class ContextBuilderService {
               if (alias) otherAliases.push(alias);
             }
             const npcDefCurrent = this.content.getNpc(factNpcId);
-            const npcStateCurrent = (runState?.npcStates as
-              | Record<string, NPCState>
-              | undefined)?.[factNpcId];
+            const npcStateCurrent = (
+              runState?.npcStates as Record<string, NPCState> | undefined
+            )?.[factNpcId];
             const currentDisplay =
               npcStateCurrent && npcDefCurrent
                 ? getNpcDisplayName(npcStateCurrent, npcDefCurrent)
@@ -1627,6 +1795,9 @@ export class ContextBuilderService {
         (runState?.narrativeThemes as
           | import('../db/types/narrative-theme.js').NarrativeThemeEntry[]
           | undefined) ?? [],
+      // architecture/57: 보조 NPC 끼어들기 억제
+      focusedNpcId,
+      recentAuxSpeakers,
     };
   }
 

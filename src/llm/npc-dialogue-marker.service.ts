@@ -872,4 +872,41 @@ export class NpcDialogueMarkerService {
 
     return null;
   }
+
+  /**
+   * architecture/57 — focused 모드 후처리 안전망.
+   *   메인 LLM 이 학습 기본값으로 보조 NPC ("다정한 보육원 여인" 등) 를 hallucinate 했을 때,
+   *   해당 @[alias|portrait?] "대사" 블록을 narrative 에서 제거.
+   *
+   *   focusedNames: 메인 NPC 의 모든 이름 변형(실명/별칭/짧은 호칭). 이 집합에 매칭되는
+   *   alias 의 마커는 보존, 그 외 마커+대사는 제거.
+   *
+   *   반환: {narrative, stripped} — stripped 는 제거된 블록 수.
+   *
+   *   @internal export — npc-dialogue-marker.focused-strip.spec.ts 에서 직접 테스트.
+   */
+  static stripAuxNpcDialogue(
+    narrative: string,
+    focusedNames: string[],
+  ): { narrative: string; stripped: number } {
+    if (!narrative || focusedNames.length === 0) {
+      return { narrative, stripped: 0 };
+    }
+    const focusSet = focusedNames.filter((n) => !!n && n.length >= 2);
+    if (focusSet.length === 0) return { narrative, stripped: 0 };
+    let stripped = 0;
+    // @[alias|portrait?] "대사" 패턴 (유니코드 따옴표 포함).
+    //  마커 뒤 따옴표 사이 본문, 종결 공백/구두점까지 함께 제거.
+    const pattern = /@\[([^\]|]+?)(?:\|[^\]]*)?\]\s*["“][^"”]*["”][.\s]*/g;
+    const cleaned = narrative.replace(pattern, (full, alias) => {
+      const trimmed = (alias as string).trim();
+      const isMain = focusSet.some(
+        (n) => trimmed === n || trimmed.includes(n) || n.includes(trimmed),
+      );
+      if (isMain) return full;
+      stripped++;
+      return '';
+    });
+    return { narrative: cleaned, stripped };
+  }
 }
