@@ -126,6 +126,7 @@ const baseCtx = (overrides: Partial<LlmContext> = {}): LlmContext =>
     narrativeThemes: [],
     focusedNpcId: null,
     recentAuxSpeakers: [],
+    recentAuxIdentities: [],
     ...overrides,
   }) as LlmContext;
 
@@ -236,5 +237,101 @@ describe('PromptBuilderService — 보조 NPC 끼어들기 억제 directive', ()
     expect(text).toContain('[1인 응답 강제 — 보조 NPC 끼어들기 금지]');
     // focused 블록의 동적 차단(직전 끼어든 NPC) 가이드도 포함
     expect(text).toContain('조용한 문서 실무자');
+  });
+
+  // architecture/57 개선 — 허점 D (책임 분리, 중복 directive 제거)
+  it('focusedNpcId set 시 conversationLock 블록의 "다른 NPC 따옴표 대사 금지" 라인 미발화 (focused 가 전담)', () => {
+    // lock 과 focused 둘 다 "다른 NPC(경비, 행인, 점원...)의 따옴표 대사 금지" 를 출력하면
+    // 토큰 낭비 + LLM 혼란. focused 가 set 되면 단일 응답 강제는 focused 블록만 전담.
+    // lock 은 "관계 깊이/처음 만남 패턴 금지" 만.
+    const ctx = baseCtx({
+      focusedNpcId: 'NPC_EDRIC',
+      conversationLock: {
+        npcDisplayName: '날카로운 눈매의 회계사',
+        consecutiveTurns: 3,
+      },
+    });
+    const sr = baseSr();
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(ctx, sr, '계속 묻소', 'ACTION'),
+    );
+    // lock + focused 동시 set 일 때, 같은 의미의 directive 가 2회 출력되면 안 됨.
+    //   "다른 NPC.*따옴표 대사 절대 금지" 는 focused 블록에만 1회.
+    const matches = text.match(/다른 NPC[^\n]*따옴표 대사 절대 금지/g) ?? [];
+    expect(matches.length).toBeLessThanOrEqual(1);
+    // 동시에 focused 블록은 여전히 발화 (전담)
+    expect(text).toContain('[1인 응답 강제 — 보조 NPC 끼어들기 금지]');
+    // lock 블록의 관계 깊이 가이드 ("처음 만난 것처럼 행동하면 안 됩니다") 는 보존
+    expect(text).toContain('처음 만난 것처럼');
+  });
+
+  // 2차 사이클 — 익명 배경 인물 신원 hard 차단
+  it('focusedNpcId + recentAuxIdentities → 직군/소품 신원 hard 차단 라인 추가', () => {
+    const ctx = baseCtx({
+      focusedNpcId: 'NPC_EDRIC',
+      recentAuxSpeakers: [],
+      recentAuxIdentities: ['실무자', '서류 뭉치'],
+    });
+    const sr = baseSr();
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(ctx, sr, '도박 빚?', 'ACTION'),
+    );
+    // 동적 차단 라인이 발화하고, 차단 키워드 목록이 그대로 들어가야 함
+    expect(text).toMatch(/직전 3턴에 이미 등장한 다음 단역 신원\/소품/);
+    expect(text).toContain('실무자');
+    expect(text).toContain('서류 뭉치');
+  });
+
+  it('focusedNpcId set + recentAuxIdentities 비어 있음 → 차단 라인 미발화 (불필요한 노이즈 회피)', () => {
+    const ctx = baseCtx({
+      focusedNpcId: 'NPC_EDRIC',
+      recentAuxSpeakers: [],
+      recentAuxIdentities: [],
+    });
+    const sr = baseSr();
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(ctx, sr, '안녕하시오', 'ACTION'),
+    );
+    expect(text).not.toMatch(/직전 3턴에 이미 등장한 다음 단역 신원\/소품/);
+  });
+
+  it('focusedNpcId null + recentAuxIdentities 있음 → focused 블록 자체가 안 뜨므로 차단 라인 미발화', () => {
+    const ctx = baseCtx({
+      focusedNpcId: null,
+      recentAuxSpeakers: [],
+      recentAuxIdentities: ['실무자'],
+    });
+    const sr = baseSr({
+      ui: { actionContext: { actionType: 'MOVE_LOCATION' } } as any,
+    });
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(ctx, sr, '이동', 'ACTION'),
+    );
+    expect(text).not.toContain('[1인 응답 강제 — 보조 NPC 끼어들기 금지]');
+    expect(text).not.toMatch(/직전 3턴에 이미 등장한 다음 단역 신원\/소품/);
+  });
+
+  it('focusedNpcId null + conversationLock 만 set → lock 블록은 단일 NPC 응답 강제 그대로 유지 (focused 없으면 lock 이 전담)', () => {
+    // focused 가 없으면 lock 이 "단일 NPC 응답 강제" 전담 — 기존 동작 보존.
+    const ctx = baseCtx({
+      focusedNpcId: null,
+      conversationLock: {
+        npcDisplayName: '날카로운 눈매의 회계사',
+        consecutiveTurns: 3,
+      },
+    });
+    const sr = baseSr({
+      ui: {
+        // primary 없음 — focused 가 set 되지 않게.
+        actionContext: { actionType: 'OBSERVE' },
+      } as any,
+    });
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(ctx, sr, '주변을 살핀다', 'ACTION'),
+    );
+    expect(text).toContain('[대화 연속 상태]');
+    expect(text).toContain('단일 NPC 응답 강제');
+    // focused 블록은 미발화
+    expect(text).not.toContain('[1인 응답 강제 — 보조 NPC 끼어들기 금지]');
   });
 });
