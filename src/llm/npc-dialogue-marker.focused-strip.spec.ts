@@ -88,4 +88,51 @@ describe('NpcDialogueMarkerService.stripAuxNpcDialogue', () => {
     expect(strip(text, ['A', 'B']).stripped).toBe(0);
     expect(strip(text, ['A', 'B']).narrative).toBe(text);
   });
+
+  // architecture/57 개선 — 허점 A (whitespace 정리)
+  it('보조 마커 2개가 같은 줄 안에 있으면 strip 후 이중 공백/빈 줄 없음', () => {
+    const text =
+      '@[하를런|h.webp] "부두 일이 바쁘오."\n' +
+      '@[보육원1|a.webp] "거기서 뭐하시오?"\n' +
+      '@[보육원2|b.webp] "조용히 하시오."\n' +
+      '그가 자리를 옮긴다.';
+    const result = strip(text, ['하를런']);
+    // 보조 2개 모두 제거
+    expect(result.stripped).toBe(2);
+    // 정리 후: 연속 빈 줄(`\n\n\n+`)이나 trailing 빈 줄/이중 공백이 없어야 함
+    expect(result.narrative).not.toMatch(/\n{3,}/);
+    expect(result.narrative).not.toMatch(/ {2,}/);
+    // 본문 내용 보존
+    expect(result.narrative).toContain('부두 일이 바쁘오');
+    expect(result.narrative).toContain('그가 자리를 옮긴다');
+  });
+
+  it('서술 중간 보조 마커 strip 후 앞뒤 narration 사이 공백 1개 또는 줄바꿈만 유지', () => {
+    const text =
+      '그는 손가락으로 탁자를 두드린다. @[보육원|r.webp] "거기서 뭐하시오?" 주변에서 사람들이 움직인다.';
+    const result = strip(text, ['하를런 보스']);
+    expect(result.stripped).toBe(1);
+    // narration 단어들이 모두 보존되어야 함
+    expect(result.narrative).toContain('손가락으로 탁자를 두드린다');
+    expect(result.narrative).toContain('주변에서 사람들이 움직인다');
+    // 이중 공백 잔여 없음
+    expect(result.narrative).not.toMatch(/ {2,}/);
+  });
+
+  // architecture/57 개선 — 허점 B (substring 매칭 정밀도)
+  it('보조 alias 가 메인 short alias 를 substring 으로 포함하지만 명백히 다른 인물이면 strip', () => {
+    // 메인 "보스" (짧은 호칭) — 보조 "보스의 졸개" 는 boundary 가 다른 인물.
+    // 양방향 substring 매칭이면 졸개가 메인으로 오인되어 보존됨 → 회귀.
+    // 안전 규칙: 보조 alias 가 메인 의 진부분문자열일 때만 메인. (n.includes(trimmed))
+    // 메인 이 보조 의 진부분문자열일 때는, 양쪽이 정확한 별칭 형태 매칭(suffix/prefix word)이어야 함.
+    const text =
+      '@[하를런 보스|h.webp] "..."\n' +
+      '@[보스의 졸개|s.webp] "두목 말씀에 따르겠습니다."';
+    const result = strip(text, ['하를런 보스', '보스']);
+    expect(result.narrative).toContain('하를런 보스');
+    // 보조 "보스의 졸개" 는 메인으로 오인되면 안 됨
+    expect(result.narrative).not.toContain('보스의 졸개');
+    expect(result.narrative).not.toContain('두목 말씀에 따르겠습니다');
+    expect(result.stripped).toBe(1);
+  });
 });

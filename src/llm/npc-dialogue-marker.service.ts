@@ -885,6 +885,26 @@ export class NpcDialogueMarkerService {
    *
    *   @internal export — npc-dialogue-marker.focused-strip.spec.ts 에서 직접 테스트.
    */
+  /**
+   * focused NPC 이름 변형이 보조 alias 안에서 word boundary 로 매칭되는지 검사.
+   *   - alias === name → true
+   *   - name 이 alias 의 substring 으로 등장하되 앞뒤가 공백/문자열끝이면 true
+   *   - name 다음에 조사("의/이/가/을/를" 등) 가 붙으면 다른 인물 → false
+   *
+   * @internal
+   */
+  private static matchesFocusedName(alias: string, name: string): boolean {
+    if (!alias || !name) return false;
+    if (alias === name) return true;
+    const idx = alias.indexOf(name);
+    if (idx === -1) return false;
+    const prevCh = idx === 0 ? '' : alias[idx - 1];
+    const nextIdx = idx + name.length;
+    const nextCh = nextIdx >= alias.length ? '' : alias[nextIdx];
+    const isBoundary = (ch: string) => ch === '' || ch === ' ' || ch === '\t';
+    return isBoundary(prevCh) && isBoundary(nextCh);
+  }
+
   static stripAuxNpcDialogue(
     narrative: string,
     focusedNames: string[],
@@ -900,13 +920,25 @@ export class NpcDialogueMarkerService {
     const pattern = /@\[([^\]|]+?)(?:\|[^\]]*)?\]\s*["“][^"”]*["”][.\s]*/g;
     const cleaned = narrative.replace(pattern, (full, alias) => {
       const trimmed = (alias as string).trim();
-      const isMain = focusSet.some(
-        (n) => trimmed === n || trimmed.includes(n) || n.includes(trimmed),
+      // architecture/57: word-boundary substring 매칭으로 보조 NPC 오인 차단.
+      //   메인 이름이 보조 alias 의 substring 으로 등장해도, 단어 경계(공백/문자열끝)가
+      //   맞아야 메인으로 인정. 조사("의/이/가") 등이 뒤에 붙으면 별개 인물로 판정.
+      //   예) focused=["하를런 보스", "보스"]
+      //     - "하를런 보스" 는 메인 (정확 일치)
+      //     - "보스의 졸개" 는 보조 ("보스" 뒤에 "의" → 단어 경계 실패)
+      const isMain = focusSet.some((n) =>
+        NpcDialogueMarkerService.matchesFocusedName(trimmed, n),
       );
       if (isMain) return full;
       stripped++;
       return '';
     });
-    return { narrative: cleaned, stripped };
+    // strip 후 잉여 빈 줄/이중 공백 정리 — 클라 타이핑 렌더링 깨짐 방지.
+    //   1) 줄 안에 마커만 있었으면 빈 줄(`\n\n\n`) 잔여 가능 → `\n\n` 으로 압축
+    //   2) 줄 중간 strip 으로 이중 공백 발생 시 1개로 축소
+    const polished = cleaned
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]{2,}/g, ' ');
+    return { narrative: polished, stripped };
   }
 }

@@ -37,3 +37,4 @@ test-*.py
 
 # E2E 결과 임시 파일 (full-run.ts가 server CWD 실행 시 생성)
 playtest-reports/
+.gstack/

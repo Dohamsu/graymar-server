@@ -1167,6 +1167,10 @@ export class PromptBuilderService {
     }
 
     // 대화 잠금 상태: 같은 NPC와 연속 대화 중임을 LLM에 전달
+    //   architecture/57 책임 분리:
+    //     - lock 블록  = 관계 깊이/처음 만남 패턴 금지 (다회 대화 맥락)
+    //     - focused 블록 = 1인 응답 강제 + 보조 NPC 차단 + recentAuxSpeakers 동적 침묵
+    //   focusedNpcId 가 set 되면 단일 응답 강제 라인은 focused 블록이 전담 — lock 에서는 제거.
     if (ctx.conversationLock) {
       const { npcDisplayName, consecutiveTurns } = ctx.conversationLock;
       const depth =
@@ -1175,23 +1179,30 @@ export class PromptBuilderService {
           : consecutiveTurns >= 3
             ? '점차 마음을 여는'
             : '경계를 낮추는';
-      factsParts.push(
-        `[대화 연속 상태]\n` +
-          `${npcDisplayName}와(과) ${consecutiveTurns}턴째 연속 대화 중입니다.\n` +
-          `⚠️ 이 NPC는 처음 만난 것처럼 행동하면 안 됩니다. ${depth} 단계의 대화를 이어가세요.\n` +
-          `- 이전 대화에서 나온 내용을 참조하며 더 깊은 정보/감정을 드러내세요.\n` +
-          `- "다가와서 경고한다" 같은 첫 만남 패턴 금지. 이미 옆에 서서 대화하는 중입니다.\n` +
-          `⚠️ 단일 NPC 응답 강제 (architecture/51 §B R6): 이 턴은 ${npcDisplayName}만 말합니다.\n` +
-          `- 다른 NPC(경비, 행인, 점원, 군중, 동료)의 따옴표 대사 절대 금지. 끼어들기 금지.\n` +
-          `- 주변 인물은 서술(narration)로만 묘사 (예: "옆에서 누군가 지나간다"). 그들의 대사를 따옴표로 쓰지 마세요.\n` +
+      const focusedTakesSingleResponseDuty = !!ctx.focusedNpcId;
+      const lockLines = [
+        `[대화 연속 상태]`,
+        `${npcDisplayName}와(과) ${consecutiveTurns}턴째 연속 대화 중입니다.`,
+        `⚠️ 이 NPC는 처음 만난 것처럼 행동하면 안 됩니다. ${depth} 단계의 대화를 이어가세요.`,
+        `- 이전 대화에서 나온 내용을 참조하며 더 깊은 정보/감정을 드러내세요.`,
+        `- "다가와서 경고한다" 같은 첫 만남 패턴 금지. 이미 옆에 서서 대화하는 중입니다.`,
+        // verify57 회귀: NPC가 한 답변 안에서 모순된 사실 표명
+        `- ⚠️ NPC는 한 답변 안에서 자기 모순된 사실을 동시에 말하지 마시오. 예: "본 자가 없다" + "본 자는 입을 다문다" 동시 발언 금지. 한 가지 입장만 선택해서 답하시오.`,
+      ];
+      // focused 블록이 없는 경우(=비사회적 lock 등 엣지)만 lock 이 단일 응답 강제 전담.
+      if (!focusedTakesSingleResponseDuty) {
+        lockLines.push(
+          `⚠️ 단일 NPC 응답 강제 (architecture/51 §B R6): 이 턴은 ${npcDisplayName}만 말합니다.`,
+          `- 다른 NPC(경비, 행인, 점원, 군중, 동료)의 따옴표 대사 절대 금지. 끼어들기 금지.`,
+          `- 주변 인물은 서술(narration)로만 묘사 (예: "옆에서 누군가 지나간다"). 그들의 대사를 따옴표로 쓰지 마세요.`,
           `- 특히 "이 시간에 무엇을 하고 계십니까?", "두 분의 대화가..." 같은 일반 끼어들기를 매 턴 반복하면 게임이 깨집니다.`,
-      );
+        );
+      }
+      factsParts.push(lockLines.join('\n'));
     }
-    // architecture/57: focused 모드 directive — conversationLock 과 독립 발화.
-    //   lock 은 "관계 깊이/처음 만남 패턴 금지" 가이드 중심이고,
-    //   focused 는 "보조 NPC 끼어들기 금지 + 직전 끼어든 NPC 침묵" 가이드 중심이라 역할이 다름.
-    //   lock 이 이미 "단일 NPC 응답 강제" 를 포함하지만, recentAuxSpeakers 같은 동적 차단 정보는
-    //   여기서만 전달되므로 두 블록 모두 발화시킨다.
+    // architecture/57: focused 모드 directive — 단일 응답 강제 + 보조 NPC 동적 차단 전담.
+    //   lock 과 동시 set 일 때 lock 은 관계 깊이만 다루고, 단일 응답 강제는 focused 가 책임.
+    //   recentAuxSpeakers 동적 차단 정보는 focused 만 제공.
     if (ctx.focusedNpcId) {
       const focusedDef = this.content.getNpc(ctx.focusedNpcId);
       const focusedState = ctx.npcStates?.[ctx.focusedNpcId];
@@ -1206,10 +1217,22 @@ export class PromptBuilderService {
         `- 다른 NPC(경비, 행인, 점원, 동료, 보조 인물)의 따옴표 대사 절대 금지.`,
         `- 주변 인물의 행동/시선은 서술 1문장 이내로만 묘사. 대사 금지.`,
         `- "거기서 무엇을 하고 있소", "두 분 대화가...", "서류를 정리하는 척이라도" 같은 일반 끼어들기는 매 턴 같은 인물이 반복하는 회귀를 일으킵니다 — 절대 사용 금지.`,
+        // verify57 회귀: 같은 익명 신원/소품 매 턴 반복 (Positive framing 으로 다양화 유도)
+        `- ⚠️ 직전 턴 서술에 등장한 익명 배경 인물(예: "서류 뭉치를 품에 안은 실무자", "짐을 옮기던 노동자", "여인")을 **이번 턴에 다시 등장시키지 마시오**. 같은 신원·소품 조합 2회+ 반복 금지.`,
+        `- 배경 인물이 필요하면 매 턴 다른 신원·소품을 골라 1문장으로 짧게 묘사. 풀: 어부 / 행상 / 견습공 / 마부 / 청소부 / 술꾼 / 노점상 / 짐꾼 / 사제 보조 / 떠도는 음유시인 / 약초 채집인.`,
+        `- 배경 인물 없이 환경(빛·소리·냄새)만으로 분위기를 만들어도 좋습니다.`,
       ];
       if (ctx.recentAuxSpeakers && ctx.recentAuxSpeakers.length > 0) {
         auxBlockLines.push(
           `- 직전 턴에 이미 끼어든 인물(${ctx.recentAuxSpeakers.join(', ')})은 이번 턴 침묵. 같은 보조 NPC 가 2턴 연속 발화하면 안 됩니다.`,
+        );
+      }
+      // 직전 3턴 본문에 마커 밖으로 등장한 익명 배경 인물 신원(직군/소품) hard 차단.
+      //   (예: '실무자', '서류 뭉치', '짐꾼') — 같은 신원/소품을 이번 턴에서 다시 쓰면
+      //   "조용한 문서 실무자" → "근처를 지나던 실무자" 처럼 의미적으로 동일 인물 회귀.
+      if (ctx.recentAuxIdentities && ctx.recentAuxIdentities.length > 0) {
+        auxBlockLines.push(
+          `- ⚠️ 직전 3턴에 이미 등장한 다음 단역 신원/소품은 이번 턴 사용 금지: ${ctx.recentAuxIdentities.join(', ')}. 같은 단어를 그대로 또는 의미적 변형(예: "실무자" → "문서 직원")으로도 재사용하지 마시오. 풀의 다른 신원을 택하거나 환경 묘사로 대체하시오.`,
         );
       }
       factsParts.push(auxBlockLines.join('\n'));

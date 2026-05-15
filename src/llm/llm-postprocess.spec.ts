@@ -403,3 +403,133 @@ describe('Step F: NPC 불일치 교정', () => {
     expect(result.narrative).not.toContain('그림자 상인');
   });
 });
+
+// ═══════════════════════════════════════════════════════════
+// Step G: 문장 종결부 + 한글 사이 공백 보정
+//   바그: LLM이 "...들려온다.서류 뭉치를..." 처럼 마침표/물음표/느낌표 뒤
+//   공백 없이 다음 문장을 붙여 출력. analyzeText의 문단 분리가 실패하고
+//   서술 전체가 한 덩어리로 렌더링됨. 마침표/물음표/느낌표 + 한글 사이에
+//   누락된 공백을 자동 삽입.
+// ═══════════════════════════════════════════════════════════
+
+function stepG_insertSpaceAfterSentence(text: string): string {
+  if (!text) return text;
+  // 한글 + 마침표/물음표/느낌표 + 한글 (공백 없이) → 공백 삽입.
+  // 마커(@[...]) 앞은 5.10.9b가 별도 처리하므로 대상에서 제외 (한글 다음 마침표 + 한글만).
+  return text.replace(/([가-힣][.!?])(?=[가-힣])/g, '$1 ');
+}
+
+describe('Step G: 문장 종결부 뒤 공백 보정', () => {
+  it('"다.서류 뭉치" → "다. 서류 뭉치"', () => {
+    expect(
+      stepG_insertSpaceAfterSentence(
+        '발소리가 들려온다.서류 뭉치를 품에 안은 인물이',
+      ),
+    ).toBe('발소리가 들려온다. 서류 뭉치를 품에 안은 인물이');
+  });
+
+  it('"옮긴다.서류" → "옮긴다. 서류"', () => {
+    expect(
+      stepG_insertSpaceAfterSentence(
+        '발걸음을 옮긴다.서류 뭉치를 품에 안은 실무자',
+      ),
+    ).toBe('발걸음을 옮긴다. 서류 뭉치를 품에 안은 실무자');
+  });
+
+  it('물음표/느낌표 뒤도 공백 삽입', () => {
+    expect(stepG_insertSpaceAfterSentence('정말이오?그렇게 말하는 거요')).toBe(
+      '정말이오? 그렇게 말하는 거요',
+    );
+    expect(stepG_insertSpaceAfterSentence('조심하시오!그자는 위험하오')).toBe(
+      '조심하시오! 그자는 위험하오',
+    );
+  });
+
+  it('이미 공백/개행이 있으면 변경하지 않음', () => {
+    const ok1 = '들려온다. 서류 뭉치';
+    const ok2 = '들려온다.\n서류 뭉치';
+    const ok3 = '들려온다.\n\n서류 뭉치';
+    expect(stepG_insertSpaceAfterSentence(ok1)).toBe(ok1);
+    expect(stepG_insertSpaceAfterSentence(ok2)).toBe(ok2);
+    expect(stepG_insertSpaceAfterSentence(ok3)).toBe(ok3);
+  });
+
+  it('따옴표/마커는 영향 없음 (마침표 뒤 한글이 아닌 경우)', () => {
+    const input = '@[로넨|/npc-portraits/ronen.webp] "도와주십시오."';
+    expect(stepG_insertSpaceAfterSentence(input)).toBe(input);
+  });
+
+  it('숫자/소수점은 한글 아니므로 건너뜀', () => {
+    const input = '거리 3.5미터';
+    expect(stepG_insertSpaceAfterSentence(input)).toBe(input);
+  });
+
+  it('대사 안에서도 동작 (마침표 뒤 한글이면 공백 삽입)', () => {
+    expect(
+      stepG_insertSpaceAfterSentence(
+        '"이오.그대는 모르겠지만 나는 알고 있소."',
+      ),
+    ).toBe('"이오. 그대는 모르겠지만 나는 알고 있소."');
+  });
+
+  it('연속 문장 여러 개도 모두 보정', () => {
+    expect(
+      stepG_insertSpaceAfterSentence('하나다.둘이다.셋이다.넷이다.'),
+    ).toBe('하나다. 둘이다. 셋이다. 넷이다.');
+  });
+
+  it('실측 회귀(verify57): 발소리 + 서류 뭉치', () => {
+    // playtest-reports/multi_npc_play_verify57_20260514_205914.json T3
+    const broken =
+      '인근 골목 그림자 속에서 누군가의 발소리가 들려온다.서류 뭉치를 품에 안은 인물이 경계 어린 눈빛으로 두 사람을 응시하며 멈춰 선다.';
+    const fixed = stepG_insertSpaceAfterSentence(broken);
+    expect(fixed).toContain('들려온다. 서류 뭉치를');
+    expect(fixed).not.toContain('들려온다.서류');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Detect: 어색한 분사구 비문 검출
+//   "짐을 옮기던 멈춰 선다" — 분사구 "옮기던" 다음에 주어가 빠지고 바로
+//   동사구가 와서 비문이 됨. 자동 복구는 위험하므로 검출만 수행 — 시스템
+//   프롬프트로 해결하되 회귀 추적용 detect helper 보존.
+// ═══════════════════════════════════════════════════════════
+
+// 분사형(-던) + 공백 + 동사구 패턴. 주어가 있어야 자연스러움.
+// "옮기던/나르던" 직후 동사/목적어로 바로 이어지면 비문 (주어 누락).
+// "정리하던/하던 + 손/시선/눈" 은 정상 명사구 수식이므로 제외.
+// 멈춰 = 동사 직결, 당신을/이쪽을 = 분사구가 목적어를 받는 비문.
+const BROKEN_PARTICIPLE_RE =
+  /(짐을\s+옮기던|짐을\s+나르던)\s+(멈춰|당신을|이쪽을)/g;
+
+function detectBrokenParticiple(text: string): string[] {
+  if (!text) return [];
+  const hits: string[] = [];
+  for (const m of text.matchAll(BROKEN_PARTICIPLE_RE)) {
+    hits.push(m[0]);
+  }
+  return hits;
+}
+
+describe('Detect: 어색한 분사구 비문', () => {
+  it('"짐을 옮기던 멈춰 선다" 검출', () => {
+    const input = '그때, 짐을 옮기던 멈춰 선다. 그녀는 당신을 무심하게 훑어';
+    expect(detectBrokenParticiple(input)).toContain('짐을 옮기던 멈춰');
+  });
+
+  it('"짐을 옮기던 당신을 응시한다" 검출', () => {
+    const input = '말을 마칠 때쯤, 짐을 옮기던 당신을 응시한다';
+    expect(detectBrokenParticiple(input)).toContain('짐을 옮기던 당신을');
+  });
+
+  it('정상 분사구 ("짐을 옮기던 노동자가") 는 검출 안 함', () => {
+    const input = '멀리서 짐을 옮기던 노동자가 땀을 닦으며';
+    expect(detectBrokenParticiple(input)).toEqual([]);
+  });
+
+  it('정상 명사구 수식 ("정리하던 손을 멈추고") 은 검출 안 함', () => {
+    // "정리하던" 분사구가 "손"이라는 명사를 자연스럽게 수식 — 정상
+    const input = '문서를 정리하던 손을 멈추고는';
+    expect(detectBrokenParticiple(input)).toEqual([]);
+  });
+});

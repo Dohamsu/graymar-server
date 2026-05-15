@@ -2607,6 +2607,15 @@ ${npcList}`,
         narrative = narrative.replace(/([^\s\n])(@\[)/g, '$1\n\n$2');
       }
 
+      // 5.10.9c. 문장 종결부 뒤 공백 보정 (verify57 회귀 — playtest 2026-05-14)
+      //   LLM이 "들려온다.서류 뭉치를..." 처럼 마침표/물음표/느낌표 뒤 공백 없이
+      //   다음 문장을 붙여 출력하는 케이스. 클라 analyzeText 의 문단 분리가
+      //   실패해 서술이 한 덩어리로 렌더링됨. 한글 + .!? + 한글 사이에 공백 삽입.
+      //   숫자/소수점/따옴표/마커는 한글 조건에 걸리지 않아 영향 없음.
+      if (narrative) {
+        narrative = narrative.replace(/([가-힣][.!?])(?=[가-힣])/g, '$1 ');
+      }
+
       // 5.10.10. 복합 호칭 hallucination 제거 (bug 4636, 4655 JSON 외부화)
       //   규칙은 content/graymar_v1/text_replacements.json 에서 로드.
       if (narrative) {

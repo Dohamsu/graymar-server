@@ -186,6 +186,10 @@ export interface LlmContext {
   //  - 직전 1~2턴 narrative 에서 메인 NPC 외 발화한 보조 NPC 별칭 목록
   //  - 이번 턴 끼어들기 금지 명단으로 프롬프트에 주입
   recentAuxSpeakers: string[];
+  //  - 직전 3턴 narrative 본문에서 마커 밖에 등장한 익명 배경 인물의 신원 키워드
+  //    (예: '실무자', '서류 뭉치', '짐꾼', '견습공'). recentAuxSpeakers 가 @마커 발화자만
+  //    잡는 한계를 보완 — 마커 없이 본문에 반복 등장하는 동일 신원/소품을 hard 차단.
+  recentAuxIdentities: string[];
 }
 
 @Injectable()
@@ -251,11 +255,16 @@ export class ContextBuilderService {
   }
 
   /**
-   * 직전 2턴 narrative 에서 메인 NPC 외 발화한 보조 NPC 별칭/실명 목록 추출.
+   * 직전 3턴 narrative 에서 메인 NPC 외 발화한 보조 NPC 별칭/실명 목록 추출.
    * `@[별칭|portrait]` 마커 또는 `별칭: "..."` 형식의 dialogue 헤더 매칭.
    * 같은 별칭은 1회만 (중복 제거), 최대 5개.
    *
    * focusedDisplayNames: 메인 NPC 의 모든 이름 변형(실명/별칭/짧은 호칭) — 이 집합에 속한 화자는 제외.
+   *
+   * architecture/57 — 윈도우 2턴 → 3턴 확장.
+   *   직전 2턴 기준으로는 같은 보조 NPC 가 3턴 이상 반복 등장할 때
+   *   첫 등장 turn 이 윈도우 밖으로 밀려나 추적이 끊김. 3턴으로 늘리면
+   *   반복 끼어들기 패턴을 더 안정적으로 잡아 LLM 침묵 가이드에 반영.
    *
    * @internal export — spec 테스트용.
    */
@@ -267,8 +276,8 @@ export class ContextBuilderService {
     const focusSet = new Set(focusedDisplayNames.filter((n) => !!n));
     const seen = new Set<string>();
     const aux: string[] = [];
-    // 최근 2턴만 검사 (그 이상은 노이즈)
-    const window = turns.slice(-2);
+    // 최근 3턴만 검사 (그 이상은 노이즈)
+    const window = turns.slice(-3);
     // @[alias|...] OR 줄 시작 "alias: \"...\""
     const markerRe = /@\[([^\]|]+)(?:\|[^\]]*)?\]/g;
     const dialogueHeaderRe = /(?:^|\n)\s*([^\s"@[][^\n:"]{0,20})\s*:\s*"/g;
@@ -300,6 +309,81 @@ export class ContextBuilderService {
       }
     }
     return aux;
+  }
+
+  /**
+   * 직전 3턴 narrative 에서 익명 배경 인물의 신원/소품 키워드 추출.
+   * recentAuxSpeakers(@마커 발화자 기반) 의 사각지대 — 마커 없이 본문에 등장하는
+   * "조용한 문서 실무자가...", "서류 뭉치를 든 실무자가..." 같은 반복 신원을 잡는다.
+   *
+   * 동작:
+   *  1) @[...]"..." 마커 발화 라인 제거 → 남은 서술 본문만 검사
+   *  2) BG_IDENTITY_KEYWORDS 사전(직군/소품) 중 본문에 등장한 키워드 수집
+   *  3) 같은 키워드는 1회만(중복 제거), 최대 8개
+   *
+   * 풀(prompt-builder 의 "어부/행상/견습공/마부..." 풀)과 동일한 카테고리에서 발생하는
+   * 의미적 우회를 잡기 위해, 카테고리 단위 추상 키워드("실무자", "짐꾼" 등)를 추출한다.
+   *
+   * @internal export — spec 테스트용.
+   */
+  static extractRecentAuxIdentities(turns: RecentTurnEntry[]): string[] {
+    if (!turns || turns.length === 0) return [];
+    // 직군 + 소품 + 일반 단역 키워드 — prompt-builder 풀과 의미적 유사 카테고리 중심
+    const KEYWORDS = [
+      '실무자',
+      '서기',
+      '서기관',
+      '서류 뭉치',
+      '서류뭉치',
+      '장부',
+      '견습공',
+      '견습',
+      '짐꾼',
+      '노동자',
+      '인부',
+      '부두꾼',
+      '청소부',
+      '마부',
+      '행상',
+      '노점상',
+      '어부',
+      '술꾼',
+      '음유시인',
+      '약초',
+      '사제 보조',
+      '관리인',
+      '문지기',
+      '경비병',
+      '순찰자',
+      '거지',
+      '구경꾼',
+      '행인',
+      '여인',
+      '소년',
+      '소녀',
+      '노파',
+      '노인',
+    ];
+    const seen = new Set<string>();
+    const found: string[] = [];
+    const window = turns.slice(-3);
+    for (const t of window) {
+      const raw = t.narrative ?? '';
+      if (!raw) continue;
+      // 마커 발화 라인 제거 — `@[X|...]` "..." 부분
+      const body = raw
+        .replace(/@\[[^\]]+\]\s*["“][^"”]*["”]/g, ' ')
+        .replace(/@\[[^\]]+\]/g, ' ');
+      for (const kw of KEYWORDS) {
+        if (seen.has(kw)) continue;
+        if (body.includes(kw)) {
+          seen.add(kw);
+          found.push(kw);
+          if (found.length >= 8) return found;
+        }
+      }
+    }
+    return found;
   }
 
   /**
@@ -606,6 +690,12 @@ export class ContextBuilderService {
           focusedDisplayNames,
         )
       : [];
+
+    // 직전 3턴 본문에서 등장한 익명 배경 인물 신원 키워드 (마커 밖 서술)
+    //  - focused 여부 무관하게 항상 추출 — 일반 턴에서도 LLM 이 같은 단역을 반복 사용하는
+    //    경향이 있어 hard 차단 명단이 도움이 된다.
+    const recentAuxIdentities =
+      ContextBuilderService.extractRecentAuxIdentities(locationSessionTurns);
 
     // HUB 확장: WorldState, Location, Agenda/Arc 컨텍스트 구축
     let worldSnapshot: string | null = null;
@@ -1798,6 +1888,8 @@ export class ContextBuilderService {
       // architecture/57: 보조 NPC 끼어들기 억제
       focusedNpcId,
       recentAuxSpeakers,
+      // 익명 배경 인물 반복 차단 (마커 밖 서술 본문 기반)
+      recentAuxIdentities,
     };
   }
 
