@@ -1236,6 +1236,49 @@ export class PromptBuilderService {
         );
       }
       factsParts.push(auxBlockLines.join('\n'));
+
+      const actionCtx = sr.ui?.actionContext as
+        | {
+            parsedType?: string;
+            actionType?: string;
+            intentActionType?: string;
+            originalInput?: string;
+            eventSceneFrame?: string;
+          }
+        | undefined;
+      const focusedAction =
+        actionCtx?.parsedType ??
+        actionCtx?.actionType ??
+        actionCtx?.intentActionType ??
+        'ACTION';
+      const outcome = (sr.ui as Record<string, unknown>)?.resolveOutcome as
+        | string
+        | undefined;
+      const sceneFrame = actionCtx?.eventSceneFrame;
+      const genericSummary =
+        sr.summary?.short &&
+        /플레이어가[\s\S]*시도하여[\s\S]*(성공|실패|부분 성공)했다/.test(
+          sr.summary.short,
+        )
+          ? sr.summary.short
+          : null;
+      const reactionLines = [
+        '[집중 NPC 반응 지시]',
+        `${focusedDisplay}가 이번 턴 반응의 중심입니다.`,
+        `- 행동 유형: ${focusedAction}${outcome ? ` / 판정: ${outcome}` : ''}`,
+        '- 첫 문장부터 서버 요약이 아니라 이 NPC의 구체 반응(표정, 몸짓, 침묵, 말투 변화, 짧은 대사)으로 시작하세요.',
+        '- 플레이어 행동을 다시 설명하지 말고, 해당 NPC가 무엇을 알아차렸고 무엇을 숨기거나 인정하는지 보여주세요.',
+        '- 이 NPC의 speakingNpc/npcPortrait가 유지될 수 있도록 최소 1회는 이 NPC 별칭으로 대사를 쓰세요.',
+      ];
+      if (sceneFrame) {
+        reactionLines.push(`- 장면/단서 맥락: ${sceneFrame}`);
+      }
+      if (genericSummary) {
+        reactionLines.push(
+          `- 금지 요약문: "${genericSummary}" — 그 문장을 출력하지 마세요. 같은 뜻의 "플레이어가 ... 시도하여 성공했다"식 문장도 금지입니다.`,
+        );
+      }
+      factsParts.push(reactionLines.join('\n'));
     }
 
     // === Phase 2: 파티 모드 4인분 행동 통합 서술 ===

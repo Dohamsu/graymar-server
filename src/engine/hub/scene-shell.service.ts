@@ -12,6 +12,12 @@ import { ContentLoaderService } from '../../content/content-loader.service.js';
 
 // --- Resolve 후속 선택지 (판정 결과에 따른 상황별) ---
 
+interface NpcChoiceContext {
+  npcId?: string;
+  npcDisplayName: string;
+  questContext?: string;
+}
+
 // --- LOCATION별 후속 선택지 (맥락 구체화) ---
 
 const LOCATION_FOLLOW_UPS: Record<
@@ -726,17 +732,42 @@ export class SceneShellService {
     eventType?: string,
     turnNo?: number,
     eventChoices?: EventChoice[],
+    npcContext?: NpcChoiceContext,
   ): ChoiceItem[] {
     const used = new Set(usedChoiceIds ?? []);
     const TARGET_COUNT = 3;
     const choices: ChoiceItem[] = [];
     const usedAffordances = new Set<string>();
 
+    // 0. NPC/quest context가 있는 후속 턴에서는 범용 follow-up보다 대상 NPC 반응을 우선한다.
+    //    LLM/nano choices가 실패해도 "다른 이에게 접근한다" 류 generic fallback으로
+    //    같은 NPC 압박 장면이 끊기지 않도록 서버 선택지 레벨에서 보강한다.
+    if (npcContext?.npcDisplayName) {
+      const contextLabel = (npcContext.questContext ?? '방금 드러난 단서')
+        .replace(/\s+/g, ' ')
+        .slice(0, 24);
+      const npcName = npcContext.npcDisplayName;
+      choices.push({
+        id: `npc_followup_talk_${turnNo ?? 0}`,
+        label: `${npcName}에게 ${contextLabel}를 더 캐묻는다`,
+        hint: '같은 인물의 즉각적인 반응을 이어서 확인한다',
+        action: {
+          type: 'CHOICE' as const,
+          payload: {
+            affordance: 'TALK',
+            ...(npcContext.npcId ? { sourceNpcId: npcContext.npcId } : {}),
+            ...(sourceEventId ? { sourceEventId } : {}),
+          },
+        },
+      });
+      usedAffordances.add('TALK');
+    }
+
     // 1. 이벤트 미사용 고유 선택지 (payload.choices 중 미선택분) — 가장 관련성 높음
     if (eventChoices && eventChoices.length > 0) {
       const unusedEventChoices = eventChoices
         .filter((c) => !used.has(c.id))
-        .slice(0, 2);
+        .slice(0, Math.max(0, 2 - choices.length));
       for (const c of unusedEventChoices) {
         choices.push({
           id: c.id,

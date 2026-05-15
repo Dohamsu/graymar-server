@@ -190,6 +190,57 @@ describe('PromptBuilderService — 보조 NPC 끼어들기 억제 directive', ()
     expect(text).toMatch(/(에드릭 베일|날카로운 눈매의 회계사)/);
   });
 
+  it('focusedNpcId + 조사/압박 턴 → focused NPC reaction directive includes action/outcome and bans generic summary prose', () => {
+    const ctx = baseCtx({
+      focusedNpcId: 'NPC_EDRIC',
+      npcStates: {
+        NPC_EDRIC: {
+          npcId: 'NPC_EDRIC',
+          introduced: true,
+          posture: 'CAUTIOUS',
+          emotional: {
+            trust: 10,
+            fear: 0,
+            respect: 0,
+            suspicion: 20,
+            attachment: 0,
+          },
+        },
+      } as any,
+    });
+    const sr = baseSr({
+      summary: {
+        short: '플레이어가 "장부 조작 흔적을 더 압박한다"를 시도하여 성공했다.',
+      },
+      ui: {
+        resolveOutcome: 'SUCCESS',
+        actionContext: {
+          primaryNpcId: 'NPC_EDRIC',
+          parsedType: 'INVESTIGATE',
+          originalInput: '장부 조작 흔적을 더 압박한다',
+          eventSceneFrame: '장부 셋째 칸 넷째 줄에 다른 필체가 덧씌워져 있다.',
+        },
+      } as any,
+    });
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(
+        ctx,
+        sr,
+        '장부 조작 흔적을 더 압박한다',
+        'ACTION',
+      ),
+    );
+
+    expect(text).toContain('[집중 NPC 반응 지시]');
+    expect(text).toContain('에드릭 베일');
+    expect(text).toContain('INVESTIGATE');
+    expect(text).toContain('SUCCESS');
+    expect(text).toContain('장부 셋째 칸 넷째 줄');
+    expect(text).toContain('플레이어가');
+    expect(text).toContain('시도하여 성공했다');
+    expect(text).toContain('그 문장을 출력하지 마세요');
+  });
+
   it('focusedNpcId + recentAuxSpeakers → 직전 끼어든 NPC 침묵 가이드 추가', () => {
     const ctx = baseCtx({
       focusedNpcId: 'NPC_EDRIC',
