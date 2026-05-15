@@ -2490,8 +2490,24 @@ ${npcList}`,
             srChanged = true;
           }
         } else if (existingPortrait && _appearedNpcIds.size === 0) {
-          ui.npcPortrait = null;
-          srChanged = true;
+          const actionCtx = ui.actionContext as
+            | Record<string, unknown>
+            | undefined;
+          const speakingNpc = ui.speakingNpc as
+            | Record<string, unknown>
+            | undefined;
+          const expectedNpcId =
+            llmContext.focusedNpcId ??
+            (actionCtx?.primaryNpcId as string | undefined) ??
+            (speakingNpc?.npcId as string | undefined) ??
+            null;
+          // Focused NPC turns can produce valid dialogue without an @ marker
+          // after post-processing. Keep the server-selected portrait when it
+          // still matches the focused/primary NPC instead of blanking the card.
+          if (!expectedNpcId || existingPortrait.npcId !== expectedNpcId) {
+            ui.npcPortrait = null;
+            srChanged = true;
+          }
         }
 
         if (srChanged) {

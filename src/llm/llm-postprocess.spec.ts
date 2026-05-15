@@ -473,9 +473,9 @@ describe('Step G: 문장 종결부 뒤 공백 보정', () => {
   });
 
   it('연속 문장 여러 개도 모두 보정', () => {
-    expect(
-      stepG_insertSpaceAfterSentence('하나다.둘이다.셋이다.넷이다.'),
-    ).toBe('하나다. 둘이다. 셋이다. 넷이다.');
+    expect(stepG_insertSpaceAfterSentence('하나다.둘이다.셋이다.넷이다.')).toBe(
+      '하나다. 둘이다. 셋이다. 넷이다.',
+    );
   });
 
   it('실측 회귀(verify57): 발소리 + 서류 뭉치', () => {

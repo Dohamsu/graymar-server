@@ -1562,7 +1562,11 @@ export class TurnsService {
             null,
           eventTitle: eventTitleForChallenge,
         })
-      : { result: 'CHECK' as const, reason: 'classifier unavailable', source: 'rule' as const };
+      : {
+          result: 'CHECK' as const,
+          reason: 'classifier unavailable',
+          source: 'rule' as const,
+        };
 
     // ResolveService 판정 (FREE면 주사위 스킵하고 자동 SUCCESS)
     const resolveResult =
@@ -2376,11 +2380,7 @@ export class TurnsService {
         rawInput,
         intent,
         currentLocationId: locationId,
-        timePhase: (ws.phaseV2 ?? ws.timePhase) as
-          | 'DAWN'
-          | 'DAY'
-          | 'DUSK'
-          | 'NIGHT',
+        timePhase: ws.phaseV2 ?? ws.timePhase,
         actionHistory,
         candidateEvent: event as {
           eventId: string;
@@ -2461,7 +2461,7 @@ export class TurnsService {
         const inputKwSet = new Set(rawInput.match(/[가-힣]{2,}/g) ?? []);
         const factCandidates = this.content.getFactsByKeywords(inputKwSet);
         const lockNpcKnowsFact = factCandidates.some((f) =>
-          f.knownBy.includes(candidateLockNpc!),
+          f.knownBy.includes(candidateLockNpc),
         );
         if (lockNpcKnowsFact) {
           this.logger.debug(
@@ -3602,6 +3602,32 @@ export class TurnsService {
       .map((h) => h.choiceId!);
 
     let choices: ChoiceItem[];
+    const choiceNpcContext =
+      eventPrimaryNpc &&
+      [
+        'TALK',
+        'PERSUADE',
+        'BRIBE',
+        'THREATEN',
+        'HELP',
+        'INVESTIGATE',
+        'TRADE',
+      ].includes(intent.actionType)
+        ? {
+            npcId: eventPrimaryNpc,
+            npcDisplayName:
+              npcNames[eventPrimaryNpc] ??
+              this.content.getNpc(eventPrimaryNpc)?.unknownAlias ??
+              this.content.getNpc(eventPrimaryNpc)?.name ??
+              eventPrimaryNpc,
+            questContext:
+              discoveredFactIdsThisTurn
+                .map((factId) => this.questProgression?.getFactDetail(factId))
+                .find((detail): detail is string => !!detail) ??
+              resolvedSceneFrame ??
+              undefined,
+          }
+        : undefined;
     if (eventAlreadyInteracted) {
       // 이미 상호작용한 이벤트 → resolve 결과 기반 후속 선택지 (sourceEventId 부분 적용 + eventType별 풀)
       choices = this.sceneShellService.buildFollowUpChoices(
@@ -3612,6 +3638,7 @@ export class TurnsService {
         event.eventType,
         turnNo,
         resolvedChoices,
+        choiceNpcContext,
       );
     } else {
       // 첫 만남 이벤트 → 이벤트 고유 선택지

@@ -53,9 +53,9 @@ describe('ContextBuilderService.detectFocusedNpcId', () => {
 
   // architecture/57 패치 v2 — actionType 누락 케이스에 대한 fallback 검증
   it('parsedType=TALK + primary → focusedNpcId (현재 IntentParser 필드명)', () => {
-    expect(
-      detect({ parsedType: 'TALK', primaryNpcId: 'NPC_EDRIC_VEIL' }),
-    ).toBe('NPC_EDRIC_VEIL');
+    expect(detect({ parsedType: 'TALK', primaryNpcId: 'NPC_EDRIC_VEIL' })).toBe(
+      'NPC_EDRIC_VEIL',
+    );
   });
 
   it('actionType/parsedType 모두 없어도 approachVector=SOCIAL → focused (대화 잠금 후속턴)', () => {

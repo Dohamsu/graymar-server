@@ -35,13 +35,13 @@ import {
 // ──────────────────────────────────────────────────────────────
 
 export type NpcResolutionSource =
-  | 'STRONG_EXPLICIT_NAME'   // 실명 또는 unknownAlias 전체 매칭
-  | 'STRONG_PARTICLE'        // "X에게/X와/X을" 호명 조사 패턴
-  | 'MEDIUM_ROLE_KEYWORD'    // 명시 roleKeywords
-  | 'WEAK_ALIAS_PARTIAL'     // 별칭 부분 키워드 (lock 부재 시만)
-  | 'CONVERSATION_LOCK'      // 직전 SOCIAL NPC 잠금
-  | 'EVENT_PRIMARY'          // EventMatcher 이벤트 NPC
-  | 'NO_NPC';                // NPC 없음
+  | 'STRONG_EXPLICIT_NAME' // 실명 또는 unknownAlias 전체 매칭
+  | 'STRONG_PARTICLE' // "X에게/X와/X을" 호명 조사 패턴
+  | 'MEDIUM_ROLE_KEYWORD' // 명시 roleKeywords
+  | 'WEAK_ALIAS_PARTIAL' // 별칭 부분 키워드 (lock 부재 시만)
+  | 'CONVERSATION_LOCK' // 직전 SOCIAL NPC 잠금
+  | 'EVENT_PRIMARY' // EventMatcher 이벤트 NPC
+  | 'NO_NPC'; // NPC 없음
 
 export interface NpcResolutionAlternative {
   npcId: string;
@@ -67,9 +67,7 @@ export interface NpcResolutionContext {
   candidateEvent?: { eventId: string; payload: { primaryNpcId?: string } };
   nodeType: 'LOCATION' | 'COMBAT' | 'EVENT' | 'REST' | 'HUB';
   inputType: 'ACTION' | 'CHOICE';
-  runState?:
-    | { worldState?: { npcLocations?: Record<string, string> } }
-    | null;
+  runState?: { worldState?: { npcLocations?: Record<string, string> } } | null;
 }
 
 export interface NpcResolution {
@@ -158,11 +156,22 @@ export class NpcResolverService {
       }
       if (nameMatched.length > 0) {
         const localFirst = nameMatched.find((npc) =>
-          this.isAtLocation(npc, ctx.currentLocationId, ctx.timePhase, ctx.runState),
+          this.isAtLocation(
+            npc,
+            ctx.currentLocationId,
+            ctx.timePhase,
+            ctx.runState,
+          ),
         );
         const picked = localFirst ?? nameMatched[0];
         return this.applyWhereabouts(
-          { npcId: picked.npcId, source: 'STRONG_EXPLICIT_NAME', confidence: 1.0, alternatives, lockApplied: false },
+          {
+            npcId: picked.npcId,
+            source: 'STRONG_EXPLICIT_NAME',
+            confidence: 1.0,
+            alternatives,
+            lockApplied: false,
+          },
           picked,
           ctx,
         );
@@ -171,11 +180,22 @@ export class NpcResolverService {
       const particleCandidates = this.matchParticleAll(ctx.rawInput, allNpcs);
       if (particleCandidates.length > 0) {
         const localFirst = particleCandidates.find((npc) =>
-          this.isAtLocation(npc, ctx.currentLocationId, ctx.timePhase, ctx.runState),
+          this.isAtLocation(
+            npc,
+            ctx.currentLocationId,
+            ctx.timePhase,
+            ctx.runState,
+          ),
         );
         const picked = localFirst ?? particleCandidates[0];
         return this.applyWhereabouts(
-          { npcId: picked.npcId, source: 'STRONG_PARTICLE', confidence: 0.9, alternatives, lockApplied: false },
+          {
+            npcId: picked.npcId,
+            source: 'STRONG_PARTICLE',
+            confidence: 0.9,
+            alternatives,
+            lockApplied: false,
+          },
           picked,
           ctx,
         );
@@ -191,7 +211,12 @@ export class NpcResolverService {
       if (matched.length > 0) {
         // 같은 location 우선
         const localFirst = matched.find((npc) =>
-          this.isAtLocation(npc, ctx.currentLocationId, ctx.timePhase, ctx.runState),
+          this.isAtLocation(
+            npc,
+            ctx.currentLocationId,
+            ctx.timePhase,
+            ctx.runState,
+          ),
         );
         if (localFirst) {
           return {
@@ -227,7 +252,13 @@ export class NpcResolverService {
 
     // ── Step 4: WEAK 신호 (별칭 부분 키워드) — lock 활성 시 무시 ──
     if (!isChoice && !lockNpcId) {
-      const weak = this.matchAliasPartial(inputLower, allNpcs, ctx.currentLocationId, ctx.timePhase, ctx.runState);
+      const weak = this.matchAliasPartial(
+        inputLower,
+        allNpcs,
+        ctx.currentLocationId,
+        ctx.timePhase,
+        ctx.runState,
+      );
       if (weak) {
         return {
           npcId: weak.npcId,
@@ -335,7 +366,8 @@ export class NpcResolverService {
   ): { npcId: string } | null {
     // 같은 location의 NPC만 후보 (다른 장소 NPC false positive 방지)
     for (const npc of npcs) {
-      if (!this.isAtLocation(npc, currentLocationId, timePhase, runState)) continue;
+      if (!this.isAtLocation(npc, currentLocationId, timePhase, runState))
+        continue;
       const fragments = (npc.unknownAlias ?? '').split(/\s+/);
       for (const frag of fragments) {
         if (frag.length < 3) continue;
@@ -363,7 +395,7 @@ export class NpcResolverService {
     if (!SOCIAL_ACTIONS.has(actionType)) return null;
     const windowStart = Math.max(0, actionHistory.length - 4);
     for (let i = actionHistory.length - 1; i >= windowStart; i--) {
-      const prev = actionHistory[i] as Record<string, unknown>;
+      const prev = actionHistory[i];
       const prevNpc = prev.primaryNpcId as string | undefined;
       const prevAction = prev.actionType as string | undefined;
       if (!prevNpc) continue;
@@ -377,7 +409,7 @@ export class NpcResolverService {
     if (!SOCIAL_ACTIONS.has(ctx.intent.actionType)) return null;
     const windowStart = Math.max(0, ctx.actionHistory.length - 4);
     for (let i = ctx.actionHistory.length - 1; i >= windowStart; i--) {
-      const prev = ctx.actionHistory[i] as Record<string, unknown>;
+      const prev = ctx.actionHistory[i];
       const prevNpc = prev.primaryNpcId as string | undefined;
       const prevAction = prev.actionType as string | undefined;
       if (!prevNpc) continue;
@@ -448,7 +480,11 @@ export class NpcResolverService {
       confidence: base.confidence,
       alternatives: [
         ...base.alternatives,
-        { npcId: npc.npcId, source: base.source, reason: '다른 장소 — 위치 안내' },
+        {
+          npcId: npc.npcId,
+          source: base.source,
+          reason: '다른 장소 — 위치 안내',
+        },
       ],
       lockApplied: base.lockApplied,
       whereaboutsHint: hint,

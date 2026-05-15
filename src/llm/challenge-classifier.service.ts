@@ -145,10 +145,7 @@ export class ChallengeClassifierService {
   }
 
   private buildUserMessage(ctx: ChallengeClassifierContext): string {
-    const parts = [
-      `행동: "${ctx.rawInput}"`,
-      `타입: ${ctx.actionType}`,
-    ];
+    const parts = [`행동: "${ctx.rawInput}"`, `타입: ${ctx.actionType}`];
     if (ctx.targetNpcName) {
       const posture = ctx.targetNpcPosture ?? 'NEUTRAL';
       parts.push(`대상 NPC: ${ctx.targetNpcName} (${posture})`);
