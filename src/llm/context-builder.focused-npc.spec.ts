@@ -5,6 +5,45 @@
 
 import { ContextBuilderService } from './context-builder.service.js';
 import type { RecentTurnEntry } from './context-builder.service.js';
+import type { NPCState } from '../db/types/index.js';
+
+function npc(overrides: Partial<NPCState> = {}): NPCState {
+  return {
+    npcId: 'NPC_TEST',
+    introduced: false,
+    encounterCount: 0,
+    agenda: '',
+    currentGoal: '',
+    currentStage: 'INITIAL',
+    trustToPlayer: 0,
+    suspicion: 0,
+    influence: 50,
+    funds: 50,
+    network: 50,
+    exposure: 0,
+    posture: 'CAUTIOUS',
+    emotional: {
+      trust: 0,
+      fear: 0,
+      respect: 0,
+      suspicion: 0,
+      attachment: 0,
+    },
+    ...overrides,
+  };
+}
+
+function makeContextBuilder(content: unknown): ContextBuilderService {
+  return new ContextBuilderService(
+    {} as never,
+    {} as never,
+    content as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+}
 
 describe('ContextBuilderService.detectFocusedNpcId', () => {
   const detect = (
@@ -283,5 +322,53 @@ describe('ContextBuilderService.extractRecentAuxIdentities', () => {
     ];
     const result = extract(turns);
     expect(result.length).toBeLessThanOrEqual(8);
+  });
+});
+
+describe('ContextBuilderService.sanitizeNpcNames', () => {
+  it('does not re-expand an unknownAlias when one of its alias entries is contained inside it', () => {
+    const builder = makeContextBuilder({
+      getNpc: (npcId: string) =>
+        npcId === 'NPC_INFO_BROKER'
+          ? {
+              name: '칼리드',
+              unknownAlias: '후드를 깊이 쓴 정보상',
+              aliases: ['정보상'],
+            }
+          : undefined,
+    });
+    const runState = {
+      npcStates: {
+        NPC_INFO_BROKER: npc({
+          npcId: 'NPC_INFO_BROKER',
+          introduced: false,
+        }),
+      },
+    };
+
+    const sanitize = (
+      builder as unknown as {
+        sanitizeNpcNames: (
+          text: string,
+          runState: Record<string, unknown>,
+        ) => string;
+      }
+    ).sanitizeNpcNames.bind(builder);
+
+    expect(sanitize('후드를 깊이 쓴 정보상이 고개를 숙인다.', runState)).toBe(
+      '후드를 깊이 쓴 정보상이 고개를 숙인다.',
+    );
+  });
+});
+
+describe('ContextBuilderService.collectFactKeywords', () => {
+  it('does not let BRIBE action keywords independently trigger broad fact matching', () => {
+    const keywords = ContextBuilderService.collectFactKeywords(
+      '돈을 건네며 조용히 묻는다',
+      'BRIBE',
+    );
+
+    expect(keywords.has('뇌물')).toBe(false);
+    expect(keywords.has('매수')).toBe(false);
   });
 });

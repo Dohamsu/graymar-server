@@ -24,6 +24,7 @@ import {
   computeEffectivePosture,
   getNpcDisplayName,
   generateRelationSummary,
+  replaceNpcNameWithAlias,
 } from '../db/types/npc-state.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { NpcKnowledgeLedger } from '../db/types/npc-knowledge.js';
@@ -252,6 +253,17 @@ export class ContextBuilderService {
     if (actionCtx.approachVector === 'SOCIAL') return primary;
     if (actionCtx.turnMode === 'CONVERSATION_CONT') return primary;
     return null;
+  }
+
+  /**
+   * Fact matching should be driven by the player's actual wording. Action labels
+   * are too coarse for high-level facts; in particular BRIBE must not inject
+   * generic "뇌물/매수" keywords that can match unrelated evidence facts.
+   *
+   * @internal export — context-builder.focused-npc.spec.ts regression coverage.
+   */
+  static collectFactKeywords(rawInput: string, _actionType: string): Set<string> {
+    return new Set(rawInput.match(/[가-힣]{2,}/g) ?? []);
   }
 
   /**
@@ -507,9 +519,13 @@ export class ContextBuilderService {
       const npcDef = this.content.getNpc(npcId);
       if (!npcDef || !npcDef.name) continue;
       const alias = npcDef.unknownAlias || '누군가';
+      const protectedAliasToken = `__NPC_ALIAS_PROTECT_${npcId}__`;
       // 실명이 텍스트에 포함되어 있으면 alias로 치환
       if (result.includes(npcDef.name)) {
-        result = result.replaceAll(npcDef.name, alias);
+        result = replaceNpcNameWithAlias(result, npcDef.name, alias);
+      }
+      if (result.includes(alias)) {
+        result = result.replaceAll(alias, protectedAliasToken);
       }
       // aliases 배열도 치환 (2글자 이상만 — 1글자는 동사/조사 오탐)
       if (npcDef.aliases) {
@@ -519,6 +535,9 @@ export class ContextBuilderService {
             result = result.replaceAll(a, alias);
           }
         }
+      }
+      if (result.includes(protectedAliasToken)) {
+        result = result.replaceAll(protectedAliasToken, alias);
       }
     }
     return result;
@@ -1607,26 +1626,16 @@ export class ContextBuilderService {
         const factNpcId = acForFact?.primaryNpcId as string | null | undefined;
 
         const rawInputForFact =
-          ((
-            (serverResult as Record<string, unknown>)?.summary as
-              | Record<string, unknown>
-              | undefined
-          )?.short as string) ?? '';
+          (acForFact?.originalInput as string | undefined) ??
+          (((serverResult as Record<string, unknown>)?.summary as
+            | Record<string, unknown>
+            | undefined)?.short as string | undefined) ??
+          '';
         const actionTypeForFact = (acForFact?.parsedType as string) ?? '';
-        const inputKw = new Set(rawInputForFact.match(/[가-힣]{2,}/g) ?? []);
-        const ACTION_KW: Record<string, string[]> = {
-          INVESTIGATE: ['조사', '단서', '흔적', '증거', '살펴'],
-          SEARCH: ['찾기', '뒤지기', '살펴', '수색'],
-          TALK: ['대화', '이야기', '소문', '물어'],
-          PERSUADE: ['설득', '부탁', '요청'],
-          OBSERVE: ['관찰', '지켜', '살핀'],
-          STEAL: ['훔치기', '절도'],
-          BRIBE: ['뇌물', '매수'],
-          THREATEN: ['위협', '협박'],
-          TRADE: ['거래', '교환', '구매'],
-          HELP: ['도와', '도움'],
-        };
-        for (const k of ACTION_KW[actionTypeForFact] ?? []) inputKw.add(k);
+        const inputKw = ContextBuilderService.collectFactKeywords(
+          rawInputForFact,
+          actionTypeForFact,
+        );
 
         const discoveredFacts =
           (runState?.discoveredQuestFacts as string[]) ?? [];
@@ -1680,10 +1689,11 @@ export class ContextBuilderService {
               const st = (
                 runState?.npcStates as Record<string, NPCState> | undefined
               )?.[npcId];
-              const alias =
+              const aliasRaw =
                 st && def
                   ? getNpcDisplayName(st, def)
                   : def?.unknownAlias || def?.name || npcId;
+              const alias = this.sanitizeNpcNames(aliasRaw, runState);
               if (alias) otherAliases.push(alias);
             }
             const npcDefCurrent = this.content.getNpc(factNpcId);
@@ -1701,7 +1711,7 @@ export class ContextBuilderService {
             factHandoffHint = {
               npcDisplayName: currentDisplay,
               topic: topicKw,
-              otherNpcAliases: otherAliases.slice(0, 2), // 최대 2명만 (프롬프트 간결)
+              otherNpcAliases: [...new Set(otherAliases)].slice(0, 2), // 최대 2명만 (프롬프트 간결)
             };
           }
         } else if (factCandidates.length > 0 && !factNpcId) {

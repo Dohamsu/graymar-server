@@ -1,4 +1,9 @@
-import { shouldIntroduce, type NPCState } from './npc-state.js';
+import {
+  replaceNpcNameWithAlias,
+  sanitizeNpcNamesForTurn,
+  shouldIntroduce,
+  type NPCState,
+} from './npc-state.js';
 
 function npc(overrides: Partial<NPCState> = {}): NPCState {
   return {
@@ -132,5 +137,59 @@ describe('shouldIntroduce', () => {
         ),
       ).toBe(false);
     });
+  });
+});
+
+describe('sanitizeNpcNamesForTurn', () => {
+  const npcStates: Record<string, NPCState> = {
+    NPC_BG_DOCKER: npc({ npcId: 'NPC_BG_DOCKER', introduced: false }),
+  };
+  const getNpcDef = (npcId: string) =>
+    npcId === 'NPC_BG_DOCKER'
+      ? { name: '벅', unknownAlias: '덩치 큰 하역 인부', aliases: [] }
+      : undefined;
+
+  it('한 글자 NPC 실명이 일반 한국어 단어 내부에 있을 때 치환하지 않는다', () => {
+    const text = '시끌벅적한 소음과 허벅지에 닿는 찬바람이 골목을 채운다.';
+
+    expect(sanitizeNpcNamesForTurn(text, npcStates, getNpcDef, 1)).toBe(text);
+  });
+
+  it('한 글자 NPC 실명이 독립 토큰으로 나올 때는 별칭으로 치환한다', () => {
+    expect(sanitizeNpcNamesForTurn('벅이 고개를 끄덕인다.', npcStates, getNpcDef, 1)).toBe(
+      '덩치 큰 하역 인부이 고개를 끄덕인다.',
+    );
+  });
+
+  it('선택지 라벨의 미소개 한 글자 NPC 실명도 별칭으로 치환한다', () => {
+    expect(replaceNpcNameWithAlias('벅에게 말을 건다', '벅', '덩치 큰 하역 인부')).toBe(
+      '덩치 큰 하역 인부에게 말을 건다',
+    );
+  });
+
+  it('unknownAlias 내부에 포함된 aliases 항목을 다시 unknownAlias로 확장하지 않는다', () => {
+    const states: Record<string, NPCState> = {
+      NPC_INFO_BROKER: npc({
+        npcId: 'NPC_INFO_BROKER',
+        introduced: false,
+      }),
+    };
+    const def = (npcId: string) =>
+      npcId === 'NPC_INFO_BROKER'
+        ? {
+            name: '칼리드',
+            unknownAlias: '후드를 깊이 쓴 정보상',
+            aliases: ['정보상'],
+          }
+        : undefined;
+
+    expect(
+      sanitizeNpcNamesForTurn(
+        '후드를 깊이 쓴 정보상이 낮게 속삭인다.',
+        states,
+        def,
+        8,
+      ),
+    ).toBe('후드를 깊이 쓴 정보상이 낮게 속삭인다.');
   });
 });

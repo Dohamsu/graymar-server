@@ -270,9 +270,35 @@ export function isNameRevealed(
   return true;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const KOREAN_NAME_PARTICLE =
+  '(?:은|는|이|가|을|를|과|와|에게|한테|께|도|만|의|으로|로|이라|라고|처럼|부터|까지|마저|조차)';
+
 /**
- * 텍스트에 포함된 NPC 실명을 현재 턴 기준으로 alias로 치환.
- * 모든 LLM 프롬프트/출력에 적용할 수 있는 범용 세이프가드.
+ * NPC 실명/별칭을 alias로 치환하되, 한 글자 이름이 일반 한국어 단어 내부에
+ * 들어간 경우(시끌벅적한, 허벅지 등)는 건드리지 않는다.
+ */
+export function replaceNpcNameWithAlias(
+  text: string,
+  name: string,
+  alias: string,
+): string {
+  if (!text || !name) return text;
+  if (name.length >= 2) return text.replaceAll(name, alias);
+
+  const pattern = new RegExp(
+    `(^|[^가-힣A-Za-z0-9_])(${escapeRegExp(name)})(?=${KOREAN_NAME_PARTICLE}|[^가-힣A-Za-z0-9_]|$)`,
+    'g',
+  );
+  return text.replace(pattern, (_match, prefix: string) => `${prefix}${alias}`);
+}
+
+/**
+ * 텍스트 내 NPC 실명을 introduced 상태에 따라 alias로 치환.
+ * LLM 컨텍스트/결과 후처리에서 실명 노출 방지용.
  */
 export function sanitizeNpcNamesForTurn(
   text: string,
@@ -289,9 +315,13 @@ export function sanitizeNpcNamesForTurn(
     const npcDef = getNpcDef(npcId);
     if (!npcDef?.name) continue;
     const alias = npcDef.unknownAlias || '낯선 인물';
-    // 실명 치환
+    const protectedAliasToken = `__NPC_ALIAS_PROTECT_${npcId}__`;
+    // 실명 치환 — 한 글자 이름은 한국어 단어 내부 오탐 방지
     if (result.includes(npcDef.name)) {
-      result = result.replaceAll(npcDef.name, alias);
+      result = replaceNpcNameWithAlias(result, npcDef.name, alias);
+    }
+    if (result.includes(alias)) {
+      result = result.replaceAll(alias, protectedAliasToken);
     }
     // aliases 배열도 치환 (2글자 이상만 — 1글자는 동사/조사에 오탐)
     if (npcDef.aliases) {
@@ -301,6 +331,9 @@ export function sanitizeNpcNamesForTurn(
           result = result.replaceAll(a, alias);
         }
       }
+    }
+    if (result.includes(protectedAliasToken)) {
+      result = result.replaceAll(protectedAliasToken, alias);
     }
   }
   return result;
