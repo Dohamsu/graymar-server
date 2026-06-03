@@ -1089,6 +1089,30 @@ export class PromptBuilderService {
         );
       }
 
+      const semanticFrame = npcReaction.semanticFrame;
+      if (semanticFrame) {
+        lines.push('', '[반복/복붙 억제 가드 — 의미만 사용, 원문 치환 금지]');
+        if (semanticFrame.playerIntent) {
+          lines.push(`▸ 플레이어 의도: ${semanticFrame.playerIntent}`);
+        }
+        lines.push(
+          `▸ 압박도/정서: ${semanticFrame.pressureLevel} / ${semanticFrame.emotionalTone}`,
+        );
+        if (semanticFrame.topicAtoms?.length) {
+          lines.push(`▸ 핵심 화제: ${semanticFrame.topicAtoms.join(', ')}`);
+        }
+        if (semanticFrame.avoidEchoPhrases?.length) {
+          lines.push(
+            `▸ 그대로 반복 금지 어구: ${semanticFrame.avoidEchoPhrases.join(' / ')}`,
+          );
+        }
+        lines.push(
+          '⚠️ 플레이어 입력을 치환하지 말고 의미·정서·화제만 반영하세요.',
+          '⚠️ 금지 어구는 NPC 대사와 서술 첫 문장에 그대로 복사하지 마세요.',
+          '⚠️ 대체 표현 예시는 만들지 말고 NPC의 반응/행동으로만 풀어 쓰세요.',
+        );
+      }
+
       factsParts.push(lines.join('\n'));
     }
 
@@ -1325,9 +1349,15 @@ export class PromptBuilderService {
         // architecture/51 §B (R2) — 사용자 키워드 응답률 강화.
         // NPC가 사용자 질문/말의 핵심 단어를 답변에 자연스럽게 인용하도록 Positive framing.
         const userKeywords = extractTopUserKeywords(rawInput, 3);
-        if (userKeywords.length >= 1) {
+        const suppressKeywordEcho =
+          (npcReaction?.semanticFrame?.avoidEchoPhrases?.length ?? 0) > 0;
+        if (userKeywords.length >= 1 && !suppressKeywordEcho) {
           parts.push(
             `답변 가이드: 사용자가 언급한 단어 [${userKeywords.join(', ')}] 중 1~2개를 NPC 대사 또는 서술 안에 자연스럽게 인용하시오. 사용자 질문/말의 주제를 답변에서 그대로 반영하세요.`,
+          );
+        } else if (suppressKeywordEcho) {
+          parts.push(
+            '답변 가이드: 사용자 입력의 핵심 의미만 반영하고, 원문 단어를 그대로 인용하지 마세요. 위 반복/복붙 억제 가드가 우선합니다.',
           );
         }
         if (actionCtx?.parsedType) {

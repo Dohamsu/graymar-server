@@ -36,7 +36,25 @@ export interface NpcReactionResult {
   voiceQuality: string;
   emotionalUndertone: string;
   bodyLanguageMood: string;
+  semanticFrame?: NpcReactionSemanticFrame;
   source: 'llm' | 'fallback';
+}
+
+export type PlayerPressureLevel = 'LOW' | 'MID' | 'HIGH';
+export type PlayerEmotionalTone =
+  | 'NEUTRAL'
+  | 'CURIOUS'
+  | 'APOLOGETIC'
+  | 'THREATENING'
+  | 'PLEADING'
+  | 'SARCASTIC';
+
+export interface NpcReactionSemanticFrame {
+  playerIntent: string;
+  pressureLevel: PlayerPressureLevel;
+  emotionalTone: PlayerEmotionalTone;
+  topicAtoms: string[];
+  avoidEchoPhrases: string[];
 }
 
 export interface RecentPlayerAction {
@@ -134,6 +152,14 @@ bodyLanguageMood: 이번 턴 신체 분위기 (10~20자)
 - 올바른 형태: "닫힌 자세, 손목만 살짝 움직임", "열린 손짓, 기울인 상체"
 - ❌ 절대 금지: 구체 신체 동작 ("안경테 밀기" 같은 실행 가능 동작)
 
+semanticFrame: 플레이어 입력을 치환하지 말고 의미만 추상화한다.
+- playerIntent: 플레이어 의도 요약 (15~35자, 새 대사 문장 X)
+- pressureLevel: LOW / MID / HIGH
+- emotionalTone: NEUTRAL / CURIOUS / APOLOGETIC / THREATENING / PLEADING / SARCASTIC
+- topicAtoms: 핵심 화제 명사 1~5개
+- avoidEchoPhrases: 메인 LLM이 그대로 복붙하면 안 되는 플레이어 표현/최근 반복 어구 0~5개
+- ❌ rewrittenInput, 대체 문장, NPC가 말할 예시는 절대 만들지 마라.
+
 판단 기준:
 - 플레이어 행동의 위협 정도 + NPC posture/감정 + 판정 결과 종합
 - FAIL이면 더 경계/거절, SUCCESS면 호응 가능 (적대 NPC는 여전히 경계)
@@ -157,7 +183,7 @@ R3. **refusalLevel 단조성**: 플레이어가 같은 행동을 반복(같은 a
 R4. **단서 진전**: 직전 NPC 대사에서 정보가 흘러나왔거나 단서가 드러났다면 이번 턴 immediateGoal 은 그 단서를 전제로 한 다음 단계로 둔다 ("정체 더 확인" 같은 후퇴 금지).
 
 JSON만 출력:
-{"reactionType":"...","refusalLevel":"...","immediateGoal":"...","openingStance":"...","emotionalShiftHint":{"trust":0,"fear":0,"respect":0,"suspicion":0},"dialogueHint":"...","voiceQuality":"...","emotionalUndertone":"...","bodyLanguageMood":"..."}`;
+{"reactionType":"...","refusalLevel":"...","immediateGoal":"...","openingStance":"...","emotionalShiftHint":{"trust":0,"fear":0,"respect":0,"suspicion":0},"dialogueHint":"...","voiceQuality":"...","emotionalUndertone":"...","bodyLanguageMood":"...","semanticFrame":{"playerIntent":"...","pressureLevel":"LOW","emotionalTone":"NEUTRAL","topicAtoms":["..."],"avoidEchoPhrases":["..."]}}`;
 
 @Injectable()
 export class NpcReactionDirectorService {
@@ -195,7 +221,7 @@ export class NpcReactionDirectorService {
         return this.buildFallback(ctx, 'no response');
       }
 
-      const parsed = this.parseResponse(result.response.text);
+      const parsed = this.parseResponse(result.response.text, ctx);
       if (!parsed) {
         return this.buildFallback(ctx, 'parse failed');
       }
@@ -207,7 +233,11 @@ export class NpcReactionDirectorService {
         `[NpcReaction] npc=${ctx.npcDisplayName} type=${guarded.reactionType} refuse=${guarded.refusalLevel} goal="${guarded.immediateGoal}"`,
       );
 
-      return { ...guarded, source: 'llm' };
+      return {
+        ...guarded,
+        semanticFrame: this.enrichSemanticFrame(guarded.semanticFrame, ctx),
+        source: 'llm',
+      };
     } catch (err) {
       this.logger.warn(
         `[NpcReaction] error: ${err instanceof Error ? err.message : err}`,
@@ -349,6 +379,7 @@ export class NpcReactionDirectorService {
 
   private parseResponse(
     text: string,
+    ctx: NpcReactionContext,
   ): Omit<NpcReactionResult, 'source'> | null {
     const jsonMatch = text.trim().match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
@@ -402,6 +433,7 @@ export class NpcReactionDirectorService {
         typeof parsed.bodyLanguageMood === 'string'
           ? parsed.bodyLanguageMood.slice(0, 40)
           : '';
+      const semanticFrame = this.parseSemanticFrame(parsed.semanticFrame, ctx);
 
       return {
         reactionType,
@@ -413,6 +445,7 @@ export class NpcReactionDirectorService {
         voiceQuality,
         emotionalUndertone,
         bodyLanguageMood,
+        semanticFrame,
       };
     } catch {
       return null;
@@ -439,6 +472,133 @@ export class NpcReactionDirectorService {
     return typeof v === 'string' && (valid as string[]).includes(v)
       ? (v as RefusalLevel)
       : 'NONE';
+  }
+
+  private parseSemanticFrame(
+    raw: unknown,
+    ctx: NpcReactionContext,
+  ): NpcReactionSemanticFrame {
+    const obj = (raw ?? {}) as Record<string, unknown>;
+    const playerIntent =
+      typeof obj.playerIntent === 'string'
+        ? obj.playerIntent.trim().slice(0, 80)
+        : this.inferPlayerIntent(ctx);
+    const pressureLevel = this.validatePressureLevel(obj.pressureLevel, ctx);
+    const emotionalTone = this.validateEmotionalTone(obj.emotionalTone, ctx);
+    const topicAtoms = this.normalizeStringList(obj.topicAtoms, 5, 16);
+    const avoidEchoPhrases = this.normalizeStringList(
+      obj.avoidEchoPhrases,
+      8,
+      40,
+    );
+
+    return this.enrichSemanticFrame(
+      {
+        playerIntent,
+        pressureLevel,
+        emotionalTone,
+        topicAtoms,
+        avoidEchoPhrases,
+      },
+      ctx,
+    );
+  }
+
+  private enrichSemanticFrame(
+    frame: NpcReactionSemanticFrame | undefined,
+    ctx: NpcReactionContext,
+  ): NpcReactionSemanticFrame {
+    const base: NpcReactionSemanticFrame = frame ?? {
+      playerIntent: this.inferPlayerIntent(ctx),
+      pressureLevel: this.validatePressureLevel(undefined, ctx),
+      emotionalTone: this.validateEmotionalTone(undefined, ctx),
+      topicAtoms: [],
+      avoidEchoPhrases: [],
+    };
+    return {
+      ...base,
+      avoidEchoPhrases: this.dedupeStrings([
+        ...base.avoidEchoPhrases,
+        ...this.extractAvoidPhrases(ctx.rawInput),
+        ...(ctx.recentNpcDialogues ?? []).flatMap((d) =>
+          this.extractAvoidPhrases(d, 24),
+        ),
+      ]).slice(0, 10),
+    };
+  }
+
+  private validatePressureLevel(
+    v: unknown,
+    ctx: NpcReactionContext,
+  ): PlayerPressureLevel {
+    if (v === 'LOW' || v === 'MID' || v === 'HIGH') return v;
+    if (['THREATEN', 'FIGHT', 'STEAL'].includes(ctx.actionType)) return 'HIGH';
+    if (['INVESTIGATE', 'PERSUADE', 'BRIBE'].includes(ctx.actionType)) {
+      return 'MID';
+    }
+    return 'LOW';
+  }
+
+  private validateEmotionalTone(
+    v: unknown,
+    ctx: NpcReactionContext,
+  ): PlayerEmotionalTone {
+    const valid: PlayerEmotionalTone[] = [
+      'NEUTRAL',
+      'CURIOUS',
+      'APOLOGETIC',
+      'THREATENING',
+      'PLEADING',
+      'SARCASTIC',
+    ];
+    if (typeof v === 'string' && (valid as string[]).includes(v)) {
+      return v as PlayerEmotionalTone;
+    }
+    if (ctx.actionType === 'THREATEN') return 'THREATENING';
+    if (/미안|사과|거칠|용서/.test(ctx.rawInput)) return 'APOLOGETIC';
+    if (/왜|무엇|어디|누구|알려|묻/.test(ctx.rawInput)) return 'CURIOUS';
+    return 'NEUTRAL';
+  }
+
+  private inferPlayerIntent(ctx: NpcReactionContext): string {
+    const cleaned = ctx.rawInput.replace(/["“”]/g, '').trim();
+    if (!cleaned) return `${ctx.actionType} 의도 파악`;
+    return cleaned.length > 35 ? cleaned.slice(0, 35) : cleaned;
+  }
+
+  private normalizeStringList(
+    raw: unknown,
+    max: number,
+    itemMax: number,
+  ): string[] {
+    if (!Array.isArray(raw)) return [];
+    return this.dedupeStrings(
+      raw
+        .filter((v): v is string => typeof v === 'string')
+        .map((v) => v.trim().replace(/["“”]/g, ''))
+        .filter((v) => v.length >= 2)
+        .map((v) => v.slice(0, itemMax)),
+    ).slice(0, max);
+  }
+
+  private extractAvoidPhrases(text: string, maxLen = 40): string[] {
+    return text
+      .split(/[.!?。！？…\n]+/)
+      .map((p) => p.trim().replace(/["“”]/g, ''))
+      .filter((p) => p.length >= 5)
+      .map((p) => (p.length > maxLen ? p.slice(0, maxLen) : p));
+  }
+
+  private dedupeStrings(values: string[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const value of values) {
+      const normalized = value.trim();
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      out.push(normalized);
+    }
+    return out;
   }
 
   /**
@@ -590,6 +750,7 @@ export class NpcReactionDirectorService {
       voiceQuality: '',
       emotionalUndertone: '',
       bodyLanguageMood: '',
+      semanticFrame: this.enrichSemanticFrame(undefined, ctx),
       source: 'fallback',
     };
   }

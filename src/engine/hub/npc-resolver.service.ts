@@ -29,6 +29,7 @@ import {
   NpcWhereaboutsService,
   type NpcLocationStatus,
 } from './npc-whereabouts.service.js';
+import { isNegatedNpcMention } from './npc-reference-negation.helper.js';
 
 // ──────────────────────────────────────────────────────────────
 // 공개 타입
@@ -145,11 +146,16 @@ export class NpcResolverService {
       // 1a. 실명/별칭 전체 매칭
       const nameMatched: NpcDefinition[] = [];
       for (const npc of allNpcs) {
-        if (npc.name && inputLower.includes(npc.name.toLowerCase())) {
+        if (
+          npc.name &&
+          inputLower.includes(npc.name.toLowerCase()) &&
+          !isNegatedNpcMention(ctx.rawInput, npc.name)
+        ) {
           nameMatched.push(npc);
         } else if (
           npc.unknownAlias &&
-          inputLower.includes(npc.unknownAlias.toLowerCase())
+          inputLower.includes(npc.unknownAlias.toLowerCase()) &&
+          !isNegatedNpcMention(ctx.rawInput, npc.unknownAlias)
         ) {
           nameMatched.push(npc);
         }

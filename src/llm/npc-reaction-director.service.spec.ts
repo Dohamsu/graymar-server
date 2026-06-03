@@ -96,6 +96,36 @@ describe('NpcReactionDirectorService', () => {
       expect(result!.source).toBe('llm');
     });
 
+    it('semanticFrame을 파싱하고 rawInput 복붙 방지 어구를 보강한다', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"reactionType":"PROBE","immediateGoal":"장부 의혹의 범위만 확인","refusalLevel":"POLITE","openingStance":"경계심을 낮추지 않음","emotionalShiftHint":{"trust":0,"fear":0,"respect":1,"suspicion":2},"dialogueHint":"협조하되 핵심은 흐릴 것","voiceQuality":"낮고 조심스러운 톤","emotionalUndertone":"의심 섞인 신중함","bodyLanguageMood":"닫힌 거리감","semanticFrame":{"playerIntent":"방금 위협을 사과하며 장부 의혹을 재확인","pressureLevel":"LOW","emotionalTone":"APOLOGETIC","topicAtoms":["장부","위협","로넨"],"avoidEchoPhrases":["수지타산"]}}',
+        },
+      });
+
+      const result = await service.direct(
+        makeCtx({
+          rawInput: '방금은 거칠었소. 장부 조작 흔적만 다시 확인하고 싶소.',
+          recentNpcDialogues: ['수지타산이 맞지 않는다는 말은 아직 이르오.'],
+        }),
+      );
+
+      expect(result!.semanticFrame).toMatchObject({
+        playerIntent: '방금 위협을 사과하며 장부 의혹을 재확인',
+        pressureLevel: 'LOW',
+        emotionalTone: 'APOLOGETIC',
+        topicAtoms: ['장부', '위협', '로넨'],
+      });
+      expect(result!.semanticFrame!.avoidEchoPhrases).toEqual(
+        expect.arrayContaining([
+          '수지타산',
+          '방금은 거칠었소',
+          '장부 조작 흔적만 다시 확인하고 싶소',
+        ]),
+      );
+    });
+
     it('톤 3축 누락 → 빈 문자열 (parse는 성공)', async () => {
       mockLlmCaller.call.mockResolvedValue({
         success: true,

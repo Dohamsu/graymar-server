@@ -58,6 +58,8 @@ import {
   LLM_FACT_CATEGORY,
   createEmptyStructuredMemory,
 } from '../db/types/structured-memory.js';
+import { applyNpcSpeakerContinuity } from './npc-speaker-continuity.helper.js';
+import { replaceNpcNameWithAlias } from '../db/types/npc-state.js';
 
 /** JSON 구조화 출력 모드 타입 (LLM_JSON_MODE=true) */
 interface NarrativeJsonSegment {
@@ -1309,7 +1311,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
               if (llmChoices) {
                 for (const choice of llmChoices) {
                   if (choice.label.includes(npcDef.name)) {
-                    choice.label = choice.label.replaceAll(npcDef.name, alias);
+                    choice.label = replaceNpcNameWithAlias(
+                      choice.label,
+                      npcDef.name,
+                      alias,
+                    );
                   }
                   for (const a of npcDef.aliases ?? []) {
                     if (a.length < 2) continue;
@@ -2449,9 +2455,21 @@ ${npcList}`,
             };
             // primaryNpcId carry-over: 다음 턴 conversationLock 시드
             if (resolvedNpcId) {
-              const ctx = (ui.actionContext ?? {}) as Record<string, unknown>;
-              if (ctx.primaryNpcId == null) {
-                ui.actionContext = { ...ctx, primaryNpcId: resolvedNpcId };
+              updatedSr.ui = ui;
+              const continuity = applyNpcSpeakerContinuity({
+                serverResult: updatedSr,
+                runState: runSession?.runState as
+                  | Record<string, unknown>
+                  | null
+                  | undefined,
+                turnNo: pending.turnNo,
+                visibleSpeakerNpcId: resolvedNpcId,
+              });
+              if (continuity.actionHistoryChanged && runSession?.runState) {
+                await this.db
+                  .update(runSessions)
+                  .set({ runState: runSession.runState as any })
+                  .where(eq(runSessions.id, pending.runId));
               }
             }
             srChanged = true;

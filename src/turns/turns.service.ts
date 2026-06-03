@@ -13,6 +13,7 @@ enum TurnMode {
 }
 
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
+import { isNegatedNpcMention } from '../engine/hub/npc-reference-negation.helper.js';
 
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { and, asc, eq, ne } from 'drizzle-orm';
@@ -1170,10 +1171,16 @@ export class TurnsService {
       // lastPrimaryNpcId는 대화 잠금용(SOCIAL_ACTION 연속), contextNpcId는 모든 행동에서 유지
       const contextNpcId = (lastEntry?.primaryNpcId as string) ?? null;
 
+      const safeIntentV3TargetNpcId =
+        intentV3.targetNpcId &&
+        !isNegatedNpcMention(rawInput, intentV3.targetNpcId)
+          ? intentV3.targetNpcId
+          : null;
+
       // ── Player-First 턴 모드 결정 ──
       const turnMode = this.determineTurnMode({
         earlyTargetNpcId,
-        intentV3TargetNpcId: intentV3.targetNpcId ?? null,
+        intentV3TargetNpcId: safeIntentV3TargetNpcId,
         actionType: intent.actionType,
         lastPrimaryNpcId: lastPrimaryNpcId ?? null,
         contextNpcId,
@@ -1182,7 +1189,7 @@ export class TurnsService {
         questFactTrigger,
       });
       this.logger.log(
-        `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'})`,
+        `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? safeIntentV3TargetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'})`,
       );
 
       // ── 모드별 이벤트 매칭 ──
@@ -1190,7 +1197,7 @@ export class TurnsService {
         case TurnMode.PLAYER_DIRECTED: {
           // 플레이어가 NPC/행동을 명시 → 이벤트 매칭 스킵
           const targetNpcForShell =
-            earlyTargetNpcId ?? intentV3.targetNpcId ?? null;
+            earlyTargetNpcId ?? safeIntentV3TargetNpcId ?? null;
           matchedEvent = {
             eventId: `FREE_PLAYER_${turnNo}`,
             eventType: 'ENCOUNTER' as any,
@@ -1503,7 +1510,7 @@ export class TurnsService {
         }
       }
 
-      if (overrideNpcId) {
+      if (overrideNpcId && !isNegatedNpcMention(rawInput, overrideNpcId)) {
         const prevNpc = (event.payload as Record<string, unknown>)
           ?.primaryNpcId;
         if (prevNpc !== overrideNpcId) {
@@ -6546,17 +6553,26 @@ export class TurnsService {
     //   이전엔 name/unknownAlias만 검사 — aliases/shortAlias 누락으로 "하위크"
     //   같은 단독 별칭 입력 시 타깃 NPC 식별 실패했음.
     for (const npc of allNpcs) {
-      if (npc.name && inputLower.includes(npc.name.toLowerCase()))
+      if (
+        npc.name &&
+        inputLower.includes(npc.name.toLowerCase()) &&
+        !isNegatedNpcMention(rawInput, npc.name)
+      )
         return npc.npcId;
       if (
         npc.unknownAlias &&
-        inputLower.includes(npc.unknownAlias.toLowerCase())
+        inputLower.includes(npc.unknownAlias.toLowerCase()) &&
+        !isNegatedNpcMention(rawInput, npc.unknownAlias)
       )
         return npc.npcId;
       if (
         (npc as Record<string, unknown>).shortAlias &&
         inputLower.includes(
           ((npc as Record<string, unknown>).shortAlias as string).toLowerCase(),
+        ) &&
+        !isNegatedNpcMention(
+          rawInput,
+          (npc as Record<string, unknown>).shortAlias as string,
         )
       )
         return npc.npcId;
@@ -6565,7 +6581,12 @@ export class TurnsService {
         | undefined;
       if (aliases && aliases.length > 0) {
         for (const al of aliases) {
-          if (al && al.length >= 2 && inputLower.includes(al.toLowerCase()))
+          if (
+            al &&
+            al.length >= 2 &&
+            inputLower.includes(al.toLowerCase()) &&
+            !isNegatedNpcMention(rawInput, al)
+          )
             return npc.npcId;
         }
       }

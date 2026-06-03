@@ -241,6 +241,51 @@ describe('PromptBuilderService — 보조 NPC 끼어들기 억제 directive', ()
     expect(text).toContain('그 문장을 출력하지 마세요');
   });
 
+  it('npcReaction semanticFrame → 반복/복붙 억제 가드 블록을 주입한다', () => {
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(
+        baseCtx(),
+        baseSr(),
+        '방금은 거칠었소. 장부 조작 흔적만 다시 확인하고 싶소.',
+        'ACTION',
+        undefined,
+        null,
+        null,
+        false,
+        {
+          reactionType: 'PROBE',
+          immediateGoal: '장부 의혹 범위 확인',
+          refusalLevel: 'POLITE',
+          openingStance: '경계심을 낮추지 않음',
+          emotionalShiftHint: { trust: 0, fear: 0, respect: 1, suspicion: 2 },
+          dialogueHint: '협조하되 핵심은 흐릴 것',
+          voiceQuality: '낮고 조심스러운 톤',
+          emotionalUndertone: '의심 섞인 신중함',
+          bodyLanguageMood: '닫힌 거리감',
+          semanticFrame: {
+            playerIntent: '사과하며 장부 의혹을 재확인',
+            pressureLevel: 'LOW',
+            emotionalTone: 'APOLOGETIC',
+            topicAtoms: ['장부', '위협'],
+            avoidEchoPhrases: [
+              '방금은 거칠었소',
+              '장부 조작 흔적만 다시 확인하고 싶소',
+            ],
+          },
+          source: 'llm',
+        },
+      ),
+    );
+
+    expect(text).toContain('[반복/복붙 억제 가드');
+    expect(text).toContain('사과하며 장부 의혹을 재확인');
+    expect(text).toContain('APOLOGETIC');
+    expect(text).toContain('장부, 위협');
+    expect(text).toContain('방금은 거칠었소');
+    expect(text).toContain('입력을 치환하지 말고');
+    expect(text).not.toContain('자연스럽게 인용하시오');
+  });
+
   it('focusedNpcId + recentAuxSpeakers → 직전 끼어든 NPC 침묵 가이드 추가', () => {
     const ctx = baseCtx({
       focusedNpcId: 'NPC_EDRIC',
