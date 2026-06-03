@@ -1103,12 +1103,13 @@ export class PromptBuilderService {
         }
         if (semanticFrame.avoidEchoPhrases?.length) {
           lines.push(
-            `▸ 그대로 반복 금지 어구: ${semanticFrame.avoidEchoPhrases.join(' / ')}`,
+            `▸ 그대로 반복 금지 어구/어휘: ${semanticFrame.avoidEchoPhrases.join(' / ')}`,
           );
         }
         lines.push(
           '⚠️ 플레이어 입력을 치환하지 말고 의미·정서·화제만 반영하세요.',
-          '⚠️ 금지 어구는 NPC 대사와 서술 첫 문장에 그대로 복사하지 마세요.',
+          '⚠️ 금지 어구는 부분 단어도 그대로 재사용하지 말고, 다른 신체 부위·제스처·사물 반응으로 바꾸세요.',
+          '⚠️ 이전 턴의 손/시선/눈매/떨림 계열 묘사가 금지 목록에 있으면 이번 턴에서는 같은 신체 묘사를 피하세요.',
           '⚠️ 대체 표현 예시는 만들지 말고 NPC의 반응/행동으로만 풀어 쓰세요.',
         );
       }

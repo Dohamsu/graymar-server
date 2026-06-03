@@ -38,6 +38,7 @@ import {
   NpcReactionDirectorService,
   type NpcReactionResult,
 } from './npc-reaction-director.service.js';
+import { NpcRepetitionGuardService } from './npc-repetition-guard.service.js';
 import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
 import {
@@ -128,6 +129,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly streamBroker: LlmStreamBrokerService,
     @Optional()
     private readonly npcReactionDirector?: NpcReactionDirectorService,
+    @Optional()
+    private readonly npcRepetitionGuard?: NpcRepetitionGuardService,
   ) {}
 
   onModuleInit(): void {
@@ -2648,6 +2651,51 @@ ${npcList}`,
       //   숫자/소수점/따옴표/마커는 한글 조건에 걸리지 않아 영향 없음.
       if (narrative) {
         narrative = narrative.replace(/([가-힣][.!?])(?=[가-힣])/g, '$1 ');
+      }
+
+      // 5.10.9d. NPC 반복 전이 가드 — 프롬프트/Director에서 금지한 rawInput echo,
+      // 최근 제스처, 한 턴 내 반복 문장이 최종 narrative로 넘어온 경우 DB 저장 전 탐지/축약.
+      if (narrative && this.npcRepetitionGuard) {
+        const rs = runSession?.runState as
+          | {
+              npcStates?: Record<
+                string,
+                { recentGestures?: Array<{ text?: string } | string> }
+              >;
+            }
+          | undefined;
+        const uiData = serverResult.ui as Record<string, unknown> | undefined;
+        const speakingNpc = uiData?.speakingNpc as
+          | { npcId?: string | null }
+          | undefined;
+        const actionContext = uiData?.actionContext as
+          | { primaryNpcId?: string | null }
+          | undefined;
+        const targetNpcId =
+          llmContext.focusedNpcId ??
+          actionContext?.primaryNpcId ??
+          speakingNpc?.npcId ??
+          null;
+        const recentGestures = targetNpcId
+          ? (rs?.npcStates?.[targetNpcId]?.recentGestures ?? [])
+              .map((g) => (typeof g === 'string' ? g : g.text))
+              .filter((g): g is string => typeof g === 'string' && g.length > 0)
+          : [];
+        const guarded = this.npcRepetitionGuard.apply({
+          narrative,
+          rawInput: pending.rawInput ?? '',
+          npcReaction: npcReaction ?? null,
+          recentGestures,
+          topicAtoms: npcReaction?.semanticFrame?.topicAtoms ?? [],
+        });
+        narrative = guarded.narrative;
+        if (guarded.issues.length > 0) {
+          this.logger.debug(
+            `[NpcRepetitionGuard] turn=${pending.turnNo} issues=${guarded.issues
+              .map((i) => `${i.type}:${i.action}:${i.phrase}`)
+              .join(' | ')}`,
+          );
+        }
       }
 
       // 5.10.10. 복합 호칭 hallucination 제거 (bug 4636, 4655 JSON 외부화)

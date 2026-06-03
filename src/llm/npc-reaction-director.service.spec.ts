@@ -126,6 +126,36 @@ describe('NpcReactionDirectorService', () => {
       );
     });
 
+    it('최근 서술의 반복 신체/시그니처 어휘를 회피 어구에 추가한다', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"reactionType":"PROBE","immediateGoal":"장부 의혹의 범위만 확인","refusalLevel":"POLITE","openingStance":"경계심을 낮추지 않음","emotionalShiftHint":{"trust":0,"fear":0,"respect":1,"suspicion":2},"dialogueHint":"협조하되 핵심은 흐릴 것","voiceQuality":"낮고 조심스러운 톤","emotionalUndertone":"의심 섞인 신중함","bodyLanguageMood":"닫힌 거리감","semanticFrame":{"playerIntent":"장부 의혹을 재확인","pressureLevel":"MID","emotionalTone":"CURIOUS","topicAtoms":["장부"],"avoidEchoPhrases":[]}}',
+        },
+      });
+
+      const result = await service.direct(
+        makeCtx({
+          rawInput: '장부 조작 흔적을 다시 확인한다.',
+          recentNpcDialogues: [
+            '회계사는 떨리는 손으로 장부를 붙잡고 손끝을 세운다. 그의 시선이 장부 위를 오간다.',
+            '날카로운 눈매가 흔들리고, 서류 뭉치를 품에 안은 채 주변을 살핀다.',
+          ],
+        }),
+      );
+
+      expect(result!.semanticFrame!.avoidEchoPhrases).toEqual(
+        expect.arrayContaining([
+          '떨리는 손',
+          '손',
+          '시선',
+          '날카로운 눈매',
+          '서류 뭉치',
+          '주변을 살핀',
+        ]),
+      );
+    });
+
     it('톤 3축 누락 → 빈 문자열 (parse는 성공)', async () => {
       mockLlmCaller.call.mockResolvedValue({
         success: true,

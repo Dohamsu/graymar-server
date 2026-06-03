@@ -24,6 +24,7 @@ import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
 import { ChallengeClassifierService } from './challenge-classifier.service.js';
 import { NpcReactionDirectorService } from './npc-reaction-director.service.js';
+import { NpcRepetitionGuardService } from './npc-repetition-guard.service.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
 import { ContentModule } from '../content/content.module.js';
 
@@ -51,6 +52,7 @@ import { ContentModule } from '../content/content.module.js';
     ThemeClassifierService,
     ChallengeClassifierService,
     NpcReactionDirectorService,
+    NpcRepetitionGuardService,
   ],
   exports: [
     ContextBuilderService,
@@ -63,6 +65,7 @@ import { ContentModule } from '../content/content.module.js';
     ThemeClassifierService,
     ChallengeClassifierService,
     NpcReactionDirectorService,
+    NpcRepetitionGuardService,
   ],
 })
 export class LlmModule implements OnModuleInit {

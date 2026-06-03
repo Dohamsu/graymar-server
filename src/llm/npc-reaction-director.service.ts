@@ -520,10 +520,11 @@ export class NpcReactionDirectorService {
       avoidEchoPhrases: this.dedupeStrings([
         ...base.avoidEchoPhrases,
         ...this.extractAvoidPhrases(ctx.rawInput),
+        ...this.extractRecentLexicalAvoidTerms(ctx.recentNpcDialogues ?? []),
         ...(ctx.recentNpcDialogues ?? []).flatMap((d) =>
           this.extractAvoidPhrases(d, 24),
         ),
-      ]).slice(0, 10),
+      ]).slice(0, 14),
     };
   }
 
@@ -587,6 +588,52 @@ export class NpcReactionDirectorService {
       .map((p) => p.trim().replace(/["“”]/g, ''))
       .filter((p) => p.length >= 5)
       .map((p) => (p.length > maxLen ? p.slice(0, maxLen) : p));
+  }
+
+  /**
+   * 최근 NPC 응답에서 반복되기 쉬운 신체/시그니처 어휘를 짧은 금지 토큰으로 추출한다.
+   * 긴 문장 금지만으로는 "손/시선/눈매" 같은 부분 반복을 막지 못하므로,
+   * 메인 LLM 프롬프트에 더 작은 lexical guard 를 함께 제공한다.
+   */
+  private extractRecentLexicalAvoidTerms(dialogues: string[]): string[] {
+    const text = dialogues.join('\n');
+    if (!text.trim()) return [];
+
+    const phrasePatterns: RegExp[] = [
+      /떨리는\s*손/g,
+      /날카로운\s*눈매/g,
+      /거칠게\s*매만/g,
+      /마른침을\s*삼키/g,
+      /헛기침/g,
+      /수지타산/g,
+      /서류\s*뭉치/g,
+      /주변을\s*살핀/g,
+      /곁눈질/g,
+    ];
+    const bodyTerms = [
+      '손',
+      '손끝',
+      '시선',
+      '눈매',
+      '눈빛',
+      '이마',
+      '목덜미',
+      '턱',
+      '옷깃',
+      '입술',
+    ];
+
+    const out: string[] = [];
+    for (const pattern of phrasePatterns) {
+      for (const match of text.matchAll(pattern)) {
+        out.push(match[0].replace(/\s+/g, ' ').trim());
+      }
+    }
+    for (const term of bodyTerms) {
+      if (text.includes(term)) out.push(term);
+    }
+
+    return this.dedupeStrings(out);
   }
 
   private dedupeStrings(values: string[]): string[] {
