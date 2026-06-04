@@ -337,7 +337,7 @@ describe('StreamClassifierService.buildCandidates()', () => {
     getNpc: (id: string) => mockNpcDefs[id] ?? null,
   } as any;
 
-  it('NPC 이름, 별칭, 역할에서 후보 생성', () => {
+  it('NPC 이름과 정확한 별칭에서만 후보 생성', () => {
     const npcStates = {
       NPC_EDRIC: { introduced: true } as any,
     };
@@ -351,9 +351,9 @@ describe('StreamClassifierService.buildCandidates()', () => {
     expect(edric).toBeDefined();
     expect(edric!.names).toContain('에드릭 베일');
     expect(edric!.names).toContain('날카로운 눈매의 회계사');
-    // 역할 파싱: "회계사/재무관" → ["회계사", "재무관"]
-    expect(edric!.names).toContain('회계사');
-    expect(edric!.names).toContain('재무관');
+    // bug 6ba6fd6b: 역할/짧은 일반 명사는 후보에서 제외해 NPC 점프를 막는다.
+    expect(edric!.names).not.toContain('회계사');
+    expect(edric!.names).not.toContain('재무관');
   });
 
   it('introduced=true → displayName=실명', () => {
@@ -440,7 +440,7 @@ describe('StreamClassifierService.buildCandidates()', () => {
     expect(candidates).toHaveLength(0);
   });
 
-  it('unknownAlias의 마지막 단어를 짧은 호칭으로 추가 (2자 이상)', () => {
+  it('unknownAlias의 마지막 일반 단어는 짧은 호칭으로 추가하지 않음', () => {
     const npcStates = {
       NPC_EDRIC: { introduced: false } as any,
     };
@@ -450,8 +450,8 @@ describe('StreamClassifierService.buildCandidates()', () => {
       1,
     );
     const edric = candidates.find((c) => c.npcId === 'NPC_EDRIC');
-    // "날카로운 눈매의 회계사" → 마지막 단어 "회계사" (3자)
-    expect(edric!.names).toContain('회계사');
+    // "회계사" 같은 일반 단어 매칭은 본문 흔한 단어와 충돌하므로 제외한다.
+    expect(edric!.names).not.toContain('회계사');
   });
 
   it('npcState가 없는 eventNpc → unknownAlias 또는 name을 displayName으로', () => {

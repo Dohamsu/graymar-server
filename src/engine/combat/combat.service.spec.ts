@@ -119,6 +119,12 @@ function makeDefaultBattleState(
 const defaultPlayerStats: PermanentStats = {
   maxHP: 100,
   maxStamina: 5,
+  str: 15,
+  dex: 10,
+  wit: 8,
+  con: 10,
+  per: 7,
+  cha: 8,
   atk: 15,
   def: 10,
   acc: 5,
@@ -133,6 +139,12 @@ const defaultEnemyStats: Record<string, PermanentStats> = {
   enemy_01: {
     maxHP: 50,
     maxStamina: 5,
+    str: 10,
+    dex: 10,
+    wit: 8,
+    con: 5,
+    per: 7,
+    cha: 8,
     atk: 10,
     def: 5,
     acc: 5,
@@ -156,6 +168,10 @@ describe('CombatService', () => {
       new DamageService(),
       new EnemyAiService(),
       mockContentLoader(),
+      {
+        getActiveSpecialEffects: () => [],
+        getGearModifiers: () => [],
+      } as any,
     );
   });
 
@@ -390,6 +406,12 @@ describe('CombatService', () => {
         enemy_01: {
           maxHP: 50,
           maxStamina: 5,
+          str: 200,
+          dex: 50,
+          wit: 8,
+          con: 5,
+          per: 7,
+          cha: 10,
           atk: 200,
           def: 5,
           acc: 50,

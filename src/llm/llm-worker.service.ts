@@ -2523,9 +2523,18 @@ ${npcList}`,
             (speakingNpc?.npcId as string | undefined) ??
             null;
           // Focused NPC turns can produce valid dialogue without an @ marker
-          // after post-processing. Keep the server-selected portrait when it
-          // still matches the focused/primary NPC instead of blanking the card.
-          if (!expectedNpcId || existingPortrait.npcId !== expectedNpcId) {
+          // after post-processing. Keep the server-selected portrait only when
+          // the final narrative still has dialogue-like evidence for that NPC.
+          // Otherwise a newly encountered NPC can leak into the card even when
+          // the LLM chose to narrate a different/non-speaking character.
+          const hasDialogueEvidence = /["\u201C][^"\u201D]{3,}["\u201D]/.test(
+            narrative,
+          );
+          if (
+            !expectedNpcId ||
+            existingPortrait.npcId !== expectedNpcId ||
+            !hasDialogueEvidence
+          ) {
             ui.npcPortrait = null;
             srChanged = true;
           }

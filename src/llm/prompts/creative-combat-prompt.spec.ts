@@ -54,10 +54,12 @@ function baseResult(
       inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
       meta: {
         battle: { phase: 'TURN', rngConsumed: 0 },
-        position: {},
+        position: { env: [] },
       },
     },
     ui: {
+      availableActions: [],
+      targetLabels: [],
       enemies: [],
       actionSlots: { base: 2, bonusAvailable: false, max: 3 },
       toneHint: 'tense',
