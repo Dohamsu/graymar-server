@@ -126,4 +126,82 @@ describe('NpcRepetitionGuardService', () => {
     );
     expect(result.narrative).toContain('안경테를 밀어 올린다');
   });
+
+  it('keeps repeated player commands as log-only even after multiple exact turns', () => {
+    const result = guard.apply({
+      rawInput:
+        '장부 조작 흔적만 다시 확인하고 싶소. 장부 조작 흔적만 다시 확인하고 싶소. 장부 조작 흔적만 다시 확인하고 싶소.',
+      narrative:
+        '@[에드릭] "장부 조작 흔적만 다시 확인하고 싶소." 그는 장부를 덮는다.',
+    });
+
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'RAW_INPUT_ECHO',
+          phrase: '장부 조작 흔적만 다시 확인하고 싶소',
+          action: 'LOG_ONLY',
+        }),
+      ]),
+    );
+    expect(result.narrative).toContain('@[에드릭] "장부 조작 흔적만 다시 확인하고 싶소."');
+  });
+
+  it('does not treat a non-present NPC name in player input as removable prose', () => {
+    const result = guard.apply({
+      rawInput: '로넨이 시킨 일이오? 로넨 이름을 들먹이며 떠본다.',
+      narrative:
+        '에드릭은 잠시 표정을 굳힌다. @[에드릭] "그 이름은 여기서 조심히 꺼내시오."',
+      npcReaction: {
+        semanticFrame: {
+          playerIntent: '비재현 인물 이름으로 압박',
+          pressureLevel: 'MID',
+          emotionalTone: 'SUSPICIOUS',
+          topicAtoms: ['로넨'],
+          avoidEchoPhrases: ['로넨'],
+        },
+      } as any,
+    });
+
+    expect(result.issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'AVOID_PHRASE_ECHO',
+          phrase: '로넨',
+        }),
+      ]),
+    );
+    expect(result.narrative).toContain('@[에드릭]');
+    expect(result.narrative).toContain('그 이름은 여기서 조심히 꺼내시오');
+  });
+
+  it('removes previous NPC signature prose but preserves the current speaker marker and dialogue', () => {
+    const result = guard.apply({
+      rawInput: '에드릭에게 길드 장부를 캐묻는다.',
+      narrative:
+        '안경테를 밀어 올린다. @[에드릭] "장부는 내가 확인하겠소."',
+      npcReaction: {
+        semanticFrame: {
+          playerIntent: '에드릭 추궁',
+          pressureLevel: 'MID',
+          emotionalTone: 'CURIOUS',
+          topicAtoms: ['에드릭', '장부'],
+          avoidEchoPhrases: ['안경테를 밀어 올린다'],
+        },
+      } as any,
+      recentGestures: ['안경테를 밀어 올린다'],
+    });
+
+    expect(result.narrative).not.toContain('안경테를 밀어 올린다');
+    expect(result.narrative).toBe('@[에드릭] "장부는 내가 확인하겠소."');
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'AVOID_PHRASE_ECHO',
+          phrase: '안경테를 밀어 올린다',
+          action: 'REMOVE_DUPLICATE_SENTENCE',
+        }),
+      ]),
+    );
+  });
 });

@@ -176,6 +176,7 @@ export class NpcRepetitionGuardService {
       const before = next;
       next = next
         .replace(sentence, '')
+        .replace(/^[\s.!?。！？]+/, '')
         .replace(/\s{2,}/g, ' ')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
