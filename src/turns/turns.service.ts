@@ -141,6 +141,7 @@ import type {
   IncidentSummaryUI,
   SignalFeedItemUI,
   NpcEmotionalUI,
+  QuestRevealUI,
 } from '../db/types/server-result.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
 
@@ -3078,6 +3079,8 @@ export class TurnsService {
 
     // === Quest Progression: 3경로 FACT 발견 + 단계 전환 ===
     const discoveredFactIdsThisTurn: string[] = []; // 대화 주제 추적용
+    // architecture/58 — NPC 경로 발견 fact를 serverResult.ui.questReveal로 전달 (기록·서술 단일화)
+    let questRevealThisTurn: QuestRevealUI | null = null;
     if (this.questProgression) {
       try {
         const existing = updatedRunState.discoveredQuestFacts ?? [];
@@ -3181,17 +3184,21 @@ export class TurnsService {
             );
 
             if (npcWillReveal) {
-              const revealedFactId =
-                this.questProgression.getRevealableQuestFact(
+              // architecture/58 — 주제 우선 선택: 입력 키워드 매칭 fact 우선, 없으면 순서 fallback
+              const selected = this.questProgression.selectRevealableFact(
+                npcId,
+                rawInput,
+                updatedRunState,
+              );
+              if (selected && npcRevealMode !== 'refuse') {
+                addFact(selected.factId, `npc:${npcId}:${npcRevealMode}`);
+                // 기록된 fact와 동일한 fact를 LLM이 서술하도록 serverResult로 전달
+                questRevealThisTurn = {
+                  factId: selected.factId,
                   npcId,
-                  updatedRunState,
-                );
-              if (revealedFactId) {
-                addFact(revealedFactId, `npc:${npcId}:${npcRevealMode}`);
-                // revealMode를 serverResult에 전달하여 context-builder에서 프롬프트 분기에 활용
-                (
-                  updatedRunState as unknown as Record<string, unknown>
-                )._npcRevealMode = npcRevealMode;
+                  revealMode: npcRevealMode,
+                  matchedByTopic: selected.matchedByTopic,
+                };
               }
             }
           }
@@ -3738,6 +3745,11 @@ export class TurnsService {
           },
       allEquipmentAdded.length > 0 ? allEquipmentAdded : undefined,
     );
+
+    // architecture/58 — 이번 턴 발견 fact를 ui에 attach (기록·서술 단일화)
+    if (questRevealThisTurn) {
+      result.ui.questReveal = questRevealThisTurn;
+    }
 
     // architecture/48 Layer 4 — NPC 위치 안내 hint를 ui에 attach (LLM 프롬프트 주입용)
     if (npcWhereaboutsHint) {

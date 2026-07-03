@@ -112,6 +112,7 @@ const baseCtx = (overrides: Partial<LlmContext> = {}): LlmContext =>
     npcAlreadyRevealedFacts: null,
     factHandoffHint: null,
     factDefaultDescription: null,
+    factWithheldHint: null,
     npcWhereaboutsHint: null,
     questFactHint: null,
     questDirectionHint: null,

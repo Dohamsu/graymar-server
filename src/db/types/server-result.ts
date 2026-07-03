@@ -185,6 +185,19 @@ export type OperationProgressUI = {
   active: boolean;
 };
 
+/**
+ * architecture/58 — 이번 턴 NPC 경로로 발견된 quest fact.
+ * 기록(discoveredQuestFacts)과 LLM 서술이 같은 fact를 가리키도록
+ * context-builder가 이 값을 최우선으로 npcRevealableFact에 사용한다.
+ */
+export type QuestRevealUI = {
+  factId: string;
+  npcId: string;
+  revealMode: 'direct' | 'indirect' | 'observe';
+  /** true = 입력 키워드 매칭으로 선택, false = 순서 기반 fallback */
+  matchedByTopic: boolean;
+};
+
 export type UIBundle = {
   availableActions: string[];
   targetLabels: TargetLabel[];
@@ -195,6 +208,8 @@ export type UIBundle = {
   resolveOutcome?: 'SUCCESS' | 'PARTIAL' | 'FAIL';
   resolveBreakdown?: ResolveBreakdown;
   actionContext?: ActionContext;
+  /** architecture/58 — 이번 턴 발견 fact (기록·서술 단일화) */
+  questReveal?: QuestRevealUI;
   // Narrative Engine v1 확장
   signalFeed?: SignalFeedItemUI[];
   activeIncidents?: IncidentSummaryUI[];

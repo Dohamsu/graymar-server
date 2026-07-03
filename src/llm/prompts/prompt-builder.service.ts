@@ -2378,6 +2378,23 @@ export class PromptBuilderService {
       factsParts.push(lines.join('\n'));
     }
 
+    // === architecture/58: 보류 가이드 (NPC가 알지만 이번 턴 발견 조건 미충족) ===
+    // 서버가 fact를 기록하지 않은 턴에 detail을 공개하면 발견 로그와 어긋난다.
+    // NPC가 "아는 눈치"만 보이고 정보는 아끼는 반응으로 유도.
+    if (!ctx.npcRevealableFact && ctx.factWithheldHint) {
+      const { npcDisplayName, topic } = ctx.factWithheldHint;
+      factsParts.push(
+        [
+          `[NPC 정보 보류]`,
+          `${npcDisplayName}은(는) "${topic}"에 대해 무언가 아는 눈치지만, 아직 입을 열 마음이 없습니다.`,
+          `⚠️ 구체적인 정보/단서 내용을 절대 공개하지 마세요. 대신:`,
+          `- 잠시 멈칫하거나, 시선을 피하거나, 화제를 돌리는 반응`,
+          `- "그 얘기는... 다음에 합시다" 식의 짧은 유보 (NPC 말투에 맞춰)`,
+          `- 플레이어가 신뢰를 더 쌓거나 다른 방식으로 접근할 여지를 남기는 톤`,
+        ].join('\n'),
+      );
+    }
+
     // === architecture/46: default 텍스트 (NPC 누구도 모를 때, quest description) ===
     if (
       !ctx.npcRevealableFact &&
@@ -2394,11 +2411,12 @@ export class PromptBuilderService {
     }
 
     // === Phase 2 (architecture/45): 잡담 모드 — daily_topic 주입 ===
-    // npcRevealableFact / factHandoffHint / factDefaultDescription 모두 없을 때 (key 매칭 0)
-    // NPC 일상 화제 풀에서 1개 선택해 자연 대화 유도.
+    // npcRevealableFact / factHandoffHint / factWithheldHint / factDefaultDescription
+    // 모두 없을 때 (key 매칭 0). NPC 일상 화제 풀에서 1개 선택해 자연 대화 유도.
     if (
       !ctx.npcRevealableFact &&
       !ctx.factHandoffHint &&
+      !ctx.factWithheldHint &&
       !ctx.factDefaultDescription &&
       targetNpcIds.size > 0
     ) {

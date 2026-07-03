@@ -132,6 +132,39 @@ export class QuestProgressionService {
   }
 
   /**
+   * architecture/58 — 기록·서술 단일화: 주제 우선 fact 선택.
+   *
+   * 플레이어 입력 키워드를 facts.json 키워드 인덱스와 매칭해, 현재 NPC가
+   * 보유(knownBy)한 미발견 fact를 우선 선택한다. 매칭이 없으면 기존
+   * 순서 기반(getRevealableQuestFact)으로 fallback.
+   *
+   * 반환된 factId는 발견 기록과 LLM 서술 주입(ui.questReveal) 양쪽에
+   * 동일하게 사용되어야 한다 — 기록 fact ≠ 서술 fact 데스싱크 방지.
+   */
+  selectRevealableFact(
+    npcId: string,
+    rawInput: string,
+    runState: RunState,
+  ): { factId: string; matchedByTopic: boolean } | null {
+    const discovered = new Set(runState.discoveredQuestFacts ?? []);
+
+    const inputKeywords = new Set(rawInput?.match(/[가-힣]{2,}/g) ?? []);
+    if (inputKeywords.size > 0) {
+      const candidates = this.content.getFactsByKeywords(
+        inputKeywords,
+        discovered,
+      );
+      const ownFact = candidates.find((f) => f.knownBy.includes(npcId));
+      if (ownFact) {
+        return { factId: ownFact.factId, matchedByTopic: true };
+      }
+    }
+
+    const fallback = this.getRevealableQuestFact(npcId, runState);
+    return fallback ? { factId: fallback, matchedByTopic: false } : null;
+  }
+
+  /**
    * factId에 해당하는 quest.json의 nextHint를 반환.
    * fact 발견 직후, 다음 턴 LLM 프롬프트에 방향 힌트로 사용.
    */

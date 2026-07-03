@@ -141,6 +141,11 @@ export interface LlmContext {
   } | null;
   // architecture/46: NPC 누구도 fact 모를 때 default 일반 서술 (quest.facts.description)
   factDefaultDescription: string | null;
+  // architecture/58: NPC가 알지만 이번 턴 발견 조건 미충족 — detail 노출 없이 보류 반응 가이드
+  factWithheldHint: {
+    npcDisplayName: string;
+    topic: string;
+  } | null;
   // architecture/48 Layer 4: 사용자가 호명한 NPC가 다른 장소에 있을 때 주변인 안내 hint
   npcWhereaboutsHint: {
     searchedNpcDisplay: string;
@@ -262,7 +267,10 @@ export class ContextBuilderService {
    *
    * @internal export — context-builder.focused-npc.spec.ts regression coverage.
    */
-  static collectFactKeywords(rawInput: string, _actionType: string): Set<string> {
+  static collectFactKeywords(
+    rawInput: string,
+    _actionType: string,
+  ): Set<string> {
     return new Set(rawInput.match(/[가-힣]{2,}/g) ?? []);
   }
 
@@ -1605,17 +1613,18 @@ export class ContextBuilderService {
       }
     }
 
-    // === architecture/46: Fact Pool + NPC Continuity — 4-mode 분기 ===
-    // 1. 입력 키워드 → 모든 NPC fact 풀에서 후보 추출
-    // 2. discoveredQuestFacts 제외
-    // 3. 현재 NPC(primaryNpc=잠금/맥락 NPC) 보유 여부에 따라 4-mode:
-    //    a. 보유 → fact 공개 (npcRevealableFact)
+    // === architecture/46 + 58: Fact Pool + 기록·서술 단일화 ===
+    // 0. (58) 서버가 이번 턴 발견 처리한 fact(ui.questReveal)가 있으면 그 fact를 그대로 서술
+    //    — 기록된 fact와 LLM이 말하는 fact가 반드시 일치.
+    // 1. 없으면 (46) 입력 키워드 → fact 풀 매칭으로 분기:
+    //    a. 현재 NPC 보유 → 보류 가이드 (factWithheldHint — 기록 없는 detail 공개 금지)
     //    b. 미보유 + 다른 NPC 보유 → 인계 가이드 (factHandoffHint)
     //    c. 누구도 미보유 → default 텍스트 (factDefaultDescription)
     //    d. 키워드 매칭 0 → 잡담 모드 (모두 null, prompt-builder가 daily_topics 주입)
     let npcRevealableFact: LlmContext['npcRevealableFact'] = null;
     let factHandoffHint: LlmContext['factHandoffHint'] = null;
     let factDefaultDescription: LlmContext['factDefaultDescription'] = null;
+    let factWithheldHint: LlmContext['factWithheldHint'] = null;
     {
       const outcome = resolveOutcome as string | undefined;
       if (outcome === 'SUCCESS' || outcome === 'PARTIAL') {
@@ -1625,11 +1634,50 @@ export class ContextBuilderService {
           | undefined;
         const factNpcId = acForFact?.primaryNpcId as string | null | undefined;
 
+        // === architecture/58 — 서버 발견 fact 최우선 주입 ===
+        const questReveal = uiForFact?.questReveal as
+          | {
+              factId: string;
+              npcId: string;
+              revealMode: 'direct' | 'indirect' | 'observe';
+              matchedByTopic: boolean;
+            }
+          | undefined;
+        if (questReveal?.factId) {
+          const revealedFact = this.content.getFact(questReveal.factId);
+          if (revealedFact) {
+            const npcDef = this.content.getNpc(questReveal.npcId);
+            const npcStatesForFact = runState?.npcStates as
+              | Record<string, NPCState>
+              | undefined;
+            const npcState = npcStatesForFact?.[questReveal.npcId];
+            const displayName =
+              npcState && npcDef
+                ? getNpcDisplayName(npcState, npcDef)
+                : npcDef?.unknownAlias || npcDef?.name || questReveal.npcId;
+            const detail =
+              revealedFact.versions[questReveal.npcId] ??
+              revealedFact.description ??
+              '';
+            npcRevealableFact = {
+              npcDisplayName: displayName,
+              factId: revealedFact.factId,
+              detail: this.sanitizeNpcNames(detail, runState),
+              resolveOutcome: outcome,
+              trust: npcState?.emotional?.trust ?? 0,
+              posture: npcState?.posture ?? 'CAUTIOUS',
+              revealMode: questReveal.revealMode,
+            };
+          }
+        }
+
         const rawInputForFact =
           (acForFact?.originalInput as string | undefined) ??
-          (((serverResult as Record<string, unknown>)?.summary as
-            | Record<string, unknown>
-            | undefined)?.short as string | undefined) ??
+          ((
+            (serverResult as Record<string, unknown>)?.summary as
+              | Record<string, unknown>
+              | undefined
+          )?.short as string | undefined) ??
           '';
         const actionTypeForFact = (acForFact?.parsedType as string) ?? '';
         const inputKw = ContextBuilderService.collectFactKeywords(
@@ -1642,10 +1690,10 @@ export class ContextBuilderService {
         const revealedFactIds = new Set(discoveredFacts);
 
         // === Step A: facts.json에서 키워드 매칭 fact 후보 추출 (architecture/46) ===
-        const factCandidates = this.content.getFactsByKeywords(
-          inputKw,
-          revealedFactIds,
-        );
+        // 서버 발견 fact가 이미 결정된 턴에는 인계/보류 분기가 필요 없음
+        const factCandidates = npcRevealableFact
+          ? []
+          : this.content.getFactsByKeywords(inputKw, revealedFactIds);
 
         if (factCandidates.length > 0 && factNpcId) {
           // === Step B: 현재 NPC가 후보 fact 중 하나라도 보유? (knownBy 기반) ===
@@ -1654,7 +1702,8 @@ export class ContextBuilderService {
           );
 
           if (ownFact) {
-            // mode A: 현재 NPC가 보유 → 그 NPC의 versions[npcId] 사용
+            // mode A' (58): 서버가 기록하지 않은 fact detail을 서술로 공개하면
+            // 발견 로그와 어긋나는 정보 누출이 된다 → detail 없이 '보류' 가이드만.
             const npcDef = this.content.getNpc(factNpcId);
             const npcStatesForFact = runState?.npcStates as
               | Record<string, NPCState>
@@ -1664,21 +1713,10 @@ export class ContextBuilderService {
               npcState && npcDef
                 ? getNpcDisplayName(npcState, npcDef)
                 : npcDef?.unknownAlias || npcDef?.name || factNpcId;
-            const detail =
-              ownFact.versions[factNpcId] ?? ownFact.description ?? '';
-            const sanitizedDetail = this.sanitizeNpcNames(detail, runState);
-            npcRevealableFact = {
+            factWithheldHint = {
               npcDisplayName: displayName,
-              factId: ownFact.factId,
-              detail: sanitizedDetail,
-              resolveOutcome: outcome,
-              trust: npcState?.emotional?.trust ?? 0,
-              posture: npcState?.posture ?? 'CAUTIOUS',
-              revealMode:
-                ((runState as Record<string, unknown>)?._npcRevealMode as
-                  | 'direct'
-                  | 'indirect'
-                  | 'observe') ?? 'indirect',
+              topic:
+                ownFact.topic ?? [...inputKw].find((k) => k.length >= 2) ?? '',
             };
           } else {
             // mode B: 현재 NPC 미보유 → 다른 NPC가 알면 인계 가이드
@@ -1854,6 +1892,8 @@ export class ContextBuilderService {
       factHandoffHint,
       // architecture/46: NPC 누구도 모를 때 default 일반 서술
       factDefaultDescription,
+      // architecture/58: NPC가 알지만 미발견 — detail 없는 보류 가이드
+      factWithheldHint,
       // architecture/48 Layer 4: 사용자 호명 NPC가 다른 장소일 때 안내 hint
       npcWhereaboutsHint:
         ((serverResult.ui as Record<string, unknown> | undefined)
