@@ -143,11 +143,26 @@ export class NpcResolverService {
     // 같은 location NPC 우선 — 같은 키워드("두목")가 여러 NPC에 있을 때 잘못 선택 방지
     if (!isChoice) {
       // 1a. 실명/별칭 전체 매칭
-      // architecture/59 이슈 1 — extractTargetNpcFromInput과 매칭 감도 정렬:
-      //   aliases[]("하를런" 등 부분 이름 변형)는 무조건 검사,
-      //   shortAlias("노동자" 등 일반 명사 위험)는 같은 장소에 있을 때만 검사.
+      // architecture/59 이슈 1 — extractTargetNpcFromInput과 매칭 감도 정렬.
+      // 리뷰 반영(arch/60): aliases[]도 공유 별칭("보스" 등)이면 다른 NPC를
+      // 가로채 whereabouts 안내로 화자를 지워버릴 수 있어, "고유 별칭이거나
+      // 같은 장소에 있을 때"만 STRONG으로 인정 (shortAlias와 동일 가드).
+      const aliasOwnerCount = new Map<string, number>();
+      for (const npc of allNpcs) {
+        for (const al of npc.aliases ?? []) {
+          const key = al.toLowerCase();
+          aliasOwnerCount.set(key, (aliasOwnerCount.get(key) ?? 0) + 1);
+        }
+      }
       const nameMatched: NpcDefinition[] = [];
       for (const npc of allNpcs) {
+        const atLocation = () =>
+          this.isAtLocation(
+            npc,
+            ctx.currentLocationId,
+            ctx.timePhase,
+            ctx.runState,
+          );
         if (npc.name && inputLower.includes(npc.name.toLowerCase())) {
           nameMatched.push(npc);
         } else if (
@@ -157,7 +172,11 @@ export class NpcResolverService {
           nameMatched.push(npc);
         } else if (
           (npc.aliases ?? []).some(
-            (al) => al.length >= 2 && inputLower.includes(al.toLowerCase()),
+            (al) =>
+              al.length >= 2 &&
+              inputLower.includes(al.toLowerCase()) &&
+              ((aliasOwnerCount.get(al.toLowerCase()) ?? 0) <= 1 ||
+                atLocation()),
           )
         ) {
           nameMatched.push(npc);
@@ -165,12 +184,7 @@ export class NpcResolverService {
           npc.shortAlias &&
           npc.shortAlias.length >= 2 &&
           inputLower.includes(npc.shortAlias.toLowerCase()) &&
-          this.isAtLocation(
-            npc,
-            ctx.currentLocationId,
-            ctx.timePhase,
-            ctx.runState,
-          )
+          atLocation()
         ) {
           nameMatched.push(npc);
         }
@@ -347,11 +361,19 @@ export class NpcResolverService {
         continue;
       }
       // architecture/59 이슈 1 — 조사 타깃("하를런에게"의 "하를런")은 별칭 변형도 인정.
-      // target은 조사 앞 구절로 범위가 좁아 shortAlias 오탐 위험이 낮다.
+      // target은 조사 앞 구절로 범위가 좁지만, 공유 별칭("보스" 등)은 부재 NPC를
+      // 임의 선택할 수 있어 고유 별칭만 인정 (arch/60 리뷰 반영).
       const nameVariants = [...(npc.aliases ?? []), npc.shortAlias ?? ''];
       if (
         nameVariants.some(
-          (al) => al.length >= 2 && target.includes(al.toLowerCase()),
+          (al) =>
+            al.length >= 2 &&
+            target.includes(al.toLowerCase()) &&
+            npcs.filter((o) =>
+              [...(o.aliases ?? []), o.shortAlias ?? ''].some(
+                (oa) => oa.toLowerCase() === al.toLowerCase(),
+              ),
+            ).length <= 1,
         )
       ) {
         candidates.push(npc);

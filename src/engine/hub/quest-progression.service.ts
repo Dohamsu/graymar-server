@@ -4,6 +4,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import type { RunState } from '../../db/types/permanent-stats.js';
+import { extractKoreanKeywords } from '../../common/text-utils.js';
 
 interface StateTransition {
   requiredFacts?: string[];
@@ -148,13 +149,13 @@ export class QuestProgressionService {
   ): { factId: string; matchedByTopic: boolean } | null {
     const discovered = new Set(runState.discoveredQuestFacts ?? []);
 
-    const inputKeywords = new Set(rawInput?.match(/[가-힣]{2,}/g) ?? []);
+    const inputKeywords = extractKoreanKeywords(rawInput);
     if (inputKeywords.size > 0) {
       const candidates = this.content.getFactsByKeywords(
         inputKeywords,
         discovered,
       );
-      const ownFact = candidates.find((f) => f.knownBy.includes(npcId));
+      const ownFact = candidates.find((f) => (f.knownBy ?? []).includes(npcId));
       if (ownFact) {
         return { factId: ownFact.factId, matchedByTopic: true };
       }

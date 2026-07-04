@@ -8,7 +8,7 @@ import {
   type OnModuleDestroy,
   Logger,
 } from '@nestjs/common';
-import { and, eq, lt, or, isNull, desc } from 'drizzle-orm';
+import { and, eq, lt, or, isNull, desc, sql } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import {
   turns,
@@ -3495,26 +3495,46 @@ ${npcList}`,
     label: string,
     patch: (rs: Record<string, unknown>) => boolean,
   ): Promise<void> {
-    const session = await this.db.query.runSessions.findFirst({
-      where: eq(runSessions.id, runId),
-      columns: { runState: true },
-    });
-    const fresh = session?.runState as Record<string, unknown> | undefined;
-    if (!fresh) return;
-    let changed = false;
-    try {
-      changed = patch(fresh);
-    } catch (err) {
-      this.logger.warn(
-        `[RunStatePatch:${label}] patch error: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return;
-    }
-    if (changed) {
-      await this.db
+    // CAS(비교-후-쓰기) 재시도: SELECT와 UPDATE 사이에 턴 커밋이 끼면
+    // (빠른 연속 턴에서 실측된 잔여 경합 창) 0행 갱신이 되고 fresh부터 재시도한다.
+    // 3회 연속 충돌 시 이 패치(제스처/테마 축적)는 포기 — soft 데이터라 다음 턴에 재수집.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const session = await this.db.query.runSessions.findFirst({
+        where: eq(runSessions.id, runId),
+        columns: { runState: true },
+      });
+      const fresh = session?.runState as Record<string, unknown> | undefined;
+      if (!fresh) return;
+      const baseline = JSON.stringify(fresh);
+      const working = JSON.parse(baseline) as Record<string, unknown>;
+      let changed = false;
+      try {
+        changed = patch(working);
+      } catch (err) {
+        this.logger.warn(
+          `[RunStatePatch:${label}] patch error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return;
+      }
+      if (!changed) return;
+      const updated = await this.db
         .update(runSessions)
-        .set({ runState: fresh as any })
-        .where(eq(runSessions.id, runId));
+        .set({ runState: working as any })
+        .where(
+          and(
+            eq(runSessions.id, runId),
+            // jsonb 동등 비교는 키 순서 무관 — 읽은 시점 상태 그대로일 때만 갱신
+            sql`${runSessions.runState} = ${baseline}::jsonb`,
+          ),
+        )
+        .returning({ id: runSessions.id });
+      if (updated.length > 0) return;
+      this.logger.debug(
+        `[RunStatePatch:${label}] 동시 커밋과 충돌 — 재시도 ${attempt + 1}/3`,
+      );
     }
+    this.logger.warn(
+      `[RunStatePatch:${label}] 3회 충돌 — 이번 턴 패치 포기 (soft 데이터)`,
+    );
   }
 }

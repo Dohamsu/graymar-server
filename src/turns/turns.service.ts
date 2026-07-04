@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/restrict-template-expressions, @typescript-eslint/no-base-to-string, @typescript-eslint/no-require-imports */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/restrict-template-expressions, @typescript-eslint/no-base-to-string */
 // 정본: specs/HUB_system.md — Action-First 턴 파이프라인
 // Player-First Event Engine: 이벤트가 유저를 끌고가지 않고, 유저가 게임을 끌고간다
 
@@ -60,6 +60,8 @@ import { InventoryService } from '../engine/rewards/inventory.service.js';
 import { RewardsService } from '../engine/rewards/rewards.service.js';
 import { EquipmentService } from '../engine/rewards/equipment.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
+import { QUEST_BALANCE } from '../engine/hub/quest-balance.config.js';
+import { extractKoreanKeywords } from '../common/text-utils.js';
 // HUB 엔진 서비스
 import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { HeatService } from '../engine/hub/heat.service.js';
@@ -385,10 +387,13 @@ export class TurnsService {
     const _agenda = runState.agenda ?? this.agendaService.initAgenda();
     const updatedRunState: RunState = { ...runState };
 
-    // pendingQuestHint 만료 정리 (HUB 턴에서도 실행): 발견 다음 턴 1회만 전달
+    // pendingQuestHint 만료 정리 (HUB 턴): 이월 창(arch/60 P2)을 존중해
+    // 창 초과분만 정리. HUB 방문이 발견↔다음 LOCATION 턴 사이에 끼어도
+    // [단서 방향] 힌트가 살아남아 복귀 턴에 발화된다 (리뷰 발견 반영).
     if (
       updatedRunState.pendingQuestHint &&
-      updatedRunState.pendingQuestHint.setAtTurn < turnNo
+      updatedRunState.pendingQuestHint.setAtTurn <
+        turnNo - QUEST_BALANCE.DIRECTION_HINT_CARRY_MAX_TURNS
     ) {
       updatedRunState.pendingQuestHint = null;
     }
@@ -1259,8 +1264,7 @@ export class TurnsService {
             lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
           const dynamicRoll = rng.range(0, 100);
 
-          const { SITGEN_CHANCE } =
-            require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
+          const { SITGEN_CHANCE } = QUEST_BALANCE;
           if (
             this.situationGenerator &&
             !lastWasDynamic &&
@@ -2459,7 +2463,7 @@ export class TurnsService {
         SOCIAL_ACTIONS_FOR_LOCK.has(intent.actionType)
       ) {
         // 입력 키워드 추출 + fact 매칭 검사
-        const inputKwSet = new Set(rawInput.match(/[가-힣]{2,}/g) ?? []);
+        const inputKwSet = extractKoreanKeywords(rawInput);
         const factCandidates = this.content.getFactsByKeywords(inputKwSet);
         const lockNpcKnowsFact = factCandidates.some((f) =>
           f.knownBy.includes(candidateLockNpc),
@@ -3075,10 +3079,7 @@ export class TurnsService {
     // 부착하지 않고 다음 턴으로 이월 (최대 DIRECTION_HINT_CARRY_MAX_TURNS턴, 초과 시 만료).
     // 소비(정리)는 실제 부착 시점(buildLocationResult 이후)에 확정한다.
     const { NON_TOPIC_FALLBACK_REVEAL_CHANCE, DIRECTION_HINT_CARRY_MAX_TURNS } =
-      require('../engine/hub/quest-balance.config.js').QUEST_BALANCE as {
-        NON_TOPIC_FALLBACK_REVEAL_CHANCE: number;
-        DIRECTION_HINT_CARRY_MAX_TURNS: number;
-      };
+      QUEST_BALANCE;
     let questDirectionHintForUi: { hint: string; mode: string } | null = null;
     if (updatedRunState.pendingQuestHint) {
       const pending = updatedRunState.pendingQuestHint;
@@ -3247,8 +3248,7 @@ export class TurnsService {
 
         // 경로 3: PARTIAL + 이벤트 discoverableFact — P2/P4: 확률은 config에서 관리
 
-        const { PARTIAL_FACT_DISCOVERY_CHANCE } =
-          require('../engine/hub/quest-balance.config.js').QUEST_BALANCE;
+        const { PARTIAL_FACT_DISCOVERY_CHANCE } = QUEST_BALANCE;
         if (resolveResult.outcome === 'PARTIAL' && event) {
           const eventFact =
             ((event.payload as Record<string, unknown>)?.discoverableFact as
@@ -3794,11 +3794,18 @@ export class TurnsService {
     }
 
     // architecture/59 이슈 2 + 60 P2 — 직전 발견 fact의 nextHint를 ui에 attach ([단서 방향] 연출).
-    // 같은 턴에 새 단서 공개(questReveal)가 있으면 연출 과밀 방지를 위해 부착하지 않고
-    // pendingQuestHint를 유지해 다음 턴으로 이월한다.
+    // 같은 턴에 새 단서 공개(questReveal)가 있으면 연출 과밀 방지를 위해 부착하지 않는다.
+    // 이월 의미: 이번 턴에 새 nextHint가 쓰였으면 최신이 우선(교체), 없으면 기존 힌트 유지.
     if (questDirectionHintForUi && !questRevealThisTurn) {
       result.ui.questDirectionHint = questDirectionHintForUi;
-      updatedRunState.pendingQuestHint = null; // 소비 완료
+      // 소비 정리 — 단, 이번 턴에 새로 쓰인 힌트(setAtTurn === turnNo, 예: 이벤트
+      // 경로 발견의 nextHint)는 지우면 안 된다 (리뷰 발견: 신규 힌트 소실 방지).
+      if (
+        updatedRunState.pendingQuestHint &&
+        updatedRunState.pendingQuestHint.setAtTurn < turnNo
+      ) {
+        updatedRunState.pendingQuestHint = null;
+      }
     }
 
     // architecture/48 Layer 4 — NPC 위치 안내 hint를 ui에 attach (LLM 프롬프트 주입용)

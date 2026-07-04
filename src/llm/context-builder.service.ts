@@ -1,6 +1,7 @@
 // 정본: specs/llm_context_system_v1.md — L0~L4 5계층 인터페이스
 
 import { Inject, Injectable } from '@nestjs/common';
+import { extractKoreanKeywords } from '../common/text-utils.js';
 import { and, asc, desc, eq, ne } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import {

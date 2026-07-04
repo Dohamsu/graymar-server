@@ -114,4 +114,57 @@ describe('NpcResolverService — 부분 이름 매칭 (architecture/59 이슈 1)
     expect(r.npcId).toBe('NPC_TOBREN');
     expect(r.source).toBe('EVENT_PRIMARY');
   });
+
+  it('공유 별칭은 소유 NPC가 현장에 없으면 STRONG 매칭하지 않음 (arch/60 리뷰)', () => {
+    const SHARED_A = { ...HARLUN, aliases: ['하를런', '보스'] };
+    const SHARED_B = {
+      ...TOBREN,
+      npcId: 'NPC_OTHER_BOSS',
+      name: '검은 보스',
+      aliases: ['보스'],
+    };
+    const sharedContent = {
+      getAllNpcs: () => [SHARED_A, SHARED_B],
+      getNpc: (id: string) =>
+        [SHARED_A, SHARED_B].find((n) => n.npcId === id),
+      getFactsByKeywords: () => [],
+    };
+    const r2 = new NpcResolverService(
+      sharedContent as any,
+      new FakeWhereabouts() as any,
+    );
+    // 두 소유 NPC 모두 다른 장소 → '보스' 공유 별칭으로는 STRONG 금지
+    const away = r2.resolve(
+      baseCtx('보스를 찾아가 묻는다', {
+        candidateEvent: {
+          eventId: 'EVT_X',
+          payload: { primaryNpcId: 'NPC_OTHER_BOSS' },
+        },
+        runState: {
+          worldState: {
+            npcLocations: {
+              NPC_HARLUN: 'LOC_MARKET',
+              NPC_OTHER_BOSS: 'LOC_SLUMS',
+            },
+          },
+        },
+      }),
+    );
+    expect(away.source).not.toBe('STRONG_EXPLICIT_NAME');
+    // 한 명이 현장에 있으면 그 NPC로 STRONG 매칭
+    const here = r2.resolve(
+      baseCtx('보스를 찾아가 묻는다', {
+        runState: {
+          worldState: {
+            npcLocations: {
+              NPC_HARLUN: 'LOC_HARBOR',
+              NPC_OTHER_BOSS: 'LOC_SLUMS',
+            },
+          },
+        },
+      }),
+    );
+    expect(here.npcId).toBe('NPC_HARLUN');
+    expect(here.source).toBe('STRONG_EXPLICIT_NAME');
+  });
 });
