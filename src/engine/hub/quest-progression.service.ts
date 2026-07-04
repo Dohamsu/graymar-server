@@ -158,6 +158,13 @@ export class QuestProgressionService {
       if (ownFact) {
         return { factId: ownFact.factId, matchedByTopic: true };
       }
+      // architecture/60 P1 — 주제가 타 NPC의 fact와 매칭된 경우 fallback 금지.
+      // 여기서 순서 fallback으로 딴 단서를 공개하면 "마이렐 증거를 물었는데
+      // 장부 소문을 답하는" 문답 불일치가 되고, arch/46 인계 가이드
+      // ("그건 ○○에게 물어보시오")가 questReveal에 가로채여 죽는다.
+      if (candidates.length > 0) {
+        return null;
+      }
     }
 
     const fallback = this.getRevealableQuestFact(npcId, runState);

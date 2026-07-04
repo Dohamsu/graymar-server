@@ -142,16 +142,14 @@ describe('QuestProgressionService.selectRevealableFact (architecture/58)', () =>
     });
   });
 
-  it('매칭 fact를 현재 NPC가 보유하지 않으면 fallback (타 NPC fact 누출 방지)', () => {
+  it('매칭 fact를 현재 NPC가 보유하지 않으면 null — 인계 가이드에 양보 (arch/60 P1)', () => {
     const result = svc.selectRevealableFact(
       'NPC_HARLUN',
       '내부조사에 대해 아는 게 있소?',
       runStateWith([]),
     );
-    expect(result).toEqual({
-      factId: 'FACT_LEDGER_EXISTS',
-      matchedByTopic: false,
-    });
+    // fallback으로 딴 단서(장부)를 공개하면 문답 불일치 + 인계 가이드 가로채기
+    expect(result).toBeNull();
   });
 
   it('fallback 순서도 발견분 스킵: 첫 fact 발견 후엔 두 번째 fact', () => {
