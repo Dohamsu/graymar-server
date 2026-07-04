@@ -3136,7 +3136,11 @@ export class TurnsService {
             resolveResult.outcome === 'PARTIAL') &&
           INFO_ACTIONS.has(intent.actionType)
         ) {
+          // architecture/59 이슈 1 — 판정 NPC를 서술 NPC(actionContext.primaryNpcId)와
+          // 동일 우선순위로 계산: 텍스트 매칭 → 리졸버 최종(eventPrimaryNpc) → 이벤트 payload.
+          // 두 매처가 갈릴 때 "A에게 물었는데 B가 판정" 분열 방지 (questReveal.npcId = 서술 NPC).
           const npcId =
+            this.extractTargetNpcFromInput(rawInput, body.input.type) ??
             eventPrimaryNpc ??
             ((event?.payload as Record<string, unknown>)?.primaryNpcId as
               | string

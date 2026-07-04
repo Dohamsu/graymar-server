@@ -143,6 +143,9 @@ export class NpcResolverService {
     // 같은 location NPC 우선 — 같은 키워드("두목")가 여러 NPC에 있을 때 잘못 선택 방지
     if (!isChoice) {
       // 1a. 실명/별칭 전체 매칭
+      // architecture/59 이슈 1 — extractTargetNpcFromInput과 매칭 감도 정렬:
+      //   aliases[]("하를런" 등 부분 이름 변형)는 무조건 검사,
+      //   shortAlias("노동자" 등 일반 명사 위험)는 같은 장소에 있을 때만 검사.
       const nameMatched: NpcDefinition[] = [];
       for (const npc of allNpcs) {
         if (npc.name && inputLower.includes(npc.name.toLowerCase())) {
@@ -150,6 +153,24 @@ export class NpcResolverService {
         } else if (
           npc.unknownAlias &&
           inputLower.includes(npc.unknownAlias.toLowerCase())
+        ) {
+          nameMatched.push(npc);
+        } else if (
+          (npc.aliases ?? []).some(
+            (al) => al.length >= 2 && inputLower.includes(al.toLowerCase()),
+          )
+        ) {
+          nameMatched.push(npc);
+        } else if (
+          npc.shortAlias &&
+          npc.shortAlias.length >= 2 &&
+          inputLower.includes(npc.shortAlias.toLowerCase()) &&
+          this.isAtLocation(
+            npc,
+            ctx.currentLocationId,
+            ctx.timePhase,
+            ctx.runState,
+          )
         ) {
           nameMatched.push(npc);
         }
@@ -322,6 +343,17 @@ export class NpcResolverService {
         continue;
       }
       if (npc.unknownAlias && target.includes(npc.unknownAlias.toLowerCase())) {
+        candidates.push(npc);
+        continue;
+      }
+      // architecture/59 이슈 1 — 조사 타깃("하를런에게"의 "하를런")은 별칭 변형도 인정.
+      // target은 조사 앞 구절로 범위가 좁아 shortAlias 오탐 위험이 낮다.
+      const nameVariants = [...(npc.aliases ?? []), npc.shortAlias ?? ''];
+      if (
+        nameVariants.some(
+          (al) => al.length >= 2 && target.includes(al.toLowerCase()),
+        )
+      ) {
         candidates.push(npc);
         continue;
       }
