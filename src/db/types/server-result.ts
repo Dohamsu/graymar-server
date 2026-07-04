@@ -210,6 +210,8 @@ export type UIBundle = {
   actionContext?: ActionContext;
   /** architecture/58 — 이번 턴 발견 fact (기록·서술 단일화) */
   questReveal?: QuestRevealUI;
+  /** architecture/59 — 직전 턴 발견 fact의 방향 힌트 ([단서 방향] 연출, 발견 다음 턴 1회) */
+  questDirectionHint?: { hint: string; mode: string };
   // Narrative Engine v1 확장
   signalFeed?: SignalFeedItemUI[];
   activeIncidents?: IncidentSummaryUI[];

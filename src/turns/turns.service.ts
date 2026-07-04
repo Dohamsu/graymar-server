@@ -3069,12 +3069,23 @@ export class TurnsService {
     // PBP 집계 (최근 행동 이력 기반)
     updatedRunState.pbp = computePBP(newHistory);
 
-    // === pendingQuestHint 만료 정리: 발견 다음 턴 1회만 전달, 이후 삭제 ===
-    if (
-      updatedRunState.pendingQuestHint &&
-      updatedRunState.pendingQuestHint.setAtTurn < turnNo
-    ) {
-      updatedRunState.pendingQuestHint = null;
+    // === pendingQuestHint 소비 (architecture/59 이슈 2) ===
+    // 기존엔 runState로만 전달했는데, 비동기 LLM 워커가 커밋 후 runState를 읽는 시점엔
+    // 여기서 이미 만료 정리돼 [단서 방향] 힌트가 어느 턴 프롬프트에도 도달하지 못했다.
+    // 발견 다음 턴(setAtTurn === turnNo - 1)에 ui.questDirectionHint로 부착해 턴 결과에 싣고,
+    // runState의 원본은 정리한다 (58의 ui 전달 패턴과 동일).
+    let questDirectionHintForUi: { hint: string; mode: string } | null = null;
+    if (updatedRunState.pendingQuestHint) {
+      const pending = updatedRunState.pendingQuestHint;
+      if (pending.setAtTurn === turnNo - 1 && pending.hint) {
+        questDirectionHintForUi = {
+          hint: pending.hint,
+          mode: pending.mode ?? 'OVERHEARD',
+        };
+      }
+      if (pending.setAtTurn < turnNo) {
+        updatedRunState.pendingQuestHint = null;
+      }
     }
 
     // === Quest Progression: 3경로 FACT 발견 + 단계 전환 ===
@@ -3346,7 +3357,7 @@ export class TurnsService {
                   'RUMOR_ECHO',
                   'SCENE_CLUE',
                 ] as const;
-                const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length)];
+                const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length - 1)];
                 updatedRunState.pendingQuestHint = {
                   hint: staleHint.hint,
                   setAtTurn: turnNo,
@@ -3450,7 +3461,7 @@ export class TurnsService {
               'NPC_BEHAVIOR',
               'RUMOR_ECHO',
             ] as const;
-            const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length)];
+            const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length - 1)];
             updatedRunState.pendingQuestHint = {
               hint: nextHint,
               setAtTurn: turnNo,
@@ -3753,6 +3764,11 @@ export class TurnsService {
     // architecture/58 — 이번 턴 발견 fact를 ui에 attach (기록·서술 단일화)
     if (questRevealThisTurn) {
       result.ui.questReveal = questRevealThisTurn;
+    }
+
+    // architecture/59 이슈 2 — 직전 턴 발견 fact의 nextHint를 ui에 attach ([단서 방향] 연출)
+    if (questDirectionHintForUi) {
+      result.ui.questDirectionHint = questDirectionHintForUi;
     }
 
     // architecture/48 Layer 4 — NPC 위치 안내 hint를 ui에 attach (LLM 프롬프트 주입용)

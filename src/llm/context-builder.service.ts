@@ -2413,23 +2413,18 @@ export class ContextBuilderService {
     serverResult: Record<string, unknown> | null,
     runState: Record<string, unknown> | null | undefined,
   ): { hint: string; mode: string } | null {
-    if (!serverResult || !runState) return null;
+    if (!serverResult) return null;
 
-    const pending = runState.pendingQuestHint as
-      | { hint: string; setAtTurn: number; mode?: string }
-      | null
-      | undefined;
-    if (!pending?.hint) return null;
-
-    const currentTurnNo = serverResult.turnNo as number | undefined;
-    if (currentTurnNo == null) return null;
-
-    // 발견 턴 바로 다음 턴(setAtTurn + 1)에서만 전달 (1회만)
-    if (pending.setAtTurn + 1 !== currentTurnNo) return null;
+    // architecture/59 이슈 2 — runState.pendingQuestHint 대신 ui.questDirectionHint를 읽는다.
+    // runState는 다음 턴 처리의 만료 정리가 커밋에 포함돼 비동기 워커 시점엔 항상 null이었음
+    // (힌트가 어느 턴 프롬프트에도 도달하지 못하는 desync). 턴 결과에 실린 값은 시점 무관.
+    const uiHint = (serverResult.ui as Record<string, unknown> | undefined)
+      ?.questDirectionHint as { hint: string; mode?: string } | undefined;
+    if (!uiHint?.hint) return null;
 
     // sanitizeNpcNames 적용 (미소개 NPC 실명 제거)
-    const sanitizedHint = this.sanitizeNpcNames(pending.hint, runState);
-    return { hint: sanitizedHint, mode: pending.mode ?? 'OVERHEARD' };
+    const sanitizedHint = this.sanitizeNpcNames(uiHint.hint, runState);
+    return { hint: sanitizedHint, mode: uiHint.mode ?? 'OVERHEARD' };
   }
 
   /**
