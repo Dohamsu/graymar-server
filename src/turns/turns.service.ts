@@ -3069,22 +3069,31 @@ export class TurnsService {
     // PBP 집계 (최근 행동 이력 기반)
     updatedRunState.pbp = computePBP(newHistory);
 
-    // === pendingQuestHint 소비 (architecture/59 이슈 2) ===
-    // 기존엔 runState로만 전달했는데, 비동기 LLM 워커가 커밋 후 runState를 읽는 시점엔
-    // 여기서 이미 만료 정리돼 [단서 방향] 힌트가 어느 턴 프롬프트에도 도달하지 못했다.
-    // 발견 다음 턴(setAtTurn === turnNo - 1)에 ui.questDirectionHint로 부착해 턴 결과에 싣고,
-    // runState의 원본은 정리한다 (58의 ui 전달 패턴과 동일).
+    // === pendingQuestHint 소비 (architecture/59 이슈 2 + 60 P2 이월) ===
+    // 비동기 LLM 워커가 커밋 후 runState를 읽으므로 힌트는 ui.questDirectionHint로 전달.
+    // 60 P2: 같은 턴에 questReveal(새 단서 공개)이 있으면 연출 과밀 방지를 위해
+    // 부착하지 않고 다음 턴으로 이월 (최대 DIRECTION_HINT_CARRY_MAX_TURNS턴, 초과 시 만료).
+    // 소비(정리)는 실제 부착 시점(buildLocationResult 이후)에 확정한다.
+    const { NON_TOPIC_FALLBACK_REVEAL_CHANCE, DIRECTION_HINT_CARRY_MAX_TURNS } =
+      require('../engine/hub/quest-balance.config.js').QUEST_BALANCE as {
+        NON_TOPIC_FALLBACK_REVEAL_CHANCE: number;
+        DIRECTION_HINT_CARRY_MAX_TURNS: number;
+      };
     let questDirectionHintForUi: { hint: string; mode: string } | null = null;
     if (updatedRunState.pendingQuestHint) {
       const pending = updatedRunState.pendingQuestHint;
-      if (pending.setAtTurn === turnNo - 1 && pending.hint) {
+      const hintAge = turnNo - pending.setAtTurn;
+      if (
+        hintAge >= 1 &&
+        hintAge <= DIRECTION_HINT_CARRY_MAX_TURNS &&
+        pending.hint
+      ) {
         questDirectionHintForUi = {
           hint: pending.hint,
           mode: pending.mode ?? 'OVERHEARD',
         };
-      }
-      if (pending.setAtTurn < turnNo) {
-        updatedRunState.pendingQuestHint = null;
+      } else if (hintAge > DIRECTION_HINT_CARRY_MAX_TURNS) {
+        updatedRunState.pendingQuestHint = null; // 이월 창 초과 — 만료
       }
     }
 
@@ -3205,7 +3214,24 @@ export class TurnsService {
                 rawInput,
                 updatedRunState,
               );
-              if (selected && npcRevealMode !== 'refuse') {
+              // arch/60 P2 — 비주제(fallback) 공개는 확률 게이트: 잡담·안부에도
+              // 매턴 단서가 술술 나오는 것 방지. BRIBE/THREATEN은 대가를 치른
+              // 정보 요구라 면제 (bypassTrust).
+              let fallbackGateBlocked = false;
+              if (selected && !selected.matchedByTopic && !bypassTrust) {
+                const fallbackRoll = rng.range(0, 99);
+                if (fallbackRoll >= NON_TOPIC_FALLBACK_REVEAL_CHANCE) {
+                  fallbackGateBlocked = true;
+                  this.logger.debug(
+                    `[Quest] non-topic fallback 공개 보류 (roll=${fallbackRoll} ≥ ${NON_TOPIC_FALLBACK_REVEAL_CHANCE})`,
+                  );
+                }
+              }
+              if (
+                selected &&
+                !fallbackGateBlocked &&
+                npcRevealMode !== 'refuse'
+              ) {
                 addFact(selected.factId, `npc:${npcId}:${npcRevealMode}`);
                 // 기록된 fact와 동일한 fact를 LLM이 서술하도록 serverResult로 전달
                 questRevealThisTurn = {
@@ -3357,7 +3383,8 @@ export class TurnsService {
                   'RUMOR_ECHO',
                   'SCENE_CLUE',
                 ] as const;
-                const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length - 1)];
+                const hintMode =
+                  HINT_MODES[rng.range(0, HINT_MODES.length - 1)];
                 updatedRunState.pendingQuestHint = {
                   hint: staleHint.hint,
                   setAtTurn: turnNo,
@@ -3766,9 +3793,12 @@ export class TurnsService {
       result.ui.questReveal = questRevealThisTurn;
     }
 
-    // architecture/59 이슈 2 — 직전 턴 발견 fact의 nextHint를 ui에 attach ([단서 방향] 연출)
-    if (questDirectionHintForUi) {
+    // architecture/59 이슈 2 + 60 P2 — 직전 발견 fact의 nextHint를 ui에 attach ([단서 방향] 연출).
+    // 같은 턴에 새 단서 공개(questReveal)가 있으면 연출 과밀 방지를 위해 부착하지 않고
+    // pendingQuestHint를 유지해 다음 턴으로 이월한다.
+    if (questDirectionHintForUi && !questRevealThisTurn) {
       result.ui.questDirectionHint = questDirectionHintForUi;
+      updatedRunState.pendingQuestHint = null; // 소비 완료
     }
 
     // architecture/48 Layer 4 — NPC 위치 안내 hint를 ui에 attach (LLM 프롬프트 주입용)

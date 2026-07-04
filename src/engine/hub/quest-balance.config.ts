@@ -24,4 +24,10 @@ export const QUEST_BALANCE = {
 
   /** ALERT 상태에서 BLOCK 이벤트 삽입 확률 (0~100) */
   CRACKDOWN_BLOCK_CHANCE: 25,
+
+  /** arch/60 P2: 비주제(fallback) NPC 단서 공개 확률 (0~100). 잡담에 매턴 단서 방출 방지. BRIBE/THREATEN 면제 */
+  NON_TOPIC_FALLBACK_REVEAL_CHANCE: 35,
+
+  /** arch/60 P2: [단서 방향] 연출 이월 최대 턴 수 (발견 턴과 겹치면 다음 턴으로) */
+  DIRECTION_HINT_CARRY_MAX_TURNS: 3,
 } as const;
