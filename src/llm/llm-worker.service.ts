@@ -2659,152 +2659,154 @@ ${npcList}`,
         const hasAppearances = _appearedNpcIds.size > 0 && hasNarrative;
 
         if (hasRollbackCandidates || hasAppearances) {
-          const rs = runSession.runState as unknown as Record<string, unknown>;
-          const npcStatesRef = rs.npcStates as
-            | Record<
-                string,
-                {
-                  introduced?: boolean;
-                  introducedAtTurn?: number;
-                  appearanceCount?: number;
-                }
-              >
-            | undefined;
-          let changed = false;
-
-          if (hasRollbackCandidates && npcStatesRef) {
-            for (const npcId of newlyIntroduced) {
-              const npcDef = this.content.getNpc(npcId);
-              if (!npcDef?.name) continue;
-              if (!narrative.includes(npcDef.name)) {
-                if (npcStatesRef[npcId]) {
-                  npcStatesRef[npcId].introduced = false;
-                  npcStatesRef[npcId].introducedAtTurn = undefined;
-                  changed = true;
-                  this.logger.debug(
-                    `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백`,
-                  );
-                }
-              }
-            }
-          }
-
-          if (hasAppearances && npcStatesRef) {
-            const { shouldIntroduce } =
-              await import('../db/types/npc-state.js');
-            // 제스처 추출 regex (bug 4671, CLAUDE.md LLM 원칙 1)
-            const GESTURE_PATTERNS = [
-              /안경테를\s+\S+\s*(?:\S+)?/g,
-              /서류\s*뭉치를\s+\S+/g,
-              /손을\s+\S+\s+\S+/g,
-              /손끝을?\s+\S+/g,
-              /손가락을?\s+\S+/g,
-              /시선을\s+\S+/g,
-              /눈을\s+\S+/g,
-              /고개를\s+\S+/g,
-              /입술을\s+\S+/g,
-              /어깨를\s+\S+/g,
-              /미간을\s+\S+/g,
-              /턱을\s+\S+/g,
-            ];
-            for (const npcId of _appearedNpcIds) {
-              const npcDef = this.content.getNpc(npcId) as
-                | Record<string, unknown>
+          // architecture/60 — stale 스냅샷(rs) 전체 되쓰기 금지: fresh 재조회 후 워커 소유 필드만 패치
+          const { shouldIntroduce } = await import('../db/types/npc-state.js');
+          await this.applyRunStatePatch(
+            pending.runId,
+            'NpcAppearance',
+            (rs) => {
+              const npcStatesRef = rs.npcStates as
+                | Record<
+                    string,
+                    {
+                      introduced?: boolean;
+                      introducedAtTurn?: number;
+                      appearanceCount?: number;
+                    }
+                  >
                 | undefined;
-              if (!npcStatesRef[npcId]) continue;
+              let changed = false;
 
-              // BACKGROUND 티어는 appearanceCount 증가 스킵
-              if (npcDef?.tier !== 'BACKGROUND') {
-                const prev = npcStatesRef[npcId].appearanceCount ?? 0;
-                npcStatesRef[npcId].appearanceCount = prev + 1;
-                changed = true;
-
-                const npcStateFull = npcStatesRef[
-                  npcId
-                ] as unknown as import('../db/types/npc-state.js').NPCState;
-                if (
-                  !npcStateFull.introduced &&
-                  shouldIntroduce(
-                    npcStateFull,
-                    npcStateFull.posture,
-                    (npcDef?.tier as string | undefined) ?? undefined,
-                  )
-                ) {
-                  npcStatesRef[npcId].introduced = true;
-                  npcStatesRef[npcId].introducedAtTurn = pending.turnNo;
-                  this.logger.log(
-                    `[AppearanceIntro] turn=${pending.turnNo} ${npcId} appearanceCount=${prev + 1} → introduced=true`,
-                  );
-                }
-              }
-
-              // 제스처 이력 축적 (CORE/SUB NPC만 — 캐릭터 다양화 대상)
-              if (npcDef?.tier === 'CORE' || npcDef?.tier === 'SUB') {
-                const aliasSet = new Set<string>();
-                const npcDefTyped = npcDef as {
-                  name?: string;
-                  unknownAlias?: string;
-                  shortAlias?: string;
-                };
-                if (npcDefTyped.name) aliasSet.add(npcDefTyped.name);
-                if (npcDefTyped.unknownAlias)
-                  aliasSet.add(npcDefTyped.unknownAlias);
-                if (npcDefTyped.shortAlias)
-                  aliasSet.add(npcDefTyped.shortAlias);
-
-                // NPC 마커 주변 서술 윈도우 (마커 앞 200자 + 뒤 100자)
-                let npcWindow = '';
-                for (const alias of aliasSet) {
-                  const marker = `@[${alias}`;
-                  let searchFrom = 0;
-                  while (searchFrom < narrative.length) {
-                    const idx = narrative.indexOf(marker, searchFrom);
-                    if (idx < 0) break;
-                    const start = Math.max(0, idx - 200);
-                    const end = Math.min(narrative.length, idx + 100);
-                    npcWindow += narrative.slice(start, end) + '\n';
-                    searchFrom = idx + marker.length;
-                  }
-                }
-
-                if (npcWindow) {
-                  const foundGestures: string[] = [];
-                  for (const pat of GESTURE_PATTERNS) {
-                    const matches = npcWindow.match(pat) ?? [];
-                    for (const m of matches) {
-                      foundGestures.push(m.trim());
+              if (hasRollbackCandidates && npcStatesRef) {
+                for (const npcId of newlyIntroduced) {
+                  const npcDef = this.content.getNpc(npcId);
+                  if (!npcDef?.name) continue;
+                  if (!narrative.includes(npcDef.name)) {
+                    if (npcStatesRef[npcId]) {
+                      npcStatesRef[npcId].introduced = false;
+                      npcStatesRef[npcId].introducedAtTurn = undefined;
+                      changed = true;
+                      this.logger.debug(
+                        `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백`,
+                      );
                     }
                   }
-                  if (foundGestures.length > 0) {
-                    type GestureEntry = { text: string; turnNo: number };
-                    const existing: GestureEntry[] =
-                      (
-                        npcStatesRef[npcId] as unknown as {
-                          recentGestures?: GestureEntry[];
-                        }
-                      ).recentGestures ?? [];
-                    const newEntries = foundGestures.map((g) => ({
-                      text: g,
-                      turnNo: pending.turnNo,
-                    }));
-                    (
-                      npcStatesRef[npcId] as unknown as {
-                        recentGestures: GestureEntry[];
-                      }
-                    ).recentGestures = [...existing, ...newEntries].slice(-5);
+                }
+              }
+
+              if (hasAppearances && npcStatesRef) {
+                // 제스처 추출 regex (bug 4671, CLAUDE.md LLM 원칙 1)
+                const GESTURE_PATTERNS = [
+                  /안경테를\s+\S+\s*(?:\S+)?/g,
+                  /서류\s*뭉치를\s+\S+/g,
+                  /손을\s+\S+\s+\S+/g,
+                  /손끝을?\s+\S+/g,
+                  /손가락을?\s+\S+/g,
+                  /시선을\s+\S+/g,
+                  /눈을\s+\S+/g,
+                  /고개를\s+\S+/g,
+                  /입술을\s+\S+/g,
+                  /어깨를\s+\S+/g,
+                  /미간을\s+\S+/g,
+                  /턱을\s+\S+/g,
+                ];
+                for (const npcId of _appearedNpcIds) {
+                  const npcDef = this.content.getNpc(npcId) as
+                    | Record<string, unknown>
+                    | undefined;
+                  if (!npcStatesRef[npcId]) continue;
+
+                  // BACKGROUND 티어는 appearanceCount 증가 스킵
+                  if (npcDef?.tier !== 'BACKGROUND') {
+                    const prev = npcStatesRef[npcId].appearanceCount ?? 0;
+                    npcStatesRef[npcId].appearanceCount = prev + 1;
                     changed = true;
+
+                    const npcStateFull = npcStatesRef[
+                      npcId
+                    ] as unknown as import('../db/types/npc-state.js').NPCState;
+                    if (
+                      !npcStateFull.introduced &&
+                      shouldIntroduce(
+                        npcStateFull,
+                        npcStateFull.posture,
+                        (npcDef?.tier as string | undefined) ?? undefined,
+                      )
+                    ) {
+                      npcStatesRef[npcId].introduced = true;
+                      npcStatesRef[npcId].introducedAtTurn = pending.turnNo;
+                      this.logger.log(
+                        `[AppearanceIntro] turn=${pending.turnNo} ${npcId} appearanceCount=${prev + 1} → introduced=true`,
+                      );
+                    }
+                  }
+
+                  // 제스처 이력 축적 (CORE/SUB NPC만 — 캐릭터 다양화 대상)
+                  if (npcDef?.tier === 'CORE' || npcDef?.tier === 'SUB') {
+                    const aliasSet = new Set<string>();
+                    const npcDefTyped = npcDef as {
+                      name?: string;
+                      unknownAlias?: string;
+                      shortAlias?: string;
+                    };
+                    if (npcDefTyped.name) aliasSet.add(npcDefTyped.name);
+                    if (npcDefTyped.unknownAlias)
+                      aliasSet.add(npcDefTyped.unknownAlias);
+                    if (npcDefTyped.shortAlias)
+                      aliasSet.add(npcDefTyped.shortAlias);
+
+                    // NPC 마커 주변 서술 윈도우 (마커 앞 200자 + 뒤 100자)
+                    let npcWindow = '';
+                    for (const alias of aliasSet) {
+                      const marker = `@[${alias}`;
+                      let searchFrom = 0;
+                      while (searchFrom < narrative.length) {
+                        const idx = narrative.indexOf(marker, searchFrom);
+                        if (idx < 0) break;
+                        const start = Math.max(0, idx - 200);
+                        const end = Math.min(narrative.length, idx + 100);
+                        npcWindow += narrative.slice(start, end) + '\n';
+                        searchFrom = idx + marker.length;
+                      }
+                    }
+
+                    if (npcWindow) {
+                      const foundGestures: string[] = [];
+                      for (const pat of GESTURE_PATTERNS) {
+                        const matches = npcWindow.match(pat) ?? [];
+                        for (const m of matches) {
+                          foundGestures.push(m.trim());
+                        }
+                      }
+                      if (foundGestures.length > 0) {
+                        type GestureEntry = { text: string; turnNo: number };
+                        const existing: GestureEntry[] =
+                          (
+                            npcStatesRef[npcId] as unknown as {
+                              recentGestures?: GestureEntry[];
+                            }
+                          ).recentGestures ?? [];
+                        const newEntries = foundGestures.map((g) => ({
+                          text: g,
+                          turnNo: pending.turnNo,
+                        }));
+                        (
+                          npcStatesRef[npcId] as unknown as {
+                            recentGestures: GestureEntry[];
+                          }
+                        ).recentGestures = [...existing, ...newEntries].slice(
+                          -5,
+                        );
+                        changed = true;
+                      }
+                    }
                   }
                 }
               }
-            }
-          }
 
-          if (changed) {
-            await this.db
-              .update(runSessions)
-              .set({ runState: rs as any })
-              .where(eq(runSessions.id, pending.runId));
-          }
+              return changed;
+            },
+          );
         }
       }
 
@@ -2814,73 +2816,74 @@ ${npcList}`,
       // 무관하게 항상 실행되어야 한다 (dialogue_split 경로 포함).
       if (narrative && runSession?.runState) {
         try {
-          const themeRs = runSession.runState as unknown as Record<
-            string,
-            unknown
-          >;
-          const themeNpcStates =
-            (themeRs.npcStates as Record<string, unknown> | undefined) ?? {};
-          const candidateNpcIds = Object.keys(themeNpcStates);
+          // architecture/60 — stale 스냅샷 전체 되쓰기 금지: fresh 재조회 후 narrativeThemes만 패치
+          await this.applyRunStatePatch(
+            pending.runId,
+            'ThemeRecord',
+            (themeRs) => {
+              const themeNpcStates =
+                (themeRs.npcStates as Record<string, unknown> | undefined) ??
+                {};
+              const candidateNpcIds = Object.keys(themeNpcStates);
 
-          const markerToNpcId = (bracketName: string): string | null => {
-            const trimmed = bracketName.trim();
-            for (const npcId of candidateNpcIds) {
-              const def = this.content.getNpc(npcId);
-              if (!def) continue;
-              const short = (def as Record<string, unknown>).shortAlias as
-                | string
-                | undefined;
-              if (
-                def.name === trimmed ||
-                def.unknownAlias === trimmed ||
-                short === trimmed
-              ) {
-                return npcId;
+              const markerToNpcId = (bracketName: string): string | null => {
+                const trimmed = bracketName.trim();
+                for (const npcId of candidateNpcIds) {
+                  const def = this.content.getNpc(npcId);
+                  if (!def) continue;
+                  const short = (def as Record<string, unknown>).shortAlias as
+                    | string
+                    | undefined;
+                  if (
+                    def.name === trimmed ||
+                    def.unknownAlias === trimmed ||
+                    short === trimmed
+                  ) {
+                    return npcId;
+                  }
+                }
+                return null;
+              };
+
+              const dialogueRegex =
+                /@(?:\[([^\]|]+)(?:\|[^\]]+)?\]|([A-Z][A-Z_0-9]+))\s*["\u201C]([^"\u201D]{3,})["\u201D]/g;
+              let themeChanged = false;
+              let themeRecorded = 0;
+              let m: RegExpExecArray | null;
+              while ((m = dialogueRegex.exec(narrative)) !== null) {
+                const bracketName = m[1];
+                const plainId = m[2];
+                const dialogue = m[3];
+                const npcId =
+                  plainId ?? (bracketName ? markerToNpcId(bracketName) : null);
+                if (!npcId) continue;
+                const theme = this.themeClassifier.classify(dialogue);
+                if (theme === 'OTHER') continue;
+                const entry: NarrativeThemeEntry = {
+                  turnNo: pending.turnNo,
+                  npcId,
+                  theme,
+                  snippet: dialogue.slice(0, 20),
+                };
+                const runStateAny = themeRs as {
+                  narrativeThemes?: NarrativeThemeEntry[];
+                };
+                runStateAny.narrativeThemes = pushNarrativeTheme(
+                  runStateAny.narrativeThemes,
+                  entry,
+                );
+                themeChanged = true;
+                themeRecorded++;
               }
-            }
-            return null;
-          };
 
-          const dialogueRegex =
-            /@(?:\[([^\]|]+)(?:\|[^\]]+)?\]|([A-Z][A-Z_0-9]+))\s*["\u201C]([^"\u201D]{3,})["\u201D]/g;
-          let themeChanged = false;
-          let themeRecorded = 0;
-          let m: RegExpExecArray | null;
-          while ((m = dialogueRegex.exec(narrative)) !== null) {
-            const bracketName = m[1];
-            const plainId = m[2];
-            const dialogue = m[3];
-            const npcId =
-              plainId ?? (bracketName ? markerToNpcId(bracketName) : null);
-            if (!npcId) continue;
-            const theme = this.themeClassifier.classify(dialogue);
-            if (theme === 'OTHER') continue;
-            const entry: NarrativeThemeEntry = {
-              turnNo: pending.turnNo,
-              npcId,
-              theme,
-              snippet: dialogue.slice(0, 20),
-            };
-            const runStateAny = themeRs as {
-              narrativeThemes?: NarrativeThemeEntry[];
-            };
-            runStateAny.narrativeThemes = pushNarrativeTheme(
-              runStateAny.narrativeThemes,
-              entry,
-            );
-            themeChanged = true;
-            themeRecorded++;
-          }
-
-          if (themeChanged) {
-            await this.db
-              .update(runSessions)
-              .set({ runState: themeRs as any })
-              .where(eq(runSessions.id, pending.runId));
-            this.logger.debug(
-              `[ThemeRecord] turn=${pending.turnNo} recorded=${themeRecorded}`,
-            );
-          }
+              if (themeChanged) {
+                this.logger.debug(
+                  `[ThemeRecord] turn=${pending.turnNo} recorded=${themeRecorded}`,
+                );
+              }
+              return themeChanged;
+            },
+          );
         } catch (err) {
           this.logger.warn(
             `[ThemeRecord] 분류 실패: ${err instanceof Error ? err.message : err}`,
@@ -3477,5 +3480,41 @@ ${npcList}`,
     }
 
     return result;
+  }
+
+  /**
+   * architecture/60 — 워커의 runState 부분 패치 (lost update 방지).
+   *
+   * 워커가 턴 처리 시작 시점에 들고 있던 stale 스냅샷 전체를 되쓰면, 워커가
+   * 도는 사이 커밋된 이후 턴의 변경(discoveredQuestFacts/heat/trust 등)이
+   * 통째로 소실된다 — 점검 런 cede95d3에서 실측(t6·t7 발견 소실 → t8·t10 재발견).
+   * 쓰기 직전 fresh runState를 재조회하고 워커 소유 필드만 그 위에 반영한다.
+   */
+  private async applyRunStatePatch(
+    runId: string,
+    label: string,
+    patch: (rs: Record<string, unknown>) => boolean,
+  ): Promise<void> {
+    const session = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+      columns: { runState: true },
+    });
+    const fresh = session?.runState as Record<string, unknown> | undefined;
+    if (!fresh) return;
+    let changed = false;
+    try {
+      changed = patch(fresh);
+    } catch (err) {
+      this.logger.warn(
+        `[RunStatePatch:${label}] patch error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    if (changed) {
+      await this.db
+        .update(runSessions)
+        .set({ runState: fresh as any })
+        .where(eq(runSessions.id, runId));
+    }
   }
 }
