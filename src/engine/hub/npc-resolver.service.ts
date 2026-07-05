@@ -212,7 +212,7 @@ export class NpcResolverService {
         );
       }
       // 1b. "X에게/X와/X께" 호명 조사 패턴
-      const particleCandidates = this.matchParticleAll(ctx.rawInput, allNpcs);
+      const particleCandidates = this.matchParticleAll(ctx, allNpcs);
       if (particleCandidates.length > 0) {
         const localFirst = particleCandidates.find((npc) =>
           this.isAtLocation(
@@ -343,10 +343,10 @@ export class NpcResolverService {
 
   /** 호명 조사 패턴에 매칭되는 모든 NPC 후보 반환 (같은 location 우선 정렬은 호출부에서). */
   private matchParticleAll(
-    input: string,
+    ctx: NpcResolutionContext,
     npcs: NpcDefinition[],
   ): NpcDefinition[] {
-    const m = input.match(PARTICLE_RE);
+    const m = ctx.rawInput.match(PARTICLE_RE);
     if (!m) return [];
     const target = m[1].trim().toLowerCase();
     if (!target) return [];
@@ -362,18 +362,26 @@ export class NpcResolverService {
       }
       // architecture/59 이슈 1 — 조사 타깃("하를런에게"의 "하를런")은 별칭 변형도 인정.
       // target은 조사 앞 구절로 범위가 좁지만, 공유 별칭("보스" 등)은 부재 NPC를
-      // 임의 선택할 수 있어 고유 별칭만 인정 (arch/60 리뷰 반영).
+      // 임의 선택할 수 있어 고유 별칭이거나 현장에 있을 때만 인정 — 1a(실명/별칭
+      // 전체 매칭)와 동일 가드로 정렬 (arch/60 리뷰 발견 반영: 기존엔 고유성만
+      // 체크해 현장에 있는 NPC도 공유 별칭이면 STRONG 매칭에서 배제되던 불일치).
       const nameVariants = [...(npc.aliases ?? []), npc.shortAlias ?? ''];
       if (
         nameVariants.some(
           (al) =>
             al.length >= 2 &&
             target.includes(al.toLowerCase()) &&
-            npcs.filter((o) =>
+            (npcs.filter((o) =>
               [...(o.aliases ?? []), o.shortAlias ?? ''].some(
                 (oa) => oa.toLowerCase() === al.toLowerCase(),
               ),
-            ).length <= 1,
+            ).length <= 1 ||
+              this.isAtLocation(
+                npc,
+                ctx.currentLocationId,
+                ctx.timePhase,
+                ctx.runState,
+              )),
         )
       ) {
         candidates.push(npc);

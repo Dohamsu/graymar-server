@@ -272,7 +272,7 @@ export class ContextBuilderService {
     rawInput: string,
     _actionType: string,
   ): Set<string> {
-    return new Set(rawInput.match(/[가-힣]{2,}/g) ?? []);
+    return extractKoreanKeywords(rawInput);
   }
 
   /**
