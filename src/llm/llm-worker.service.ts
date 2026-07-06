@@ -449,7 +449,6 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 npcRole: npcDef.role ?? '',
                 personalityCore: npcDef.personality?.core,
                 speechStyle: npcDef.personality?.speechStyle,
-                signature: npcDef.personality?.signature,
                 softSpot: npcDef.personality?.softSpot,
                 innerConflict: npcDef.personality?.innerConflict,
                 npcState,

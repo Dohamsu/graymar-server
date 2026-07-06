@@ -51,7 +51,6 @@ export interface NpcReactionContext {
   npcRole: string;
   personalityCore?: string;
   speechStyle?: string;
-  signature?: string[];
   softSpot?: string;
   innerConflict?: string;
   npcState: NPCState | null;
@@ -239,9 +238,8 @@ export class NpcReactionDirectorService {
     if (ctx.speechStyle) parts.push(`말투: ${ctx.speechStyle}`);
     if (ctx.softSpot) parts.push(`인간적 약점: ${ctx.softSpot}`);
     if (ctx.innerConflict) parts.push(`내면 갈등: ${ctx.innerConflict}`);
-    if (ctx.signature?.length) {
-      parts.push(`시그니처: ${ctx.signature.slice(0, 3).join(', ')}`);
-    }
+    // architecture/56 — signature 배열의 인용구 예시가 anchor를 유발해 노출 제거함.
+    // 여기서도 동일 원칙 적용 (2026-07-06 감사에서 발견된 회귀 수정).
 
     parts.push(
       ``,

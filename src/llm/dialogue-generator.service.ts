@@ -295,9 +295,8 @@ export class DialogueGeneratorService {
       personality?.speechStyle
         ? `⚠️ 말투 (반드시 반영): ${personality.speechStyle}`
         : '',
-      personality?.signature?.length
-        ? `시그니처 표현: ${personality.signature.join(', ')}`
-        : '',
+      // architecture/56 — signature 배열의 인용구 예시는 anchor를 유발해 노출 제거함
+      // (2026-07-06 감사: 이 Stage B 경로가 같은 노출을 재도입하고 있던 회귀 수정).
       input.factToReveal ? `이번에 전달할 정보: ${input.factToReveal}` : '',
     ]
       .filter(Boolean)
