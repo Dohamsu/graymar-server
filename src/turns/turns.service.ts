@@ -62,6 +62,11 @@ import { EquipmentService } from '../engine/rewards/equipment.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
 import { QUEST_BALANCE } from '../engine/hub/quest-balance.config.js';
 import { extractKoreanKeywords } from '../common/text-utils.js';
+import {
+  detectDialogueAct,
+  isQuestionInput,
+  type DialogueAct,
+} from '../common/dialogue-act.js';
 // HUB 엔진 서비스
 import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { HeatService } from '../engine/hub/heat.service.js';
@@ -2754,6 +2759,14 @@ export class TurnsService {
     // cooldown 업데이트
     const newCooldowns = { ...cooldowns, [event.eventId]: turnNo };
 
+    // 대화 행위 감지 — 순수 사교 발화(인사/안부/감사/작별)는 fact 공개 파이프라인을
+    // 타지 않고, FAREWELL은 다음 턴 대화 잠금을 자연 해제한다 (자유 입력만 대상).
+    const dialogueAct: DialogueAct | null =
+      body.input.type === 'ACTION' ? detectDialogueAct(rawInput) : null;
+    if (dialogueAct) {
+      this.logger.log(`[DialogueAct] ${dialogueAct} — "${rawInput}"`);
+    }
+
     // 행동 이력 업데이트 (고집 시스템 + FALLBACK 페널티 + 선택지 중복 방지)
     const eventPrimaryNpcId = (event.payload as Record<string, unknown>)
       ?.primaryNpcId as string | undefined;
@@ -2770,6 +2783,7 @@ export class TurnsService {
           body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
         primaryNpcId: eventPrimaryNpcId ?? undefined,
         resolveOutcome: resolveResult.outcome,
+        dialogueAct: dialogueAct ?? undefined,
       },
     ].slice(-10); // 최대 10개 유지
 
@@ -3152,7 +3166,15 @@ export class TurnsService {
           'THREATEN',
           'STEAL',
         ]);
+        // 대화 행위 게이트 — 인사/안부/감사/작별은 자동 SUCCESS(자유 행동)와 결합해
+        // 매 잡담 턴 단서가 새는 통로였다. 사교 발화 턴은 NPC 경로 공개 자체를 건너뛴다.
+        if (dialogueAct) {
+          this.logger.debug(
+            `[Quest] 사교 발화(${dialogueAct}) — NPC fact 공개 스킵`,
+          );
+        }
         if (
+          !dialogueAct &&
           (resolveResult.outcome === 'SUCCESS' ||
             resolveResult.outcome === 'PARTIAL') &&
           INFO_ACTIONS.has(intent.actionType)
@@ -3218,14 +3240,23 @@ export class TurnsService {
               // arch/60 P2 — 비주제(fallback) 공개는 확률 게이트: 잡담·안부에도
               // 매턴 단서가 술술 나오는 것 방지. BRIBE/THREATEN은 대가를 치른
               // 정보 요구라 면제 (bypassTrust).
+              // 개선 3 — 질문 턴은 확률 무관 완전 차단: 구체적으로 물었는데
+              // 무관한 단서로 답하는 문답 불일치가 확률로 새는 것 방지.
               let fallbackGateBlocked = false;
               if (selected && !selected.matchedByTopic && !bypassTrust) {
-                const fallbackRoll = rng.range(0, 99);
-                if (fallbackRoll >= NON_TOPIC_FALLBACK_REVEAL_CHANCE) {
+                if (body.input.type === 'ACTION' && isQuestionInput(rawInput)) {
                   fallbackGateBlocked = true;
                   this.logger.debug(
-                    `[Quest] non-topic fallback 공개 보류 (roll=${fallbackRoll} ≥ ${NON_TOPIC_FALLBACK_REVEAL_CHANCE})`,
+                    `[Quest] 질문 턴 — 비주제 fallback 공개 차단 (문답 불일치 방지)`,
                   );
+                } else {
+                  const fallbackRoll = rng.range(0, 99);
+                  if (fallbackRoll >= NON_TOPIC_FALLBACK_REVEAL_CHANCE) {
+                    fallbackGateBlocked = true;
+                    this.logger.debug(
+                      `[Quest] non-topic fallback 공개 보류 (roll=${fallbackRoll} ≥ ${NON_TOPIC_FALLBACK_REVEAL_CHANCE})`,
+                    );
+                  }
                 }
               }
               if (
@@ -3764,6 +3795,8 @@ export class TurnsService {
           : event.eventId.startsWith('FREE_CONV_')
             ? 'CONVERSATION_CONT'
             : 'WORLD_EVENT',
+        // 대화 행위 — context/prompt-builder 톤 가이드 + fact 힌트 억제에 사용
+        ...(dialogueAct ? { dialogueAct } : {}),
         // architecture/49 — NpcResolver audit trail (NPA 디버깅용)
         ...(npcResolutionSource
           ? {
@@ -3796,7 +3829,12 @@ export class TurnsService {
     // architecture/59 이슈 2 + 60 P2 — 직전 발견 fact의 nextHint를 ui에 attach ([단서 방향] 연출).
     // 같은 턴에 새 단서 공개(questReveal)가 있으면 연출 과밀 방지를 위해 부착하지 않는다.
     // 이월 의미: 이번 턴에 새 nextHint가 쓰였으면 최신이 우선(교체), 없으면 기존 힌트 유지.
-    if (questDirectionHintForUi && !questRevealThisTurn) {
+    // 작별 턴에는 부착하지 않고 이월 — 대화를 닫는 장면에 단서 연출이 끼면 어색하다.
+    if (
+      questDirectionHintForUi &&
+      !questRevealThisTurn &&
+      dialogueAct !== 'FAREWELL'
+    ) {
       result.ui.questDirectionHint = questDirectionHintForUi;
       // 소비 정리 — 단, 이번 턴에 새로 쓰인 힌트(setAtTurn === turnNo, 예: 이벤트
       // 경로 발견의 nextHint)는 지우면 안 된다 (리뷰 발견: 신규 힌트 소실 방지).
@@ -6231,6 +6269,8 @@ export class TurnsService {
       targetNpcId?: string;
       /** Player-First: 턴 모드 (PLAYER_DIRECTED / CONVERSATION_CONT / WORLD_EVENT) */
       turnMode?: string;
+      /** 대화 행위 — 순수 사교 발화 (GREETING/WELLBEING/THANKS/FAREWELL) */
+      dialogueAct?: string;
       /** architecture/49 — NPC Resolver 결정 근거 (NPA 디버깅용) */
       npcResolutionSource?: string;
       npcResolutionConfidence?: number;

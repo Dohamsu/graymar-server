@@ -18,6 +18,8 @@ import {
 } from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { TokenBudgetService } from '../token-budget.service.js';
+import { collectRecentNpcUtterances } from '../npc-utterance.util.js';
+import { isQuestionInput } from '../../common/dialogue-act.js';
 import {
   aggregateRecentThemes,
   getSaturatedThemes,
@@ -138,6 +140,13 @@ export class PromptBuilderService {
   ): LlmMessage[] {
     const messages: LlmMessage[] = [];
     const isHub = sr.node.type === 'HUB';
+    // 질문 턴 (개선 3): NPC 첫 대사가 질문의 직접 답으로 시작하도록 강제하고,
+    // 질문을 밀어내는 부차 연출(감각 초점, 목격 장면)을 이번 턴 억제한다.
+    const isQuestionTurn =
+      !isHub &&
+      inputType === 'ACTION' &&
+      !ctx.dialogueAct &&
+      isQuestionInput(rawInput);
 
     // 1. System prompt + L0 theme 병합 (Tier 1: 런 전체 고정 → prefix 캐싱 대상)
     const isPartyMode = ctx.partyActions && ctx.partyActions.length > 0;
@@ -1303,6 +1312,39 @@ export class PromptBuilderService {
       );
     }
 
+    // === 대화 행위 톤 가이드 (개선 1) — 사교 발화는 사교로 응답 ===
+    // 인사에 단서·경고를 꺼내거나(톤 불일치), 작별에 재인사를 하는 회귀 방지.
+    if (ctx.dialogueAct && !isHub) {
+      const ACT_GUIDES: Record<string, string[]> = {
+        GREETING: [
+          `[대화 행위: 인사]`,
+          `플레이어의 이번 입력은 가벼운 인사입니다. NPC도 자기 성격과 말투대로 인사와 짧은 반응으로만 응답하세요 (1~3문장).`,
+          `⚠️ 사건·단서·임무·경고를 화두로 꺼내지 마세요. 무거운 정보 전달 금지.`,
+          `이미 아는 사이라면 관계 깊이에 맞는 인사로 (처음 만난 듯한 반응 금지).`,
+        ],
+        WELLBEING: [
+          `[대화 행위: 안부]`,
+          `플레이어가 가벼운 안부/근황을 물었습니다. NPC는 자기 근황·기분·일상을 가볍게 답하세요 (1~3문장). 안부에는 안부의 무게로 답합니다.`,
+          `⚠️ 사건·단서·임무 정보를 여기에 얹지 마세요.`,
+        ],
+        THANKS: [
+          `[대화 행위: 감사 인사]`,
+          `플레이어가 감사를 표했습니다. NPC는 성격대로 짧게 받아들이세요 (겸양, 농담, 무뚝뚝한 수긍 등, 1~2문장).`,
+          `⚠️ 새로운 정보나 화제를 꺼내지 마세요.`,
+        ],
+        FAREWELL: [
+          `[대화 행위: 작별 인사]`,
+          `플레이어가 대화를 끝내려 합니다. NPC는 짧은 마무리 인사로 대화를 닫으세요 (1~2문장).`,
+          `⚠️ 새 화제·질문·정보 제시 금지. "반갑소" 같은 만남 인사 표현 금지 — 지금은 헤어지는 장면입니다.`,
+          `대화가 자연스럽게 종료되고 각자 하던 일로 돌아가는 장면으로 서술을 닫으세요.`,
+        ],
+      };
+      const guide = ACT_GUIDES[ctx.dialogueAct];
+      if (guide) {
+        factsParts.push(guide.join('\n'));
+      }
+    }
+
     // 플레이어 행동 (가장 중요 — 서술에 반드시 반영)
     if (rawInput && inputType !== 'SYSTEM') {
       if (inputType === 'ACTION') {
@@ -1328,6 +1370,13 @@ export class PromptBuilderService {
         if (userKeywords.length >= 1) {
           parts.push(
             `답변 가이드: 사용자가 언급한 단어 [${userKeywords.join(', ')}] 중 1~2개를 NPC 대사 또는 서술 안에 자연스럽게 인용하시오. 사용자 질문/말의 주제를 답변에서 그대로 반영하세요.`,
+          );
+        }
+        // 질문 우선 응답 (개선 3) — NPC가 물은 것에 답하지 않고 딴 화제로 흐르는
+        // 회귀(사용자 응답률 56%) 방지. 답/거절/회피 중 하나로 반드시 먼저 반응.
+        if (isQuestionTurn) {
+          parts.push(
+            `⚠️ [질문 우선] 플레이어의 이번 입력은 질문입니다. NPC의 첫 대사는 반드시 이 질문에 대한 직접적인 답변, 명시적인 거절("말할 수 없소"), 또는 즉답을 피하는 반응(되묻기, 침묵 후 짧은 유보) 중 하나로 시작하세요. 질문과 무관한 화제·경고·자기 사정으로 시작하지 마세요.`,
           );
         }
         if (actionCtx?.parsedType) {
@@ -1475,7 +1524,8 @@ export class PromptBuilderService {
     //   LLM이 시각 묘사에 치우치는 경향(안경테/시선/고개) 방지를 위해
     //   턴 번호 기반 rotation 으로 매 턴 다른 감각 카테고리 권장.
     //   CLAUDE.md LLM 원칙 2 (Positive framing — "다음 중 선택").
-    {
+    //   질문 턴에는 억제 (개선 3) — 감각 연출이 질문 답변을 밀어내는 경쟁 지시가 된다.
+    if (!isQuestionTurn) {
       const turnNo = sr.turnNo ?? 0;
       const SENSE_POOL: { name: string; examples: string[] }[] = [
         {
@@ -2050,22 +2100,91 @@ export class PromptBuilderService {
       );
     }
 
-    // === 작업 1: 직전 NPC 대사 추출 & 반복 방지 지시 (LOCATION only) ===
+    // === 작업 1: 직전 NPC 발화 — 이어받을 맥락 + 반복 방지 (LOCATION only, 개선 2) ===
     // ⚠️ locationSessionTurns 마지막 entry는 현재 턴(self) — llmOutput이 아직 없을 때
     //    summary.short(예: '플레이어가 "입력"을 시도하여 성공했다') fallback이 들어가
     //    raw_input이 큰따옴표로 감싸져 NPC 대사로 잘못 매칭됨.
-    //    → 진짜 직전 턴(length-2)에서만 추출. 추가로 rawInput 포함 매치 안전망 필터.
+    //    → 이전 턴들(slice(0, -1))에서만 추출. 추가로 rawInput 포함 매치 안전망 필터.
+    //
+    // v4에서 이전 턴 원문이 THREAD 요약으로 대체되며 NPC의 직전 발언(질문·제안·약속)이
+    // 뭉개져 LLM이 자기 발언을 잊고 문답을 리셋하는 갭이 생겼다. primary NPC의 실제
+    // 발화만 마커 기반으로 추출해 "이어받을 맥락"(positive)으로 주입하고, 화자 무관
+    // 따옴표 추출(반복 금지 negative)은 마커 추출 실패 시의 fallback으로 유지.
     if (
       !isHub &&
       ctx.locationSessionTurns &&
       ctx.locationSessionTurns.length >= 2
     ) {
-      const lastSessionTurn =
-        ctx.locationSessionTurns[ctx.locationSessionTurns.length - 2];
+      const previousTurns = ctx.locationSessionTurns.slice(0, -1);
+      const lastSessionTurn = previousTurns[previousTurns.length - 1];
       const currentRawInput =
         ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]
           ?.rawInput ?? '';
-      if (lastSessionTurn.narrative) {
+
+      // 1) primary NPC 발화 마커 기반 정밀 추출 → 이어받기 컨텍스트
+      const acForCont = sr.ui?.actionContext as
+        | { primaryNpcId?: string | null; targetNpcId?: string }
+        | undefined;
+      const continuityNpcId =
+        ctx.focusedNpcId ??
+        acForCont?.targetNpcId ??
+        acForCont?.primaryNpcId ??
+        null;
+      let continuityInjected = false;
+      if (continuityNpcId) {
+        const contDef = this.content.getNpc(continuityNpcId);
+        const contState = ctx.npcStates?.[continuityNpcId];
+        if (contDef) {
+          const contDisplayNames = [
+            contDef.name,
+            contDef.unknownAlias,
+            contDef.shortAlias,
+            ...(contDef.aliases ?? []),
+            contState ? getNpcDisplayName(contState, contDef) : undefined,
+          ].filter((n): n is string => !!n);
+          const recentUtterances = collectRecentNpcUtterances(
+            previousTurns.map((t) => t.narrative),
+            { npcId: continuityNpcId, displayNames: contDisplayNames },
+            2,
+          ).filter(
+            (u) =>
+              !currentRawInput ||
+              currentRawInput.length < 5 ||
+              !u.includes(currentRawInput),
+          );
+          if (recentUtterances.length > 0) {
+            const latest = recentUtterances[0];
+            const contDisplay = contState
+              ? getNpcDisplayName(contState, contDef)
+              : (contDef.unknownAlias ?? contDef.name);
+            const opening = latest
+              .slice(
+                0,
+                Math.min(
+                  15,
+                  latest.indexOf(',') > 3 ? latest.indexOf(',') : 15,
+                ),
+              )
+              .trim();
+            factsParts.push(
+              [
+                `[${contDisplay}의 직전 발언 — 이어받을 맥락]`,
+                ...recentUtterances
+                  .slice()
+                  .reverse()
+                  .map((u) => `"${u}"`),
+                `플레이어의 이번 입력은 위 발언에 대한 반응입니다. ${contDisplay}은(는) 자기가 방금 한 말을 기억하고 있습니다 — 위 발언에서 자연스럽게 이어지는 다음 응답을 하세요.`,
+                `자기 발언을 잊은 듯 처음부터 다시 설명하거나, 방금 한 질문/제안을 무효화하지 마세요.`,
+                `⚠️ 위 발언을 그대로 반복하거나 같은 어구로 시작하지 마세요${opening ? ` (직전 시작 어구: "${opening}")` : ''}. 대화를 한 걸음 전진시키세요.`,
+              ].join('\n'),
+            );
+            continuityInjected = true;
+          }
+        }
+      }
+
+      // 2) fallback: 마커 추출 실패 시 기존 화자 무관 따옴표 추출 (반복 방지 전용)
+      if (!continuityInjected && lastSessionTurn?.narrative) {
         const dialogueMatches = lastSessionTurn.narrative.match(
           /\u201c([^\u201d]+)\u201d|"([^"]+)"/g,
         );
@@ -2420,6 +2539,9 @@ export class PromptBuilderService {
       !ctx.factHandoffHint &&
       !ctx.factWithheldHint &&
       !ctx.factDefaultDescription &&
+      // 작별/감사 턴에는 새 화제를 꺼내지 않는다 — [대화 행위] 가이드와 충돌 (개선 1)
+      ctx.dialogueAct !== 'FAREWELL' &&
+      ctx.dialogueAct !== 'THANKS' &&
       targetNpcIds.size > 0
     ) {
       const chatNpcId = [...targetNpcIds][0];
@@ -2494,7 +2616,8 @@ export class PromptBuilderService {
     }
 
     // NPC 아젠다 목격: 같은 장소에서 NPC가 무언가를 하고 있는 장면
-    if (ctx.agendaWitnessHint) {
+    // 질문 턴에는 억제 (개선 3) — 답변 대신 목격 연출로 흐르는 것 방지
+    if (ctx.agendaWitnessHint && !isQuestionTurn) {
       factsParts.push(
         [
           `[목격 장면]`,

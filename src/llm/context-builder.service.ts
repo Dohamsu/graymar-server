@@ -166,6 +166,8 @@ export interface LlmContext {
     npcDisplayName: string;
     consecutiveTurns: number; // 연속 대화 턴 수
   } | null;
+  // 대화 행위 (개선 1): 순수 사교 발화 (GREETING/WELLBEING/THANKS/FAREWELL)
+  dialogueAct: string | null;
   // 장소 기반 NPC 필터링용
   currentLocationId: string | null;
   currentTimePhase: string | null;
@@ -839,6 +841,14 @@ export class ContextBuilderService {
       ? `\n[행동 결과] ${resolveOutcome === 'SUCCESS' ? '성공' : resolveOutcome === 'PARTIAL' ? '부분 성공' : '실패'}`
       : '';
 
+    // 대화 행위 (개선 1) — 사교 발화 턴은 fact 힌트 억제 + 톤 가이드 대상
+    const dialogueAct =
+      ((
+        (serverResult.ui as Record<string, unknown>)?.actionContext as
+          | Record<string, unknown>
+          | undefined
+      )?.dialogueAct as string | undefined) ?? null;
+
     // Phase 2: NPC 관계 서술 요약 (L2 확장)
     const npcRelationFacts: string[] = [];
     if (runState) {
@@ -1323,9 +1333,16 @@ export class ContextBuilderService {
             npcDef && npcState
               ? getNpcDisplayName(npcState, npcDef)
               : (npcDef?.unknownAlias ?? '상대 인물');
-          sceneParts.push(
-            `⚠️ 대화 연속 중: ${displayName}와(과) 대화가 이어지고 있습니다. 이 NPC가 떠나거나 장면이 종료되지 않아야 합니다. 대화가 자연스럽게 계속될 수 있는 열린 상태로 서술을 마무리하세요.`,
-          );
+          if (dialogueAct === 'FAREWELL') {
+            // 작별 턴 — "열린 상태로 마무리" 지시와 충돌하므로 대화 종결 유도로 교체
+            sceneParts.push(
+              `대화 마무리 국면: 플레이어가 ${displayName}와(과)의 대화를 끝내려 합니다. 대화가 자연스럽게 닫히는 장면으로 서술을 마무리하세요.`,
+            );
+          } else {
+            sceneParts.push(
+              `⚠️ 대화 연속 중: ${displayName}와(과) 대화가 이어지고 있습니다. 이 NPC가 떠나거나 장면이 종료되지 않아야 합니다. 대화가 자연스럽게 계속될 수 있는 열린 상태로 서술을 마무리하세요.`,
+            );
+          }
         }
       }
 
@@ -1691,10 +1708,13 @@ export class ContextBuilderService {
         const revealedFactIds = new Set(discoveredFacts);
 
         // === Step A: facts.json에서 키워드 매칭 fact 후보 추출 (architecture/46) ===
-        // 서버 발견 fact가 이미 결정된 턴에는 인계/보류 분기가 필요 없음
-        const factCandidates = npcRevealableFact
-          ? []
-          : this.content.getFactsByKeywords(inputKw, revealedFactIds);
+        // 서버 발견 fact가 이미 결정된 턴에는 인계/보류 분기가 필요 없음.
+        // 사교 발화(인사/안부/감사/작별) 턴에도 억제 — 인사에 인계/보류 가이드가 끼면
+        // NPC가 단서 화두를 꺼내는 어색함이 된다 (개선 1). 잡담 모드(D)로 자연 전환.
+        const factCandidates =
+          npcRevealableFact || dialogueAct
+            ? []
+            : this.content.getFactsByKeywords(inputKw, revealedFactIds);
 
         if (factCandidates.length > 0 && factNpcId) {
           // === Step B: 현재 NPC가 후보 fact 중 하나라도 보유? (knownBy 기반) ===
@@ -1916,6 +1936,7 @@ export class ContextBuilderService {
       agendaWitnessHint: this.buildAgendaWitnessHint(runState, serverResult),
       // 대화 잠금 상태
       conversationLock: this.buildConversationLock(runState),
+      dialogueAct,
       // 장소 기반 NPC 필터링
       currentLocationId:
         ((runState?.worldState as Record<string, unknown> | undefined)
@@ -2437,7 +2458,11 @@ export class ContextBuilderService {
   ): { npcDisplayName: string; consecutiveTurns: number } | null {
     if (!runState) return null;
     const actionHistory = runState.actionHistory as
-      | Array<{ actionType: string; primaryNpcId?: string }>
+      | Array<{
+          actionType: string;
+          primaryNpcId?: string;
+          dialogueAct?: string;
+        }>
       | undefined;
     if (!actionHistory || actionHistory.length === 0) return null;
 
@@ -2460,6 +2485,11 @@ export class ContextBuilderService {
     let count = 0;
     for (let i = actionHistory.length - 1; i >= 0; i--) {
       const entry = actionHistory[i];
+      // 작별로 닫힌 이전 대화는 연속으로 세지 않는다 (개선 1).
+      // 단, 마지막 entry 자신이 작별이면 그 턴까지는 같은 대화다.
+      if (i < actionHistory.length - 1 && entry.dialogueAct === 'FAREWELL') {
+        break;
+      }
       if (
         entry.primaryNpcId === targetNpcId &&
         SOCIAL_ACTIONS.has(entry.actionType)

@@ -461,6 +461,8 @@ export class NpcResolverService {
       const prevNpc = prev.primaryNpcId as string | undefined;
       const prevAction = prev.actionType as string | undefined;
       if (!prevNpc) continue;
+      // 작별 인사로 닫힌 대화는 잠금을 잇지 않는다 (대화 행위 감지 — 개선 1)
+      if (prev.dialogueAct === 'FAREWELL') break;
       if (SOCIAL_ACTIONS.has(prevAction ?? '')) return prevNpc;
       break;
     }
@@ -475,6 +477,8 @@ export class NpcResolverService {
       const prevNpc = prev.primaryNpcId as string | undefined;
       const prevAction = prev.actionType as string | undefined;
       if (!prevNpc) continue;
+      // 작별 인사로 닫힌 대화는 잠금을 잇지 않는다 (대화 행위 감지 — 개선 1)
+      if (prev.dialogueAct === 'FAREWELL') break;
       if (SOCIAL_ACTIONS.has(prevAction ?? '')) {
         return prevNpc;
       }

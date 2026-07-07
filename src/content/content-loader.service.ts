@@ -644,6 +644,13 @@ export class ContentLoaderService implements OnModuleInit {
 
   /**
    * 키워드 매칭 fact 후보 반환.
+   *
+   * 매칭 정밀화 (NPC 대화엔진 개선 3): 기존 1-hit 매칭은 "기록/시간/내용" 같은
+   * 범용 키워드 단독으로도 성립해 잡담·무관 질문이 topic-match로 오판됐다.
+   *  - 범용 키워드(3개 이상 fact가 공유)는 단독 매칭 불가
+   *  - distinct 키워드 2개 이상 hit 또는 고유 키워드 1개 이상 hit 시 성립
+   *  - hit 수 내림차순 정렬 — 호출부의 candidates[0]가 가장 관련 높은 fact
+   *
    * @param inputKeywords 입력에서 추출한 키워드 (한글 명사 등)
    * @param excludeFactIds 이미 발견된 factId 제외
    */
@@ -652,24 +659,42 @@ export class ContentLoaderService implements OnModuleInit {
     excludeFactIds: Set<string> = new Set(),
   ): FactDefinition[] {
     if (!this.factsData) return [];
-    const matched = new Set<string>();
+    const GENERIC_KEYWORD_FACT_COUNT = 3; // 이 수 이상 fact가 공유하면 범용 키워드
+    const scores = new Map<string, { hits: number; specificHits: number }>();
+    const seenKwByFact = new Map<string, Set<string>>(); // distinct 키워드 집계
     for (const ik of inputKeywords) {
       if (typeof ik !== 'string' || ik.length < 2) continue;
       const ikLower = ik.toLowerCase();
-      // 정확 일치
-      const direct = this.factsByKeyword.get(ikLower);
-      if (direct) for (const fid of direct) matched.add(fid);
-      // 부분 일치 (입력이 fact 키워드를 포함, 조사/어미 변형 대응)
+      // 정확 일치 + 부분 일치 (입력이 fact 키워드를 포함, 조사/어미 변형 대응)
       for (const [factKw, factIds] of this.factsByKeyword) {
         if (factKw.length < 2) continue;
-        if (ikLower.includes(factKw)) {
-          for (const fid of factIds) matched.add(fid);
+        if (ikLower !== factKw && !ikLower.includes(factKw)) continue;
+        const specific = factIds.size < GENERIC_KEYWORD_FACT_COUNT;
+        for (const fid of factIds) {
+          let kwSet = seenKwByFact.get(fid);
+          if (!kwSet) {
+            kwSet = new Set();
+            seenKwByFact.set(fid, kwSet);
+          }
+          if (kwSet.has(factKw)) continue; // 같은 키워드 중복 집계 방지
+          kwSet.add(factKw);
+          const entry = scores.get(fid) ?? { hits: 0, specificHits: 0 };
+          entry.hits++;
+          if (specific) entry.specificHits++;
+          scores.set(fid, entry);
         }
       }
     }
-    return [...matched]
-      .filter((fid) => !excludeFactIds.has(fid))
-      .map((fid) => this.factsData!.facts[fid])
+    return [...scores.entries()]
+      .filter(
+        ([fid, s]) =>
+          !excludeFactIds.has(fid) && (s.hits >= 2 || s.specificHits >= 1),
+      )
+      .sort(
+        (a, b) =>
+          b[1].hits - a[1].hits || b[1].specificHits - a[1].specificHits,
+      )
+      .map(([fid]) => this.factsData!.facts[fid])
       .filter(Boolean);
   }
 

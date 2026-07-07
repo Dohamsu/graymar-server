@@ -40,6 +40,7 @@ import {
 } from './npc-reaction-director.service.js';
 import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
+import { collectRecentNpcUtterances } from './npc-utterance.util.js';
 import {
   pushNarrativeTheme,
   type NarrativeThemeEntry,
@@ -430,9 +431,29 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           const npcState = npcStateMap[reactionNpcId] ?? null;
           if (npcDef) {
             // 최근 NPC 대사 흐름 (최신 → 과거 순). recentRows는 desc(turnNo) 정렬.
-            const recentNpcDialogues = recentRows
+            // 개선 2: 기존엔 서술 원문 전체(다른 NPC 대사·환경 묘사 포함)를 "이 NPC
+            // 최근 대화 흐름"으로 넘겨 라벨과 데이터가 어긋났다 — 마커 기반으로
+            // 이 NPC의 실제 발화만 추출. 실패 시 기존 원문 fallback (맥락 유실 방지).
+            const recentOutputsAsc = recentRows
               .map((t) => t.llmOutput)
-              .filter((n): n is string => !!n && n.trim().length > 0);
+              .filter((n): n is string => !!n && n.trim().length > 0)
+              .reverse(); // 과거 → 최신
+            let recentNpcDialogues = collectRecentNpcUtterances(
+              recentOutputsAsc,
+              {
+                npcId: reactionNpcId,
+                displayNames: [
+                  npcDef.name,
+                  npcDef.unknownAlias,
+                  npcDef.shortAlias,
+                  ...(npcDef.aliases ?? []),
+                ].filter((n): n is string => !!n),
+              },
+              3,
+            );
+            if (recentNpcDialogues.length === 0) {
+              recentNpcDialogues = recentOutputsAsc.slice().reverse();
+            }
 
             // 최근 플레이어 행동 흐름 (최신 → 과거 순)
             const recentPlayerActions = recentRows.map((t) => ({
