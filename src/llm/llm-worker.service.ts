@@ -1964,9 +1964,33 @@ ${npcList}`,
             /([가-힣][가-힣 ]{0,20}):\s*"(\/npc-portraits\/[^"]+)"\s*(["\u201C])/g,
             '@[$1|$2] $3',
           );
+          // 콜론 별칭이 알려진 NPC 이름 변형과 매칭될 때만 별칭 그대로 승격.
+          //   LLM 이 즉흥 생성한 콘텐츠 외 인물("창고지기", "견습공")을 검증 없이 마커로
+          //   올리면 npcId 미해석 유령 화자가 되어 대화 연속이 끊긴다 (arch/46 계열,
+          //   MARKER_NPCID_NULL 감사 발견 2026-07-08). 미매칭이면 무명 인물(실루엣)로 정규화.
+          const isKnownNpcAlias = (alias: string): boolean => {
+            const a = alias.trim();
+            if (a.length < 2) return false;
+            for (const n of this.content.getAllNpcs()) {
+              if (
+                a === n.name ||
+                a === n.unknownAlias ||
+                a === n.shortAlias ||
+                (n.aliases ?? []).includes(a) ||
+                (n.name && n.name.length >= 2 && a.includes(n.name)) ||
+                (n.unknownAlias && a.includes(n.unknownAlias))
+              ) {
+                return true;
+              }
+            }
+            return false;
+          };
           narrative = narrative.replace(
             /(^|[\n.!?,])\s*([가-힣][가-힣 ]{0,20}):\s*(["\u201C])/g,
-            (_m, pre, alias, q) => `${pre}@[${alias}] ${q}`,
+            (_m, pre, alias: string, q) =>
+              isKnownNpcAlias(alias)
+                ? `${pre}@[${alias}] ${q}`
+                : `${pre}@[무명 인물] ${q}`,
           );
 
           // B-2: @[NPC_ID] "대사" 또는 @[RONEN] "대사" → @[표시이름|초상화URL] "대사"
