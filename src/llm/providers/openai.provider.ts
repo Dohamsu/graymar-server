@@ -229,21 +229,34 @@ export class OpenAIProvider implements LlmProvider {
         }
       : {};
 
-    const stream = await client.chat.completions.create({
-      model,
-      messages: request.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-      max_tokens: request.maxTokens,
-      temperature: request.temperature,
-      stream: true,
-      stream_options: { include_usage: true },
-      ...(request.responseFormat === 'json_object'
-        ? { response_format: { type: 'json_object' as const } }
-        : {}),
-      ...openRouterParams,
-    } as any);
+    // 레이턴시 #4 — 첫 토큰 타임아웃: provider가 스트림은 열었지만 생성을 시작하지
+    // 않는 간헐 지연(p95 41~51초의 주원인)을 조기 절단. 첫 콘텐츠 델타 전에만 작동
+    // 하므로 토큰 중복 없이 caller의 non-stream fallback(재시도+fallback 모델)으로
+    // 안전하게 넘어간다.
+    const firstTokenTimeoutMs = parseInt(
+      process.env.LLM_FIRST_TOKEN_TIMEOUT_MS ?? '5000',
+      10,
+    );
+    const firstTokenAbort = new AbortController();
+
+    const stream = await client.chat.completions.create(
+      {
+        model,
+        messages: request.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+        max_tokens: request.maxTokens,
+        temperature: request.temperature,
+        stream: true,
+        stream_options: { include_usage: true },
+        ...(request.responseFormat === 'json_object'
+          ? { response_format: { type: 'json_object' as const } }
+          : {}),
+        ...openRouterParams,
+      } as any,
+      { signal: firstTokenAbort.signal },
+    );
 
     let fullText = '';
     let promptTokens = 0;
@@ -252,23 +265,67 @@ export class OpenAIProvider implements LlmProvider {
     let costUsd = 0;
     let modelUsed = model;
 
-    for await (const chunk of stream as any) {
-      const delta = chunk.choices?.[0]?.delta?.content;
-      if (delta) {
-        fullText += delta;
-        yield { type: 'token', text: delta };
-      }
+    let firstTokenTimedOut = false;
+    let firstTokenTimer: ReturnType<typeof setTimeout> | null =
+      firstTokenTimeoutMs > 0
+        ? setTimeout(() => {
+            firstTokenTimedOut = true;
+            firstTokenAbort.abort();
+          }, firstTokenTimeoutMs)
+        : null;
 
-      // 마지막 청크에 usage 정보
-      if (chunk.usage) {
-        promptTokens = chunk.usage.prompt_tokens ?? 0;
-        completionTokens = chunk.usage.completion_tokens ?? 0;
-        cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
-        costUsd = chunk.usage.cost ?? 0;
+    type RawStreamChunk = {
+      choices?: Array<{ delta?: { content?: string | null } }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+        cost?: number;
+      };
+      model?: string;
+    };
+    const iterator = (stream as unknown as AsyncIterable<RawStreamChunk>)[
+      Symbol.asyncIterator
+    ]();
+    try {
+      while (true) {
+        let next: IteratorResult<RawStreamChunk>;
+        try {
+          next = await iterator.next();
+        } catch (err) {
+          if (firstTokenTimedOut) {
+            throw new Error(
+              `첫 토큰 타임아웃(${firstTokenTimeoutMs}ms) — model=${model}, non-stream fallback 전환`,
+            );
+          }
+          throw err;
+        }
+        if (next.done) break;
+        const chunk = next.value;
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (delta) {
+          // 첫 콘텐츠 도착 — 타임아웃 해제
+          if (firstTokenTimer) {
+            clearTimeout(firstTokenTimer);
+            firstTokenTimer = null;
+          }
+          fullText += delta;
+          yield { type: 'token', text: delta };
+        }
+
+        // 마지막 청크에 usage 정보
+        if (chunk.usage) {
+          promptTokens = chunk.usage.prompt_tokens ?? 0;
+          completionTokens = chunk.usage.completion_tokens ?? 0;
+          cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
+          costUsd = chunk.usage.cost ?? 0;
+        }
+        if (chunk.model) {
+          modelUsed = chunk.model;
+        }
       }
-      if (chunk.model) {
-        modelUsed = chunk.model;
-      }
+    } finally {
+      if (firstTokenTimer) clearTimeout(firstTokenTimer);
     }
 
     yield {

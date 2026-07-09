@@ -79,6 +79,7 @@ import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js
 import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
 import { LlmCallerService } from '../llm/llm-caller.service.js';
 import { ChallengeClassifierService } from '../llm/challenge-classifier.service.js';
+import { LlmWorkerService } from '../llm/llm-worker.service.js';
 import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
 // User-Driven System v3
 import { IntentV3BuilderService } from '../engine/hub/intent-v3-builder.service.js';
@@ -234,6 +235,8 @@ export class TurnsService {
     @Optional() private readonly npcResolver?: NpcResolverService,
     @Optional()
     private readonly challengeClassifier?: ChallengeClassifierService,
+    // 레이턴시 #3 — 커밋 직후 워커 즉시 킥 (1초 폴링 대기 제거)
+    @Optional() private readonly llmWorker?: LlmWorkerService,
   ) {}
 
   /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
@@ -1104,6 +1107,43 @@ export class TurnsService {
       };
     }
 
+    // 레이턴시 #2 — Challenge 분류(회색지대 nano ~0.5s)를 이벤트 매칭·orchestration과
+    // 병렬 실행. FREE/CHECK 판단은 rawInput+actionType이 지배 요소이고, 이벤트 제목·
+    // 판정 NPC posture는 보조 힌트라 조기 발화의 판정 영향은 미미 (대상 NPC는
+    // 텍스트 매칭으로 조기 확보). 룰 게이트(RULE_FREE/CHECK)는 classify 내부 즉시 반환.
+    // 발화 지점: 조기 return(EQUIP/MOVE)·intent 다운그레이드가 모두 끝난 직후.
+    const earlyChallengeNpcId = this.extractTargetNpcFromInput(
+      rawInput,
+      body.input.type,
+    );
+    const earlyChallengeNpcDef = earlyChallengeNpcId
+      ? this.content.getNpc(earlyChallengeNpcId)
+      : null;
+    const challengePromise = this.challengeClassifier
+      ? this.challengeClassifier
+          .classify({
+            rawInput,
+            actionType: intent.actionType,
+            targetNpcId: earlyChallengeNpcId ?? null,
+            targetNpcName:
+              earlyChallengeNpcDef?.name ??
+              earlyChallengeNpcDef?.unknownAlias ??
+              null,
+            targetNpcPosture: null,
+            locationName: this.content.getLocation(locationId)?.name ?? null,
+            eventTitle: null, // 병렬화로 이벤트 미확정 — 보조 힌트라 생략
+          })
+          .catch(() => ({
+            result: 'CHECK' as const,
+            reason: 'classifier error',
+            source: 'fallback' as const,
+          }))
+      : Promise.resolve({
+          result: 'CHECK' as const,
+          reason: 'classifier unavailable',
+          source: 'rule' as const,
+        });
+
     // 이벤트 연속성: 의도 기반 씬 연속성 판단 (3단계)
     const sourceEventId = choicePayload?.sourceEventId as string | undefined;
     const rng = this.rngService.create(run.seed, turnNo);
@@ -1546,37 +1586,8 @@ export class TurnsService {
       : null;
 
     // Challenge Classifier 게이트 — 저항/결과분기 없는 자유 행동은 주사위 스킵
-    const primaryNpcDef = primaryNpcIdForResolve
-      ? this.content.getNpc(primaryNpcIdForResolve)
-      : null;
-    const npcStateForChallenge =
-      primaryNpcIdForResolve && runState.npcStates?.[primaryNpcIdForResolve]
-        ? runState.npcStates[primaryNpcIdForResolve]
-        : null;
-    const npcPostureForChallenge = npcStateForChallenge
-      ? this.npcEmotional.computePosture(npcStateForChallenge)
-      : null;
-    const eventTitleForChallenge =
-      ((event.payload as Record<string, unknown>)?.title as string) ?? null;
-    const challengeDecision = this.challengeClassifier
-      ? await this.challengeClassifier.classify({
-          rawInput,
-          actionType: intent.actionType,
-          targetNpcId: primaryNpcIdForResolve ?? null,
-          targetNpcName:
-            primaryNpcDef?.name ?? primaryNpcDef?.unknownAlias ?? null,
-          targetNpcPosture: npcPostureForChallenge,
-          locationName:
-            this.content.getLocation(ws.currentLocationId ?? '')?.name ??
-            ws.currentLocationId ??
-            null,
-          eventTitle: eventTitleForChallenge,
-        })
-      : {
-          result: 'CHECK' as const,
-          reason: 'classifier unavailable',
-          source: 'rule' as const,
-        };
+    // 레이턴시 #2 — 이벤트 매칭 시작 전에 발화된 병렬 분류 결과 회수.
+    const challengeDecision = await challengePromise;
 
     // ResolveService 판정 (FREE면 주사위 스킵하고 자동 SUCCESS)
     const resolveResult =
@@ -5342,6 +5353,10 @@ export class TurnsService {
         updatedAt: new Date(),
       })
       .where(eq(runSessions.id, run.id));
+    // 레이턴시 #3 — PENDING 턴 커밋 직후 워커 즉시 킥 (평균 ~0.5초 폴링 대기 제거)
+    if (llmStatus === 'PENDING') {
+      this.llmWorker?.wake();
+    }
   }
 
   // --- Result builders ---

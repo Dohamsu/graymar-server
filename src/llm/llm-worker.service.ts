@@ -148,6 +148,17 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     this.logger.log('LLM Worker stopped');
   }
 
+  /**
+   * 레이턴시 개선 #3 — 턴 커밋 직후 즉시 폴링 트리거.
+   * 같은 프로세스인데 1초 setInterval 폴링만 기다려 평균 ~0.5초를 낭비하던 대기 제거.
+   * poll()은 DB 락(PENDING→RUNNING + lock owner) 기반이라 중복 호출에 안전.
+   */
+  wake(): void {
+    this.poll().catch((err) =>
+      this.logger.error('LLM Worker wake error', err),
+    );
+  }
+
   private async poll(): Promise<void> {
     // 타임아웃 복구: locked_at + 60s 초과한 RUNNING → PENDING 리셋
     await this.db
@@ -325,6 +336,92 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       if (nanoEventCtx && previousChoiceLabels?.length) {
         nanoEventCtx.previousChoiceLabels = previousChoiceLabels;
       }
+      // 레이턴시 #1 — NpcReactionDirector 실행부를 클로저로 추출 (병렬/직렬 공용)
+      const startNpcReaction = async (
+        reactionNpcId: string,
+      ): Promise<NpcReactionResult | null> => {
+        const npcDef = this.content.getNpc(reactionNpcId);
+        if (!npcDef || !this.npcReactionDirector) return null;
+        const npcStateMap = llmContext.npcStates ?? {};
+        const npcState = npcStateMap[reactionNpcId] ?? null;
+        // 최근 NPC 대사 흐름 (최신 → 과거 순). recentRows는 desc(turnNo) 정렬.
+        // 개선 2: 마커 기반으로 이 NPC의 실제 발화만 추출. 실패 시 원문 fallback.
+        const recentOutputsAsc = recentRows
+          .map((t) => t.llmOutput)
+          .filter((n): n is string => !!n && n.trim().length > 0)
+          .reverse(); // 과거 → 최신
+        let recentNpcDialogues = collectRecentNpcUtterances(
+          recentOutputsAsc,
+          {
+            npcId: reactionNpcId,
+            displayNames: [
+              npcDef.name,
+              npcDef.unknownAlias,
+              npcDef.shortAlias,
+              ...(npcDef.aliases ?? []),
+            ].filter((n): n is string => !!n),
+          },
+          3,
+        );
+        if (recentNpcDialogues.length === 0) {
+          recentNpcDialogues = recentOutputsAsc.slice().reverse();
+        }
+        const recentPlayerActions = recentRows.map((t) => ({
+          rawInput: t.rawInput ?? '',
+          actionType: t.parsedIntent?.actionType ?? 'UNKNOWN',
+          outcome: t.serverResult?.ui?.resolveOutcome ?? null,
+        }));
+        try {
+          const reaction = await this.npcReactionDirector.direct({
+            npcId: reactionNpcId,
+            npcDisplayName: npcDef.unknownAlias ?? npcDef.name ?? reactionNpcId,
+            npcRole: npcDef.role ?? '',
+            personalityCore: npcDef.personality?.core,
+            speechStyle: npcDef.personality?.speechStyle,
+            softSpot: npcDef.personality?.softSpot,
+            innerConflict: npcDef.personality?.innerConflict,
+            npcState,
+            rawInput: pending.rawInput ?? '',
+            actionType: (actionCtxForTarget?.actionType as string) ?? 'TALK',
+            resolveOutcome:
+              ((serverResult.ui as Record<string, unknown>)?.resolveOutcome as
+                | 'SUCCESS'
+                | 'PARTIAL'
+                | 'FAIL'
+                | undefined) ?? null,
+            locationName: llmContext.locationContext ?? null,
+            hubHeat: llmContext.hubHeat,
+            recentNpcDialogues,
+            recentPlayerActions,
+            sceneSummary: llmContext.midSummary as string | undefined,
+          });
+          if (reaction) {
+            this.logger.log(
+              `[NpcReaction] npc=${npcDef.name} type=${reaction.reactionType} refuse=${reaction.refusalLevel} goal="${reaction.immediateGoal}" source=${reaction.source}`,
+            );
+          }
+          return reaction;
+        } catch (err) {
+          this.logger.warn(`[NpcReaction] error: ${err}`);
+          return null;
+        }
+      };
+
+      // 레이턴시 #1 — pre-known NPC(플레이어 지목/대화 잠금/이벤트 배정)가 있으면
+      // NpcReaction을 Track 1 nano와 병렬 실행 (직렬 시 ~1.6초 추가되던 구간).
+      // primaryNpcId는 NpcResolver 최종 결정이고 Step F가 서술 NPC를 이것으로
+      // 강제 교정하므로, nano 추천 NPC보다 primaryNpcId 기준 반응이 최종 서술과 정합.
+      const isReactionTurn =
+        !!this.npcReactionDirector &&
+        pending.nodeType === 'LOCATION' &&
+        pending.inputType !== 'SYSTEM';
+      const preKnownReactionNpcId =
+        (actionCtxForTarget?.primaryNpcId as string | undefined) ?? null;
+      const parallelReactionPromise =
+        isReactionTurn && preKnownReactionNpcId
+          ? startNpcReaction(preKnownReactionNpcId)
+          : null;
+
       if (!nanoEventHint && nanoEventCtx && this.nanoEventDirector) {
         try {
           const nanoResult =
@@ -422,92 +519,20 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       }
 
       // 3.4. NpcReactionDirector: NPC가 등장하는 LOCATION 턴에서 NPC 반응/즉시목표/추상톤 사전 결정
+      // 레이턴시 #1 — pre-known NPC면 위에서 Track 1과 병렬 실행된 결과 회수,
+      // 아니면 nano 추천 NPC로 직렬 실행 (기존 동작 유지).
       let npcReaction: NpcReactionResult | null = null;
-      if (
-        this.npcReactionDirector &&
-        pending.nodeType === 'LOCATION' &&
-        pending.inputType !== 'SYSTEM'
-      ) {
-        const reactionNpcId =
-          (nanoEventHint?.npcId as string | undefined) ??
-          (actionCtxForTarget?.primaryNpcId as string | undefined) ??
-          null;
-        if (reactionNpcId) {
-          const npcDef = this.content.getNpc(reactionNpcId);
-          const npcStateMap = llmContext.npcStates ?? {};
-          const npcState = npcStateMap[reactionNpcId] ?? null;
-          if (npcDef) {
-            // 최근 NPC 대사 흐름 (최신 → 과거 순). recentRows는 desc(turnNo) 정렬.
-            // 개선 2: 기존엔 서술 원문 전체(다른 NPC 대사·환경 묘사 포함)를 "이 NPC
-            // 최근 대화 흐름"으로 넘겨 라벨과 데이터가 어긋났다 — 마커 기반으로
-            // 이 NPC의 실제 발화만 추출. 실패 시 기존 원문 fallback (맥락 유실 방지).
-            const recentOutputsAsc = recentRows
-              .map((t) => t.llmOutput)
-              .filter((n): n is string => !!n && n.trim().length > 0)
-              .reverse(); // 과거 → 최신
-            let recentNpcDialogues = collectRecentNpcUtterances(
-              recentOutputsAsc,
-              {
-                npcId: reactionNpcId,
-                displayNames: [
-                  npcDef.name,
-                  npcDef.unknownAlias,
-                  npcDef.shortAlias,
-                  ...(npcDef.aliases ?? []),
-                ].filter((n): n is string => !!n),
-              },
-              3,
-            );
-            if (recentNpcDialogues.length === 0) {
-              recentNpcDialogues = recentOutputsAsc.slice().reverse();
-            }
-
-            // 최근 플레이어 행동 흐름 (최신 → 과거 순)
-            const recentPlayerActions = recentRows.map((t) => ({
-              rawInput: t.rawInput ?? '',
-              actionType: t.parsedIntent?.actionType ?? 'UNKNOWN',
-              outcome: t.serverResult?.ui?.resolveOutcome ?? null,
-            }));
-
-            try {
-              npcReaction = await this.npcReactionDirector.direct({
-                npcId: reactionNpcId,
-                npcDisplayName:
-                  npcDef.unknownAlias ?? npcDef.name ?? reactionNpcId,
-                npcRole: npcDef.role ?? '',
-                personalityCore: npcDef.personality?.core,
-                speechStyle: npcDef.personality?.speechStyle,
-                softSpot: npcDef.personality?.softSpot,
-                innerConflict: npcDef.personality?.innerConflict,
-                npcState,
-                rawInput: pending.rawInput ?? '',
-                actionType:
-                  (actionCtxForTarget?.actionType as string) ?? 'TALK',
-                resolveOutcome:
-                  ((serverResult.ui as Record<string, unknown>)
-                    ?.resolveOutcome as
-                    | 'SUCCESS'
-                    | 'PARTIAL'
-                    | 'FAIL'
-                    | undefined) ?? null,
-                locationName: llmContext.locationContext ?? null,
-                hubHeat: llmContext.hubHeat,
-                recentNpcDialogues,
-                recentPlayerActions,
-                sceneSummary: llmContext.midSummary as string | undefined,
-              });
-              if (npcReaction) {
-                this.logger.log(
-                  `[NpcReaction] npc=${npcDef.name} type=${npcReaction.reactionType} refuse=${npcReaction.refusalLevel} goal="${npcReaction.immediateGoal}" source=${npcReaction.source}`,
-                );
-              }
-            } catch (err) {
-              this.logger.warn(`[NpcReaction] error: ${err}`);
-            }
-
-            // E안: NpcSignatureGenerator 비활성화 — 톤 3축은 NpcReaction에 통합됨
+      if (isReactionTurn) {
+        if (parallelReactionPromise) {
+          npcReaction = await parallelReactionPromise;
+        } else {
+          const reactionNpcId =
+            (nanoEventHint?.npcId as string | undefined) ?? null;
+          if (reactionNpcId) {
+            npcReaction = await startNpcReaction(reactionNpcId);
           }
         }
+        // E안: NpcSignatureGenerator 비활성화 — 톤 3축은 NpcReaction에 통합됨
       }
 
       // 3.5. 프롬프트 메시지 조립

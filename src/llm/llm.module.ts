@@ -63,6 +63,7 @@ import { ContentModule } from '../content/content.module.js';
     ThemeClassifierService,
     ChallengeClassifierService,
     NpcReactionDirectorService,
+    LlmWorkerService, // 레이턴시 #3 — turns가 커밋 직후 wake() 호출
   ],
 })
 export class LlmModule implements OnModuleInit {
