@@ -66,6 +66,10 @@ export interface NanoEventContext {
   npcLocked?: boolean;
   /** Player-First: 강제 지정된 NPC ID (PLAYER_DIRECTED 모드에서 플레이어가 지목한 NPC) */
   lockedNpcId?: string | null;
+  /** 선택지 개선 P2 — 대화 행위 (GREETING/WELLBEING/THANKS/FAREWELL). FAREWELL이면 대화 계속 선택지 금지 */
+  dialogueAct?: string | null;
+  /** 선택지 개선 P3 — 직전 턴 선택지 라벨 (같은 구조/유사 라벨 반복 방지) */
+  previousChoiceLabels?: string[];
 }
 
 const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
@@ -88,6 +92,11 @@ const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
 3. fact: 발견 가능 목록에서 맥락에 맞는 것 선택. 없으면 null.
 4. choices: 정확히 3개. 최소 2종 affordance. 현재 NPC와 이어지는 선택지 포함.
    npcId: 같은 NPC와 이어가면 해당 ID, 새 상황이면 null.
+   - 라벨은 서술의 구체 요소(NPC의 마지막 발언/사물/인물/장소 디테일)를 1개 이상 인용해서 작성.
+     "더 물어본다", "주변을 살핀다", "조용히 물러난다" 같은 범용 라벨 지양.
+   - NPC가 서술에서 질문/제안으로 끝났으면 → 그 질문에 응답하는 선택지(긍정/부정/회피)를 반드시 1개 이상 포함.
+   - [직전 턴 선택지]가 주어지면 같은 구조·유사 표현 반복 금지. 다른 각도의 행동 제시.
+   - 라벨 문체는 "~한다"로 통일 (예: "장부 이야기를 꺼낸다"). "~하기" 명사형 금지.
 5. opening: "당신은" 금지. 직전과 다른 감각(시각/청각/후각/촉각/시간). 15~30자.
 6. avoid: 직전 서술에서 반복된 표현 2~3개.
 7. affordance: INVESTIGATE, PERSUADE, SNEAK, BRIBE, THREATEN, HELP, STEAL, FIGHT, OBSERVE, TRADE, TALK, SEARCH 중 선택.
@@ -195,12 +204,45 @@ export class NanoEventDirectorService {
     ];
 
     // 서술 맥락 (Dual-Track: 서술 완료 후 선택지 생성 시)
+    // P1 — 앞 300자만 보내면 서술 끝의 NPC 질문/제안이 선택지에 반영되지 않는다
+    // (실측: NPC가 질문으로 턴을 닫아도 응답 선택지 0개). 머리 150 + 꼬리 350 결합.
     if ((ctx as any).narrativeText) {
-      const narrativePreview = (ctx as any).narrativeText.slice(0, 300);
+      const nt = (ctx as any).narrativeText as string;
+      const narrativePreview =
+        nt.length <= 500
+          ? nt
+          : `${nt.slice(0, 150)}\n…(중략)…\n${nt.slice(-350)}`;
       parts.push(
         ``,
-        `[이번 턴 서술 — 이 내용에 맞는 선택지를 생성하세요]`,
+        `[이번 턴 서술 — 이 내용에 맞는 선택지를 생성하세요. 특히 서술 마지막의 NPC 발언/질문에 이어지는 선택지 포함]`,
         narrativePreview,
+      );
+    }
+
+    // P2 — 대화 행위: 작별 턴에 "대화 계속" 선택지가 나오는 자기모순 방지
+    if (ctx.dialogueAct === 'FAREWELL') {
+      parts.push(
+        ``,
+        `[대화 종결 국면 — 필수 준수]`,
+        `플레이어가 방금 작별 인사로 대화를 끝냈습니다. 같은 NPC와 대화를 계속하는 선택지("더 묻는다", "이야기를 이어간다" 등) 절대 금지.`,
+        `떠나기/이동/다른 대상 관찰/새 행동 중심으로 3개 구성.`,
+      );
+    } else if (
+      ctx.dialogueAct === 'GREETING' ||
+      ctx.dialogueAct === 'WELLBEING'
+    ) {
+      parts.push(
+        ``,
+        `[가벼운 사교 국면] 방금 인사/안부를 나눴습니다. 선택지는 자연스러운 대화 전개(안부 되묻기, 가벼운 화제, 용건 꺼내기) 중심. 무거운 조사/위협 선택지는 1개 이하.`,
+      );
+    }
+
+    // P3 — 직전 턴 선택지 라벨: 매 턴 "더 묻는다/살핀다/물러난다" 공식 반복 방지
+    if (ctx.previousChoiceLabels && ctx.previousChoiceLabels.length > 0) {
+      parts.push(
+        ``,
+        `[직전 턴 선택지 — 같은 구조/유사 라벨 금지]`,
+        ...ctx.previousChoiceLabels.slice(0, 4).map((l) => `- ${l}`),
       );
     }
 

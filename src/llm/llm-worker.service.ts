@@ -320,6 +320,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         ?.nanoEventCtx as
         | import('./nano-event-director.service.js').NanoEventContext
         | undefined;
+      // P3 — 직전 턴 선택지 라벨을 nano에도 전달 (같은 객체를 Track 2가 재사용).
+      // 기존엔 main LLM에만 전달되어 nano 선택지가 매 턴 같은 공식으로 반복됐다.
+      if (nanoEventCtx && previousChoiceLabels?.length) {
+        nanoEventCtx.previousChoiceLabels = previousChoiceLabels;
+      }
       if (!nanoEventHint && nanoEventCtx && this.nanoEventDirector) {
         try {
           const nanoResult =
@@ -345,12 +350,14 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                   },
                 }),
               );
+              // P4 — 서버 기본 go_hub와 라벨·payload 통일 (Track 2와 동일)
               nanoChoices.push({
                 id: 'go_hub',
-                label: '다른 장소로 이동한다',
+                label: "'잠긴 닻' 선술집으로 돌아간다",
+                hint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
                 action: {
                   type: 'CHOICE',
-                  payload: { affordance: 'MOVE_LOCATION', sourceNpcId: null },
+                  payload: { returnToHub: true },
                 },
               });
               // llmChoices에 저장 (DB 업데이트는 아래에서 함께)
@@ -2980,6 +2987,20 @@ ${npcList}`,
             (nanoCtx2 as any).narrativeText = narrative;
             const nanoResult2 = await this.nanoEventDirector.generate(nanoCtx2);
             if (nanoResult2 && nanoResult2.choices.length >= 3) {
+              // P5 — 서버 기본 선택지에만 붙던 예상 보정치(modifier) 중 프리셋
+              // 특기 보너스를 nano 교체본에도 부착 (이벤트 의존 보정은 다음 턴
+              // 이벤트 미확정이라 제외 — 프리셋 보너스가 안정적 정보).
+              const rsForMod = runSession?.runState as
+                | Record<string, unknown>
+                | undefined;
+              const presetBonuses =
+                (rsForMod?.actionBonuses as
+                  | Record<string, number>
+                  | undefined) ??
+                (runSession?.presetId
+                  ? this.content.getPreset(runSession.presetId)?.actionBonuses
+                  : undefined) ??
+                {};
               const nanoChoices2: ChoiceItem[] = nanoResult2.choices.map(
                 (nc, idx) => ({
                   id: `nano_${pending.turnNo}_${idx}`,
@@ -2991,14 +3012,21 @@ ${npcList}`,
                       sourceNpcId: nc.npcId ?? nanoResult2.npcId,
                     },
                   },
+                  ...(presetBonuses[nc.affordance]
+                    ? { modifier: presetBonuses[nc.affordance] }
+                    : {}),
                 }),
               );
+              // P4 — 서버 기본 go_hub와 라벨·payload 통일. 기존 "다른 장소로
+              // 이동한다"(MOVE_LOCATION)는 클릭 시 실제로는 선술집 복귀라
+              // 라벨-결과가 불일치했다.
               nanoChoices2.push({
                 id: 'go_hub',
-                label: '다른 장소로 이동한다',
+                label: "'잠긴 닻' 선술집으로 돌아간다",
+                hint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
                 action: {
                   type: 'CHOICE',
-                  payload: { affordance: 'MOVE_LOCATION', sourceNpcId: null },
+                  payload: { returnToHub: true },
                 },
               });
               this.pendingNanoChoices.set(

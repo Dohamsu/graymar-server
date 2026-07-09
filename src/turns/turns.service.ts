@@ -1604,6 +1604,15 @@ export class TurnsService {
 
     // === NanoEventDirector: 비동기 분리 — nanoCtx만 빌드, LLM Worker에서 호출 ===
     const nanoEventResult: NanoEventResult | null = null;
+    // 대화 행위 감지 — 순수 사교 발화(인사/안부/감사/작별)는 fact 공개 파이프라인을
+    // 타지 않고, FAREWELL은 다음 턴 대화 잠금을 자연 해제하며(개선 1), nano 선택지
+    // 생성에도 전달되어 작별 턴에 "대화 계속" 선택지가 나오는 것을 막는다(P2).
+    const dialogueAct: DialogueAct | null =
+      body.input.type === 'ACTION' ? detectDialogueAct(rawInput) : null;
+    if (dialogueAct) {
+      this.logger.log(`[DialogueAct] ${dialogueAct} — "${rawInput}"`);
+    }
+
     let nanoEventCtx: NanoEventContext | null = null;
     if (this.nanoEventDirector) {
       try {
@@ -1771,6 +1780,7 @@ export class TurnsService {
           npcReactions: [], // 이번 턴 반응은 nano 호출 후 계산됨 — LLM 프롬프트에서 직접 주입
           npcLocked: isNpcLocked,
           lockedNpcId,
+          dialogueAct: dialogueAct ?? null, // P2 — 작별 턴 대화 계속 선택지 방지
         };
 
         // 비동기 분리: nanoCtx만 저장, LLM Worker에서 generate() 호출
@@ -2758,14 +2768,6 @@ export class TurnsService {
 
     // cooldown 업데이트
     const newCooldowns = { ...cooldowns, [event.eventId]: turnNo };
-
-    // 대화 행위 감지 — 순수 사교 발화(인사/안부/감사/작별)는 fact 공개 파이프라인을
-    // 타지 않고, FAREWELL은 다음 턴 대화 잠금을 자연 해제한다 (자유 입력만 대상).
-    const dialogueAct: DialogueAct | null =
-      body.input.type === 'ACTION' ? detectDialogueAct(rawInput) : null;
-    if (dialogueAct) {
-      this.logger.log(`[DialogueAct] ${dialogueAct} — "${rawInput}"`);
-    }
 
     // 행동 이력 업데이트 (고집 시스템 + FALLBACK 페널티 + 선택지 중복 방지)
     const eventPrimaryNpcId = (event.payload as Record<string, unknown>)

@@ -40,6 +40,8 @@ describe('detectDialogueAct', () => {
       '잘 있으시오',
       '다음에 또 보세',
       '그럼 안녕히 계시오',
+      '오늘 좋은 이야기 들었소. 또 뵙겠소.', // 2026-07-09 실런 갭 — '뵙' 계열
+      '다음에 뵙겠습니다',
     ])('"%s" → FAREWELL', (input) => {
       expect(detectDialogueAct(input)).toBe('FAREWELL');
     });
