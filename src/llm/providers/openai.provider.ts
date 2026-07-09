@@ -130,27 +130,7 @@ export class OpenAIProvider implements LlmProvider {
 
     // GPT-5 계열은 max_completion_tokens, 이전 모델은 max_tokens
     const isGpt5 = /^gpt-5/.test(model);
-    // OpenRouter 라우팅 최적화: provider 고정 + 레이턴시 우선 정렬
-    const isOpenRouter = !!this.config.openaiBaseUrl?.includes('openrouter');
-    const openRouterParams = isOpenRouter
-      ? {
-          provider: {
-            sort: 'latency' as const,
-            allow_fallbacks: true,
-          },
-          // Gemini 2.5 Flash: thinking(reasoning) 비활성화 — OpenRouter는 max_tokens: 0으로 제어
-          ...(model.includes('gemini')
-            ? {
-                reasoning: {
-                  max_tokens: parseInt(
-                    process.env.GEMINI_REASONING_MAX_TOKENS ?? '0',
-                    10,
-                  ),
-                },
-              }
-            : {}),
-        }
-      : {};
+    const openRouterParams = this.buildOpenRouterParams(model);
     const completion = await client.chat.completions.create({
       model,
       messages: request.messages.map((m) => ({
@@ -191,6 +171,45 @@ export class OpenAIProvider implements LlmProvider {
       cacheCreationTokens: 0,
       latencyMs: Date.now() - start,
       costUsd,
+      providerName:
+        ((completion as unknown as Record<string, unknown>).provider as
+          | string
+          | undefined) ?? undefined,
+    };
+  }
+
+  /**
+   * OpenRouter 라우팅 정책 (arch/62 — provider 온건 고정).
+   * - sort: 기본 'throughput' (생성 tok/s 우선 — 'latency'는 접속 지연만 봐서
+   *   10~14 tok/s 저속 생성 스파이크를 못 거름)
+   * - ignore: 저 uptime provider 배제 (기본 cloudflare, dekallm — 30분 uptime 69%대 실측)
+   * - allow_fallbacks: true — 배제 목록 외 전체 폴백 허용 (가용성 유지)
+   */
+  private buildOpenRouterParams(model: string): Record<string, unknown> {
+    const isOpenRouter = !!this.config.openaiBaseUrl?.includes('openrouter');
+    if (!isOpenRouter) return {};
+    const sort = process.env.LLM_PROVIDER_SORT ?? 'throughput';
+    const ignore = (process.env.LLM_PROVIDER_IGNORE ?? 'cloudflare,dekallm')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return {
+      provider: {
+        sort,
+        allow_fallbacks: true,
+        ...(ignore.length > 0 ? { ignore } : {}),
+      },
+      // Gemini 2.5 Flash: thinking(reasoning) 비활성화 — OpenRouter는 max_tokens: 0으로 제어
+      ...(model.includes('gemini')
+        ? {
+            reasoning: {
+              max_tokens: parseInt(
+                process.env.GEMINI_REASONING_MAX_TOKENS ?? '0',
+                10,
+              ),
+            },
+          }
+        : {}),
     };
   }
 
@@ -209,25 +228,7 @@ export class OpenAIProvider implements LlmProvider {
     const start = Date.now();
     const client = this.getClient();
 
-    const isOpenRouter = !!this.config.openaiBaseUrl?.includes('openrouter');
-    const openRouterParams = isOpenRouter
-      ? {
-          provider: {
-            sort: 'latency' as const,
-            allow_fallbacks: true,
-          },
-          ...(model.includes('gemini')
-            ? {
-                reasoning: {
-                  max_tokens: parseInt(
-                    process.env.GEMINI_REASONING_MAX_TOKENS ?? '0',
-                    10,
-                  ),
-                },
-              }
-            : {}),
-        }
-      : {};
+    const openRouterParams = this.buildOpenRouterParams(model);
 
     // 레이턴시 #4 — 첫 토큰 타임아웃: provider가 스트림은 열었지만 생성을 시작하지
     // 않는 간헐 지연(p95 41~51초의 주원인)을 조기 절단. 첫 콘텐츠 델타 전에만 작동
@@ -264,6 +265,7 @@ export class OpenAIProvider implements LlmProvider {
     let cachedTokens = 0;
     let costUsd = 0;
     let modelUsed = model;
+    let providerName: string | undefined;
 
     let firstTokenTimedOut = false;
     let firstTokenTimer: ReturnType<typeof setTimeout> | null =
@@ -283,6 +285,8 @@ export class OpenAIProvider implements LlmProvider {
         cost?: number;
       };
       model?: string;
+      /** OpenRouter — 실제 서빙 인프라 업체명 */
+      provider?: string;
     };
     const iterator = (stream as unknown as AsyncIterable<RawStreamChunk>)[
       Symbol.asyncIterator
@@ -323,6 +327,9 @@ export class OpenAIProvider implements LlmProvider {
         if (chunk.model) {
           modelUsed = chunk.model;
         }
+        if (chunk.provider) {
+          providerName = chunk.provider;
+        }
       }
     } finally {
       if (firstTokenTimer) clearTimeout(firstTokenTimer);
@@ -339,6 +346,7 @@ export class OpenAIProvider implements LlmProvider {
         cacheCreationTokens: 0,
         latencyMs: Date.now() - start,
         costUsd,
+        providerName,
       },
     };
   }

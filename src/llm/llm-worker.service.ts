@@ -2982,6 +2982,8 @@ ${npcList}`,
             cacheCreation: callResult.response?.cacheCreationTokens ?? 0,
             completion: callResult.response?.completionTokens ?? 0,
             latencyMs: callResult.response?.latencyMs ?? 0,
+            // arch/62 — 느린 provider 식별용 (OpenRouter 실제 서빙 업체)
+            provider: callResult.response?.providerName ?? null,
           },
           llmCompletedAt: new Date(),
           llmPrompt: messages as unknown[],

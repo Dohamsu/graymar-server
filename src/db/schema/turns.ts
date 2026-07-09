@@ -67,6 +67,8 @@ export const turns = pgTable(
       cacheCreation?: number;
       completion: number;
       latencyMs: number;
+      /** arch/62 — OpenRouter 실제 서빙 업체명 (느린 provider 식별) */
+      provider?: string | null;
     }>(),
     llmCompletedAt: timestamp('llm_completed_at'),
     llmChoices: jsonb('llm_choices').$type<ChoiceItem[]>(),

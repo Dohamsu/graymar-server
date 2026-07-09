@@ -25,6 +25,8 @@ export interface LlmProviderResponse {
   cacheCreationTokens: number; // Claude: cache_creation_input_tokens (캐시 쓰기 토큰)
   latencyMs: number;
   costUsd: number; // OpenRouter x-openrouter-cost 또는 토큰 기반 추정
+  /** OpenRouter가 실제 서빙한 인프라 업체명 (예: "Novita") — 느린 provider 식별용 (arch/62) */
+  providerName?: string;
 }
 
 export interface LlmProvider {
