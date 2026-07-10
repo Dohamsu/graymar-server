@@ -283,6 +283,7 @@ export class TurnsService {
     // 활성 콘텐츠와 런의 시나리오가 어긋나면 해당 팩을 로드 (순차 전환만 보장,
     // 서로 다른 시나리오 동시 플레이는 여전히 금지 — 단일 활성 시나리오 정책).
     await this.content.ensureScenario(run.scenarioId);
+    this.content.enterScenario(run.scenarioId);
 
     // 3. expectedNextTurnNo 검증
     const expectedTurnNo = run.currentTurnNo + 1;

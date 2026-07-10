@@ -101,6 +101,7 @@ export class RunsService {
     // 서로 다른 시나리오의 런 동시 플레이는 금지 (개발·검증 용도).
     if (scenarioId) {
       await this.content.ensureScenario(scenarioId);
+      this.content.enterScenario(scenarioId);
       scenarioMeta = this.content.getScenarioMeta();
     }
 
@@ -1066,6 +1067,11 @@ export class RunsService {
     });
     if (!run) throw new NotFoundError('Run not found');
     if (run.userId !== userId) throw new ForbiddenError('Not your run');
+
+    // architecture/63 ①: 이어하기 응답 조립도 콘텐츠(프리셋/아이템 메타)를
+    // 참조하므로 런의 팩으로 스코프 설정
+    await this.content.ensureScenario(run.scenarioId);
+    this.content.enterScenario(run.scenarioId);
 
     // 현재 노드 조회
     const currentNode = await this.db.query.nodeInstances.findFirst({

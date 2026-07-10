@@ -283,9 +283,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // 1.0. architecture/63: 시나리오 일치 가드 — 서버 재시작 직후 워커가
       // 기본 팩으로 다른 시나리오 런의 턴을 처리하는 것 방지.
-      await this.content.ensureScenario(
-        (runSession as { scenarioId?: string | null } | null)?.scenarioId,
-      );
+      const workerScenarioId = (
+        runSession as { scenarioId?: string | null } | null
+      )?.scenarioId;
+      await this.content.ensureScenario(workerScenarioId);
+      this.content.enterScenario(workerScenarioId);
 
       // 1.1. LLM 컨텍스트 구축
       // Player-First: serverResult.ui.actionContext.targetNpcId 를 컨텍스트에 전달 (bug 4624)

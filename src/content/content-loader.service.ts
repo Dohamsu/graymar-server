@@ -33,6 +33,10 @@ import type {
   ChoiceItem,
 } from '../db/types/index.js';
 import type { PlannedNodeV2 } from '../db/types/graph-types.js';
+import {
+  currentScenarioIdFromContext,
+  enterScenarioContext,
+} from './scenario-context.js';
 
 // ── architecture/63 — scenario.json 필드 누락 시 안전 기본값 (graymar_v1 현행 값) ──
 // 엔진 서비스 파일에는 콘텐츠 리터럴을 두지 않는다. fallback은 이 파일 단일 지점.
@@ -60,61 +64,42 @@ const DEFAULT_PROLOGUE_META: ScenarioPrologueMeta = {
   imageUrl: '/npc-portraits/ronen.webp',
 };
 
-const CONTENT_BASE = join(process.cwd(), '..', 'content');
-
-@Injectable()
-export class ContentLoaderService implements OnModuleInit {
-  private readonly logger = new Logger(ContentLoaderService.name);
-  private contentDir = join(CONTENT_BASE, DEFAULT_SCENARIO_ID);
-  private currentScenarioId = DEFAULT_SCENARIO_ID;
-  private scenarioMeta: ScenarioMeta | null = null;
-  private enemies = new Map<string, EnemyDefinition>();
-  private encounters = new Map<string, EncounterDefinition>();
-  private items = new Map<string, ItemDefinition>();
-  private presets = new Map<string, PresetDefinition>();
-  private playerDefaults!: PlayerDefaults;
-  // HUB 시스템 콘텐츠
-  private locations = new Map<string, LocationDefinition>();
-  private eventsV2: EventDefV2[] = [];
-  private sceneShells: Record<string, Record<string, Record<string, string>>> =
-    {};
-  private suggestedChoices: Record<string, SuggestedChoice[]> = {};
-  private npcs = new Map<string, NpcDefinition>();
-  private arcEvents: Record<string, ArcEventDefinition[]> = {};
-  // Phase 4: Equipment/Set/Shop
-  private sets = new Map<string, SetDefinitionData>();
-  private shops = new Map<string, ShopDefinition>();
-  private shopsByLocation = new Map<string, ShopDefinition[]>();
-  // Phase 4.1: Region Affix
-  private affixes: RegionAffixDef[] = [];
-  // Phase 4a: Equipment Drops
-  private equipmentDrops: EquipmentDropEntry[] = [];
-  private equipDropsByEnemy = new Map<string, EquipmentDropEntry>();
-  private equipDropsByEncounter = new Map<string, EquipmentDropEntry>();
-  private equipDropsByLocation = new Map<string, EquipmentDropEntry>();
-  // Narrative Engine v1
-  private incidentsData: unknown[] = [];
-  private endingsData: Record<string, unknown> = {};
-  private narrativeMarkConditions: unknown[] = [];
-  // Quest data
-  private questData: unknown = null;
-  // architecture/46: Fact 일급 객체 (facts.json)
-  private factsData: {
-    version: string;
-    facts: Record<string, FactDefinition>;
-  } | null = null;
-  // 키워드 매칭 인덱스 (성능 최적화)
-  private factsByKeyword = new Map<string, Set<string>>(); // keyword → factIds
-  // Traits
-  private traits = new Map<string, TraitDefinition>();
-  // architecture/63: 세력 표시명 (factions.json)
-  private factions = new Map<string, FactionDefinition>();
-  // architecture/63: DAG 그래프 (dag 모드 런 전용)
-  private graph: PlannedNodeV2[] = [];
-  // architecture/63: entityAliases 역인덱스 (LLM 태그/별칭 → npcId)
-  private entityAliasIndex = new Map<string, string>();
-  // Text Replacements — LLM 후처리 치환 규칙
-  private textReplacements: {
+/**
+ * architecture/63 ① — 시나리오 팩 상태 컨테이너.
+ * 팩 하나가 자기 콘텐츠와 파생 인덱스를 전부 소유한다 (전역 상태 아님).
+ */
+interface ContentPackState {
+  scenarioMeta: ScenarioMeta | null;
+  enemies: Map<string, EnemyDefinition>;
+  encounters: Map<string, EncounterDefinition>;
+  items: Map<string, ItemDefinition>;
+  presets: Map<string, PresetDefinition>;
+  playerDefaults: PlayerDefaults;
+  locations: Map<string, LocationDefinition>;
+  eventsV2: EventDefV2[];
+  sceneShells: Record<string, Record<string, Record<string, string>>>;
+  suggestedChoices: Record<string, SuggestedChoice[]>;
+  npcs: Map<string, NpcDefinition>;
+  arcEvents: Record<string, ArcEventDefinition[]>;
+  sets: Map<string, SetDefinitionData>;
+  shops: Map<string, ShopDefinition>;
+  shopsByLocation: Map<string, ShopDefinition[]>;
+  affixes: RegionAffixDef[];
+  equipmentDrops: EquipmentDropEntry[];
+  equipDropsByEnemy: Map<string, EquipmentDropEntry>;
+  equipDropsByEncounter: Map<string, EquipmentDropEntry>;
+  equipDropsByLocation: Map<string, EquipmentDropEntry>;
+  incidentsData: unknown[];
+  endingsData: Record<string, unknown>;
+  narrativeMarkConditions: unknown[];
+  questData: unknown;
+  factsData: { version: string; facts: Record<string, FactDefinition> } | null;
+  factsByKeyword: Map<string, Set<string>>;
+  traits: Map<string, TraitDefinition>;
+  factions: Map<string, FactionDefinition>;
+  entityAliasIndex: Map<string, string>;
+  graph: PlannedNodeV2[];
+  textReplacements: {
     npcApproach: { pattern: string; replacement: string }[];
     currency: { pattern: string; replacement: string; flags?: string }[];
     repeatKillAll: string[];
@@ -125,37 +110,197 @@ export class ContentLoaderService implements OnModuleInit {
       minPartsToFix: number;
       keepTailWords: number;
     } | null;
-  } = {
-    npcApproach: [],
-    currency: [],
-    repeatKillAll: [],
-    repeatSecondPlus: [],
-    compoundTitleFix: null,
   };
+}
 
-  async onModuleInit() {
-    await this.loadAll();
+function createEmptyPack(): ContentPackState {
+  return {
+    scenarioMeta: null,
+    enemies: new Map(),
+    encounters: new Map(),
+    items: new Map(),
+    presets: new Map(),
+    playerDefaults: undefined as unknown as PlayerDefaults,
+    locations: new Map(),
+    eventsV2: [],
+    sceneShells: {},
+    suggestedChoices: {},
+    npcs: new Map(),
+    arcEvents: {},
+    sets: new Map(),
+    shops: new Map(),
+    shopsByLocation: new Map(),
+    affixes: [],
+    equipmentDrops: [],
+    equipDropsByEnemy: new Map(),
+    equipDropsByEncounter: new Map(),
+    equipDropsByLocation: new Map(),
+    incidentsData: [],
+    endingsData: {},
+    narrativeMarkConditions: [],
+    questData: null,
+    factsData: null,
+    factsByKeyword: new Map(),
+    traits: new Map(),
+    factions: new Map(),
+    entityAliasIndex: new Map(),
+    graph: [],
+    textReplacements: {
+      npcApproach: [],
+      currency: [],
+      repeatKillAll: [],
+      repeatSecondPlus: [],
+      compoundTitleFix: null,
+    },
+  };
+}
+
+const CONTENT_BASE = join(process.cwd(), '..', 'content');
+
+@Injectable()
+export class ContentLoaderService implements OnModuleInit {
+  private readonly logger = new Logger(ContentLoaderService.name);
+  /**
+   * architecture/63 ①: scenarioId → 로드된 팩 캐시 (멀티 팩 상주).
+   * loadScenario의 전역 교체 개념을 대체 — 팩은 한 번 로드되면 상주하며,
+   * 어느 팩을 볼지는 비동기 컨텍스트(scenario-context)가 결정한다.
+   */
+  private readonly packs = new Map<string, ContentPackState>();
+  /** ALS 컨텍스트 부재 경로(초기화·테스트·타이머)의 해석 기준 — loadScenario가 갱신 */
+  private fallbackScenarioId = DEFAULT_SCENARIO_ID;
+
+  /** 부팅 중(로더 init 전) 접근 대비 빈 팩 — 구 구조의 '빈 Map 필드'와 등가 */
+  private readonly emptyPack: ContentPackState = createEmptyPack();
+
+  /** 현재 컨텍스트의 팩 해석 — ALS scenarioId → fallback. 미로드면 기본 팩/빈 팩 */
+  private pack(): ContentPackState {
+    const id = currentScenarioIdFromContext() ?? this.fallbackScenarioId;
+    const pack = this.packs.get(id);
+    if (pack) return pack;
+    const fallback = this.packs.get(DEFAULT_SCENARIO_ID);
+    if (fallback) {
+      this.logger.warn(
+        `[Pack] '${id}' 미로드 상태 접근 — 기본 팩(${DEFAULT_SCENARIO_ID})으로 폴백 (ensureScenario 누락 경로?)`,
+      );
+      return fallback;
+    }
+    // 모듈 초기화 순서상 로더 init 이전 접근(ContentValidator 등) — 구 구조에서
+    // 빈 Map 필드를 보던 것과 동일하게 빈 팩 반환 (부팅 크래시 방지)
+    return this.emptyPack;
   }
 
-  private async loadAll() {
-    // architecture/63: loadScenario 재호출 시 이전 팩 항목 잔존 방지 —
-    // Map/인덱스를 전부 비우고 로드한다 (기존엔 set만 해 병합 버그).
-    this.enemies.clear();
-    this.encounters.clear();
-    this.items.clear();
-    this.presets.clear();
-    this.locations.clear();
-    this.npcs.clear();
-    this.sets.clear();
-    this.shops.clear();
-    this.shopsByLocation.clear();
-    this.equipDropsByEnemy.clear();
-    this.equipDropsByEncounter.clear();
-    this.equipDropsByLocation.clear();
-    this.factsByKeyword.clear();
-    this.traits.clear();
-    this.factions.clear();
-    this.entityAliasIndex.clear();
+  // ── 팩 상태 접근자 — 기존 accessor들의 this.<field> 참조를 무수정 보존 ──
+  private get scenarioMeta() {
+    return this.pack().scenarioMeta;
+  }
+  private get enemies() {
+    return this.pack().enemies;
+  }
+  private get encounters() {
+    return this.pack().encounters;
+  }
+  private get items() {
+    return this.pack().items;
+  }
+  private get presets() {
+    return this.pack().presets;
+  }
+  private get playerDefaults() {
+    return this.pack().playerDefaults;
+  }
+  private get locations() {
+    return this.pack().locations;
+  }
+  private get eventsV2() {
+    return this.pack().eventsV2;
+  }
+  private get sceneShells() {
+    return this.pack().sceneShells;
+  }
+  private get suggestedChoices() {
+    return this.pack().suggestedChoices;
+  }
+  private get npcs() {
+    return this.pack().npcs;
+  }
+  private get arcEvents() {
+    return this.pack().arcEvents;
+  }
+  private get sets() {
+    return this.pack().sets;
+  }
+  private get shops() {
+    return this.pack().shops;
+  }
+  private get shopsByLocation() {
+    return this.pack().shopsByLocation;
+  }
+  private get affixes() {
+    return this.pack().affixes;
+  }
+  private get equipmentDrops() {
+    return this.pack().equipmentDrops;
+  }
+  private get equipDropsByEnemy() {
+    return this.pack().equipDropsByEnemy;
+  }
+  private get equipDropsByEncounter() {
+    return this.pack().equipDropsByEncounter;
+  }
+  private get equipDropsByLocation() {
+    return this.pack().equipDropsByLocation;
+  }
+  private get incidentsData() {
+    return this.pack().incidentsData;
+  }
+  private get endingsData() {
+    return this.pack().endingsData;
+  }
+  private get narrativeMarkConditions() {
+    return this.pack().narrativeMarkConditions;
+  }
+  private get questData() {
+    return this.pack().questData;
+  }
+  private get factsData() {
+    return this.pack().factsData;
+  }
+  private get factsByKeyword() {
+    return this.pack().factsByKeyword;
+  }
+  private get traits() {
+    return this.pack().traits;
+  }
+  private get factions() {
+    return this.pack().factions;
+  }
+  private get entityAliasIndex() {
+    return this.pack().entityAliasIndex;
+  }
+  private get graph() {
+    return this.pack().graph;
+  }
+  private get textReplacements() {
+    return this.pack().textReplacements;
+  }
+
+  async onModuleInit() {
+    await this.ensurePack(DEFAULT_SCENARIO_ID);
+  }
+
+  /** 팩을 캐시에 확보 (lazy load, 1회) */
+  async ensurePack(scenarioId: string): Promise<ContentPackState> {
+    const cached = this.packs.get(scenarioId);
+    if (cached) return cached;
+    const pack = await this.loadPack(scenarioId);
+    this.packs.set(scenarioId, pack);
+    this.logger.log(`[Pack] loaded: ${scenarioId} (상주 ${this.packs.size}개)`);
+    return pack;
+  }
+
+  private async loadPack(scenarioId: string): Promise<ContentPackState> {
+    const dir = join(CONTENT_BASE, scenarioId);
+    const pack = createEmptyPack();
 
     const [
       enemiesRaw,
@@ -184,102 +329,76 @@ export class ContentLoaderService implements OnModuleInit {
       graphRaw,
       factionsRaw,
     ] = await Promise.all([
-      readFile(join(this.contentDir, 'enemies.json'), 'utf-8'),
-      readFile(join(this.contentDir, 'encounters.json'), 'utf-8'),
-      readFile(join(this.contentDir, 'items.json'), 'utf-8'),
-      readFile(join(this.contentDir, 'player_defaults.json'), 'utf-8'),
-      readFile(join(this.contentDir, 'presets.json'), 'utf-8'),
-      readFile(join(this.contentDir, 'locations.json'), 'utf-8').catch(
-        () => '[]',
-      ),
-      readFile(join(this.contentDir, 'events_v2.json'), 'utf-8').catch(
-        () => '[]',
-      ),
-      readFile(join(this.contentDir, 'scene_shells.json'), 'utf-8').catch(
-        () => '{}',
-      ),
-      readFile(join(this.contentDir, 'suggested_choices.json'), 'utf-8').catch(
-        () => '{}',
-      ),
-      readFile(join(this.contentDir, 'arc_events.json'), 'utf-8').catch(
-        () => '{}',
-      ),
-      readFile(join(this.contentDir, 'npcs.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(this.contentDir, 'sets.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(this.contentDir, 'shops.json'), 'utf-8').catch(() => '[]'),
-      readFile(join(this.contentDir, 'region_affixes.json'), 'utf-8').catch(
-        () => '[]',
-      ),
+      readFile(join(dir, 'enemies.json'), 'utf-8'),
+      readFile(join(dir, 'encounters.json'), 'utf-8'),
+      readFile(join(dir, 'items.json'), 'utf-8'),
+      readFile(join(dir, 'player_defaults.json'), 'utf-8'),
+      readFile(join(dir, 'presets.json'), 'utf-8'),
+      readFile(join(dir, 'locations.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(dir, 'events_v2.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(dir, 'scene_shells.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(dir, 'suggested_choices.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(dir, 'arc_events.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(dir, 'npcs.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(dir, 'sets.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(dir, 'shops.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(dir, 'region_affixes.json'), 'utf-8').catch(() => '[]'),
       // Phase 4a: Equipment Drops
-      readFile(join(this.contentDir, 'equipment_drops.json'), 'utf-8').catch(
-        () => '[]',
-      ),
+      readFile(join(dir, 'equipment_drops.json'), 'utf-8').catch(() => '[]'),
       // Narrative Engine v1
-      readFile(join(this.contentDir, 'incidents.json'), 'utf-8').catch(
+      readFile(join(dir, 'incidents.json'), 'utf-8').catch(
         () => '{"incidents":[]}',
       ),
-      readFile(join(this.contentDir, 'endings.json'), 'utf-8').catch(
-        () => '{}',
-      ),
-      readFile(join(this.contentDir, 'narrative_marks.json'), 'utf-8').catch(
+      readFile(join(dir, 'endings.json'), 'utf-8').catch(() => '{}'),
+      readFile(join(dir, 'narrative_marks.json'), 'utf-8').catch(
         () => '{"marks":[]}',
       ),
       // Scenario meta
-      readFile(join(this.contentDir, 'scenario.json'), 'utf-8').catch(
-        () => 'null',
-      ),
+      readFile(join(dir, 'scenario.json'), 'utf-8').catch(() => 'null'),
       // Quest data
-      readFile(join(this.contentDir, 'quest.json'), 'utf-8').catch(
-        () => 'null',
-      ),
+      readFile(join(dir, 'quest.json'), 'utf-8').catch(() => 'null'),
       // Facts data (architecture/46 — fact 일급 객체)
-      readFile(join(this.contentDir, 'facts.json'), 'utf-8').catch(
-        () => 'null',
-      ),
+      readFile(join(dir, 'facts.json'), 'utf-8').catch(() => 'null'),
       // Traits
-      readFile(join(this.contentDir, 'traits.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(dir, 'traits.json'), 'utf-8').catch(() => '[]'),
       // LLM 후처리 치환 규칙 (bug 4655)
-      readFile(join(this.contentDir, 'text_replacements.json'), 'utf-8').catch(
-        () => '{}',
-      ),
+      readFile(join(dir, 'text_replacements.json'), 'utf-8').catch(() => '{}'),
       // architecture/63: DAG 그래프 (dag 모드 런 전용, 선택 파일)
-      readFile(join(this.contentDir, 'graph.json'), 'utf-8').catch(() => '[]'),
+      readFile(join(dir, 'graph.json'), 'utf-8').catch(() => '[]'),
       // architecture/63: 세력 (선택 파일 — 표시명 파생)
-      readFile(join(this.contentDir, 'factions.json'), 'utf-8').catch(
-        () => '[]',
-      ),
+      readFile(join(dir, 'factions.json'), 'utf-8').catch(() => '[]'),
     ]);
 
     const enemiesList = JSON.parse(enemiesRaw) as EnemyDefinition[];
-    for (const e of enemiesList) this.enemies.set(e.enemyId, e);
+    for (const e of enemiesList) pack.enemies.set(e.enemyId, e);
 
     const encountersList = JSON.parse(encountersRaw) as EncounterDefinition[];
-    for (const enc of encountersList) this.encounters.set(enc.encounterId, enc);
+    for (const enc of encountersList) pack.encounters.set(enc.encounterId, enc);
 
     const itemsList = JSON.parse(itemsRaw) as ItemDefinition[];
-    for (const it of itemsList) this.items.set(it.itemId, it);
+    for (const it of itemsList) pack.items.set(it.itemId, it);
 
-    this.playerDefaults = JSON.parse(defaultsRaw) as PlayerDefaults;
+    pack.playerDefaults = JSON.parse(defaultsRaw) as PlayerDefaults;
 
     const presetsList = JSON.parse(presetsRaw) as PresetDefinition[];
-    for (const p of presetsList) this.presets.set(p.presetId, p);
+    for (const p of presetsList) pack.presets.set(p.presetId, p);
 
     // HUB 콘텐츠 로드
     const locationsList = JSON.parse(locationsRaw) as LocationDefinition[];
-    for (const loc of locationsList) this.locations.set(loc.locationId, loc);
+    for (const loc of locationsList) pack.locations.set(loc.locationId, loc);
 
     const npcsList = JSON.parse(npcsRaw) as NpcDefinition[];
-    for (const npc of npcsList) this.npcs.set(npc.npcId, npc);
+    for (const npc of npcsList) pack.npcs.set(npc.npcId, npc);
 
     // architecture/63: entityAliases 역인덱스 구축 (구 TAG_TO_NPC)
     for (const npc of npcsList) {
       for (const alias of npc.entityAliases ?? []) {
-        this.entityAliasIndex.set(alias, npc.npcId);
+        pack.entityAliasIndex.set(alias, npc.npcId);
       }
     }
 
     // architecture/63: DAG 그래프
-    this.graph = JSON.parse(graphRaw) as PlannedNodeV2[];
+    pack.graph = JSON.parse(graphRaw) as PlannedNodeV2[];
 
     // architecture/63: 세력 (factions.json — 배열 또는 {factions:[]} 래퍼)
     const factionsParsed = JSON.parse(factionsRaw) as
@@ -288,97 +407,92 @@ export class ContentLoaderService implements OnModuleInit {
     const factionsList = Array.isArray(factionsParsed)
       ? factionsParsed
       : (factionsParsed.factions ?? []);
-    for (const f of factionsList) this.factions.set(f.factionId, f);
+    for (const f of factionsList) pack.factions.set(f.factionId, f);
 
-    this.eventsV2 = JSON.parse(eventsV2Raw) as EventDefV2[];
-    this.sceneShells = JSON.parse(sceneShellsRaw) as Record<
+    pack.eventsV2 = JSON.parse(eventsV2Raw) as EventDefV2[];
+    pack.sceneShells = JSON.parse(sceneShellsRaw) as Record<
       string,
       Record<string, Record<string, string>>
     >;
-    this.suggestedChoices = JSON.parse(suggestedChoicesRaw) as Record<
+    pack.suggestedChoices = JSON.parse(suggestedChoicesRaw) as Record<
       string,
       SuggestedChoice[]
     >;
-    this.arcEvents = JSON.parse(arcEventsRaw) as Record<
+    pack.arcEvents = JSON.parse(arcEventsRaw) as Record<
       string,
       ArcEventDefinition[]
     >;
 
     // Phase 4: 세트/상점 로드
     const setsList = JSON.parse(setsRaw) as SetDefinitionData[];
-    for (const s of setsList) this.sets.set(s.setId, s);
+    for (const s of setsList) pack.sets.set(s.setId, s);
 
     const shopsList = JSON.parse(shopsRaw) as ShopDefinition[];
     for (const shop of shopsList) {
-      this.shops.set(shop.shopId, shop);
-      const existing = this.shopsByLocation.get(shop.locationId) ?? [];
+      pack.shops.set(shop.shopId, shop);
+      const existing = pack.shopsByLocation.get(shop.locationId) ?? [];
       existing.push(shop);
-      this.shopsByLocation.set(shop.locationId, existing);
+      pack.shopsByLocation.set(shop.locationId, existing);
     }
 
     // Phase 4.1: Region Affix 로드
-    this.affixes = JSON.parse(affixesRaw) as RegionAffixDef[];
+    pack.affixes = JSON.parse(affixesRaw) as RegionAffixDef[];
 
     // Phase 4a: Equipment Drops 로드 + 인덱스 구축
-    this.equipmentDrops = JSON.parse(equipDropsRaw) as EquipmentDropEntry[];
-    this.equipDropsByEnemy.clear();
-    this.equipDropsByEncounter.clear();
-    this.equipDropsByLocation.clear();
-    for (const entry of this.equipmentDrops) {
+    pack.equipmentDrops = JSON.parse(equipDropsRaw) as EquipmentDropEntry[];
+    for (const entry of pack.equipmentDrops) {
       if (entry.enemyId) {
-        this.equipDropsByEnemy.set(entry.enemyId, entry);
+        pack.equipDropsByEnemy.set(entry.enemyId, entry);
       } else if (entry.encounterId) {
-        this.equipDropsByEncounter.set(entry.encounterId, entry);
+        pack.equipDropsByEncounter.set(entry.encounterId, entry);
       } else if (entry.locationId && !entry.enemyId && !entry.encounterId) {
-        this.equipDropsByLocation.set(entry.locationId, entry);
+        pack.equipDropsByLocation.set(entry.locationId, entry);
       }
     }
 
     // 콘텐츠 무결성 검증: events_v2의 primaryNpcId가 npcs에 존재하는지 확인
-    this.validateNpcReferences();
+    this.validateNpcReferences(pack);
 
     // Narrative Engine v1: Incidents/Endings/Narrative Marks 로드
     const incidentsParsed = JSON.parse(incidentsRaw) as {
       incidents?: unknown[];
     };
-    this.incidentsData = incidentsParsed.incidents ?? [];
-    this.endingsData = JSON.parse(endingsRaw) as Record<string, unknown>;
+    pack.incidentsData = incidentsParsed.incidents ?? [];
+    pack.endingsData = JSON.parse(endingsRaw) as Record<string, unknown>;
     const marksParsed = JSON.parse(narrativeMarksRaw) as { marks?: unknown[] };
-    this.narrativeMarkConditions = marksParsed.marks ?? [];
+    pack.narrativeMarkConditions = marksParsed.marks ?? [];
 
     // Scenario meta 로드
     const scenarioParsed = JSON.parse(scenarioMetaRaw) as ScenarioMeta | null;
-    this.scenarioMeta = scenarioParsed;
+    pack.scenarioMeta = scenarioParsed;
 
     // Quest data 로드
-    this.questData = JSON.parse(questRaw) as unknown;
+    pack.questData = JSON.parse(questRaw) as unknown;
 
     // architecture/46: facts.json 로드 + 키워드 인덱스 빌드
     if (factsRaw && factsRaw !== 'null') {
       try {
-        this.factsData = JSON.parse(factsRaw) as {
+        pack.factsData = JSON.parse(factsRaw) as {
           version: string;
           facts: Record<string, FactDefinition>;
         };
-        this.factsByKeyword.clear();
-        for (const [factId, fact] of Object.entries(this.factsData.facts)) {
+        for (const [factId, fact] of Object.entries(pack.factsData.facts)) {
           for (const kw of fact.keywords ?? []) {
             const lower = kw.toLowerCase();
-            if (!this.factsByKeyword.has(lower)) {
-              this.factsByKeyword.set(lower, new Set());
+            if (!pack.factsByKeyword.has(lower)) {
+              pack.factsByKeyword.set(lower, new Set());
             }
-            this.factsByKeyword.get(lower)!.add(factId);
+            pack.factsByKeyword.get(lower)!.add(factId);
           }
         }
-      } catch (e) {
-        this.factsData = null;
+      } catch {
+        pack.factsData = null;
       }
     }
 
     // Traits 로드
     const traitsList = JSON.parse(traitsRaw) as TraitDefinition[];
-    this.traits.clear();
-    for (const t of traitsList) this.traits.set(t.traitId, t);
+    for (const t of traitsList) pack.traits.set(t.traitId, t);
 
     // Text Replacements 로드 (bug 4655)
     try {
@@ -396,7 +510,7 @@ export class ContentLoaderService implements OnModuleInit {
           keepTailWords: number;
         };
       };
-      this.textReplacements = {
+      pack.textReplacements = {
         npcApproach: tr.npcApproach?.rules ?? [],
         currency: tr.currency?.rules ?? [],
         repeatKillAll: tr.repeatKillAll?.patterns ?? [],
@@ -404,13 +518,15 @@ export class ContentLoaderService implements OnModuleInit {
         compoundTitleFix: tr.compoundTitleFix ?? null,
       };
       this.logger.log(
-        `[TextReplacements] loaded: approach=${this.textReplacements.npcApproach.length}, currency=${this.textReplacements.currency.length}, killAll=${this.textReplacements.repeatKillAll.length}, secondPlus=${this.textReplacements.repeatSecondPlus.length}, compound=${this.textReplacements.compoundTitleFix ? 1 : 0}`,
+        `[TextReplacements] loaded: approach=${pack.textReplacements.npcApproach.length}, currency=${pack.textReplacements.currency.length}, killAll=${pack.textReplacements.repeatKillAll.length}, secondPlus=${pack.textReplacements.repeatSecondPlus.length}, compound=${pack.textReplacements.compoundTitleFix ? 1 : 0}`,
       );
     } catch (err) {
       this.logger.warn(
         `[TextReplacements] load failed, using empty rules: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+
+    return pack;
   }
 
   /** LLM 후처리 치환 규칙 조회 (bug 4655 JSON 외부화) */
@@ -519,13 +635,13 @@ export class ContentLoaderService implements OnModuleInit {
     return items;
   }
 
-  private validateNpcReferences(): void {
+  private validateNpcReferences(pack: ContentPackState): void {
     const orphanNpcs = new Set<string>();
-    for (const event of this.eventsV2) {
+    for (const event of pack.eventsV2) {
       const npcId = (event.payload as Record<string, unknown>)?.primaryNpcId as
         | string
         | null;
-      if (npcId && !this.npcs.has(npcId)) {
+      if (npcId && !pack.npcs.has(npcId)) {
         orphanNpcs.add(npcId);
       }
     }
@@ -699,10 +815,10 @@ export class ContentLoaderService implements OnModuleInit {
 
   /** 특정 시나리오 콘텐츠를 로드 (캠페인 진행 시 사용) */
   async loadScenario(scenarioId: string): Promise<void> {
-    const scenarioDir = join(CONTENT_BASE, scenarioId);
-    this.contentDir = scenarioDir;
-    this.currentScenarioId = scenarioId;
-    await this.loadAll();
+    // 하위호환: "전역 전환" 의미 유지 — 팩 확보 + fallback 갱신
+    // (컨텍스트 없는 경로/테스트가 이후 이 팩을 보게 됨)
+    await this.ensurePack(scenarioId);
+    this.fallbackScenarioId = scenarioId;
     this.logger.log(`Scenario loaded: ${scenarioId}`);
   }
 
@@ -812,14 +928,23 @@ export class ContentLoaderService implements OnModuleInit {
    * run.scenarioId(null=기본 팩)와 활성 콘텐츠 일치 보장 — 팩 ID fallback의
    * 단일 지점 (불변식 45). 단일 활성 시나리오 정책: 순차 전환만 보장.
    */
+  /**
+   * architecture/63 ①: 팩 확보(async) + 컨텍스트 설정(동기)을 한 번에.
+   * ⚠️ ALS enterWith는 async callee 내부에서 설정하면 await 경계에서 복원되어
+   * caller에 전파되지 않는다 — 그래서 이 메서드는 팩 확보만 await하고,
+   * 컨텍스트 설정은 반환 직전 동기 enterScenario()가 아니라 **caller가
+   * `content.enterScenario(id)`를 직접 호출**해야 한다. 호출 규약:
+   *   await content.ensureScenario(run.scenarioId);
+   *   content.enterScenario(run.scenarioId);
+   */
   async ensureScenario(scenarioId: string | null | undefined): Promise<void> {
     const target = scenarioId ?? DEFAULT_SCENARIO_ID;
-    if (target !== this.currentScenarioId) {
-      this.logger.warn(
-        `[Scenario] 활성 콘텐츠(${this.currentScenarioId}) ≠ 요청(${target}) — loadScenario 수행`,
-      );
-      await this.loadScenario(target);
-    }
+    await this.ensurePack(target);
+  }
+
+  /** 현재 비동기 실행 컨텍스트에 시나리오 스코프 설정 (동기 — caller 경로에 유지) */
+  enterScenario(scenarioId: string | null | undefined): void {
+    enterScenarioContext(scenarioId ?? DEFAULT_SCENARIO_ID);
   }
 
   /** 시스템 프롬프트 세계관 메타 */
@@ -944,7 +1069,7 @@ export class ContentLoaderService implements OnModuleInit {
 
   /** 현재 로드된 시나리오 ID */
   getCurrentScenarioId(): string {
-    return this.currentScenarioId;
+    return currentScenarioIdFromContext() ?? this.fallbackScenarioId;
   }
 
   /** content/ 하위 폴더를 스캔하여 사용 가능한 시나리오 목록 반환 */
