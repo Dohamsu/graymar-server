@@ -20,6 +20,7 @@ import {
 import { ContextBuilderService } from './context-builder.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { korParticle } from '../common/korean.js';
+import { sanitizeNpcNamesForTurn } from '../db/types/npc-state.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
@@ -597,14 +598,15 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         const useClassifier =
           (process.env.LLM_STREAM_CLASSIFIER ?? 'true') !== 'false';
         let classifier: StreamClassifierService | null = null;
+        // R7: 스트림 문장 새니타이즈용 npcStates (미공개 실명 → 별칭)
+        const streamNpcStates = ((
+          runSession?.runState as Record<string, unknown> | undefined
+        )?.npcStates ?? {}) as Record<
+          string,
+          import('../db/types/npc-state.js').NPCState
+        >;
         if (useClassifier) {
-          const rs = runSession?.runState as
-            | Record<string, unknown>
-            | undefined;
-          const npcStates = (rs?.npcStates ?? {}) as Record<
-            string,
-            import('../db/types/npc-state.js').NPCState
-          >;
+          const npcStates = streamNpcStates;
           const eventNpcIdsRaw = (
             (serverResult.ui as Record<string, unknown>)?.actionContext as
               | Record<string, unknown>
@@ -640,7 +642,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                     pending.runId,
                     pending.turnNo,
                     ev.type,
-                    ev,
+                    this.sanitizeStreamSegment(
+                      ev,
+                      streamNpcStates,
+                      pending.turnNo,
+                    ),
                   );
                 }
               } else {
@@ -661,7 +667,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 pending.runId,
                 pending.turnNo,
                 ev.type,
-                ev,
+                this.sanitizeStreamSegment(ev, streamNpcStates, pending.turnNo),
               );
             }
           }
@@ -3525,6 +3531,32 @@ ${npcList}`,
       }
     }
     return narrative;
+  }
+
+  /**
+   * R7(architecture/64) — 스트림 세그먼트 문장 단위 새니타이즈.
+   * 완료 후처리에서만 적용되던 방어 중 "문장 단위로 안전한 것"을 emit 전에 적용해
+   * 타이핑 중 원문 노출을 줄인다:
+   * 1) 미공개 NPC 실명 → 별칭 (sanitizeNpcNamesForTurn — 2턴 분리 인지)
+   * 2) 별칭 접두 중복 결합 정리 (stripAliasPrefixDup)
+   * 마커 교정(Step E/F) 등 전체 문맥이 필요한 후처리는 done 최종본 교체가 담당.
+   */
+  private sanitizeStreamSegment(
+    ev: import('./stream-classifier.service.js').SegmentEvent,
+    npcStates: Record<string, import('../db/types/npc-state.js').NPCState>,
+    turnNo: number,
+  ): import('./stream-classifier.service.js').SegmentEvent {
+    let text = ev.text;
+    if (text) {
+      text = sanitizeNpcNamesForTurn(
+        text,
+        npcStates,
+        (npcId) => this.content.getNpc(npcId),
+        turnNo,
+      );
+      text = this.stripAliasPrefixDup(text);
+    }
+    return text === ev.text ? ev : { ...ev, text };
   }
 
   private deduplicateAliases(narrative: string): string {
