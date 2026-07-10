@@ -1,6 +1,7 @@
 // StructuredMemory → 텍스트 블록 변환 유틸리티
 
 import { Injectable } from '@nestjs/common';
+import { ContentLoaderService } from '../content/content-loader.service.js';
 import type {
   StructuredMemory,
   VisitLogEntry,
@@ -13,6 +14,8 @@ import type { NpcKnowledgeLedger } from '../db/types/npc-knowledge.js';
 
 @Injectable()
 export class MemoryRendererService {
+  constructor(private readonly content: ContentLoaderService) {}
+
   renderVisitLog(visitLog: VisitLogEntry[], limit = 5): string {
     if (visitLog.length === 0) return '';
     const recent = visitLog.slice(-limit);
@@ -226,13 +229,6 @@ export class MemoryRendererService {
 
     if (final.length === 0) return '';
 
-    const locNames: Record<string, string> = {
-      LOC_MARKET: '시장',
-      LOC_GUARD: '경비대',
-      LOC_HARBOR: '항만',
-      LOC_SLUMS: '빈민가',
-    };
-
     return final
       .map((f) => {
         const catLabel =
@@ -251,7 +247,7 @@ export class MemoryRendererService {
         // 타 장소 사실에 장소명 접두사 추가
         const locPrefix =
           f.relatedLocationId && f.relatedLocationId !== locationId
-            ? `[${locNames[f.relatedLocationId] ?? f.relatedLocationId}] `
+            ? `[${this.content.getLocationShortName(f.relatedLocationId)}] `
             : '';
         return `- ${locPrefix}${catLabel} ${text}`;
       })

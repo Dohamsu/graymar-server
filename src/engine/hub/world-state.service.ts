@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
 import type {
   WorldState,
   TimePhase,
@@ -13,6 +14,25 @@ const MIN_HEAT = 0;
 
 @Injectable()
 export class WorldStateService {
+  constructor(private readonly content: ContentLoaderService) {}
+
+  /** architecture/63: locations.json hubState 파생 초기 장소 상태 */
+  private buildInitialLocationStates(): Record<
+    string,
+    { security: number; crime: number; unrest: number; spotlight: boolean }
+  > {
+    const out: Record<
+      string,
+      { security: number; crime: number; unrest: number; spotlight: boolean }
+    > = {};
+    for (const loc of this.content.getAllLocations()) {
+      if (loc.hubState) {
+        out[loc.locationId] = { ...loc.hubState, spotlight: false };
+      }
+    }
+    return out;
+  }
+
   initWorldState(): WorldState {
     return {
       currentLocationId: null,
@@ -31,12 +51,8 @@ export class WorldStateService {
       deferredEffects: [],
       combatWindowCount: 0,
       combatWindowStart: 0,
-      locationStates: {
-        LOC_MARKET: { security: 60, crime: 30, unrest: 20, spotlight: false },
-        LOC_GUARD: { security: 80, crime: 10, unrest: 10, spotlight: false },
-        LOC_HARBOR: { security: 40, crime: 50, unrest: 40, spotlight: false },
-        LOC_SLUMS: { security: 20, crime: 70, unrest: 60, spotlight: false },
-      },
+      // architecture/63: locations.json hubState 파생 (구 하드코딩)
+      locationStates: this.buildInitialLocationStates(),
       // Narrative Engine v1
       globalClock: 0,
       day: 1,

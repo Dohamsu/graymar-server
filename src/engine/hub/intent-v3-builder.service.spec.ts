@@ -22,7 +22,10 @@ describe('IntentV3BuilderService', () => {
   let service: IntentV3BuilderService;
 
   beforeEach(() => {
-    service = new IntentV3BuilderService();
+    const contentMock = {
+      getLocationShortName: (id: string) => id,
+    };
+    service = new IntentV3BuilderService(contentMock as never);
   });
 
   // --- approachVector 매핑 ---

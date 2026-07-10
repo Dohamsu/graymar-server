@@ -4,6 +4,7 @@
 // - LLM 실패 시 키워드 파서 결과를 silent fallback으로 사용
 
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { IntentParserV2Service } from './intent-parser-v2.service.js';
 import { LlmProviderRegistryService } from '../../llm/providers/llm-provider-registry.service.js';
 import {
@@ -50,6 +51,7 @@ export class LlmIntentParserService implements OnModuleInit {
   constructor(
     private readonly keywordParser: IntentParserV2Service,
     private readonly providerRegistry: LlmProviderRegistryService,
+    private readonly content: ContentLoaderService,
   ) {
     this.intentProvider = process.env.INTENT_LLM_PROVIDER ?? 'openai';
     this.intentModel = process.env.INTENT_LLM_MODEL ?? 'gpt-5-nano';
@@ -185,6 +187,9 @@ export class LlmIntentParserService implements OnModuleInit {
               inputText,
               locationId,
               npcsAtLocation,
+              locationId
+                ? this.content.getLocationDisplayName(locationId)
+                : undefined,
             ),
           },
         ],

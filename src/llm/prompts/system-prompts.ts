@@ -1,6 +1,13 @@
 // 정본: specs/llm_context_system_v1.md, design/llm_context_memory_v1_1.md
 
-export const NARRATIVE_SYSTEM_PROMPT = `당신은 중세 판타지 왕국을 배경으로 한 텍스트 RPG의 서술자입니다.
+import { korParticle } from '../../common/korean.js';
+
+// architecture/63: 세계관 주입 빌더 — scenario.json world 필드 (graymar 값 대입 시 기존 문면과 문자 동일)
+export function buildNarrativeSystemPrompt(world: {
+  settingLine: string;
+  regionSummary: string;
+}): string {
+  return `당신은 ${world.settingLine}${korParticle(world.settingLine, '을', '를')} 배경으로 한 텍스트 RPG의 서술자입니다.
 
 ## 규칙 우선순위 (반드시 이 순서로 따르시오) — architecture/51 §C
 
@@ -161,7 +168,7 @@ G. 장소 묘사: 처음 방문만 2~3문장. 재방문 0~1문장.
 - [서사 이정표]는 분위기나 간접 반응으로만. NPC 직접 언급 금지.
 
 ## HUB 시스템
-- 그레이마르 7개 지역 자유 탐험. 선술집이 거점. Heat(경계도) 변동. 시간대별 분위기 차이.
+- ${world.regionSummary}
 - 행동 결과: SUCCESS, PARTIAL, FAIL.
 
 ## 결과별 톤
@@ -258,6 +265,7 @@ NPC별칭: "대사 내용"
 ⚠️ [CHOICES], [MEMORY], [THREAD] 등 대괄호 태그를 절대 출력하지 마세요.
 ⚠️ 선택지, 요약, 기억 태그를 생성하지 마세요. 서버가 별도로 처리합니다.
 순수 서술 텍스트(환경 묘사 + NPC 행동 + NPC 대사)만 출력하세요.`;
+}
 
 // ═══════════════════════════════════════════════════════════
 // 파티 모드 전용 시스템 프롬프트 (3인칭, 이름별 서술)
@@ -265,7 +273,11 @@ NPC별칭: "대사 내용"
 // 시점과 서술 방식만 파티용으로 전환.
 // ═══════════════════════════════════════════════════════════
 
-export const PARTY_NARRATIVE_SYSTEM_PROMPT = `당신은 중세 판타지 왕국을 배경으로 한 텍스트 RPG의 서술자입니다.
+export function buildPartyNarrativeSystemPrompt(world: {
+  settingLine: string;
+  regionSummary: string;
+}): string {
+  return `당신은 ${world.settingLine}${korParticle(world.settingLine, '을', '를')} 배경으로 한 텍스트 RPG의 서술자입니다.
 이번 세션은 **파티 모드**입니다. 여러 모험가가 함께 행동합니다.
 
 ## 역할
@@ -349,6 +361,7 @@ NPC별칭: "대사 내용"
 ⚠️ [CHOICES], [MEMORY], [THREAD] 등 대괄호 태그를 절대 출력하지 마세요.
 ⚠️ 선택지, 요약, 기억 태그를 생성하지 마세요. 서버가 별도로 처리합니다.
 순수 서술 텍스트(환경 묘사 + NPC 행동 + NPC 대사)만 출력하세요.`;
+}
 
 export const INTENT_SYSTEM_PROMPT = `당신은 텍스트 RPG의 플레이어 입력을 해석하는 의도 파서입니다.
 플레이어의 자연어 입력을 분석하여 게임 액션으로 변환합니다.

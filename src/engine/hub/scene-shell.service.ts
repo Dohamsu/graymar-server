@@ -9,7 +9,7 @@ import type {
   ResolveOutcome,
 } from '../../db/types/index.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
-
+import { korParticleRo } from '../../common/korean.js';
 // --- Resolve 후속 선택지 (판정 결과에 따른 상황별) ---
 
 interface NpcChoiceContext {
@@ -586,32 +586,19 @@ export class SceneShellService {
   }
 
   buildHubChoices(ws: WorldState, _arcState: ArcState): ChoiceItem[] {
-    const choices: ChoiceItem[] = [
-      {
-        id: 'go_market',
-        label: '시장 거리로 향한다',
-        hint: '상인과 소문이 있는 곳',
-        action: { type: 'CHOICE', payload: { locationId: 'LOC_MARKET' } },
-      },
-      {
-        id: 'go_guard',
-        label: '경비대 지구로 향한다',
-        hint: '질서와 감시의 영역',
-        action: { type: 'CHOICE', payload: { locationId: 'LOC_GUARD' } },
-      },
-      {
-        id: 'go_harbor',
-        label: '항만 부두로 향한다',
-        hint: '선원과 밀수품이 오가는 곳',
-        action: { type: 'CHOICE', payload: { locationId: 'LOC_HARBOR' } },
-      },
-      {
-        id: 'go_slums',
-        label: '빈민가로 향한다',
-        hint: '법 밖의 세계',
-        action: { type: 'CHOICE', payload: { locationId: 'LOC_SLUMS' } },
-      },
-    ];
+    // architecture/63: locations.json hubAccessible 파생 (구 4개 하드코딩).
+    // 라벨은 "{장소명}(으)로 향한다", hint는 locations.json hubHint.
+    const choices: ChoiceItem[] = this.contentLoader
+      .getHubAccessibleLocations()
+      .map((loc) => ({
+        id: this.contentLoader.hubChoiceIdFor(loc.locationId),
+        label: `${loc.name}${korParticleRo(loc.name)} 향한다`,
+        hint: loc.hubHint ?? loc.description,
+        action: {
+          type: 'CHOICE' as const,
+          payload: { locationId: loc.locationId },
+        },
+      }));
 
     // Heat 해결 옵션 (Heat 30 이상일 때만 표시)
     if (ws.hubHeat >= 30) {
@@ -706,12 +693,7 @@ export class SceneShellService {
     }
 
     // HUB 복귀 선택지 항상 포함
-    choices.push({
-      id: 'go_hub',
-      label: "'잠긴 닻' 선술집으로 돌아간다",
-      hint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
-      action: { type: 'CHOICE', payload: { returnToHub: true } },
-    });
+    choices.push(this.contentLoader.buildGoHubChoice());
 
     return choices;
   }
@@ -830,12 +812,7 @@ export class SceneShellService {
     }
 
     // go_hub 항상 포함 (sourceEventId 미포함 — HUB 복귀 시 이벤트 끊김이 맞음)
-    choices.push({
-      id: 'go_hub',
-      label: "'잠긴 닻' 선술집으로 돌아간다",
-      hint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
-      action: { type: 'CHOICE', payload: { returnToHub: true } },
-    });
+    choices.push(this.contentLoader.buildGoHubChoice());
 
     return choices;
   }

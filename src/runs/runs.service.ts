@@ -96,14 +96,16 @@ export class RunsService {
     const campaignId = options?.campaignId;
     const scenarioId = options?.scenarioId;
 
+    // architecture/63: 캠페인 없이도 scenarioId 직접 지정 허용 (최소 플레이 경로).
+    // ⚠️ 단일 활성 시나리오 정책 — loadScenario는 전역 콘텐츠를 교체하므로
+    // 서로 다른 시나리오의 런 동시 플레이는 금지 (개발·검증 용도).
+    if (scenarioId) {
+      await this.content.ensureScenario(scenarioId);
+      scenarioMeta = this.content.getScenarioMeta();
+    }
+
     if (campaignId) {
       carryOver = await this.campaignsService.getCarryOver(campaignId);
-
-      // 시나리오 콘텐츠 로드
-      if (scenarioId) {
-        await this.content.loadScenario(scenarioId);
-        scenarioMeta = this.content.getScenarioMeta();
-      }
 
       // scenarioOrder 결정
       if (carryOver && carryOver.completedScenarios.length > 0) {
@@ -223,11 +225,11 @@ export class RunsService {
     for (const _loc of locations) {
       // 기본 NPC 관계 50 (중립)
     }
-    npcRelations['NPC_RONEN'] = 30; // 의뢰인
-    npcRelations['NPC_GUARD_CAPTAIN'] = 20;
-    npcRelations['NPC_MERCHANT_ELDER'] = 25;
-    npcRelations['NPC_HARBOR_BOSS'] = 15;
-    npcRelations['NPC_SLUM_LEADER'] = 10;
+    // architecture/63: scenario.json initialNpcRelations 파생
+    const initRel = this.content.getScenarioMeta()?.initialNpcRelations ?? {};
+    for (const [npcId, rel] of Object.entries(initRel)) {
+      npcRelations[npcId] = rel;
+    }
 
     // Narrative Engine v1: 초기 Incident spawn
     const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
@@ -293,8 +295,8 @@ export class RunsService {
         npcStates[npcDef.npcId].introduced = true;
       }
 
-      // 프롤로그 NPC (로넨) — 프롤로그에서 자기소개하므로 처음부터 소개 완료
-      if (npcDef.npcId === 'NPC_RONEN') {
+      // 프롤로그 NPC — 프롤로그에서 자기소개하므로 처음부터 소개 완료
+      if (npcDef.npcId === this.content.getPrologueMeta().npcId) {
         npcStates[npcDef.npcId].introduced = true;
         npcStates[npcDef.npcId].introducedAtTurn = -1; // 턴0 이전에 소개됨
       }
@@ -558,43 +560,18 @@ export class RunsService {
         });
       }
 
-      // run_memories INSERT — L0 theme 구성 (캠페인 요약 포함)
-      const themeEntries = [
-        {
-          key: 'location',
-          value:
-            '그레이마르 항만 — 왕국 남서부 최대 무역항. 세 세력(항만 노동 길드, 해관청, 밀수 조직)이 이권을 다툰다.',
-          importance: 1.0,
-          tags: ['LOCATION', 'THEME'],
-        },
-        {
-          key: 'quest',
-          value:
-            '사라진 공물 장부 — 길드가 해관청에 바친 공물 내역이 담긴 장부가 도난당했다. 장부에는 뒷거래 기록도 포함되어 있어, 공개되면 길드 간부 다수가 처형당할 수 있다.',
-          importance: 1.0,
-          tags: ['QUEST', 'THEME'],
-        },
-        {
-          key: 'npc_client',
-          value:
-            '의뢰인 로넨 — 항만 노동 길드의 말단 서기관. 장부 관리 책임자였으나 도난 사실을 상부에 보고하지 못해 쫓기는 처지.',
-          importance: 0.9,
-          tags: ['NPC', 'THEME'],
-        },
-        {
-          key: 'hub_system',
-          value:
-            "HUB 거점 — '잠긴 닻' 선술집. 항만 한구석의 허름하지만 안전한 선술집. 이곳에서 시장/경비대/항만/빈민가로 이동하며 임무를 수행한다.",
-          importance: 0.8,
-          tags: ['HUB', 'THEME'],
-        },
-        {
-          key: 'protagonist',
-          value: `${characterName ? characterName : '이름 없는 용병'} — ${preset?.protagonistTheme ?? '이름 없는 용병.'} 그레이마르에는 일거리를 찾아 며칠 전 도착했다.`,
-          importance: 0.8,
-          tags: ['PROTAGONIST', 'THEME'],
-        },
-      ];
+      // run_memories INSERT — L0 theme 구성 (architecture/63: scenario.json themeMemories)
+      const themeEntries = (
+        this.content.getScenarioMeta()?.themeMemories ?? []
+      ).map((t) => ({
+        ...t,
+        value: t.value
+          .replace('{CHARACTER_NAME}', characterName ?? '이름 없는 용병')
+          .replace(
+            '{PROTAGONIST_THEME}',
+            preset?.protagonistTheme ?? '이름 없는 용병.',
+          ),
+      }));
 
       // 특성 정보를 L0 theme에 추가
       if (traitDef) {
@@ -691,43 +668,18 @@ export class RunsService {
             state: 'NODE_ACTIVE',
           },
           summary: (() => {
-            // 하이브리드 프롤로그: 분위기 변형 + 하드코딩 대사
-            const atmospheres = [
-              "짙은 안개가 항만을 감싸는 밤이었다. 선술집 '잠긴 닻'의 구석 자리에서 당신은 싸구려 에일을 홀짝이고 있었다. 기름때 묻은 등잔이 흔들릴 때마다 주변의 그림자가 일렁였다.",
-              "비가 세차게 쏟아지는 밤이었다. '잠긴 닻' 선술집의 낡은 지붕에서 빗물이 새어 들어오고, 축축한 나무 냄새가 에일 향과 뒤섞였다. 당신은 구석 자리에서 무표정하게 잔을 기울이고 있었다.",
-              "파도가 방파제를 때리는 소리가 선술집 벽 너머로 둔탁하게 울렸다. '잠긴 닻'의 천장에 매달린 등불이 바람에 흔들리며, 거친 선원들의 낮은 웃음소리 사이로 나무 바닥이 삐걱거렸다. 당신은 어두운 구석에서 주변을 살피고 있었다.",
-              "안개 낀 항만의 밤. 선술집 '잠긴 닻'은 축축한 공기와 시큼한 에일 냄새로 가득했다. 당신은 닳은 탁자에 팔꿈치를 괴고, 문 쪽을 등진 채 자리를 잡고 있었다. 간간이 들려오는 주사위 소리와 선원들의 투덜거림이 배경음처럼 깔렸다.",
-            ];
+            // 하이브리드 프롤로그 — architecture/63: scenario.json prologue 스크립트
+            const pMeta = this.content.getPrologueMeta();
+            const atmospheres = pMeta.atmospheres ?? [''];
             const atmo =
               atmospheres[Math.floor(Math.random() * atmospheres.length)];
-            const hook =
-              preset?.prologueHook ??
-              '부두에서 당신이 일하는 것을 봤습니다. 길드 안 사람은 아무도 믿을 수가 없어서… 외부 사람이 필요했습니다.';
-
-            const display = [
-              atmo,
-              '',
-              '그때, 초라한 행색의 사내가 조심스럽게 다가와 테이블 건너편에 앉았다. 끊임없이 문 쪽을 훔쳐보는 눈동자가 불안을 감추지 못했다.',
-              '',
-              `@[로넨|/npc-portraits/ronen.webp] "실례합니다. 항만 노동 길드 서기관 로넨이라고 합니다."`,
-              '',
-              '당신은 잔을 내려놓고 사내를 살폈다. 길드 서기라기엔 너무 핏기 없는 얼굴이었다.',
-              '',
-              `@[로넨|/npc-portraits/ronen.webp] "${hook}"`,
-              '',
-              '로넨이 목소리를 한층 낮췄다.',
-              '',
-              '@[로넨|/npc-portraits/ronen.webp] "장부가 사라졌습니다. 이틀 전 밤에 사무실을 털렸는데… 공물 내역만이 아닙니다. 뒷거래 기록이 전부 들어 있습니다."',
-              '',
-              '당신의 눈이 좁아졌다.',
-              '',
-              '@[로넨|/npc-portraits/ronen.webp] "길드 간부들이 해관청에 흘린 뇌물 목록입니다. 그 장부를 찾아주십시오. 보수는… 넉넉히 치르겠습니다."',
-              '',
-              '로넨의 손이 잔 위에서 미세하게 떨렸다.',
-            ].join('\n');
-
+            const hook = preset?.prologueHook ?? '';
+            const lines = (pMeta.lines ?? []).map((l) =>
+              l.replace('{HOOK}', hook),
+            );
+            const display = [atmo, '', ...lines].join('\n');
             return {
-              short: '프롤로그 — 선술집에서 로넨의 의뢰를 받다.',
+              short: pMeta.summaryShort ?? '프롤로그 — 의뢰를 받다.',
               display,
             };
           })(),
@@ -735,7 +687,9 @@ export class RunsService {
             {
               id: 'enter_quest_0',
               kind: 'QUEST',
-              text: '[의뢰] 사라진 공물 장부 — 도시의 네 구역을 탐색하여 단서를 모으고 장부의 행방을 추적하라.',
+              text:
+                this.content.getPrologueMeta().questEventText ??
+                '[의뢰] 임무가 시작되었다.',
               tags: ['QUEST', 'QUEST_START'],
             },
           ],
@@ -769,17 +723,20 @@ export class RunsService {
             {
               id: 'accept_quest',
               label: '의뢰를 받아들인다',
-              hint: '로넨의 부탁을 수락하고 장부를 찾기로 한다',
+              hint:
+                this.content.getPrologueMeta().acceptChoiceHint ??
+                '의뢰를 수락한다',
               action: { type: 'CHOICE' as const, payload: {} },
             },
           ],
           flags: { bonusSlot: false, downed: false, battleEnded: false },
         };
-        // 프롤로그 말풍선: 로넨
+        // 프롤로그 말풍선 — architecture/63: scenario.json prologue 필드
+        const prologueMeta = this.content.getPrologueMeta();
         (enterResult.ui as any).speakingNpc = {
-          npcId: 'NPC_RONEN',
-          displayName: '로넨',
-          imageUrl: '/npc-portraits/ronen.webp',
+          npcId: prologueMeta.npcId,
+          displayName: prologueMeta.displayName,
+          imageUrl: prologueMeta.imageUrl,
         };
       }
 
@@ -830,14 +787,15 @@ export class RunsService {
       battleState: null,
       runState: result.run.runState ?? initialRunState,
       memory: {
-        theme: [
-          {
-            key: 'location',
-            value: '그레이마르 항만 도시',
-            importance: 1.0,
-            tags: ['LOCATION', 'THEME'],
-          },
-        ],
+        // architecture/63: scenario.json themeMemories의 location 항목 파생
+        theme: (this.content.getScenarioMeta()?.themeMemories ?? [])
+          .filter((t) => t.key === 'location')
+          .map((t) => ({
+            key: t.key,
+            value: t.value,
+            importance: t.importance,
+            tags: t.tags,
+          })),
         storySummary: null,
       },
       setDefinitions: this.content.getAllSets(),

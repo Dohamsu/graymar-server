@@ -155,7 +155,7 @@ export class NpcAgendaService {
   }
 
   private getNpcCurrentLocation(ws: WorldState, npcId: string): string {
-    return ws.npcLocations?.[npcId] ?? 'LOC_TAVERN';
+    return ws.npcLocations?.[npcId] ?? this.content.getHubMeta().locationId;
   }
 
   private isUnblocked(blockedBy: string, ws: WorldState): boolean {

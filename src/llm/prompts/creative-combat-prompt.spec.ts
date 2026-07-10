@@ -1,5 +1,6 @@
 // 정본: architecture/41_creative_combat_actions.md §5 — 프롬프트 블록 조건부 주입
 
+import { fakeScenarioAccessors } from './testing/fake-scenario-meta.js';
 import { PromptBuilderService } from './prompt-builder.service.js';
 import { TokenBudgetService } from '../token-budget.service.js';
 import type { LlmContext } from '../context-builder.service.js';
@@ -86,6 +87,8 @@ describe('PromptBuilderService — 창의 전투 블록 조건부 주입', () =>
       getItem: () => null,
       getLocation: () => null,
       getPreset: () => null,
+      // architecture/63: 파생 API fake (공용 — testing/fake-scenario-meta)
+      ...fakeScenarioAccessors,
     };
     service = new PromptBuilderService(
       contentMock as never,

@@ -1300,14 +1300,8 @@ export class ContextBuilderService {
       const ws = runState?.worldState as Record<string, unknown> | undefined;
       const currentLocationId = ws?.currentLocationId as string | undefined;
       if (currentLocationId) {
-        const locNames: Record<string, string> = {
-          LOC_MARKET: '시장 거리',
-          LOC_GUARD: '경비대 지구',
-          LOC_HARBOR: '항만 부두',
-          LOC_SLUMS: '빈민가',
-        };
         sceneParts.push(
-          `현재 위치: ${locNames[currentLocationId] ?? currentLocationId}`,
+          `현재 위치: ${this.content.getLocationDisplayName(currentLocationId)}`,
         );
       }
 
@@ -2017,16 +2011,7 @@ export class ContextBuilderService {
       | undefined;
     const mem = locationMemories?.[currentLocationId];
 
-    const LOCATION_NAMES: Record<string, string> = {
-      LOC_MARKET: '그레이마르 시장',
-      LOC_GUARD: '경비대 지구',
-      LOC_HARBOR: '항만 부두',
-      LOC_SLUMS: '빈민가',
-      LOC_NOBLE: '상류 거리',
-      LOC_TAVERN: '잠긴 닻 선술집',
-      LOC_DOCKS_WAREHOUSE: '항만 창고구',
-    };
-    const locName = LOCATION_NAMES[currentLocationId] ?? currentLocationId;
+    const locName = this.content.getLocationDisplayName(currentLocationId);
 
     if (!mem || mem.visitCount === 0) {
       return `[장소 기억: ${locName}]\n처음 방문하는 장소입니다.`;
@@ -2135,16 +2120,6 @@ export class ContextBuilderService {
 
     if (relevantIncidentIds.size === 0) return null;
 
-    const LOCATION_NAMES: Record<string, string> = {
-      LOC_MARKET: '시장',
-      LOC_GUARD: '경비대',
-      LOC_HARBOR: '항만',
-      LOC_SLUMS: '빈민가',
-      LOC_NOBLE: '상류 거리',
-      LOC_TAVERN: '선술집',
-      LOC_DOCKS_WAREHOUSE: '항만 창고구',
-    };
-
     const blocks: string[] = [];
 
     for (const incId of relevantIncidentIds) {
@@ -2167,7 +2142,7 @@ export class ContextBuilderService {
       if (mem.playerInvolvements.length > 0) {
         const recent = mem.playerInvolvements.slice(-5);
         const items = recent.map((inv) => {
-          const locName = LOCATION_NAMES[inv.locationId] ?? inv.locationId;
+          const locName = this.content.getLocationShortName(inv.locationId);
           // impact 축약: "control+10, pressure+2" → "c+10p+2"
           const compactImpact = inv.impact
             .replace(/control/g, 'c')
@@ -2314,12 +2289,6 @@ export class ContextBuilderService {
     allNpcStates: Record<string, NPCState>,
     relevantNpcIds: Set<string>,
   ): string | null {
-    const LOCATION_NAMES: Record<string, string> = {
-      LOC_MARKET: '시장',
-      LOC_GUARD: '경비대',
-      LOC_HARBOR: '항만',
-      LOC_SLUMS: '빈민가',
-    };
     const blocks: string[] = [];
 
     for (const npcId of relevantNpcIds) {
@@ -2348,7 +2317,7 @@ export class ContextBuilderService {
           const suffix = total > recentEnc.length ? ` (총 ${total}회)` : '';
           lines.push(`만남${suffix}:`);
           for (const enc of recentEnc) {
-            const locName = LOCATION_NAMES[enc.locationId] ?? enc.locationId;
+            const locName = this.content.getLocationShortName(enc.locationId);
             const mark =
               enc.outcome === 'SUCCESS'
                 ? '○'

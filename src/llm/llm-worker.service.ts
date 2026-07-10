@@ -154,9 +154,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
    * poll()은 DB 락(PENDING→RUNNING + lock owner) 기반이라 중복 호출에 안전.
    */
   wake(): void {
-    this.poll().catch((err) =>
-      this.logger.error('LLM Worker wake error', err),
-    );
+    this.poll().catch((err) => this.logger.error('LLM Worker wake error', err));
   }
 
   private async poll(): Promise<void> {
@@ -232,6 +230,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             gender: true,
             presetId: true,
             partyRunMode: true,
+            scenarioId: true,
           },
         }),
         // 이전 턴 LLM 선택지 (반복 방지용)
@@ -279,6 +278,12 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         } | null;
       };
       const recentRows = recentDone as unknown as RecentTurnRow[];
+
+      // 1.0. architecture/63: 시나리오 일치 가드 — 서버 재시작 직후 워커가
+      // 기본 팩으로 다른 시나리오 런의 턴을 처리하는 것 방지.
+      await this.content.ensureScenario(
+        (runSession as { scenarioId?: string | null } | null)?.scenarioId,
+      );
 
       // 1.1. LLM 컨텍스트 구축
       // Player-First: serverResult.ui.actionContext.targetNpcId 를 컨텍스트에 전달 (bug 4624)
@@ -448,15 +453,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                 }),
               );
               // P4 — 서버 기본 go_hub와 라벨·payload 통일 (Track 2와 동일)
-              nanoChoices.push({
-                id: 'go_hub',
-                label: "'잠긴 닻' 선술집으로 돌아간다",
-                hint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
-                action: {
-                  type: 'CHOICE',
-                  payload: { returnToHub: true },
-                },
-              });
+              nanoChoices.push(this.content.buildGoHubChoice());
               // llmChoices에 저장 (DB 업데이트는 아래에서 함께)
               this.pendingNanoChoices.set(
                 `${pending.runId}:${pending.turnNo}`,
@@ -970,11 +967,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                   }),
                 );
               if (parsed.length > 0) {
-                parsed.push({
-                  id: 'go_hub',
-                  label: "'잠긴 닻' 선술집으로 돌아간다",
-                  action: { type: 'CHOICE', payload: { returnToHub: true } },
-                } as ChoiceItem);
+                parsed.push(this.content.buildGoHubChoice() as ChoiceItem);
                 llmChoices = parsed;
               }
             }
@@ -1110,11 +1103,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             );
             narrative = choiceResult.cleanedNarrative;
             if (choiceResult.choices) {
-              choiceResult.choices.push({
-                id: 'go_hub',
-                label: "'잠긴 닻' 선술집으로 돌아간다",
-                action: { type: 'CHOICE', payload: { returnToHub: true } },
-              });
+              choiceResult.choices.push(this.content.buildGoHubChoice());
               llmChoices = choiceResult.choices;
             }
           }
@@ -3047,15 +3036,7 @@ ${npcList}`,
               // P4 — 서버 기본 go_hub와 라벨·payload 통일. 기존 "다른 장소로
               // 이동한다"(MOVE_LOCATION)는 클릭 시 실제로는 선술집 복귀라
               // 라벨-결과가 불일치했다.
-              nanoChoices2.push({
-                id: 'go_hub',
-                label: "'잠긴 닻' 선술집으로 돌아간다",
-                hint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
-                action: {
-                  type: 'CHOICE',
-                  payload: { returnToHub: true },
-                },
-              });
+              nanoChoices2.push(this.content.buildGoHubChoice());
               this.pendingNanoChoices.set(
                 `${pending.runId}:${pending.turnNo}`,
                 nanoChoices2,

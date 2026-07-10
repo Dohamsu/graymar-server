@@ -2,6 +2,7 @@
 //   ctx.focusedNpcId / ctx.recentAuxSpeakers 가 set 되면 "[1인 응답 강제]" 블록이
 //   사용자 프롬프트에 정확히 1회 포함되어야 함.
 
+import { fakeScenarioAccessors } from './testing/fake-scenario-meta.js';
 import { PromptBuilderService } from './prompt-builder.service.js';
 import type { LlmContext } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
@@ -18,6 +19,12 @@ class FakeContent {
   getNpc(id: string): NpcDef | undefined {
     return this.npcs[id];
   }
+  // architecture/63: 파생 API fake (공용 — testing/fake-scenario-meta)
+  getWorldMeta = fakeScenarioAccessors.getWorldMeta;
+  getHubMeta = fakeScenarioAccessors.getHubMeta;
+  getLocationDisplayName = fakeScenarioAccessors.getLocationDisplayName;
+  getLocationShortName = fakeScenarioAccessors.getLocationShortName;
+
   getAllNpcs(): NpcDef[] {
     return Object.values(this.npcs);
   }

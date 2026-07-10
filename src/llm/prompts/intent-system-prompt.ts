@@ -171,19 +171,10 @@ export function buildIntentUserMessage(
   inputText: string,
   locationId?: string,
   npcsAtLocation?: NpcForIntent[],
+  // architecture/63: 호출자가 locations.json 파생 표시명을 주입 (구 하드코딩 맵)
+  locationName?: string,
 ): string {
-  const locationNames: Record<string, string> = {
-    LOC_MARKET: '시장 거리',
-    LOC_GUARD: '경비대 지구',
-    LOC_HARBOR: '항만 부두',
-    LOC_SLUMS: '빈민가',
-    LOC_NOBLE: '귀족 거리',
-    LOC_TAVERN: '선술집(잠긴 닻)',
-    LOC_DOCKS_WAREHOUSE: '항만 창고구역',
-  };
-  const locName = locationId
-    ? (locationNames[locationId] ?? locationId)
-    : '알 수 없음';
+  const locName = locationId ? (locationName ?? locationId) : '알 수 없음';
 
   let msg = `현재 장소: ${locName}\n플레이어 입력: ${inputText}`;
 

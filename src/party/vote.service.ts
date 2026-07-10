@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { eq, and } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
+import { ContentLoaderService } from '../content/content-loader.service.js';
 import { partyVotes } from '../db/schema/party-votes.js';
 import { partyMembers } from '../db/schema/party-members.js';
 import { runSessions } from '../db/schema/run-sessions.js';
@@ -32,6 +33,7 @@ export class VoteService {
     private readonly chatService: ChatService,
     @Inject(forwardRef(() => TurnsService))
     private readonly turnsService: TurnsService,
+    private readonly content: ContentLoaderService,
   ) {}
 
   /**
@@ -290,19 +292,8 @@ export class VoteService {
       });
       if (!run) return;
 
-      // locationId → HUB choiceId 매핑
-      const choiceMap: Record<string, string> = {
-        LOC_MARKET: 'go_market',
-        LOC_HARBOR: 'go_harbor',
-        LOC_GUARD: 'go_guard',
-        LOC_SLUMS: 'go_slums',
-        LOC_NOBLE: 'go_noble',
-        LOC_TEMPLE: 'go_temple',
-        LOC_TAVERN: 'go_tavern',
-      };
-      const choiceId =
-        choiceMap[targetLocationId] ??
-        `go_${targetLocationId.toLowerCase().replace('loc_', '')}`;
+      // architecture/63: locationId → HUB choiceId 기계적 파생 (구 맵과 동일)
+      const choiceId = `go_${targetLocationId.toLowerCase().replace('loc_', '')}`;
 
       // HUB 턴 자동 제출 (리더 계정으로)
       await this.turnsService.submitTurn(run.id, run.userId, {
@@ -322,15 +313,7 @@ export class VoteService {
   // ── Helpers ──
 
   private getLocationName(locationId: string): string {
-    const names: Record<string, string> = {
-      LOC_MARKET: '시장 구역',
-      LOC_HARBOR: '항구 구역',
-      LOC_GUARD: '경비대 구역',
-      LOC_SLUMS: '빈민가',
-      LOC_NOBLE: '귀족 구역',
-      LOC_TEMPLE: '신전 구역',
-      LOC_TAVERN: '선술집',
-    };
-    return names[locationId] ?? locationId;
+    // architecture/63: locations.json 파생 (구 하드코딩 맵)
+    return this.content.getLocationDisplayName(locationId);
   }
 }

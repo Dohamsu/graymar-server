@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
 import type {
   ParsedIntentV2,
   IntentActionType,
@@ -65,18 +66,10 @@ const TARGET_GOAL_OVERRIDES: Partial<
   TALK: 'SHIFT_RELATION',
 };
 
-// --- locationId → 한국어 표시명 매핑 ---
-
-const LOCATION_DISPLAY_NAMES: Record<string, string> = {
-  LOC_MARKET: '시장',
-  LOC_GUARD: '경비대',
-  LOC_HARBOR: '항만',
-  LOC_SLUMS: '빈민가',
-  HUB: '거점',
-};
-
 @Injectable()
 export class IntentV3BuilderService {
+  constructor(private readonly content: ContentLoaderService) {}
+
   build(
     intentV2: ParsedIntentV2,
     rawInput: string,
@@ -153,7 +146,10 @@ export class IntentV3BuilderService {
     target: string | null,
     locationId: string,
   ): string {
-    const loc = LOCATION_DISPLAY_NAMES[locationId] ?? locationId ?? '현재 장소';
+    // architecture/63: locations.json shortName 파생 (HUB 특례는 로더가 처리)
+    const loc = locationId
+      ? this.content.getLocationShortName(locationId)
+      : '현재 장소';
 
     if (target) {
       switch (goalCategory) {

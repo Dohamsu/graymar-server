@@ -43,25 +43,20 @@ const PRESSURE_BASE_INCREMENT = 5;
 const PRESSURE_DECAY = 3;
 const PRESSURE_MAX = 100;
 
-// NPC agenda 관련 키워드 → LOCATION 매칭
-export const NPC_LOCATION_AFFINITY: Record<string, string[]> = {
-  NPC_HARLUN: ['LOC_HARBOR', 'LOC_SLUMS'],
-  NPC_EDRIC_VEIL: ['LOC_MARKET'],
-  NPC_MAIREL: ['LOC_GUARD'],
-  NPC_TOBREN: ['LOC_HARBOR'],
-  NPC_MOON_SEA: ['LOC_MARKET', 'LOC_GUARD'],
-  NPC_INFO_BROKER: ['LOC_SLUMS', 'LOC_HARBOR'],
-  NPC_GUARD_CAPTAIN: ['LOC_GUARD'],
-  // Fixplan4-F2: 누락 NPC 추가
-  NPC_MIRELA: ['LOC_MARKET', 'LOC_SLUMS'],
-  NPC_RENNICK: ['LOC_MARKET', 'LOC_SLUMS'],
-  NPC_ROSA: ['LOC_SLUMS', 'LOC_MARKET'],
-  NPC_CAPTAIN_BREN: ['LOC_HARBOR', 'LOC_GUARD'],
-};
-
 @Injectable()
 export class TurnOrchestrationService {
   constructor(private readonly contentLoader: ContentLoaderService) {}
+
+  /**
+   * NPC 활동 장소 친화도 — npcs.json activityLocations 파생
+   * (architecture/63: 구 NPC_LOCATION_AFFINITY 하드코딩의 콘텐츠 이전).
+   */
+  private getAffinityEntries(): Array<[string, string[]]> {
+    return this.contentLoader
+      .getAllNpcs()
+      .filter((n) => n.activityLocations && n.activityLocations.length > 0)
+      .map((n) => [n.npcId, n.activityLocations!] as [string, string[]]);
+  }
 
   /**
    * Step 5-7을 한 번에 실행.
@@ -203,7 +198,7 @@ export class TurnOrchestrationService {
     // 해당 LOCATION에 친화도가 있는 NPC 중 주입 조건 확인
     const candidates: Array<{ npcId: string; score: number }> = [];
 
-    for (const [npcId, affinity] of Object.entries(NPC_LOCATION_AFFINITY)) {
+    for (const [npcId, affinity] of this.getAffinityEntries()) {
       if (!affinity.includes(locationId)) continue;
       const state = npcStates[npcId];
       if (!state) continue;
@@ -374,7 +369,7 @@ export class TurnOrchestrationService {
   ): Record<string, NpcPosture> {
     const postures: Record<string, NpcPosture> = {};
 
-    for (const [npcId, affinity] of Object.entries(NPC_LOCATION_AFFINITY)) {
+    for (const [npcId, affinity] of this.getAffinityEntries()) {
       if (!affinity.includes(locationId)) continue;
       const state = npcStates[npcId];
       if (!state) continue;

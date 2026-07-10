@@ -25,17 +25,6 @@ export type NpcLocationStatus =
     }
   | { kind: 'UNKNOWN' };
 
-/** 장소 ID → 한글 라벨 (locations.json 반영). */
-const LOC_LABELS: Record<string, string> = {
-  LOC_MARKET: '시장 거리',
-  LOC_GUARD: '경비대 지구',
-  LOC_HARBOR: '항만 부두',
-  LOC_SLUMS: '빈민가',
-  LOC_NOBLE: '상류 거리',
-  LOC_TAVERN: '잠긴 닻 선술집',
-  LOC_DOCKS_WAREHOUSE: '항만 창고구',
-};
-
 @Injectable()
 export class NpcWhereaboutsService {
   constructor(private readonly content: ContentLoaderService) {}
@@ -64,7 +53,7 @@ export class NpcWhereaboutsService {
       return {
         kind: 'DIFFERENT_LOCATION',
         locationId: dynamicLocId,
-        locationLabel: LOC_LABELS[dynamicLocId] ?? dynamicLocId,
+        locationLabel: this.content.getLocationDisplayName(dynamicLocId),
       };
     }
 
@@ -88,7 +77,7 @@ export class NpcWhereaboutsService {
     return {
       kind: 'DIFFERENT_LOCATION',
       locationId: slot.locationId,
-      locationLabel: LOC_LABELS[slot.locationId] ?? slot.locationId,
+      locationLabel: this.content.getLocationDisplayName(slot.locationId),
       activity: slot.activity,
     };
   }
@@ -97,6 +86,6 @@ export class NpcWhereaboutsService {
    * 장소 ID → 한글 라벨 변환 (외부 사용).
    */
   getLocationLabel(locationId: string): string {
-    return LOC_LABELS[locationId] ?? locationId;
+    return this.content.getLocationDisplayName(locationId);
   }
 }

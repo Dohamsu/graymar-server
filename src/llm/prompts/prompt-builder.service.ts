@@ -11,8 +11,8 @@ import {
 } from '../../db/types/npc-state.js';
 import type { LlmMessage } from '../types/index.js';
 import {
-  NARRATIVE_SYSTEM_PROMPT,
-  PARTY_NARRATIVE_SYSTEM_PROMPT,
+  buildNarrativeSystemPrompt,
+  buildPartyNarrativeSystemPrompt,
   NARRATIVE_JSON_FORMAT_INSTRUCTION,
   NARRATIVE_JSON_FORMAT_INSTRUCTION_SPLIT,
 } from './system-prompts.js';
@@ -151,8 +151,8 @@ export class PromptBuilderService {
     // 1. System prompt + L0 theme 병합 (Tier 1: 런 전체 고정 → prefix 캐싱 대상)
     const isPartyMode = ctx.partyActions && ctx.partyActions.length > 0;
     const basePrompt = isPartyMode
-      ? PARTY_NARRATIVE_SYSTEM_PROMPT
-      : NARRATIVE_SYSTEM_PROMPT;
+      ? buildPartyNarrativeSystemPrompt(this.content.getWorldMeta())
+      : buildNarrativeSystemPrompt(this.content.getWorldMeta());
 
     // 파티 모드: 파티원 소개 블록 추가 (프리셋 배경 포함)
     let partyIntro = '';
@@ -1484,13 +1484,9 @@ export class PromptBuilderService {
       !sr.summary.short.includes('[장소]') &&
       ctx.currentLocationId
     ) {
-      const locNames: Record<string, string> = {
-        LOC_MARKET: '시장 거리',
-        LOC_GUARD: '경비대 지구',
-        LOC_HARBOR: '항만 부두',
-        LOC_SLUMS: '빈민가',
-      };
-      const locName = locNames[ctx.currentLocationId] ?? ctx.currentLocationId;
+      const locName = this.content.getLocationDisplayName(
+        ctx.currentLocationId,
+      );
       factsParts.push(`[현재 장소] ${locName}`);
     }
 

@@ -2,6 +2,7 @@
 // 판정 결과를 WorldFact로 변환하고, LocationState를 변경하고, NPC에 사실을 전파한다.
 
 import { Injectable } from '@nestjs/common';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
 import type {
   WorldState,
   ResolveResult,
@@ -35,6 +36,7 @@ export class ConsequenceProcessorService {
   constructor(
     private readonly worldFact: WorldFactService,
     private readonly locationState: LocationStateService,
+    private readonly content: ContentLoaderService,
   ) {}
 
   /**
@@ -148,7 +150,7 @@ export class ConsequenceProcessorService {
     const outcomeDesc =
       OUTCOME_DESCRIPTIONS[input.resolveResult.outcome] ??
       input.resolveResult.outcome;
-    const locationDesc = input.locationId.replace('LOC_', '').toLowerCase();
+    const locationDesc = this.content.getLocationShortName(input.locationId);
 
     if (input.primaryNpcId) {
       return `플레이어가 ${locationDesc}에서 ${input.primaryNpcId}에게 ${actionDesc}을(를) ${outcomeDesc}`;

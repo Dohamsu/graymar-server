@@ -17,6 +17,7 @@ import type { ResolveOutcome } from '../../db/types/resolve-result.js';
 import type { NpcEmotionalState } from '../../db/types/npc-state.js';
 import type { NpcKnowledgeEntry } from '../../db/types/npc-knowledge.js';
 import { runMemories } from '../../db/schema/index.js';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
 
 export interface CollectTurnData {
   actionType: IntentActionType;
@@ -43,36 +44,12 @@ export interface CollectTurnData {
   newMarks: string[];
 }
 
-/** 이벤트 태그에서 NPC ID를 추론 (태그에 NPC 힌트가 포함된 경우) */
-export const TAG_TO_NPC: Record<string, string> = {
-  NPC_EDRIC: 'NPC_EDRIC_VEIL',
-  SEO_DOYUN: 'NPC_EDRIC_VEIL',
-  CAPTAIN_BELLON: 'NPC_GUARD_CAPTAIN',
-  TOBREN: 'NPC_TOBREN',
-  SHADOW: 'NPC_INFO_BROKER',
-  HARLUN: 'NPC_HARLUN',
-  NPC_HARLAN: 'NPC_HARLUN',
-  LYRA: 'NPC_MOON_SEA',
-  MAIREL_FACTION: 'NPC_MAIREL',
-  MAIREL_CORRUPTION: 'NPC_MAIREL',
-  MAIREL_OFFICE: 'NPC_MAIREL',
-  NPC_MIRELA: 'NPC_MIRELA',
-  NPC_RENNICK: 'NPC_RENNICK',
-  NPC_CAPTAIN_BREN: 'NPC_CAPTAIN_BREN',
-  NPC_ROSA: 'NPC_ROSA',
-  // 장소별 분위기/일상 태그 → 해당 장소의 핵심 NPC 매핑
-  GUARD_MORALE: 'NPC_GUARD_CAPTAIN',
-  PATROL: 'NPC_GUARD_CAPTAIN',
-  SHIFT_CHANGE: 'NPC_GUARD_CAPTAIN',
-  BLACKSMITH: 'NPC_GUARD_CAPTAIN',
-  SMUGGLING: 'NPC_TOBREN',
-  DOCK_WORKERS: 'NPC_HARLUN',
-  HERB: 'NPC_MIRELA',
-};
-
 @Injectable()
 export class MemoryCollectorService {
-  constructor(@Inject(DB) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DB) private readonly db: DrizzleDB,
+    private readonly content: ContentLoaderService,
+  ) {}
 
   async collectFromTurn(
     runId: string,
@@ -122,7 +99,8 @@ export class MemoryCollectorService {
     }
     if (data.eventTags) {
       for (const tag of data.eventTags) {
-        const npcId = TAG_TO_NPC[tag];
+        // architecture/63: npcs.json entityAliases 파생 (구 TAG_TO_NPC)
+        const npcId = this.content.resolveEntityAlias(tag);
         if (npcId && !ctx.npcsEncountered.includes(npcId)) {
           ctx.npcsEncountered.push(npcId);
         }
@@ -269,7 +247,7 @@ export class MemoryCollectorService {
   private resolveNpcFromTags(tags?: string[]): string | undefined {
     if (!tags) return undefined;
     for (const tag of tags) {
-      const npcId = TAG_TO_NPC[tag];
+      const npcId = this.content.resolveEntityAlias(tag);
       if (npcId) return npcId;
     }
     return undefined;

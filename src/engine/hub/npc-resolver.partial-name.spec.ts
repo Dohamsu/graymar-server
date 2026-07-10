@@ -125,8 +125,7 @@ describe('NpcResolverService — 부분 이름 매칭 (architecture/59 이슈 1)
     };
     const sharedContent = {
       getAllNpcs: () => [SHARED_A, SHARED_B],
-      getNpc: (id: string) =>
-        [SHARED_A, SHARED_B].find((n) => n.npcId === id),
+      getNpc: (id: string) => [SHARED_A, SHARED_B].find((n) => n.npcId === id),
       getFactsByKeywords: () => [],
     };
     const r2 = new NpcResolverService(

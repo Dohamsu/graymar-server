@@ -90,7 +90,21 @@ describe('ResolveService', () => {
   let service: ResolveService;
 
   beforeEach(() => {
-    service = new ResolveService(new SuddenActionDetectorService());
+    const ambushMap: Record<string, string> = {
+      LOC_MARKET: 'enc_market_thugs',
+      LOC_GUARD: 'enc_guard_ambush',
+      LOC_HARBOR: 'enc_harbor_pirates',
+      LOC_SLUMS: 'enc_slum_gang',
+    };
+    const contentMock = {
+      getLocation: (id: string) =>
+        ambushMap[id] ? { ambushEncounterId: ambushMap[id] } : undefined,
+      getAmbushEncounterId: (id: string) => ambushMap[id] ?? 'enc_generic',
+    };
+    service = new ResolveService(
+      new SuddenActionDetectorService(),
+      contentMock as never,
+    );
   });
 
   // ══════════════════════════════════════════════════════════════

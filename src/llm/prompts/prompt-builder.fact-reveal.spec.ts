@@ -4,6 +4,7 @@
 //   3) npcRevealableFact 존재 시 보류 블록 미발화 (우선순위)
 
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
+import { fakeScenarioAccessors } from './testing/fake-scenario-meta.js';
 import { PromptBuilderService } from './prompt-builder.service.js';
 import type { LlmContext } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
@@ -17,6 +18,12 @@ class FakeContent {
   getNpc(id: string): NpcDef | undefined {
     return this.npcs[id];
   }
+  // architecture/63: 파생 API fake (공용 — testing/fake-scenario-meta)
+  getWorldMeta = fakeScenarioAccessors.getWorldMeta;
+  getHubMeta = fakeScenarioAccessors.getHubMeta;
+  getLocationDisplayName = fakeScenarioAccessors.getLocationDisplayName;
+  getLocationShortName = fakeScenarioAccessors.getLocationShortName;
+
   getAllNpcs(): NpcDef[] {
     return Object.values(this.npcs);
   }

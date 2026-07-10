@@ -29,19 +29,6 @@ import type {
 import { createEmptyStructuredMemory } from '../../db/types/structured-memory.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 
-const LOCATION_NAMES: Record<string, string> = {
-  LOC_MARKET: '시장 거리',
-  LOC_GUARD: '경비대 지구',
-  LOC_HARBOR: '항만 부두',
-  LOC_SLUMS: '빈민가',
-};
-
-const FACTION_NAMES: Record<string, string> = {
-  CITY_GUARD: '경비대',
-  MERCHANT_CONSORTIUM: '상인 길드',
-  LABOR_GUILD: '노동 길드',
-};
-
 const MAX_VISIT_LOG = 15;
 const MAX_NPC_INTERACTIONS = 5;
 const MAX_INCIDENT_INVOLVEMENTS = 5;
@@ -113,7 +100,7 @@ export class MemoryIntegrationService {
 
     const ws = runState.worldState!;
     const locationId = ctx.locationId;
-    const locName = LOCATION_NAMES[locationId] ?? locationId;
+    const locName = this.content.getLocationDisplayName(locationId);
 
     // 3. Milestone 체크 — visitLog push 전에 해야 FIRST_VISIT 감지 가능
     const newMilestones = this.checkMilestones(
@@ -246,7 +233,7 @@ export class MemoryIntegrationService {
 
       const ws = runState.worldState;
       const locationId = ws?.currentLocationId ?? 'UNKNOWN';
-      const locName = LOCATION_NAMES[locationId] ?? locationId;
+      const locName = this.content.getLocationDisplayName(locationId);
       const summaryLine = `[${locName} 방문] 잠시 들렀다 떠남`;
       let newStorySummary = memRow.storySummary ?? '';
       newStorySummary = newStorySummary
@@ -566,7 +553,7 @@ export class MemoryIntegrationService {
     // FIRST_VISIT — visitLog에 push 전이므로 정확히 감지
     const visitedLocations = new Set(memory.visitLog.map((v) => v.locationId));
     if (!visitedLocations.has(locationId)) {
-      const locName = LOCATION_NAMES[locationId] ?? locationId;
+      const locName = this.content.getLocationDisplayName(locationId);
       milestones.push({
         type: 'FIRST_VISIT',
         turnNo,
@@ -658,7 +645,7 @@ export class MemoryIntegrationService {
     // REPUTATION_SHIFT — 세력 평판이 의미 있게 변동한 경우
     for (const [factionId, delta] of Object.entries(ctx.reputationChanges)) {
       if (Math.abs(delta) >= 3) {
-        const factionName = FACTION_NAMES[factionId] ?? factionId;
+        const factionName = this.content.getFactionDisplayName(factionId);
         const alreadyHas = memory.milestones.some(
           (m) =>
             m.type === 'REPUTATION_SHIFT' &&
@@ -788,7 +775,7 @@ export class MemoryIntegrationService {
       ctx.outcomes.success + ctx.outcomes.partial + ctx.outcomes.fail;
     if (totalOutcomes >= 2) {
       if (ctx.outcomes.success >= 2 && ctx.outcomes.fail === 0) {
-        const locName = LOCATION_NAMES[locationId] ?? locationId;
+        const locName = this.content.getLocationDisplayName(locationId);
         facts.push({
           turnNo,
           category: 'ATMOSPHERE' as LlmFactCategory,
@@ -797,7 +784,7 @@ export class MemoryIntegrationService {
           importance: 0.5,
         });
       } else if (ctx.outcomes.fail >= 2) {
-        const locName = LOCATION_NAMES[locationId] ?? locationId;
+        const locName = this.content.getLocationDisplayName(locationId);
         facts.push({
           turnNo,
           category: 'ATMOSPHERE' as LlmFactCategory,
@@ -991,7 +978,7 @@ export class MemoryIntegrationService {
     if (count === 0) return '';
 
     const avgTrust = totalTrust / count;
-    const locName = LOCATION_NAMES[locationId] ?? locationId;
+    const locName = this.content.getLocationDisplayName(locationId);
 
     if (avgTrust >= 30) return `${locName}의 사람들이 호의적인 편`;
     if (avgTrust >= 10) return `${locName}에서 대체로 환영받는 편`;

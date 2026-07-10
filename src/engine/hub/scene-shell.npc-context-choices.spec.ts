@@ -2,6 +2,14 @@ import { SceneShellService } from './scene-shell.service.js';
 import type { ContentLoaderService } from '../../content/content-loader.service.js';
 
 class FakeContentLoader {
+  buildGoHubChoice(): unknown {
+    return {
+      id: 'go_hub',
+      label: "'잠긴 닻' 선술집으로 돌아간다",
+      hint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
+      action: { type: 'CHOICE', payload: { returnToHub: true } },
+    };
+  }
   getSuggestedChoices(): null {
     return null;
   }

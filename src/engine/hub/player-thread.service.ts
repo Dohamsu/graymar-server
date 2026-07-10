@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
 import type {
   WorldState,
   PlayerThread,
@@ -12,16 +13,10 @@ const THREAD_ACTIVE_THRESHOLD = 4; // 4회 이상 → ACTIVE
 const THREAD_ABANDON_TURNS = 22; // 마지막 행동 후 22턴 경과 → ABANDONED (4개 LOCATION 순환 고려)
 const MAX_THREADS = 10;
 
-const LOCATION_DISPLAY_NAMES: Record<string, string> = {
-  LOC_MARKET: '시장',
-  LOC_GUARD: '경비대',
-  LOC_HARBOR: '항만',
-  LOC_SLUMS: '빈민가',
-  HUB: '거점',
-};
-
 @Injectable()
 export class PlayerThreadService {
+  constructor(private readonly content: ContentLoaderService) {}
+
   /**
    * 현재 턴 행동을 반영하여 playerThreads를 업데이트.
    * 같은 location + approachVector + goalCategory 조합이 반복되면 thread가 생성/승격.
@@ -124,7 +119,7 @@ export class PlayerThreadService {
         ? Math.round((thread.successCount / thread.actionCount) * 100)
         : 0;
     const locName =
-      LOCATION_DISPLAY_NAMES[thread.locationId] ?? thread.locationId;
+      this.content.getLocationShortName(thread.locationId);
     return `${locName}에서 ${thread.approachVector} 접근 ${thread.actionCount}회 (성공률 ${rate}%)`;
   }
 

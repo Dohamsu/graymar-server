@@ -307,7 +307,7 @@ export class SituationGeneratorService {
           ]);
           if (!template) continue;
 
-          const sceneFrame = `${npcA.name}과(와) ${npcB.name}이(가) ${locationId.replace('LOC_', '').toLowerCase()}에서 마주치고 있다. 긴장감이 감돈다.`;
+          const sceneFrame = `${npcA.name}과(와) ${npcB.name}이(가) ${this.content.getLocationShortName(locationId)}에서 마주치고 있다. 긴장감이 감돈다.`;
 
           return {
             trigger: 'NPC_CONFLICT',

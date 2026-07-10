@@ -4,6 +4,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { readFile, readdir } from 'fs/promises';
 import { join } from 'path';
 import type {
+  FactionDefinition,
   EnemyDefinition,
   EncounterDefinition,
   ItemDefinition,
@@ -26,15 +27,46 @@ import type {
   AffixKind,
   RegionAffixDef,
   ScenarioMeta,
+  ScenarioWorldMeta,
+  ScenarioHubMeta,
+  ScenarioPrologueMeta,
+  ChoiceItem,
 } from '../db/types/index.js';
+import type { PlannedNodeV2 } from '../db/types/graph-types.js';
+
+// ── architecture/63 — scenario.json 필드 누락 시 안전 기본값 (graymar_v1 현행 값) ──
+// 엔진 서비스 파일에는 콘텐츠 리터럴을 두지 않는다. fallback은 이 파일 단일 지점.
+/** 기본 팩 — run.scenarioId가 null인 레거시 런 포함 */
+const DEFAULT_SCENARIO_ID = 'graymar_v1';
+/** AMBUSH encounter 미지정 장소의 범용 encounter */
+const DEFAULT_AMBUSH_ENCOUNTER_ID = 'enc_generic';
+const DEFAULT_WORLD_META: ScenarioWorldMeta = {
+  settingLine: '중세 판타지 왕국',
+  regionSummary:
+    '그레이마르 7개 지역 자유 탐험. 선술집이 거점. Heat(경계도) 변동. 시간대별 분위기 차이.',
+};
+const DEFAULT_HUB_META: ScenarioHubMeta = {
+  locationId: 'LOC_TAVERN',
+  name: '잠긴 닻 선술집',
+  returnLabel: "'잠긴 닻' 선술집으로 돌아간다",
+  returnHint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
+  defaultLocationId: 'LOC_MARKET',
+};
+// atmospheres/lines 등 스크립트는 팩 scenario.json 필수 — fallback은 화자 신원만
+// 보장한다 (스크립트 누락 팩은 빈 프롤로그로 기동은 하되 콘텐츠 결함).
+const DEFAULT_PROLOGUE_META: ScenarioPrologueMeta = {
+  npcId: 'NPC_RONEN',
+  displayName: '로넨',
+  imageUrl: '/npc-portraits/ronen.webp',
+};
 
 const CONTENT_BASE = join(process.cwd(), '..', 'content');
 
 @Injectable()
 export class ContentLoaderService implements OnModuleInit {
   private readonly logger = new Logger(ContentLoaderService.name);
-  private contentDir = join(CONTENT_BASE, 'graymar_v1');
-  private currentScenarioId = 'graymar_v1';
+  private contentDir = join(CONTENT_BASE, DEFAULT_SCENARIO_ID);
+  private currentScenarioId = DEFAULT_SCENARIO_ID;
   private scenarioMeta: ScenarioMeta | null = null;
   private enemies = new Map<string, EnemyDefinition>();
   private encounters = new Map<string, EncounterDefinition>();
@@ -75,6 +107,12 @@ export class ContentLoaderService implements OnModuleInit {
   private factsByKeyword = new Map<string, Set<string>>(); // keyword → factIds
   // Traits
   private traits = new Map<string, TraitDefinition>();
+  // architecture/63: 세력 표시명 (factions.json)
+  private factions = new Map<string, FactionDefinition>();
+  // architecture/63: DAG 그래프 (dag 모드 런 전용)
+  private graph: PlannedNodeV2[] = [];
+  // architecture/63: entityAliases 역인덱스 (LLM 태그/별칭 → npcId)
+  private entityAliasIndex = new Map<string, string>();
   // Text Replacements — LLM 후처리 치환 규칙
   private textReplacements: {
     npcApproach: { pattern: string; replacement: string }[];
@@ -100,6 +138,25 @@ export class ContentLoaderService implements OnModuleInit {
   }
 
   private async loadAll() {
+    // architecture/63: loadScenario 재호출 시 이전 팩 항목 잔존 방지 —
+    // Map/인덱스를 전부 비우고 로드한다 (기존엔 set만 해 병합 버그).
+    this.enemies.clear();
+    this.encounters.clear();
+    this.items.clear();
+    this.presets.clear();
+    this.locations.clear();
+    this.npcs.clear();
+    this.sets.clear();
+    this.shops.clear();
+    this.shopsByLocation.clear();
+    this.equipDropsByEnemy.clear();
+    this.equipDropsByEncounter.clear();
+    this.equipDropsByLocation.clear();
+    this.factsByKeyword.clear();
+    this.traits.clear();
+    this.factions.clear();
+    this.entityAliasIndex.clear();
+
     const [
       enemiesRaw,
       encountersRaw,
@@ -124,6 +181,8 @@ export class ContentLoaderService implements OnModuleInit {
       factsRaw,
       traitsRaw,
       textReplacementsRaw,
+      graphRaw,
+      factionsRaw,
     ] = await Promise.all([
       readFile(join(this.contentDir, 'enemies.json'), 'utf-8'),
       readFile(join(this.contentDir, 'encounters.json'), 'utf-8'),
@@ -183,6 +242,12 @@ export class ContentLoaderService implements OnModuleInit {
       readFile(join(this.contentDir, 'text_replacements.json'), 'utf-8').catch(
         () => '{}',
       ),
+      // architecture/63: DAG 그래프 (dag 모드 런 전용, 선택 파일)
+      readFile(join(this.contentDir, 'graph.json'), 'utf-8').catch(() => '[]'),
+      // architecture/63: 세력 (선택 파일 — 표시명 파생)
+      readFile(join(this.contentDir, 'factions.json'), 'utf-8').catch(
+        () => '[]',
+      ),
     ]);
 
     const enemiesList = JSON.parse(enemiesRaw) as EnemyDefinition[];
@@ -205,6 +270,25 @@ export class ContentLoaderService implements OnModuleInit {
 
     const npcsList = JSON.parse(npcsRaw) as NpcDefinition[];
     for (const npc of npcsList) this.npcs.set(npc.npcId, npc);
+
+    // architecture/63: entityAliases 역인덱스 구축 (구 TAG_TO_NPC)
+    for (const npc of npcsList) {
+      for (const alias of npc.entityAliases ?? []) {
+        this.entityAliasIndex.set(alias, npc.npcId);
+      }
+    }
+
+    // architecture/63: DAG 그래프
+    this.graph = JSON.parse(graphRaw) as PlannedNodeV2[];
+
+    // architecture/63: 세력 (factions.json — 배열 또는 {factions:[]} 래퍼)
+    const factionsParsed = JSON.parse(factionsRaw) as
+      | FactionDefinition[]
+      | { factions: FactionDefinition[] };
+    const factionsList = Array.isArray(factionsParsed)
+      ? factionsParsed
+      : (factionsParsed.factions ?? []);
+    for (const f of factionsList) this.factions.set(f.factionId, f);
 
     this.eventsV2 = JSON.parse(eventsV2Raw) as EventDefV2[];
     this.sceneShells = JSON.parse(sceneShellsRaw) as Record<
@@ -720,6 +804,132 @@ export class ContentLoaderService implements OnModuleInit {
   /** 현재 로드된 시나리오의 메타 정보 반환 */
   getScenarioMeta(): ScenarioMeta | null {
     return this.scenarioMeta;
+  }
+
+  // ── architecture/63: 시나리오 스코프 파생 API ──
+
+  /**
+   * run.scenarioId(null=기본 팩)와 활성 콘텐츠 일치 보장 — 팩 ID fallback의
+   * 단일 지점 (불변식 45). 단일 활성 시나리오 정책: 순차 전환만 보장.
+   */
+  async ensureScenario(scenarioId: string | null | undefined): Promise<void> {
+    const target = scenarioId ?? DEFAULT_SCENARIO_ID;
+    if (target !== this.currentScenarioId) {
+      this.logger.warn(
+        `[Scenario] 활성 콘텐츠(${this.currentScenarioId}) ≠ 요청(${target}) — loadScenario 수행`,
+      );
+      await this.loadScenario(target);
+    }
+  }
+
+  /** 시스템 프롬프트 세계관 메타 */
+  getWorldMeta(): ScenarioWorldMeta {
+    return this.scenarioMeta?.world ?? DEFAULT_WORLD_META;
+  }
+
+  /** 거점(허브) 메타 — go_hub 라벨/fallback 장소 단일 소스 */
+  getHubMeta(): ScenarioHubMeta {
+    return this.scenarioMeta?.hub ?? DEFAULT_HUB_META;
+  }
+
+  /** 프롤로그 화자 + 스크립트 메타 */
+  getPrologueMeta(): ScenarioPrologueMeta {
+    return this.scenarioMeta?.prologue ?? DEFAULT_PROLOGUE_META;
+  }
+
+  /** HUB 복귀 선택지 — go_hub 라벨/힌트의 단일 조립 지점 */
+  buildGoHubChoice(): ChoiceItem {
+    const hub = this.getHubMeta();
+    return {
+      id: 'go_hub',
+      label: hub.returnLabel,
+      hint: hub.returnHint,
+      action: { type: 'CHOICE', payload: { returnToHub: true } },
+    };
+  }
+
+  /** AMBUSH 이벤트 기본 encounter (locations.json ambushEncounterId) */
+  getAmbushEncounterId(locationId: string): string {
+    return (
+      this.locations.get(locationId)?.ambushEncounterId ??
+      DEFAULT_AMBUSH_ENCOUNTER_ID
+    );
+  }
+
+  /** 세력 표시명 (factions.json shortName → name → id) */
+  getFactionDisplayName(factionId: string): string {
+    const f = this.factions.get(factionId);
+    return f?.shortName ?? f?.name ?? factionId;
+  }
+
+  /** 장소 표시명 (locations.json name) */
+  getLocationDisplayName(locationId: string): string {
+    return this.locations.get(locationId)?.name ?? locationId;
+  }
+
+  /** 장소 짧은 표기 (shortName → name → id). 'HUB' 가상 ID는 '거점' */
+  getLocationShortName(locationId: string): string {
+    if (locationId === 'HUB') return '거점';
+    const loc = this.locations.get(locationId);
+    return loc?.shortName ?? loc?.name ?? locationId;
+  }
+
+  /** HUB 기본 이동 선택지 노출 장소 (locations.json hubAccessible) */
+  getHubAccessibleLocations(): LocationDefinition[] {
+    return [...this.locations.values()].filter((l) => l.hubAccessible);
+  }
+
+  /** locationId → HUB 이동 choiceId — 기계적 파생: go_ + LOC_ 제거 소문자 */
+  hubChoiceIdFor(locationId: string): string {
+    return 'go_' + locationId.replace(/^LOC_/, '').toLowerCase();
+  }
+
+  /** HUB 이동 choiceId → 장소 (hubAccessible 한정 역매핑) */
+  getHubChoiceLocation(choiceId: string): LocationDefinition | undefined {
+    return this.getHubAccessibleLocations().find(
+      (loc) => this.hubChoiceIdFor(loc.locationId) === choiceId,
+    );
+  }
+
+  /**
+   * 이동 의도 감지용 (장소별 moveKeywords) — locations.json 순서 유지.
+   * moveKeywordsFallback(범용 어휘)은 전 장소 전용 키워드 뒤에 배치해
+   * "창고로 돌아가" 류가 전용 키워드에 먼저 매칭되게 한다.
+   */
+  getMoveKeywordEntries(): Array<{ keywords: string[]; locationId: string }> {
+    const out: Array<{ keywords: string[]; locationId: string }> = [];
+    const late: Array<{ keywords: string[]; locationId: string }> = [];
+    for (const loc of this.locations.values()) {
+      if (loc.moveKeywords?.length) {
+        out.push({ keywords: loc.moveKeywords, locationId: loc.locationId });
+      }
+      if (loc.moveKeywordsFallback?.length) {
+        late.push({
+          keywords: loc.moveKeywordsFallback,
+          locationId: loc.locationId,
+        });
+      }
+    }
+    return [...out, ...late];
+  }
+
+  /**
+   * LLM 추출 태그/별칭 → NPC ID 정규화 (npcs.json entityAliases, 구 TAG_TO_NPC).
+   * 정확한 npcId 태그는 identity로 해석 (구 맵의 identity 항목 일반화).
+   */
+  resolveEntityAlias(tag: string): string | undefined {
+    if (this.npcs.has(tag)) return tag;
+    return this.entityAliasIndex.get(tag);
+  }
+
+  /** NPC 아젠다/상황 생성용 활동 장소 (npcs.json activityLocations) */
+  getNpcActivityLocations(npcId: string): string[] {
+    return this.npcs.get(npcId)?.activityLocations ?? [];
+  }
+
+  /** DAG 그래프 (dag 모드 런 전용, graph.json) */
+  getGraph(): PlannedNodeV2[] {
+    return this.graph;
   }
 
   // --- Trait 메서드 ---

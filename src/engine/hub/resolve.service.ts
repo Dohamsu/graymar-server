@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { Logger } from '@nestjs/common';
 import type {
   EventDefV2,
@@ -48,6 +49,7 @@ export class ResolveService {
 
   constructor(
     private readonly suddenActionDetector: SuddenActionDetectorService,
+    private readonly content: ContentLoaderService,
   ) {}
 
   /**
@@ -436,13 +438,7 @@ export class ResolveService {
   }
 
   private selectCombatEncounter(event: EventDefV2): string {
-    // AMBUSH 이벤트의 기본 encounter, 나중에 콘텐츠 기반으로 확장
-    const locationEncounters: Record<string, string> = {
-      LOC_MARKET: 'enc_market_thugs',
-      LOC_GUARD: 'enc_guard_ambush',
-      LOC_HARBOR: 'enc_harbor_pirates',
-      LOC_SLUMS: 'enc_slum_gang',
-    };
-    return locationEncounters[event.locationId] ?? 'enc_generic';
+    // architecture/63: locations.json ambushEncounterId 파생 (fallback은 로더 단일 지점)
+    return this.content.getAmbushEncounterId(event.locationId);
   }
 }

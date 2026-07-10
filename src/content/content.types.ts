@@ -160,6 +160,14 @@ export type TraitDefinition = {
 
 // HUB 시스템 콘텐츠 타입
 
+/** 세력 정의 (factions.json) — architecture/63: 표시명 파생용 최소 계약 */
+export type FactionDefinition = {
+  factionId: string;
+  name?: string;
+  /** 짧은 표기 (프롬프트 라벨용) — 없으면 name */
+  shortName?: string;
+};
+
 export type LocationDefinition = {
   locationId: string;
   name: string;
@@ -168,6 +176,24 @@ export type LocationDefinition = {
   dangerLevel: number;
   availableAtNight: boolean;
   nightDescription: string;
+  // ── architecture/63 멀티 시나리오 디커플링 ──
+  /** 짧은 표기 (사건/시그널 블록 등) — 없으면 name */
+  shortName?: string;
+  /** HUB 기본 이동 선택지에 노출 여부 */
+  hubAccessible?: boolean;
+  /** HUB 이동 선택지 hint (hubAccessible일 때) */
+  hubHint?: string;
+  /** 이동 의도 감지용 키워드 (extractTargetLocation) */
+  moveKeywords?: string[];
+  /**
+   * 이동 키워드 후순위 풀 — 모든 장소의 moveKeywords 검사 후 마지막에 검사.
+   * 예: 거점의 '거점/본거지/돌아가'는 범용 어휘라 다른 장소 전용 키워드에 양보.
+   */
+  moveKeywordsFallback?: string[];
+  /** AMBUSH 이벤트 기본 encounter (구 resolve.service 하드코딩) */
+  ambushEncounterId?: string;
+  /** HUB 초기 장소 상태 (구 world-state 하드코딩) */
+  hubState?: { security: number; crime: number; unrest: number };
 };
 
 export type SuggestedChoice = {
@@ -243,6 +269,18 @@ export type NpcDefinition = {
     /** 잡담 매칭 가중치 (선택) */
     keywords?: string[];
   }>;
+  // ── architecture/63 멀티 시나리오 디커플링 ──
+  /**
+   * LLM 추출/이벤트 태그가 이 NPC로 정규화되어야 하는 별칭·토픽 키.
+   * 예: 에드릭 ["NPC_EDRIC", "SEO_DOYUN"], 경비대장 ["GUARD_MORALE", "PATROL"].
+   * (구 memory-collector TAG_TO_NPC 하드코딩의 콘텐츠 이전)
+   */
+  entityAliases?: string[];
+  /**
+   * NPC 아젠다/상황 생성용 활동 장소 — schedule과 별개의 의도적 큐레이션.
+   * (구 turn-orchestration NPC_ACTIVITY_MAP의 콘텐츠 이전)
+   */
+  activityLocations?: string[];
 };
 
 /**

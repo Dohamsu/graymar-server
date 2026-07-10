@@ -438,17 +438,8 @@ export class PartyController {
 
     // HUB CHOICE → 이동 투표 자동 생성 (다수결)
     if (inputType === 'CHOICE' && rawInput.startsWith('go_')) {
-      const locationMap: Record<string, string> = {
-        go_market: 'LOC_MARKET',
-        go_harbor: 'LOC_HARBOR',
-        go_guard: 'LOC_GUARD',
-        go_slums: 'LOC_SLUMS',
-        go_noble: 'LOC_NOBLE',
-        go_temple: 'LOC_TEMPLE',
-        go_tavern: 'LOC_TAVERN',
-      };
-      const targetLocationId =
-        locationMap[rawInput] ?? rawInput.replace('go_', 'LOC_').toUpperCase();
+      // architecture/63: 기계적 파생 규칙 (구 맵과 동일 결과)
+      const targetLocationId = rawInput.replace('go_', 'LOC_').toUpperCase();
 
       // 투표 생성 (제안자 자동 찬성)
       const vote = await this.voteService.createVote(

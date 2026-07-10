@@ -12,6 +12,7 @@ enum TurnMode {
   WORLD_EVENT = 'WORLD_EVENT',
 }
 
+import { korParticle } from '../common/korean.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
@@ -104,10 +105,7 @@ import {
   MIN_TURNS_FOR_NATURAL,
 } from '../engine/hub/ending-generator.service.js';
 import { SummaryBuilderService } from '../engine/hub/summary-builder.service.js';
-import {
-  MemoryCollectorService,
-  TAG_TO_NPC,
-} from '../engine/hub/memory-collector.service.js';
+import { MemoryCollectorService } from '../engine/hub/memory-collector.service.js';
 import { MemoryIntegrationService } from '../engine/hub/memory-integration.service.js';
 // Event Director + Procedural Event (설계문서 19, 20)
 import { EventDirectorService } from '../engine/hub/event-director.service.js';
@@ -157,17 +155,6 @@ import type {
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
 
 /** 한국어 조사 자동 판별 — 받침 유무에 따라 을/를, 이/가 등 선택 */
-function korParticle(
-  word: string,
-  withBatchim: string,
-  withoutBatchim: string,
-): string {
-  if (!word) return withBatchim;
-  const last = word.charCodeAt(word.length - 1);
-  if (last < 0xac00 || last > 0xd7a3) return withBatchim;
-  return (last - 0xac00) % 28 !== 0 ? withBatchim : withoutBatchim;
-}
-
 @Injectable()
 export class TurnsService {
   private readonly logger = new Logger(TurnsService.name);
@@ -292,6 +279,11 @@ export class TurnsService {
     if (run.status !== 'RUN_ACTIVE')
       throw new InvalidInputError('Run is not active');
 
+    // 2-1. architecture/63: 시나리오 일치 가드 — 재시작 후 이어하기 등으로
+    // 활성 콘텐츠와 런의 시나리오가 어긋나면 해당 팩을 로드 (순차 전환만 보장,
+    // 서로 다른 시나리오 동시 플레이는 여전히 금지 — 단일 활성 시나리오 정책).
+    await this.content.ensureScenario(run.scenarioId);
+
     // 3. expectedNextTurnNo 검증
     const expectedTurnNo = run.currentTurnNo + 1;
     if (body.expectedNextTurnNo !== expectedTurnNo) {
@@ -411,23 +403,13 @@ export class TurnsService {
 
     const choiceId = body.input.choiceId;
 
-    // LOCATION 이동
-    const locationMap: Record<string, string> = {
-      go_market: 'LOC_MARKET',
-      go_guard: 'LOC_GUARD',
-      go_harbor: 'LOC_HARBOR',
-      go_slums: 'LOC_SLUMS',
-    };
-    const locationNameMap: Record<string, string> = {
-      go_market: '시장 거리',
-      go_guard: '경비대 지구',
-      go_harbor: '항만 부두',
-      go_slums: '빈민가',
-    };
+    // LOCATION 이동 — architecture/63: locations.json hubAccessible 파생
+    // (go_ choiceId 규약, HUB 노출 장소만 — 구 locationMap 4곳과 동일 범위)
+    const hubChoiceLoc = this.content.getHubChoiceLocation(choiceId);
 
-    if (locationMap[choiceId]) {
-      const locationId = locationMap[choiceId];
-      const locName = locationNameMap[choiceId] ?? locationId;
+    if (hubChoiceLoc) {
+      const locationId = hubChoiceLoc.locationId;
+      const locName = hubChoiceLoc.name;
       const newWs = this.worldStateService.moveToLocation(ws, locationId);
       updatedRunState.worldState = newWs;
       updatedRunState.actionHistory = []; // LOCATION 이동 시 고집 이력 초기화
@@ -617,20 +599,16 @@ export class TurnsService {
       const hubChoices = this.sceneShellService.buildHubChoices(ws, arcState);
       const result: ServerResultV1 = {
         ...this.buildSystemResult(turnNo, currentNode, '의뢰를 수락했다.'),
-        summary: {
-          short: [
-            '[상황] 당신은 로넨의 의뢰를 수락했다. 사라진 공물 장부를 찾기로 했다.',
-            '[NPC] 서기관 로넨 — 항만 노동 길드 말단 서기관. ⚠️ 말투: 합쇼체("~습니다", "~입니다", "~십시오"). 예: "감사합니다", "은혜를 잊지 않겠습니다".',
-            '[서술 지시] 150~300자. 의뢰 수락 장면을 서술하세요.',
-            '- 당신이 수락의 의사를 행동(고개 끄덕임, 잔을 내려놓음, 몸을 일으킴 등)으로 표현하는 장면을 묘사하세요.',
-            '- 로넨이 안도하며 짧게 감사를 표한다. 반드시 합쇼체로 말한다. 예: "감사합니다", "은혜를 잊지 않겠습니다".',
-            '- 로넨의 @마커: @[로넨|/npc-portraits/ronen.webp] "대사" 형태로 작성하세요. 다른 NPC 마커를 사용하지 마세요.',
-            '- 선술집을 나서며 밤의 그레이마르 거리를 바라보는 것으로 마무리하세요. 어디로 갈지는 언급하지 마세요.',
-            '- 당신의 내면("결심한다", "다짐한다")을 쓰지 마세요. 행동만 묘사하세요.',
-          ].join('\n'),
-          display:
-            '당신은 고개를 끄덕이며 의뢰를 수락했다. 서기관 로넨이 안도의 한숨을 내쉬었다. "감사합니다… 은혜를 잊지 않겠습니다." 당신은 선술집을 나서 밤의 그레이마르 거리를 바라보았다.',
-        },
+        // architecture/63: scenario.json prologue.accept 스크립트
+        summary: (() => {
+          const accept = this.content.getPrologueMeta().accept;
+          return {
+            short: (accept?.instructionLines ?? ['의뢰를 수락했다.']).join(
+              '\n',
+            ),
+            display: accept?.display ?? '당신은 의뢰를 수락했다.',
+          };
+        })(),
         ui: {
           availableActions: ['CHOICE'],
           targetLabels: [],
@@ -649,11 +627,13 @@ export class TurnsService {
         choices: hubChoices,
       };
 
-      // HUB accept_quest: speakingNpc를 로넨으로 고정 (LLM이 다른 NPC로 마킹 방지)
+      // HUB accept_quest: speakingNpc를 프롤로그 화자로 고정 (LLM이 다른 NPC로 마킹 방지)
+      // architecture/63: scenario.json prologue 필드
+      const prologueMeta = this.content.getPrologueMeta();
       (result.ui as any).speakingNpc = {
-        npcId: 'NPC_RONEN',
-        displayName: '로넨',
-        imageUrl: '/npc-portraits/ronen.webp',
+        npcId: prologueMeta.npcId,
+        displayName: prologueMeta.displayName,
+        imageUrl: prologueMeta.imageUrl,
       };
 
       await this.commitTurnRecord(
@@ -785,7 +765,9 @@ export class TurnsService {
     let agenda = runState.agenda ?? this.agendaService.initAgenda();
     const cooldowns = runState.eventCooldowns ?? {};
     const locationId =
-      ws.currentLocationId ?? currentNode.nodeMeta?.locationId ?? 'LOC_MARKET';
+      ws.currentLocationId ??
+      currentNode.nodeMeta?.locationId ??
+      this.content.getHubMeta().defaultLocationId;
     const updatedRunState: RunState = { ...runState };
 
     // go_hub 선택 시 → HUB 복귀
@@ -811,7 +793,7 @@ export class TurnsService {
       const result = this.buildSystemResult(
         turnNo,
         currentNode,
-        '잠긴 닻 선술집으로 발걸음을 돌린다.',
+        `${this.content.getHubMeta().name}${korParticle(this.content.getHubMeta().name, '으로', '로')} 발걸음을 돌린다.`,
       );
       await this.commitTurnRecord(
         run,
@@ -1047,7 +1029,7 @@ export class TurnsService {
       const moveResult = this.buildSystemResult(
         turnNo,
         currentNode,
-        '잠긴 닻 선술집으로 돌아가기로 한다.',
+        `${this.content.getHubMeta().name}${korParticle(this.content.getHubMeta().name, '으로', '로')} 돌아가기로 한다.`,
       );
       await this.commitTurnRecord(
         run,
@@ -2700,7 +2682,8 @@ export class TurnsService {
     // 태그는 간접 참조이므로 encounterCount는 증가하지 않음 (직접 대면=primaryNpcId만 카운트)
     if (!eventPrimaryNpc && event.payload.tags) {
       for (const tag of event.payload.tags) {
-        const tagNpcId = TAG_TO_NPC[tag];
+        // architecture/63: npcs.json entityAliases 파생 (구 TAG_TO_NPC)
+        const tagNpcId = this.content.resolveEntityAlias(tag);
         if (!tagNpcId) continue;
         if (!npcStates[tagNpcId]) {
           const npcDef = this.content.getNpc(tagNpcId);
@@ -4927,7 +4910,8 @@ export class TurnsService {
     // Phase 4a: 전투 승리 시 장비 드랍
     if (resolveResult.combatOutcome === 'VICTORY') {
       const locationId =
-        updatedRunState.worldState?.currentLocationId ?? 'LOC_HARBOR';
+        updatedRunState.worldState?.currentLocationId ??
+        this.content.getHubMeta().defaultLocationId;
       const encounterEnc = currentNode.nodeMeta?.encounterId as
         | string
         | undefined;
@@ -5190,7 +5174,8 @@ export class TurnsService {
           });
           const parentNodeIndex =
             parentNode?.nodeIndex ?? currentNode.nodeIndex - 1;
-          const locationId = ws.currentLocationId ?? 'LOC_MARKET';
+          const locationId =
+            ws.currentLocationId ?? this.content.getHubMeta().defaultLocationId;
 
           // Heat 반영 (combatWindowCount는 전투 시작 시 이미 증가됨 — 중복 증가 방지)
           const newWs = this.heatService.applyHeatDelta(ws, 3);
@@ -5512,13 +5497,7 @@ export class TurnsService {
     if (visitTurns.length === 0) return;
 
     // 결정론적 요약 생성 (LLM 불필요 — 행동+결과 기반)
-    const locationNames: Record<string, string> = {
-      LOC_MARKET: '시장 거리',
-      LOC_GUARD: '경비대 지구',
-      LOC_HARBOR: '항만 부두',
-      LOC_SLUMS: '빈민가',
-    };
-    const locName = locationNames[locationId] ?? locationId;
+    const locName = this.content.getLocationDisplayName(locationId);
     // 핵심 행동+결과 요약 (행동 라인)
     const summaryLines = visitTurns.map((t) => {
       const sr = t.serverResult as ServerResultV1 | null;
@@ -5619,16 +5598,7 @@ export class TurnsService {
       .where(eq(nodeInstances.id, currentNode.id));
 
     // 이동 턴 커밋
-    const locationNames: Record<string, string> = {
-      LOC_MARKET: '시장 거리',
-      LOC_GUARD: '경비대 지구',
-      LOC_HARBOR: '항만 부두',
-      LOC_SLUMS: '빈민가',
-      LOC_NOBLE: '상류 거리',
-      LOC_TAVERN: '잠긴 닻 선술집',
-      LOC_DOCKS_WAREHOUSE: '항만 창고구',
-    };
-    const toName = locationNames[toLocationId] ?? toLocationId;
+    const toName = this.content.getLocationDisplayName(toLocationId);
     const moveResult = this.buildSystemResult(
       turnNo,
       currentNode,
@@ -6072,97 +6042,9 @@ export class TurnsService {
     _currentLocationId: string,
   ): string | null {
     const normalized = input.toLowerCase();
-    const locationKeywords: Array<{ keywords: string[]; locationId: string }> =
-      [
-        {
-          keywords: [
-            '시장',
-            '상점가',
-            '장터',
-            '노점가',
-            '노점',
-            '좌판거리',
-            '상인들이 모인',
-            '물건 파는',
-          ],
-          locationId: 'LOC_MARKET',
-        },
-        {
-          keywords: [
-            '경비대',
-            '경비',
-            '초소',
-            '병영',
-            '수비대',
-            '순찰대',
-            '경비병',
-            '병사들',
-            '관청',
-          ],
-          locationId: 'LOC_GUARD',
-        },
-        {
-          keywords: [
-            '항만',
-            '부두',
-            '항구',
-            '선착장',
-            '포구',
-            '배터',
-            '창고가',
-            '선박',
-            '정박',
-            '바닷가',
-          ],
-          locationId: 'LOC_HARBOR',
-        },
-        {
-          keywords: [
-            '빈민가',
-            '빈민',
-            '슬럼',
-            '뒷골목',
-            '하층가',
-            '빈민굴',
-            '어두운 골목',
-            '허름한 골목',
-          ],
-          locationId: 'LOC_SLUMS',
-        },
-        {
-          keywords: [
-            '귀족',
-            '상류',
-            '저택',
-            '귀족가',
-            '귀족 거리',
-            '정원',
-            '의회',
-            '노블',
-          ],
-          locationId: 'LOC_NOBLE',
-        },
-        {
-          keywords: ['선술집', '잠긴 닻', '숙소', '주점', '술집', '거점'],
-          locationId: 'LOC_TAVERN',
-        },
-        {
-          keywords: [
-            '창고',
-            '창고구',
-            '창고 지구',
-            '물류',
-            '하역장',
-            '화물 창고',
-          ],
-          locationId: 'LOC_DOCKS_WAREHOUSE',
-        },
-        {
-          keywords: ['거점', '본거지', '돌아가'],
-          locationId: 'LOC_TAVERN',
-        },
-      ];
-    for (const entry of locationKeywords) {
+    // architecture/63: locations.json moveKeywords 파생 (구 하드코딩 배열).
+    // locations.json 순서 = 매칭 우선순위 (첫 매칭 승리).
+    for (const entry of this.content.getMoveKeywordEntries()) {
       for (const kw of entry.keywords) {
         if (normalized.includes(kw)) return entry.locationId;
       }
