@@ -57,7 +57,10 @@ import { NodeResolverService } from '../engine/nodes/node-resolver.service.js';
 import { NodeTransitionService } from '../engine/nodes/node-transition.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { InventoryService } from '../engine/rewards/inventory.service.js';
-import { RewardsService } from '../engine/rewards/rewards.service.js';
+import {
+  RewardsService,
+  GOLD_ACTIONS,
+} from '../engine/rewards/rewards.service.js';
 import { EquipmentService } from '../engine/rewards/equipment.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
 import { QUEST_BALANCE } from '../engine/hub/quest-balance.config.js';
@@ -1613,6 +1616,21 @@ export class TurnsService {
       `[Resolve] ${resolveResult.outcome} (score=${resolveResult.score}) event=${event.eventId} heat=${resolveResult.heatDelta}${presetActionBonuses?.[intent.actionType] ? ` presetBonus=+${presetActionBonuses[intent.actionType]}` : ''}${resolveResult.traitBonus ? ` traitBonus=${resolveResult.traitBonus > 0 ? '+' : ''}${resolveResult.traitBonus}` : ''}${resolveResult.gamblerLuckTriggered ? ' GAMBLER_LUCK!' : ''}`,
     );
 
+    // BRIBE/TRADE 잔액 클램프 — 없는 돈으로 뇌물이 성사되던 결함 (점검 2026-07-09, arch/40 부록).
+    // 명시 금액이 잔액을 초과하면 잔액만 지불하고, 부족 사실을 LLM에 전달해 NPC가 반응하게 한다.
+    let goldShortfall: { requested: number; paid: number } | null = null;
+    if (resolveResult.goldDelta < 0) {
+      const requestedGold = -resolveResult.goldDelta;
+      const availableGold = updatedRunState.gold ?? 0;
+      if (requestedGold > availableGold) {
+        goldShortfall = { requested: requestedGold, paid: availableGold };
+        resolveResult.goldDelta = -availableGold;
+        this.logger.log(
+          `[Gold] 잔액 부족 클램프: 제안 ${requestedGold}G → 지불 ${availableGold}G`,
+        );
+      }
+    }
+
     // === NanoEventDirector: 비동기 분리 — nanoCtx만 빌드, LLM Worker에서 호출 ===
     const nanoEventResult: NanoEventResult | null = null;
     // 대화 행위 감지 — 순수 사교 발화(인사/안부/감사/작별)는 fact 공개 파이프라인을
@@ -2801,12 +2819,20 @@ export class TurnsService {
     ].slice(-10); // 최대 10개 유지
 
     // LOCATION 보상 계산 (resolve 주사위 이후 같은 RNG로 수행)
-    const locationReward = this.rewardsService.calculateLocationRewards({
-      outcome: resolveResult.outcome,
-      eventType: event.eventType,
-      actionType: intent.actionType,
-      rng,
-    });
+    // 보상 자격 (점검 2026-07-09, arch/40 부록): ① 서사적 금품 행동(GOLD_ACTIONS)만
+    // — 잡담·인사 턴에 장비가 떨어지던 게이트 누락 복원. ② FREE(자동 SUCCESS) 턴
+    // 제외 — 주사위 없는 자유 행동으로 무위험 파밍 방지.
+    const rewardsEligible =
+      GOLD_ACTIONS.has(intent.actionType) &&
+      challengeDecision.result !== 'FREE';
+    const locationReward = rewardsEligible
+      ? this.rewardsService.calculateLocationRewards({
+          outcome: resolveResult.outcome,
+          eventType: event.eventType,
+          actionType: intent.actionType,
+          rng,
+        })
+      : { gold: 0, items: [], exp: 0 };
 
     // 골드: BRIBE/TRADE 비용(음수) + 보상(양수) 합산
     const totalGoldDelta = resolveResult.goldDelta + locationReward.gold;
@@ -2837,13 +2863,9 @@ export class TurnsService {
           itemRewards?: import('../db/types/event-def.js').EventItemReward[];
         }
       ).itemRewards ?? [];
-    const pendingItemRewardEvents: Array<{
-      id: string;
-      kind: 'LOOT';
-      text: string;
-      tags: string[];
-      data?: Record<string, unknown>;
-    }> = [];
+    // payload.itemRewards 지급 — 인벤토리 반영 + locationReward.items 병합.
+    // 연출 이벤트는 아래 통합 loot 루프가 단일 스타일([아이템] … 획득)로 생성한다
+    // (기존엔 item_reward 이벤트 + loot 이벤트가 이중 표기됐다 — 점검 2026-07-09).
     for (const reward of payloadItemRewards) {
       const pass =
         reward.condition === 'SUCCESS'
@@ -2859,14 +2881,6 @@ export class TurnsService {
       else updatedRunState.inventory.push({ itemId: reward.itemId, qty });
       // locationReward.items에 병합 → buildLocationResult가 diff.inventory.itemsAdded로 반영
       locationReward.items.push({ itemId: reward.itemId, qty });
-      const itemDef = this.content.getItem(reward.itemId);
-      pendingItemRewardEvents.push({
-        id: `item_reward_${reward.itemId}`,
-        kind: 'LOOT',
-        text: `[아이템] ${itemDef?.name ?? reward.itemId} 획득`,
-        tags: ['LOOT', 'ITEM_REWARD'],
-        data: { itemId: reward.itemId, qty },
-      });
     }
 
     // Phase 4a: LOCATION 장비 드랍 (GOLD_ACTIONS + SUCCESS/PARTIAL)
@@ -2877,7 +2891,10 @@ export class TurnsService {
       tags: string[];
       data?: Record<string, unknown>;
     }> = [];
-    if (resolveResult.outcome !== 'FAIL') {
+    // 게이트 복원 (점검 2026-07-09): 기존엔 outcome !== FAIL만 검사해 잡담·작별
+    // 턴에도 장비가 드랍됐다 (실측: "안녕하시오" 턴에 부두 만도). 주석의 원설계
+    // (GOLD_ACTIONS + SUCCESS/PARTIAL)대로 rewardsEligible 게이트 적용.
+    if (rewardsEligible && resolveResult.outcome !== 'FAIL') {
       const equipDrop = this.rewardsService.rollLocationEquipmentDrop(
         locationId,
         rng,
@@ -3810,6 +3827,8 @@ export class TurnsService {
             : 'WORLD_EVENT',
         // 대화 행위 — context/prompt-builder 톤 가이드 + fact 힌트 억제에 사용
         ...(dialogueAct ? { dialogueAct } : {}),
+        // BRIBE/TRADE 잔액 부족 클램프 정보 — LLM이 부족분을 서술에 반영 (점검 ③)
+        ...(goldShortfall ? { goldShortfall } : {}),
         // architecture/49 — NpcResolver audit trail (NPA 디버깅용)
         ...(npcResolutionSource
           ? {
@@ -3870,11 +3889,6 @@ export class TurnsService {
       result.events.push(pe);
     }
 
-    // 이벤트 payload.itemRewards 이벤트 반영 (아이템 자체는 이미 locationReward.items 경유)
-    for (const ire of pendingItemRewardEvents) {
-      result.events.push(ire);
-    }
-
     // 고집 2회째 경고 이벤트 — 다음 반복 시 에스컬레이션 예고
     if (intent.insistenceWarning) {
       const nextType = this.actionTypeToKorean(
@@ -3897,30 +3911,33 @@ export class TurnsService {
       });
     }
 
-    // 골드 변동 이벤트 (순 변동 기준 — 비용+보상 합산)
+    // 골드 변동 연출 이벤트 (순 변동 — 비용+보상 합산, 점검 2026-07-09 ④).
+    // [장비]/[아이템] 이벤트와 접두 표기를 통일해 HUD 없이도 골드 변동을 인지하게 한다.
     if (totalGoldDelta > 0) {
       result.events.push({
         id: `gold_${turnNo}`,
         kind: 'GOLD',
-        text: `${totalGoldDelta}골드를 획득했다.`,
-        tags: [],
+        text: `[골드] ${totalGoldDelta}골드 획득`,
+        tags: ['GOLD', 'GOLD_REWARD'],
       });
     } else if (totalGoldDelta < 0) {
       result.events.push({
         id: `gold_${turnNo}`,
         kind: 'GOLD',
-        text: `${Math.abs(totalGoldDelta)}골드를 소비했다.`,
-        tags: [],
+        text: `[골드] ${Math.abs(totalGoldDelta)}골드 소비`,
+        tags: ['GOLD', 'GOLD_SPEND'],
       });
     }
+    // 아이템 획득 연출 이벤트 — 드랍 + payload itemRewards 통합 단일 경로 (점검 2026-07-09).
+    // [골드]/[장비] 이벤트와 접두 표기를 통일하고 item_reward 이중 이벤트를 제거.
     for (const item of locationReward.items) {
       const itemDef = this.content.getItem(item.itemId);
       const itemName = itemDef?.name ?? item.itemId;
       result.events.push({
         id: `loot_${turnNo}_${item.itemId}`,
         kind: 'LOOT',
-        text: `${itemName}${korParticle(itemName, '을', '를')} 획득했다.`,
-        tags: [],
+        text: `[아이템] ${itemName} 획득`,
+        tags: ['LOOT', 'ITEM_REWARD'],
       });
     }
 
@@ -6288,6 +6305,8 @@ export class TurnsService {
       turnMode?: string;
       /** 대화 행위 — 순수 사교 발화 (GREETING/WELLBEING/THANKS/FAREWELL) */
       dialogueAct?: string;
+      /** BRIBE/TRADE 잔액 부족 클램프 — 제안 금액 vs 실제 지불 (점검 2026-07-09 ③) */
+      goldShortfall?: { requested: number; paid: number };
       /** architecture/49 — NPC Resolver 결정 근거 (NPA 디버깅용) */
       npcResolutionSource?: string;
       npcResolutionConfidence?: number;

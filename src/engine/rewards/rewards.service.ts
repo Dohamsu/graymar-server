@@ -55,7 +55,13 @@ const LOCATION_DROP_TABLE: DropEntry[] = [
  * SEARCH: 수색으로 숨긴 금품 발견
  * HELP: 도움에 대한 감사 보답 (소액)
  */
-const GOLD_ACTIONS = new Set(['STEAL', 'THREATEN', 'FIGHT', 'SEARCH', 'HELP']);
+export const GOLD_ACTIONS = new Set([
+  'STEAL',
+  'THREATEN',
+  'FIGHT',
+  'SEARCH',
+  'HELP',
+]);
 
 export interface LocationRewardInput {
   outcome: ResolveOutcome;

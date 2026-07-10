@@ -1372,6 +1372,16 @@ export class PromptBuilderService {
             `답변 가이드: 사용자가 언급한 단어 [${userKeywords.join(', ')}] 중 1~2개를 NPC 대사 또는 서술 안에 자연스럽게 인용하시오. 사용자 질문/말의 주제를 답변에서 그대로 반영하세요.`,
           );
         }
+        // BRIBE/TRADE 잔액 부족 (점검 2026-07-09 ③) — 클램프된 지불액을 서술에 반영.
+        // "전액을 건넸다" 서술이 실지급과 어긋나는 것 방지 + NPC가 부족분에 반응.
+        const goldShortfallCtx = (
+          actionCtx as Record<string, unknown> | undefined
+        )?.goldShortfall as { requested: number; paid: number } | undefined;
+        if (goldShortfallCtx) {
+          parts.push(
+            `⚠️ [잔액 부족] 플레이어가 ${goldShortfallCtx.requested}골드를 제안했지만 실제 가진 돈은 ${goldShortfallCtx.paid}골드뿐이며, 그 금액만 지불됐습니다. ${goldShortfallCtx.requested}골드 전액을 건네는 장면을 서술하지 마세요. NPC는 약속보다 적은 금액을 알아차리고 성격에 맞게 반응하세요 (불쾌/비웃음/경계 등).`,
+          );
+        }
         // 질문 우선 응답 (개선 3) — NPC가 물은 것에 답하지 않고 딴 화제로 흐르는
         // 회귀(사용자 응답률 56%) 방지. 답/거절/회피 중 하나로 반드시 먼저 반응.
         if (isQuestionTurn) {
