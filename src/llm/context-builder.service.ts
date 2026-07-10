@@ -563,6 +563,9 @@ export class ContextBuilderService {
     presetId?: string | null,
     playerTargetNpcId?: string | null,
   ): Promise<LlmContext> {
+    // 이름 공개 정밀 분석(2026-07-10) C: 소개 턴(introducedAtTurn===turnNo)에는
+    // 별칭을 유지하도록 모든 표시명 파생에 현재 턴 번호를 전달 (2턴 분리).
+    const turnNoForNames = serverResult.turnNo;
     // L0 + L1: run_memories
     const memory = await this.db.query.runMemories.findFirst({
       where: eq(runMemories.runId, runId),
@@ -709,7 +712,9 @@ export class ContextBuilderService {
           focusedDisplayNames.push(focusedDef.unknownAlias);
       }
       if (focusedState && focusedDef) {
-        focusedDisplayNames.push(getNpcDisplayName(focusedState, focusedDef));
+        focusedDisplayNames.push(
+          getNpcDisplayName(focusedState, focusedDef, turnNoForNames),
+        );
       }
     }
 
@@ -866,7 +871,7 @@ export class ContextBuilderService {
           const npc = npcStates[npcId];
           if (npc) {
             const npcDef = this.content.getNpc(npcId);
-            const displayName = getNpcDisplayName(npc, npcDef);
+            const displayName = getNpcDisplayName(npc, npcDef, turnNoForNames);
             const posture = computeEffectivePosture(npc);
             const summary = summarizeRelationship(displayName, rel);
             npcRelationFacts.push(`${summary} (자세: ${posture})`);
@@ -965,7 +970,7 @@ export class ContextBuilderService {
           const npcDef = this.content.getNpc(lastDelta.npcId);
           const npcState = npcStates[lastDelta.npcId];
           const dName = npcState
-            ? getNpcDisplayName(npcState, npcDef)
+            ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
             : (npcDef?.unknownAlias ?? '관련 인물');
           npcDeltaHint = `⚡ 이번 턴 변화: ${dName}의 감정이 변했다 (${deltaDesc}). 이 변화를 NPC의 표정, 목소리, 행동에 반영하세요.`;
         }
@@ -981,7 +986,7 @@ export class ContextBuilderService {
           const markNpcState = npcStates?.[m.npcId];
           const markNpcName =
             markNpcDef && markNpcState
-              ? getNpcDisplayName(markNpcState, markNpcDef)
+              ? getNpcDisplayName(markNpcState, markNpcDef, turnNoForNames)
               : (markNpcDef?.unknownAlias ?? '관련 인물');
           return `- [${m.type}] ${m.context} (${markNpcName})`;
         });
@@ -1202,7 +1207,11 @@ export class ContextBuilderService {
         for (const [npcId, npcState] of Object.entries(npcStatesAll)) {
           const npcDef = this.content.getNpc(npcId);
           if (!npcDef) continue;
-          const displayName = getNpcDisplayName(npcState, npcDef);
+          const displayName = getNpcDisplayName(
+            npcState,
+            npcDef,
+            turnNoForNames,
+          );
           if (rawInput.includes(displayName)) {
             choiceTargetNpcName = displayName;
             break;
@@ -1222,7 +1231,7 @@ export class ContextBuilderService {
         const npc = npcStates?.[primaryNpcId];
         if (npc) {
           const npcDef = this.content.getNpc(primaryNpcId);
-          const displayName = getNpcDisplayName(npc, npcDef);
+          const displayName = getNpcDisplayName(npc, npcDef, turnNoForNames);
           const posture = computeEffectivePosture(npc);
           const isChoiceTarget = choiceTargetNpcName === displayName;
           sceneParts.push(
@@ -1247,7 +1256,11 @@ export class ContextBuilderService {
             const npc = npcStates?.[prevNpcId];
             if (npc) {
               const npcDef = this.content.getNpc(prevNpcId);
-              const displayName = getNpcDisplayName(npc, npcDef);
+              const displayName = getNpcDisplayName(
+                npc,
+                npcDef,
+                turnNoForNames,
+              );
               sceneParts.push(`최근 상호작용 상대: ${displayName}`);
             }
             break;
@@ -1325,7 +1338,7 @@ export class ContextBuilderService {
           const npcState = npcStatesAll?.[currentTargetNpcId];
           const displayName =
             npcDef && npcState
-              ? getNpcDisplayName(npcState, npcDef)
+              ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
               : (npcDef?.unknownAlias ?? '상대 인물');
           if (dialogueAct === 'FAREWELL') {
             // 작별 턴 — "열린 상태로 마무리" 지시와 충돌하므로 대화 종결 유도로 교체
@@ -1620,6 +1633,7 @@ export class ContextBuilderService {
           relevantNpcMemoryText = this.renderRelevantNpcMemory(
             allNpcStates,
             relevantNpcIds,
+            turnNoForNames,
           );
         }
       }
@@ -1665,7 +1679,7 @@ export class ContextBuilderService {
             const npcState = npcStatesForFact?.[questReveal.npcId];
             const displayName =
               npcState && npcDef
-                ? getNpcDisplayName(npcState, npcDef)
+                ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
                 : npcDef?.unknownAlias || npcDef?.name || questReveal.npcId;
             const detail =
               revealedFact.versions[questReveal.npcId] ??
@@ -1726,7 +1740,7 @@ export class ContextBuilderService {
             const npcState = npcStatesForFact?.[factNpcId];
             const displayName =
               npcState && npcDef
-                ? getNpcDisplayName(npcState, npcDef)
+                ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
                 : npcDef?.unknownAlias || npcDef?.name || factNpcId;
             factWithheldHint = {
               npcDisplayName: displayName,
@@ -1744,7 +1758,7 @@ export class ContextBuilderService {
               )?.[npcId];
               const aliasRaw =
                 st && def
-                  ? getNpcDisplayName(st, def)
+                  ? getNpcDisplayName(st, def, turnNoForNames)
                   : def?.unknownAlias || def?.name || npcId;
               const alias = this.sanitizeNpcNames(aliasRaw, runState);
               if (alias) otherAliases.push(alias);
@@ -1755,7 +1769,11 @@ export class ContextBuilderService {
             )?.[factNpcId];
             const currentDisplay =
               npcStateCurrent && npcDefCurrent
-                ? getNpcDisplayName(npcStateCurrent, npcDefCurrent)
+                ? getNpcDisplayName(
+                    npcStateCurrent,
+                    npcDefCurrent,
+                    turnNoForNames,
+                  )
                 : npcDefCurrent?.unknownAlias ||
                   npcDefCurrent?.name ||
                   factNpcId;
@@ -1794,7 +1812,9 @@ export class ContextBuilderService {
             | undefined;
           const npcState = npcStatesForRev?.[revNpcId];
           const displayName =
-            npcDef && npcState ? getNpcDisplayName(npcState, npcDef) : revNpcId;
+            npcDef && npcState
+              ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
+              : revNpcId;
           npcAlreadyRevealedFacts = {
             npcDisplayName: displayName,
             facts: entries
@@ -1929,7 +1949,7 @@ export class ContextBuilderService {
           : null,
       agendaWitnessHint: this.buildAgendaWitnessHint(runState, serverResult),
       // 대화 잠금 상태
-      conversationLock: this.buildConversationLock(runState),
+      conversationLock: this.buildConversationLock(runState, turnNoForNames),
       dialogueAct,
       // 장소 기반 NPC 필터링
       currentLocationId:
@@ -2167,7 +2187,8 @@ export class ContextBuilderService {
           const npcDef = this.content.getNpc(nid);
           if (!npcDef) return '알 수 없는 인물';
           const npcState = allNpcStatesForInc?.[nid];
-          if (npcState) return getNpcDisplayName(npcState, npcDef);
+          if (npcState)
+            return getNpcDisplayName(npcState, npcDef, serverResult?.turnNo);
           return npcDef.unknownAlias || '알 수 없는 인물';
         });
         lines.push(`관련 NPC: ${npcNames.join(', ')}`);
@@ -2288,6 +2309,7 @@ export class ContextBuilderService {
   private renderRelevantNpcMemory(
     allNpcStates: Record<string, NPCState>,
     relevantNpcIds: Set<string>,
+    turnNo?: number,
   ): string | null {
     const blocks: string[] = [];
 
@@ -2296,7 +2318,7 @@ export class ContextBuilderService {
       if (!npc) continue;
 
       const npcDef = this.content.getNpc(npcId);
-      const displayName = getNpcDisplayName(npc, npcDef);
+      const displayName = getNpcDisplayName(npc, npcDef, turnNo);
       const posture = computeEffectivePosture(npc);
       const pm = npc.personalMemory;
 
@@ -2424,6 +2446,7 @@ export class ContextBuilderService {
    */
   private buildConversationLock(
     runState: Record<string, unknown> | null | undefined,
+    turnNo?: number,
   ): { npcDisplayName: string; consecutiveTurns: number } | null {
     if (!runState) return null;
     const actionHistory = runState.actionHistory as
@@ -2478,7 +2501,7 @@ export class ContextBuilderService {
     const npcDef = this.content.getNpc(targetNpcId);
     const displayName =
       npcState && npcDef
-        ? getNpcDisplayName(npcState, npcDef)
+        ? getNpcDisplayName(npcState, npcDef, turnNo)
         : (npcDef?.unknownAlias ?? '상대');
 
     return { npcDisplayName: displayName, consecutiveTurns: count };

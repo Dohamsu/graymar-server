@@ -1775,9 +1775,12 @@ export class PromptBuilderService {
       const alias = npcDef?.unknownAlias || '낯선 인물';
       const npcDisplayName = npc.introduced === true ? npc.npcName : alias;
 
-      // isNewlyIntroduced인 경우: 실명을 프롬프트에 직접 포함하지 않고 행동 지시만 제공
+      // 이름 공개 정밀 분석(2026-07-10) C: 실명은 콘텐츠(npcDef.name)에서 직접.
+      // 기존엔 npc.npcName(경로에 따라 소개 턴 별칭)이 들어가 LLM이 실명을 모른 채
+      // 소개를 연출 — "제 이름은 전령 소년이에요" 류 별칭 자기소개 발생.
+      const realName = npcDef?.name ?? npc.npcName;
       const nameRevealHint = isNewlyIntroduced
-        ? `\n이 NPC의 이름이 이번 장면에서 자연스럽게 드러납니다. 자기소개, 다른 인물의 언급, 또는 상황 단서를 통해 밝혀지도록 하세요. 별칭으로 시작하세요. (실명: "${npc.npcName}")`
+        ? `\n이 NPC의 이름이 이번 장면에서 자연스럽게 드러납니다. 자기소개, 다른 인물의 언급, 또는 상황 단서를 통해 밝혀지도록 하세요. 별칭으로 시작하세요. (실명: "${realName}")`
         : '';
 
       // NPC tier 확인 (미소개 상태면 CORE tier의 대사량 확장을 억제)

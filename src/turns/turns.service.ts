@@ -3638,6 +3638,9 @@ export class TurnsService {
       const introPosture = npcStates[injectedNpcId].posture;
       if (shouldIntroduce(npcStates[injectedNpcId], introPosture)) {
         npcStates[injectedNpcId].introduced = true;
+        // 이름 공개 정밀 분석(2026-07-10) D: 2턴 분리 — primary 경로와 동일하게
+        // 소개 턴엔 별칭 유지, 다음 턴부터 실명 (기존엔 이 경로만 미설정)
+        npcStates[injectedNpcId].introducedAtTurn = turnNo;
         newlyIntroducedNpcIds.push(injectedNpcId);
       }
       updatedRunState.npcStates = npcStates;

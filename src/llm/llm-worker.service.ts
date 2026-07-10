@@ -967,7 +967,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                   }),
                 );
               if (parsed.length > 0) {
-                parsed.push(this.content.buildGoHubChoice() as ChoiceItem);
+                parsed.push(this.content.buildGoHubChoice());
                 llmChoices = parsed;
               }
             }
@@ -2711,6 +2711,11 @@ ${npcList}`,
         }
       }
 
+      // 5.10.11. 별칭 접두 중복 최종 정리 (E) — 후단 단계 생성분 포함 보장
+      if (narrative) {
+        narrative = this.stripAliasPrefixDup(narrative);
+      }
+
       // 5.11. NPC 소개 롤백 + appearanceCount 증가
       //   - 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
       //   - appearanceCount: LLM 서술에 @마커로 등장한 NPC 카운터 +1 (반복 호칭 고착 방지)
@@ -2742,6 +2747,12 @@ ${npcList}`,
                 | undefined;
               let changed = false;
 
+              // 이름 공개 정밀 분석(2026-07-10) A: 이번 턴 롤백된 NPC 집합 —
+              // 같은 패치의 AppearanceIntro가 즉시 재소개하면 롤백이 항상 무효화
+              // (임계 1회 FRIENDLY/FEARFUL NPC는 연출 실패가 그대로 확정되던 버그).
+              // "한 턴에 소개 시도는 1회" — 다음 기회에 다시 소개 연출과 함께 판정.
+              const rolledBackThisTurn = new Set<string>();
+
               if (hasRollbackCandidates && npcStatesRef) {
                 for (const npcId of newlyIntroduced) {
                   const npcDef = this.content.getNpc(npcId);
@@ -2750,6 +2761,7 @@ ${npcList}`,
                     if (npcStatesRef[npcId]) {
                       npcStatesRef[npcId].introduced = false;
                       npcStatesRef[npcId].introducedAtTurn = undefined;
+                      rolledBackThisTurn.add(npcId);
                       changed = true;
                       this.logger.debug(
                         `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백`,
@@ -2792,6 +2804,8 @@ ${npcList}`,
                     ] as unknown as import('../db/types/npc-state.js').NPCState;
                     if (
                       !npcStateFull.introduced &&
+                      // A: 이번 턴 롤백된 NPC는 재소개 금지 (한 턴 소개 시도 1회)
+                      !rolledBackThisTurn.has(npcId) &&
                       shouldIntroduce(
                         npcStateFull,
                         npcStateFull.posture,
@@ -3460,7 +3474,36 @@ ${npcList}`,
    * @마커 내부(@[...])는 건드리지 않음.
    * gender 기반 대명사 풀에서 랜덤 선택하여 다채로움 확보.
    */
+  /**
+   * 별칭 접두 중복 결합 정리 (이름 공개 정밀 분석 2026-07-10 E).
+   * LLM이 별칭 일부를 쓰다가 풀 별칭을 이어 붙이는 hallucination:
+   * "팔뚝 굵은 광부 팔뚝 굵은 광부 조합장" → "팔뚝 굵은 광부 조합장".
+   * 각 unknownAlias의 단어 경계 접두부 + 공백 + 풀 별칭 → 풀 별칭.
+   * dedupe 초입과 최종 저장 직전 두 곳에서 호출 — 후단 단계가 중복을
+   * 만들어도 최종본을 보장한다 (T5 실측: dedupe 이후 잔존 사례).
+   */
+  private stripAliasPrefixDup(narrative: string): string {
+    const allNpcsForPrefix = this.content.getAllNpcs?.() ?? [];
+    for (const npc of allNpcsForPrefix) {
+      const alias = npc.unknownAlias;
+      if (!alias || !narrative.includes(alias)) continue;
+      const words = alias.split(' ');
+      for (let w = words.length - 1; w >= 1; w--) {
+        const prefix = words.slice(0, w).join(' ');
+        if (prefix.length < 2) continue;
+        const dup = `${prefix} ${alias}`;
+        if (narrative.includes(dup)) {
+          narrative = narrative.split(dup).join(alias);
+        }
+      }
+    }
+    return narrative;
+  }
+
   private deduplicateAliases(narrative: string): string {
+    // 0. 별칭 접두 중복 결합 정리 (E)
+    narrative = this.stripAliasPrefixDup(narrative);
+
     // 1. @마커 위치 기록 (교체 대상에서 제외)
     const markerRanges: Array<[number, number]> = [];
     const markerRegex = /@\[[^\]]*\]/g;

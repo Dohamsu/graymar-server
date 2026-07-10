@@ -90,6 +90,7 @@ export class TurnOrchestrationService {
       eventTags,
       recentNpcIds,
       actionType,
+      turnNo,
     );
 
     // Step 6: Emotional Peak Check
@@ -188,6 +189,7 @@ export class TurnOrchestrationService {
     eventTags: string[],
     recentNpcIds: string[] = [],
     actionType?: string,
+    turnNo?: number,
   ): NpcInjection | null {
     // OBSERVE/SEARCH 등 비대면 행동에서는 NPC 주입 억제 (관찰 중 NPC가 뜬금없이 말 거는 문제 방지)
     const PASSIVE_ACTIONS = new Set(['OBSERVE', 'SEARCH', 'REST']);
@@ -235,7 +237,8 @@ export class TurnOrchestrationService {
     const chosen = pool[0];
     const state = npcStates[chosen.npcId];
     const npcData = this.contentLoader.getNpc(chosen.npcId);
-    const npcName = getNpcDisplayName(state, npcData);
+    // 이름 공개 정밀 분석(2026-07-10) C: 소개 턴 별칭 유지 (2턴 분리)
+    const npcName = getNpcDisplayName(state, npcData, turnNo);
     const posture = computeEffectivePosture(state);
 
     // 대화 시드 생성
