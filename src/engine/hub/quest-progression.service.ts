@@ -18,6 +18,11 @@ interface QuestData {
   states: string[];
   stateTransitions: Record<string, StateTransition>;
   facts: Record<string, unknown>;
+  /** 경제 루프 — fact 발견/단계 전환 사례금 (quest.json rewards, 팩별 밸런싱) */
+  rewards?: {
+    factGold?: number;
+    transitionGold?: Record<string, number>;
+  };
 }
 
 @Injectable()
@@ -76,6 +81,18 @@ export class QuestProgressionService {
     }
 
     return { newState: null, transitionDesc: null };
+  }
+
+  /** fact 1건 발견 사례금 (quest.json rewards.factGold, 미정의 시 0) */
+  getFactGoldReward(): number {
+    const quest = this.content.getQuestData() as QuestData | null;
+    return quest?.rewards?.factGold ?? 0;
+  }
+
+  /** 단계 전환 사례금 (quest.json rewards.transitionGold["from→to"], 미정의 시 0) */
+  getTransitionGoldReward(from: string, to: string): number {
+    const quest = this.content.getQuestData() as QuestData | null;
+    return quest?.rewards?.transitionGold?.[`${from}→${to}`] ?? 0;
   }
 
   /**

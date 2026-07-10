@@ -70,6 +70,8 @@ export interface NanoEventContext {
   dialogueAct?: string | null;
   /** 선택지 개선 P3 — 직전 턴 선택지 라벨 (같은 구조/유사 라벨 반복 방지) */
   previousChoiceLabels?: string[];
+  /** 경제 싱크 — 이 NPC가 미공개 fact를 보류/거부함. 선택지에 BRIBE 1개 포함 유도 */
+  bribeOpportunity?: { npcId: string } | null;
 }
 
 const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
@@ -234,6 +236,20 @@ export class NanoEventDirectorService {
       parts.push(
         ``,
         `[가벼운 사교 국면] 방금 인사/안부를 나눴습니다. 선택지는 자연스러운 대화 전개(안부 되묻기, 가벼운 화제, 용건 꺼내기) 중심. 무거운 조사/위협 선택지는 1개 이하.`,
+      );
+    }
+
+    // 경제 싱크 — 정보 보류 NPC에게 금전 접근 선택지 1개 유도 (2026-07-11).
+    // BRIBE 비용·판정은 서버(resolve)가 처리하므로 여기서는 노출만 담당.
+    if (ctx.bribeOpportunity) {
+      const bribeNpc = ctx.presentNpcs.find(
+        (n) => n.npcId === ctx.bribeOpportunity!.npcId,
+      );
+      parts.push(
+        ``,
+        `[정보 보류 국면] ${bribeNpc?.displayName ?? '상대'}은(는) 무언가 알고 있지만 입을 열지 않았습니다.`,
+        `선택지 3개 중 정확히 1개는 이 인물에게 대가를 제시하는 금전 접근으로 만드세요 — affordance "BRIBE", npcId "${ctx.bribeOpportunity.npcId}".`,
+        `라벨은 노골적인 "뇌물"이라는 단어 대신 "은화 몇 닢을 슬쩍 밀어 넣는다", "수고비를 얹어 다시 묻는다" 같은 자연스러운 표현으로.`,
       );
     }
 

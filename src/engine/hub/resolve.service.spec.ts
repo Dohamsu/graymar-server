@@ -4,6 +4,7 @@
 
 import { ResolveService } from './resolve.service.js';
 import { SuddenActionDetectorService } from './sudden-action-detector.service.js';
+import { QUEST_BALANCE } from './quest-balance.config.js';
 import type {
   EventDefV2,
   ParsedIntentV2,
@@ -424,7 +425,7 @@ describe('ResolveService', () => {
 
   // ══════════════════════════════════════════════════════════════
   describe('BRIBE/TRADE 골드 비용 (computeGoldCost)', () => {
-    it('BRIBE SUCCESS 기본값 → goldDelta=-3', () => {
+    it('BRIBE SUCCESS 기본값 → config 비용 차감 (경제 루프 2026-07-11)', () => {
       const r = service.resolve(
         makeEvent(),
         makeIntent({ actionType: 'BRIBE' }),
@@ -433,10 +434,10 @@ describe('ResolveService', () => {
         makeRng([6]),
       );
       expect(r.outcome).toBe('SUCCESS');
-      expect(r.goldDelta).toBe(-3);
+      expect(r.goldDelta).toBe(-QUEST_BALANCE.BRIBE_DEFAULT_COST_SUCCESS);
     });
 
-    it('BRIBE PARTIAL 기본값 → goldDelta=-2', () => {
+    it('BRIBE PARTIAL 기본값 → config 비용 차감 (경제 루프 2026-07-11)', () => {
       const r = service.resolve(
         makeEvent(),
         makeIntent({ actionType: 'BRIBE' }),
@@ -445,7 +446,7 @@ describe('ResolveService', () => {
         makeRng([2]),
       );
       expect(r.outcome).toBe('PARTIAL');
-      expect(r.goldDelta).toBe(-2);
+      expect(r.goldDelta).toBe(-QUEST_BALANCE.BRIBE_DEFAULT_COST_PARTIAL);
     });
 
     it('BRIBE FAIL → goldDelta=0 (거래 불성사)', () => {

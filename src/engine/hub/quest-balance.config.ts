@@ -30,4 +30,9 @@ export const QUEST_BALANCE = {
 
   /** arch/60 P2: [단서 방향] 연출 이월 최대 턴 수 (발견 턴과 겹치면 다음 턴으로) */
   DIRECTION_HINT_CARRY_MAX_TURNS: 3,
+
+  /** 경제 루프 2026-07-11: BRIBE/TRADE 기본 비용 (플레이어가 금액 미명시 시).
+   *  fact 사례금(quest.json 기본 5G)보다 싸면 정보 구매가 싱크 역할을 못 하므로 소폭 상회 */
+  BRIBE_DEFAULT_COST_SUCCESS: 6,
+  BRIBE_DEFAULT_COST_PARTIAL: 3,
 } as const;

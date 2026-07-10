@@ -3135,6 +3135,12 @@ export class TurnsService {
 
     // === Quest Progression: 3경로 FACT 발견 + 단계 전환 ===
     const discoveredFactIdsThisTurn: string[] = []; // 대화 주제 추적용
+    // 경제 루프 — 단서·진전 사례금 누적 (quest.json rewards, 팩별 밸런싱). 실플레이의
+    // 86%가 대화·조사 턴이라 GOLD_ACTIONS 게이트만으로는 골드 소스가 사실상 없다
+    // (2026-07-11 실측: 30일 441턴 중 골드 이벤트 4건). 핵심 루프에 소스를 연결한다.
+    let questGoldReward = 0;
+    // 정보 보류 시그널 — NPC가 미공개 fact를 보류/거부한 턴. nano 선택지에 BRIBE 유도 (싱크).
+    let bribeOpportunityNpcId: string | null = null;
     // architecture/58 — NPC 경로 발견 fact를 serverResult.ui.questReveal로 전달 (기록·서술 단일화)
     let questRevealThisTurn: QuestRevealUI | null = null;
     if (this.questProgression) {
@@ -3153,6 +3159,7 @@ export class TurnsService {
             }
             existing.push(factId); // 같은 턴 중복 방지
             discoveredFactIdsThisTurn.push(factId);
+            questGoldReward += this.questProgression!.getFactGoldReward();
             this.logger.log(
               `[Quest] Fact discovered: ${factId} (source: ${source})`,
             );
@@ -3293,7 +3300,19 @@ export class TurnsService {
                   revealMode: npcRevealMode,
                   matchedByTopic: selected.matchedByTopic,
                 };
+              } else if (selected && !bypassTrust) {
+                // 보류(fallback 게이트/질문 차단)된 미공개 fact 보유 → 뇌물 기회
+                bribeOpportunityNpcId = npcId;
               }
+            } else if (!bypassTrust) {
+              // 거부(trust<-20)/FAIL — 미공개 fact를 보유하고 있으면 뇌물로 우회 가능.
+              // selectRevealableFact는 조회 전용(부작용 없음)이라 보유 확인에 재사용.
+              const withheld = this.questProgression.selectRevealableFact(
+                npcId,
+                rawInput,
+                updatedRunState,
+              );
+              if (withheld) bribeOpportunityNpcId = npcId;
             }
           }
         }
@@ -3337,6 +3356,10 @@ export class TurnsService {
           (
             updatedRunState as unknown as Record<string, unknown>
           ).questStateSinceTurn = turnNo;
+          questGoldReward += this.questProgression.getTransitionGoldReward(
+            currentQuestState,
+            transition.newState,
+          );
           this.logger.log(
             `[Quest] ${currentQuestState} -> ${transition.newState}`,
           );
@@ -3423,6 +3446,11 @@ export class TurnsService {
                     (
                       updatedRunState as unknown as Record<string, unknown>
                     ).questStateSinceTurn = turnNo;
+                    questGoldReward +=
+                      this.questProgression.getTransitionGoldReward(
+                        currentQuestState,
+                        recheck.newState,
+                      );
                     this.logger.log(
                       `[Quest] Auto-transition: ${currentQuestState} -> ${recheck.newState}`,
                     );
@@ -3779,6 +3807,15 @@ export class TurnsService {
       }
     }
 
+    // 경제 루프 — 단서·진전 사례금 지급 (fact 발견/questState 전환 누적분).
+    // totalGoldDelta(BRIBE 비용+행동 보상)는 fact 발견보다 앞서 이미 적용됐으므로 별도 가산.
+    if (questGoldReward > 0) {
+      updatedRunState.gold += questGoldReward;
+      this.logger.log(
+        `[Quest] 사례금 지급: +${questGoldReward}G (gold=${updatedRunState.gold})`,
+      );
+    }
+
     // summary.short: "이번 턴의 핵심 한 문장" — 행동 + 판정결과만 (sceneFrame 분리하여 중복 전달 방지)
     const outcomeLabel =
       resolveResult.outcome === 'SUCCESS'
@@ -3838,7 +3875,7 @@ export class TurnsService {
           : {}),
       },
       isNonChallenge,
-      totalGoldDelta,
+      totalGoldDelta + questGoldReward,
       locationReward.items,
       isNonChallenge
         ? undefined
@@ -3928,6 +3965,16 @@ export class TurnsService {
         tags: ['GOLD', 'GOLD_SPEND'],
       });
     }
+    // 단서·진전 사례금 연출 — 행동 보상([골드])과 출처를 구분해 별도 표기.
+    // 서사 명분: 의뢰 경비 지원 (프롤로그의 의뢰인 구조). 수치는 quest.json rewards.
+    if (questGoldReward > 0) {
+      result.events.push({
+        id: `quest_gold_${turnNo}`,
+        kind: 'GOLD',
+        text: `[사례금] 조사 진전의 대가 ${questGoldReward}골드`,
+        tags: ['GOLD', 'GOLD_REWARD', 'QUEST_REWARD'],
+      });
+    }
     // 아이템 획득 연출 이벤트 — 드랍 + payload itemRewards 통합 단일 경로 (점검 2026-07-09).
     // [골드]/[장비] 이벤트와 접두 표기를 통일하고 item_reward 이중 이벤트를 제거.
     for (const item of locationReward.items) {
@@ -3958,6 +4005,11 @@ export class TurnsService {
 
     // NanoEventDirector: nanoCtx를 ui에 저장 → LLM Worker에서 비동기 호출
     if (nanoEventCtx) {
+      // 정보 보류 시그널 — nano 선택지에 BRIBE(금전 접근) 1개 포함 유도 (경제 싱크).
+      // nanoCtx 빌드는 fact 보류 판정보다 앞이라 부착 직전에 주입한다.
+      if (bribeOpportunityNpcId) {
+        nanoEventCtx.bribeOpportunity = { npcId: bribeOpportunityNpcId };
+      }
       (result.ui as any).nanoEventCtx = nanoEventCtx;
     }
     // 하위 호환: nanoEventResult가 있으면 기존 방식으로도 전달
@@ -4289,7 +4341,7 @@ export class TurnsService {
           eventTags: event.payload.tags ?? [],
           summaryShort: summaryText ?? undefined,
           reputationChanges: resolveResult.reputationChanges,
-          goldDelta: totalGoldDelta,
+          goldDelta: totalGoldDelta + questGoldReward,
           incidentImpact: relevantIncident
             ? {
                 incidentId: relevantIncident.incident.incidentId,

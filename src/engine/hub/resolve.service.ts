@@ -13,6 +13,7 @@ import type {
 import type { TraitEffects } from '../../content/content.types.js';
 import type { Rng } from '../rng/rng.service.js';
 import { SuddenActionDetectorService } from './sudden-action-detector.service.js';
+import { QUEST_BALANCE } from './quest-balance.config.js';
 
 const HEAT_DELTA_CLAMP = 8;
 const MAX_COMBAT_PER_WINDOW = 3;
@@ -72,9 +73,9 @@ export class ResolveService {
       return -Math.ceil(specifiedGold * 0.6);
     }
 
-    // 기본값 (골드 밸런스 조정: LOCATION 보상과 균형)
-    if (outcome === 'SUCCESS') return -3;
-    return -2; // PARTIAL
+    // 기본값 — 경제 루프 2026-07-11: fact 사례금(기본 5G)과의 균형상 config로 외부화
+    if (outcome === 'SUCCESS') return -QUEST_BALANCE.BRIBE_DEFAULT_COST_SUCCESS;
+    return -QUEST_BALANCE.BRIBE_DEFAULT_COST_PARTIAL; // PARTIAL
   }
 
   resolve(
