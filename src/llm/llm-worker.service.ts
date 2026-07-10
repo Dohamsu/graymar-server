@@ -19,6 +19,7 @@ import {
 } from '../db/schema/index.js';
 import { ContextBuilderService } from './context-builder.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
+import { korParticle } from '../common/korean.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
@@ -2742,6 +2743,7 @@ ${npcList}`,
                       introduced?: boolean;
                       introducedAtTurn?: number;
                       pendingIntroduction?: boolean;
+                      introAttempts?: number;
                       appearanceCount?: number;
                     }
                   >
@@ -2760,14 +2762,32 @@ ${npcList}`,
                   if (!npcDef?.name) continue;
                   if (!narrative.includes(npcDef.name)) {
                     if (npcStatesRef[npcId]) {
+                      const attempts =
+                        npcStatesRef[npcId].introAttempts ?? 0;
+                      // architecture/64 튜닝: 결정론적 마감 — LLM이 2회 연속
+                      // 연출에 실패하면 서버가 제3자 호명 문장을 말미에 덧붙여
+                      // 소개를 확정한다 (LLM 원칙 6: 서버 로직 우선. 실측: Gemma가
+                      // avoid 경로 지시에도 5연속 미준수 — 프롬프트만으론 종결 불가).
+                      if (attempts >= 2) {
+                        const alias = npcDef.unknownAlias ?? '그 인물';
+                        narrative = `${narrative.trimEnd()}\n\n그때 근처를 지나던 누군가가 ${alias}${korParticle(alias, '을', '를')} 향해 "${npcDef.name}!" 하고 짧게 부르고는 제 갈 길을 갔다.`;
+                        npcStatesRef[npcId].pendingIntroduction = false;
+                        changed = true;
+                        this.logger.log(
+                          `[IntroFallback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — 연출 ${attempts}회 실패, 서버 제3자 호명 문장으로 소개 확정`,
+                        );
+                        continue; // introduced/introducedAtTurn 유지 (소개 확정)
+                      }
                       npcStatesRef[npcId].introduced = false;
                       npcStatesRef[npcId].introducedAtTurn = undefined;
                       // architecture/64 B: 연출 실패 NPC는 다음 관련 턴 재시도 후보
                       npcStatesRef[npcId].pendingIntroduction = true;
+                      // 튜닝: 실패 누적 — 다음 시도는 제3자 호명/단서 경로로 전환
+                      npcStatesRef[npcId].introAttempts = attempts + 1;
                       rolledBackThisTurn.add(npcId);
                       changed = true;
                       this.logger.debug(
-                        `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백 → pending`,
+                        `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백 → pending (attempts=${attempts + 1})`,
                       );
                     }
                   }

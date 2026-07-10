@@ -11,6 +11,10 @@ import {
 } from '../../db/types/npc-state.js';
 import type { LlmMessage } from '../types/index.js';
 import {
+  buildIntroDirective,
+  shouldAvoidSelfIntro,
+} from './intro-directive.js';
+import {
   buildNarrativeSystemPrompt,
   buildPartyNarrativeSystemPrompt,
   NARRATIVE_JSON_FORMAT_INSTRUCTION,
@@ -704,13 +708,32 @@ export class PromptBuilderService {
         const idTag = `[ID:${npc.npcId}, ${genderTag}, 대명사:${pronoun}]`;
 
         if (isNewlyIntroduced && isNewlyEncountered) {
-          return `- ${npc.name}${title} ${idTag}: ${npc.role} [자기소개] — 이 인물의 이름은 "${npc.name}"입니다. 이번 턴에 "${alias}"로 처음 등장하여 본인이 직접 이름을 밝힙니다. "${alias}"가 먼저 등장한 뒤, 해당 NPC의 대사 안에 이름 "${npc.name}"을 포함시킨 자기소개 대사 1회를 반드시 넣으세요. ⚠️ "${alias}"는 겉모습 묘사이지 이름이 아닙니다 — 자기소개 대사의 이름 자리에 "${alias}"를 넣지 마세요 (잘못: "제 이름은 ${alias}이에요" / 올바름: 이름 "${npc.name}" 사용). 자기소개 이전 서술에서는 "${alias}" 사용, 이후에는 "${npc.name}" 실명 사용.`;
+          // architecture/64 튜닝: posture/실패 이력 기반 연출 경로 분기
+          const stIntro = ctx.npcStates?.[npc.npcId];
+          return buildIntroDirective({
+            name: npc.name,
+            alias,
+            idTag,
+            role: npc.role,
+            title,
+            pronoun,
+            isNewlyEncountered: true,
+            posture: stIntro?.posture,
+            introAttempts: stIntro?.introAttempts,
+          });
         } else if (isNewlyIntroduced && !isNewlyEncountered) {
-          return `- ${npc.name}${title} ${idTag}: ${npc.role} [이번 장면에서 이름이 자연스럽게 드러납니다] — 이전까지 "${alias}"로 등장했고 이번 턴에 실명이 공개됩니다. 아래 3가지 장면 중 **반드시 하나**를 서술에 삽입하세요:
-    (a) 제3자 호명: 다른 NPC가 "${npc.name}! ..." 식으로 이름을 불러주는 대사 장면
-    (b) 단서 발견: 플레이어가 명찰·편지·장부·간판에서 '${npc.name}' 이름을 읽는 장면 (홑따옴표 인용)
-    (c) 본인 우발 노출: ${alias}가 "... 아, 내 이름은 ${npc.name}이오. ..." 식으로 말끝에 흘리는 대사 장면
-    공개 장면 이전 문장에서는 반드시 "${alias}" 또는 "${pronoun}"을 사용하고, 장면 이후에만 "${npc.name}" 실명을 사용하세요. 장면 없이 갑자기 실명을 쓰면 몰입이 깨집니다.`;
+          const stIntro = ctx.npcStates?.[npc.npcId];
+          return buildIntroDirective({
+            name: npc.name,
+            alias,
+            idTag,
+            role: npc.role,
+            title,
+            pronoun,
+            isNewlyEncountered: false,
+            posture: stIntro?.posture,
+            introAttempts: stIntro?.introAttempts,
+          });
         } else if (isNewlyEncountered && !isNewlyIntroduced) {
           return `- "${alias}" ${idTag}: ${npc.role} [첫 만남 — 이름 미공개] 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "${pronoun}", "${pronoun} 인물" 등 짧은 대명사로 대체하세요. 실명 사용 금지.`;
         } else if (isIntroduced) {
@@ -1778,9 +1801,17 @@ export class PromptBuilderService {
       // 이름 공개 정밀 분석(2026-07-10) C: 실명은 콘텐츠(npcDef.name)에서 직접.
       // 기존엔 npc.npcName(경로에 따라 소개 턴 별칭)이 들어가 LLM이 실명을 모른 채
       // 소개를 연출 — "제 이름은 전령 소년이에요" 류 별칭 자기소개 발생.
+      // architecture/64 튜닝: 경계 성향/실패 이력 NPC는 자기소개 경로 제외.
       const realName = npcDef?.name ?? npc.npcName;
+      const stForIntro = npc.npcId ? ctx.npcStates?.[npc.npcId] : undefined;
+      const avoidSelfIntro = shouldAvoidSelfIntro(
+        stForIntro?.posture,
+        stForIntro?.introAttempts,
+      );
       const nameRevealHint = isNewlyIntroduced
-        ? `\n이 NPC의 이름이 이번 장면에서 자연스럽게 드러납니다. 자기소개, 다른 인물의 언급, 또는 상황 단서를 통해 밝혀지도록 하세요. 별칭으로 시작하세요. (실명: "${realName}")`
+        ? avoidSelfIntro
+          ? `\n이 NPC의 이름이 이번 장면에서 드러납니다 (실명: "${realName}"). ⚠️ 본인은 성격상 이름을 밝히지 않습니다 — 자기소개 대사 금지. 제3자가 "${realName}"을 부르거나, 지닌 물건의 이름 표기를 플레이어가 발견하는 장면으로 연출하세요. 별칭으로 시작하세요.`
+          : `\n이 NPC의 이름이 이번 장면에서 자연스럽게 드러납니다. 자기소개, 다른 인물의 언급, 또는 상황 단서를 통해 밝혀지도록 하세요. 별칭으로 시작하세요. (실명: "${realName}")`
         : '';
 
       // NPC tier 확인 (미소개 상태면 CORE tier의 대사량 확장을 억제)

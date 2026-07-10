@@ -72,6 +72,8 @@ export interface NPCState {
    * 조용한 공개(연출 장면 없는 introduced=true) 경로를 제거하기 위한 플래그.
    */
   pendingIntroduction?: boolean;
+  /** 소개 연출 실패(IntroRollback) 누적 — 경로 선택에 사용 (architecture/64 튜닝) */
+  introAttempts?: number;
   encounterCount: number;
   // LLM 서술에 @마커로 등장한 누적 횟수 — encounterCount와 별개로
   // 반복 호칭 고착 방지용. 임계치 이상이면 posture 무관 강제 소개.
