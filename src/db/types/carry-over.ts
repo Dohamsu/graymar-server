@@ -99,7 +99,8 @@ export interface ScenarioHubMeta {
 export interface ScenarioPrologueMeta {
   npcId: string;
   displayName: string;
-  imageUrl: string;
+  /** 초상화 URL — 없으면 클라가 무명 실루엣 아이콘 렌더 (speakingNpc 규약) */
+  imageUrl?: string;
   /** 도입 분위기 서술 풀 (랜덤 1개 선택) */
   atmospheres?: string[];
   /** 도입 서술 라인 — "{HOOK}" 플레이스홀더에 preset.prologueHook 치환. 빈 문자열 = 빈 줄 */

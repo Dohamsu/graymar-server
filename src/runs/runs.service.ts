@@ -774,6 +774,8 @@ export class RunsService {
         currentTurnNo: result.run.currentTurnNo,
         seed: result.run.seed,
         startedAt: result.run.startedAt,
+        // architecture/63 ⑥: 클라 시나리오 인지 (HUB 라벨·프리셋 표기)
+        scenarioId: result.run.scenarioId ?? null,
       },
       currentNode: {
         id: result.firstNode.id,
@@ -1127,6 +1129,8 @@ export class RunsService {
         startedAt: run.startedAt,
         presetId: run.presetId,
         gender: run.gender ?? 'male',
+        // architecture/63 ⑥: 클라 시나리오 인지
+        scenarioId: run.scenarioId ?? null,
       },
       currentNode: currentNode
         ? {
