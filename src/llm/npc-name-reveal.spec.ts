@@ -161,3 +161,66 @@ describe('E — 별칭 접두 중복 결합 정리', () => {
     expect(stripPrefixDup(input, '팔뚝 굵은 광부 조합장')).toBe(input);
   });
 });
+
+describe('B — AppearanceIntro 다음 턴 소개 후보화 (조용한 공개 제거)', () => {
+  // llm-worker AppearanceIntro + turns.service 승격 로직 재현
+  // (원본: llm-worker.service.ts pendingIntroduction / turns.service 소개 판정)
+
+  it('워커: 등장 누적 임계 충족 시 introduced가 아니라 pendingIntroduction만 세팅', () => {
+    const s = baseState({ appearanceCount: 4, encounterCount: 0 });
+    // appearanceCount 5회째 도달 (강제 소개 임계)
+    s.appearanceCount = 5;
+    const wouldIntroduce =
+      !s.introduced && !s.pendingIntroduction && shouldIntroduce(s, s.posture);
+    expect(wouldIntroduce).toBe(true);
+    // B: introduced 대신 pending 마킹
+    s.pendingIntroduction = true;
+    expect(s.introduced).toBe(false); // 조용한 공개 없음
+    // 이 상태에서 표시명은 여전히 별칭
+    expect(getNpcDisplayName(s, PIP_DEF, 7)).toBe('눈치 빠른 전령 소년');
+  });
+
+  it('turns: pending NPC가 장면에 등장하면 정식 소개로 승격 (연출 지시 목록 편입)', () => {
+    const s = baseState({ pendingIntroduction: true, encounterCount: 0 });
+    const newlyIntroducedNpcIds: string[] = [];
+    const turnNo = 8;
+    // turns.service 승격 분기 재현
+    if (
+      !s.introduced &&
+      (s.pendingIntroduction === true || shouldIntroduce(s, s.posture))
+    ) {
+      s.introduced = true;
+      s.introducedAtTurn = turnNo;
+      s.pendingIntroduction = false;
+      newlyIntroducedNpcIds.push(s.npcId);
+    }
+    expect(s.introduced).toBe(true);
+    expect(s.introducedAtTurn).toBe(8);
+    expect(s.pendingIntroduction).toBe(false);
+    expect(newlyIntroducedNpcIds).toContain('NPC_SD_ORPHAN'); // 연출 지시 발화
+    // 소개 턴엔 여전히 별칭 (2턴 분리)
+    expect(getNpcDisplayName(s, PIP_DEF, 8)).toBe('눈치 빠른 전령 소년');
+    expect(getNpcDisplayName(s, PIP_DEF, 9)).toBe('핍');
+  });
+
+  it('롤백 시 pending 마킹 — 연출 실패가 다음 관련 턴 재시도로 이월', () => {
+    const s = baseState({ introduced: true, introducedAtTurn: 4 });
+    // IntroRollback 재현 (B: pending 마킹 포함)
+    s.introduced = false;
+    s.introducedAtTurn = undefined;
+    s.pendingIntroduction = true;
+    // 다음 관련 턴: shouldIntroduce 임계와 무관하게 승격 가능
+    expect(
+      !s.introduced &&
+        (s.pendingIntroduction === true || shouldIntroduce(s, s.posture)),
+    ).toBe(true);
+  });
+
+  it('encounterCount 임계 미달 + pending 없음 → 승격 안 됨 (기존 동작 보존)', () => {
+    const s = baseState({ encounterCount: 0, posture: 'CAUTIOUS' });
+    expect(
+      !s.introduced &&
+        (s.pendingIntroduction === true || shouldIntroduce(s, s.posture)),
+    ).toBe(false);
+  });
+});

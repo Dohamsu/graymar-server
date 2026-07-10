@@ -2741,6 +2741,7 @@ ${npcList}`,
                     {
                       introduced?: boolean;
                       introducedAtTurn?: number;
+                      pendingIntroduction?: boolean;
                       appearanceCount?: number;
                     }
                   >
@@ -2761,10 +2762,12 @@ ${npcList}`,
                     if (npcStatesRef[npcId]) {
                       npcStatesRef[npcId].introduced = false;
                       npcStatesRef[npcId].introducedAtTurn = undefined;
+                      // architecture/64 B: 연출 실패 NPC는 다음 관련 턴 재시도 후보
+                      npcStatesRef[npcId].pendingIntroduction = true;
                       rolledBackThisTurn.add(npcId);
                       changed = true;
                       this.logger.debug(
-                        `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백`,
+                        `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백 → pending`,
                       );
                     }
                   }
@@ -2802,20 +2805,24 @@ ${npcList}`,
                     const npcStateFull = npcStatesRef[
                       npcId
                     ] as unknown as import('../db/types/npc-state.js').NPCState;
+                    // architecture/64 B: 조용한 공개 제거 — 임계 충족 시 즉시
+                    // introduced를 찍는 대신 "다음 턴 소개 후보"로만 마킹.
+                    // 승격은 turns.service가 해당 NPC를 primary/injected로
+                    // 장면에 등장시키는 턴에 정식 소개 연출 지시와 함께 수행.
+                    // (A의 rolledBackThisTurn 가드는 introduced를 더 이상 여기서
+                    //  찍지 않으므로 불필요 — 롤백 NPC도 pending으로 재시도)
                     if (
                       !npcStateFull.introduced &&
-                      // A: 이번 턴 롤백된 NPC는 재소개 금지 (한 턴 소개 시도 1회)
-                      !rolledBackThisTurn.has(npcId) &&
+                      !npcStateFull.pendingIntroduction &&
                       shouldIntroduce(
                         npcStateFull,
                         npcStateFull.posture,
                         (npcDef?.tier as string | undefined) ?? undefined,
                       )
                     ) {
-                      npcStatesRef[npcId].introduced = true;
-                      npcStatesRef[npcId].introducedAtTurn = pending.turnNo;
+                      npcStatesRef[npcId].pendingIntroduction = true;
                       this.logger.log(
-                        `[AppearanceIntro] turn=${pending.turnNo} ${npcId} appearanceCount=${prev + 1} → introduced=true`,
+                        `[AppearanceIntro] turn=${pending.turnNo} ${npcId} appearanceCount=${prev + 1} → pendingIntroduction (다음 관련 턴 소개 후보)`,
                       );
                     }
                   }

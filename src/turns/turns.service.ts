@@ -2556,9 +2556,16 @@ export class TurnsService {
       const npcTier = (npcDefForIntro as Record<string, unknown>)?.tier as
         | string
         | undefined;
-      if (shouldIntroduce(npcStates[npcId], introPosture, npcTier)) {
+      if (
+        !npcStates[npcId].introduced &&
+        (npcStates[npcId].pendingIntroduction === true ||
+          shouldIntroduce(npcStates[npcId], introPosture, npcTier))
+      ) {
+        // architecture/64 B: pendingIntroduction(등장 누적/연출 실패 이월) 승격 포함 —
+        // 이 NPC가 이번 턴 장면에 등장하므로 정식 소개 연출 지시와 함께 공개.
         npcStates[npcId].introduced = true;
         npcStates[npcId].introducedAtTurn = turnNo; // 2턴 분리: 이번 턴은 alias, 다음 턴부터 실명
+        npcStates[npcId].pendingIntroduction = false;
         newlyIntroducedNpcIds.push(npcId);
       }
 
@@ -3636,11 +3643,17 @@ export class TurnsService {
       }
       // 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
       const introPosture = npcStates[injectedNpcId].posture;
-      if (shouldIntroduce(npcStates[injectedNpcId], introPosture)) {
+      if (
+        !npcStates[injectedNpcId].introduced &&
+        (npcStates[injectedNpcId].pendingIntroduction === true ||
+          shouldIntroduce(npcStates[injectedNpcId], introPosture))
+      ) {
+        // architecture/64 B: pending 승격 포함 (primary 경로와 동일 규칙)
         npcStates[injectedNpcId].introduced = true;
         // 이름 공개 정밀 분석(2026-07-10) D: 2턴 분리 — primary 경로와 동일하게
         // 소개 턴엔 별칭 유지, 다음 턴부터 실명 (기존엔 이 경로만 미설정)
         npcStates[injectedNpcId].introducedAtTurn = turnNo;
+        npcStates[injectedNpcId].pendingIntroduction = false;
         newlyIntroducedNpcIds.push(injectedNpcId);
       }
       updatedRunState.npcStates = npcStates;

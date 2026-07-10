@@ -704,7 +704,7 @@ export class PromptBuilderService {
         const idTag = `[ID:${npc.npcId}, ${genderTag}, 대명사:${pronoun}]`;
 
         if (isNewlyIntroduced && isNewlyEncountered) {
-          return `- ${npc.name}${title} ${idTag}: ${npc.role} [자기소개] — 이번 턴에 "${alias}"로 처음 등장하여 본인이 직접 이름을 밝힙니다. "${alias}"가 먼저 등장한 뒤, 해당 NPC의 대사 안에 "...${npc.name}이오. ..." 식으로 이름을 포함시킨 자기소개 대사 1회를 반드시 넣으세요. 자기소개 이전 서술에서는 "${alias}" 사용, 이후에는 "${npc.name}" 실명 사용.`;
+          return `- ${npc.name}${title} ${idTag}: ${npc.role} [자기소개] — 이 인물의 이름은 "${npc.name}"입니다. 이번 턴에 "${alias}"로 처음 등장하여 본인이 직접 이름을 밝힙니다. "${alias}"가 먼저 등장한 뒤, 해당 NPC의 대사 안에 이름 "${npc.name}"을 포함시킨 자기소개 대사 1회를 반드시 넣으세요. ⚠️ "${alias}"는 겉모습 묘사이지 이름이 아닙니다 — 자기소개 대사의 이름 자리에 "${alias}"를 넣지 마세요 (잘못: "제 이름은 ${alias}이에요" / 올바름: 이름 "${npc.name}" 사용). 자기소개 이전 서술에서는 "${alias}" 사용, 이후에는 "${npc.name}" 실명 사용.`;
         } else if (isNewlyIntroduced && !isNewlyEncountered) {
           return `- ${npc.name}${title} ${idTag}: ${npc.role} [이번 장면에서 이름이 자연스럽게 드러납니다] — 이전까지 "${alias}"로 등장했고 이번 턴에 실명이 공개됩니다. 아래 3가지 장면 중 **반드시 하나**를 서술에 삽입하세요:
     (a) 제3자 호명: 다른 NPC가 "${npc.name}! ..." 식으로 이름을 불러주는 대사 장면

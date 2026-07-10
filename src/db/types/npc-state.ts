@@ -64,6 +64,14 @@ export interface NPCState {
   npcId: string;
   introduced: boolean;
   introducedAtTurn?: number; // 소개가 발생한 턴 번호 (다음 턴부터 실명 표시)
+  /**
+   * architecture/64 B — 다음 턴 소개 후보.
+   * AppearanceIntro(등장 누적 임계) 또는 IntroRollback(연출 실패)이 세팅하며,
+   * 해당 NPC가 primary/injected로 실제 장면에 등장하는 턴에 정식 소개
+   * 파이프라인(연출 지시 → IntroRollback 검증)으로 승격된다.
+   * 조용한 공개(연출 장면 없는 introduced=true) 경로를 제거하기 위한 플래그.
+   */
+  pendingIntroduction?: boolean;
   encounterCount: number;
   // LLM 서술에 @마커로 등장한 누적 횟수 — encounterCount와 별개로
   // 반복 호칭 고착 방지용. 임계치 이상이면 posture 무관 강제 소개.
