@@ -2526,6 +2526,22 @@ export class PromptBuilderService {
       );
     }
 
+    // === 인물 소재 안내 (버그 a44a7478) — 플레이어가 언급한 제3의 인물이 다른 장소 ===
+    // NpcResolver whereaboutsHint: 언급 질문 가드(잠금 유지) 또는 STRONG/MEDIUM
+    // 원격 매칭에서 전달. 찾는 인물을 이 장면에 등장시키지 않고 소재만 안내한다.
+    if (ctx.npcWhereaboutsHint) {
+      const { searchedNpcDisplay, locationLabel, activity } =
+        ctx.npcWhereaboutsHint;
+      factsParts.push(
+        [
+          `[인물 소재 안내]`,
+          `플레이어가 찾는 '${searchedNpcDisplay}'은(는) 지금 이 자리에 없습니다 — 현재 ${locationLabel}에 있습니다${activity ? ` (${activity})` : ''}.`,
+          `현재 장면의 NPC(주로 지금 대화 중인 인물)가 아는 만큼만 소재를 자연스럽게 안내하거나, 모르면 모른다고 답하게 하세요.`,
+          `⚠️ '${searchedNpcDisplay}'을(를) 이 장면에 등장시키거나 화자로 만들지 마세요.`,
+        ].join('\n'),
+      );
+    }
+
     // === architecture/46: default 텍스트 (NPC 누구도 모를 때, quest description) ===
     if (
       !ctx.npcRevealableFact &&

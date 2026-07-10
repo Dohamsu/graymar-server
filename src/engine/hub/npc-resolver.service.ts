@@ -97,6 +97,16 @@ const SOCIAL_ACTIONS = new Set([
 /** STRONG 호명 조사 — "X에게/X께/X와/X한테" 등. */
 const PARTICLE_RE = /(.+?)(에게|께|와|하고|한테)\s/;
 
+/**
+ * 언급(3인칭) 질문 패턴 — 잠금 대화 중 다른 NPC 이름이 이 패턴과 함께 나오면
+ * "그 NPC에게 말 걸기"가 아니라 "그 NPC에 대해 묻기"다 (버그 a44a7478:
+ * "정보상은 어디서 만날 수 있죠?"가 정보상을 화자로 승격, 첫 만남 카드까지 발화).
+ * 소재(어디)·정체(누구)·화제(에 대해)·면식(아시오)·접촉 방법(만나려면) 질문을 포괄.
+ * 오탐 시 실패 모드는 "잠금 NPC 유지"라 대화가 끊기지 않는 보수적 방향.
+ */
+const MENTION_QUESTION_RE =
+  /어디|에\s*대해|에\s*관해|누구|만나려면|만날\s*수\s*있|아시오|아십니까|아는가|들어봤|들어본/;
+
 /** WEAK 매칭 시 제외할 일반 형용사/환경 명사. */
 const RISKY_FRAGMENTS = new Set([
   '젊은',
@@ -139,7 +149,10 @@ export class NpcResolverService {
     // CHOICE 입력은 명시적 선택지라 사용자 자유 호명 매칭 skip — lock 또는 이벤트만 사용
     const isChoice = ctx.inputType === 'CHOICE';
 
-    // ── Step 1: STRONG 신호 (lock 무시) ──
+    // 잠금 NPC — Step 1 언급 질문 가드와 Step 3~5에서 공용
+    const lockNpcId = this.findConversationLock(ctx);
+
+    // ── Step 1: STRONG 신호 (lock 무시 — 단, 언급 질문은 예외) ──
     // 같은 location NPC 우선 — 같은 키워드("두목")가 여러 NPC에 있을 때 잘못 선택 방지
     if (!isChoice) {
       // 1a. 실명/별칭 전체 매칭
@@ -199,6 +212,32 @@ export class NpcResolverService {
           ),
         );
         const picked = localFirst ?? nameMatched[0];
+        // 언급 질문 가드 (버그 a44a7478): 잠금 대화 중 제3의 NPC를 언급 질문
+        // 형태로 물으면 화자를 승격하지 않는다 — 잠금 NPC가 그 인물에 대해
+        // 답하는 턴으로 유지하고, 다른 장소면 위치 안내 hint를 붙인다.
+        // "X에게/한테" 호명 조사(1b STRONG_PARTICLE)는 이 가드를 타지 않는다.
+        if (
+          lockNpcId &&
+          picked.npcId !== lockNpcId &&
+          MENTION_QUESTION_RE.test(ctx.rawInput)
+        ) {
+          return {
+            npcId: lockNpcId,
+            source: 'CONVERSATION_LOCK',
+            confidence: 0.85,
+            alternatives: [
+              ...alternatives,
+              {
+                npcId: picked.npcId,
+                source: 'STRONG_EXPLICIT_NAME',
+                reason: '언급 질문 — 잠금 유지, 화제로 강등',
+              },
+            ],
+            lockApplied: true,
+            whereaboutsHint:
+              this.buildWhereaboutsHint(picked, ctx) ?? undefined,
+          };
+        }
         return this.applyWhereabouts(
           {
             npcId: picked.npcId,
@@ -237,8 +276,7 @@ export class NpcResolverService {
       }
     }
 
-    // ── Step 2: 잠금 NPC 검색 (MEDIUM/WEAK 평가 전 미리 계산) ──
-    const lockNpcId = this.findConversationLock(ctx);
+    // ── Step 2: 잠금 NPC — resolve 서두에서 계산 완료 (언급 질문 가드 공용) ──
 
     // ── Step 3: MEDIUM 신호 (명시 roleKeywords) ──
     if (!isChoice) {
