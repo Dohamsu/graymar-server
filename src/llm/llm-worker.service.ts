@@ -2577,170 +2577,6 @@ ${npcList}`,
         _appearedNpcIds.add(npcId);
       }
 
-      // 5.9 speakingNpc + npcPortrait를 LLM 출력 기반으로 재결정
-      {
-        // 카드 정합 분석 (2026-07-11) 결함 A: 기존 수집 지점(B-1/B-2/콜론 승격)은
-        // 서버 중간 형식 마커만 잡아 — 스트리밍 경로의 완전형 @[표시명|url] 마커가
-        // _appearedNpcIds에 안 잡혀 "실제 등장 NPC로 카드 교체" 로직이 죽어 있었다
-        // (실측 T4: 카드=브렌 유지, 서술=토브렌만). 완전형 마커를 역해석해 보충.
-        {
-          const fullMarkerRe = /@\[([^\]|]+)(?:\|[^\]]*)?\]/g;
-          let fm: RegExpExecArray | null;
-          while ((fm = fullMarkerRe.exec(narrative)) !== null) {
-            const display = fm[1].trim();
-            if (!display || display === '무명 인물') continue;
-            for (const n of this.content.getAllNpcs()) {
-              if (
-                n.name === display ||
-                n.unknownAlias === display ||
-                n.shortAlias === display ||
-                (n.aliases ?? []).includes(display)
-              ) {
-                _appearedNpcIds.add(n.npcId);
-                break;
-              }
-            }
-          }
-        }
-        const updatedSr = { ...serverResult } as Record<string, unknown>;
-        const ui = { ...((updatedSr.ui as Record<string, unknown>) ?? {}) };
-        let srChanged = false;
-
-        // speakingNpc 갱신 (첫 번째 @마커 기반)
-        const markerMatch = narrative.match(/@\[([^\]|]+)(?:\|([^\]]+))?\]/);
-        if (markerMatch) {
-          const actualName = markerMatch[1].trim();
-          const actualImg = markerMatch[2]?.trim() || undefined;
-          if (
-            actualName.length > 0 &&
-            actualName.length <= 20 &&
-            !actualName.includes('"')
-          ) {
-            // npcId 역매핑: name/aliases/unknownAlias/shortAlias/imageUrl 순서로 시도
-            // (bug 322aa1a3 — 마커는 정확한데 npcId가 null이라 conversationLock 작동 안 함)
-            let resolvedNpcId: string | null = null;
-            const allNpcs = this.content.getAllNpcs();
-            for (const n of allNpcs) {
-              if (
-                n.name === actualName ||
-                n.unknownAlias === actualName ||
-                n.shortAlias === actualName ||
-                n.aliases?.includes(actualName)
-              ) {
-                resolvedNpcId = n.npcId;
-                break;
-              }
-            }
-            if (!resolvedNpcId && actualImg) {
-              const matched = Object.entries(NPC_PORTRAITS).find(
-                ([, url]) => url === actualImg,
-              );
-              if (matched) resolvedNpcId = matched[0];
-            }
-            ui.speakingNpc = {
-              npcId: resolvedNpcId,
-              displayName: actualName,
-              imageUrl:
-                actualImg && actualImg.startsWith('/') ? actualImg : undefined,
-            };
-            // primaryNpcId carry-over: 다음 턴 conversationLock 시드
-            if (resolvedNpcId) {
-              const ctx = (ui.actionContext ?? {}) as Record<string, unknown>;
-              if (ctx.primaryNpcId == null) {
-                ui.actionContext = { ...ctx, primaryNpcId: resolvedNpcId };
-              }
-            }
-            srChanged = true;
-          }
-        }
-
-        // npcPortrait 갱신: 서술에 실제 등장한 NPC만 카드 표시
-        const existingPortrait = ui.npcPortrait as
-          | { npcId?: string }
-          | undefined;
-        if (existingPortrait && _appearedNpcIds.size > 0) {
-          if (
-            existingPortrait.npcId &&
-            !_appearedNpcIds.has(existingPortrait.npcId)
-          ) {
-            const newPortraitNpc = [..._appearedNpcIds].find(
-              (id) => _portraits[id],
-            );
-            if (newPortraitNpc) {
-              const npcDef = this.content.getNpc(newPortraitNpc);
-              const npcState = _npcStatesRef?.[newPortraitNpc];
-              ui.npcPortrait = {
-                npcId: newPortraitNpc,
-                npcName:
-                  npcState && npcDef && _getNpcDisplayNameFn
-                    ? _getNpcDisplayNameFn(npcState, npcDef, pending.turnNo)
-                    : (npcDef?.name ?? newPortraitNpc),
-                imageUrl: _portraits[newPortraitNpc],
-                isNewlyIntroduced:
-                  npcState?.introduced &&
-                  npcState?.introducedAtTurn === pending.turnNo,
-              };
-            } else {
-              ui.npcPortrait = null;
-            }
-            srChanged = true;
-          }
-        } else if (existingPortrait && _appearedNpcIds.size === 0) {
-          const actionCtx = ui.actionContext as
-            | Record<string, unknown>
-            | undefined;
-          const speakingNpc = ui.speakingNpc as
-            | Record<string, unknown>
-            | undefined;
-          const expectedNpcId =
-            llmContext.focusedNpcId ??
-            (actionCtx?.primaryNpcId as string | undefined) ??
-            (speakingNpc?.npcId as string | undefined) ??
-            null;
-          // Focused NPC turns can produce valid dialogue without an @ marker
-          // after post-processing. Keep the server-selected portrait when it
-          // still matches the focused/primary NPC instead of blanking the card.
-          //
-          // 카드-서술 정합 정밀화 (2026-07-11): 일치하더라도 서술 본문에 그 NPC의
-          // 이름/별칭이 전혀 언급되지 않으면 카드를 제거한다 — 실측: 장소 진입 턴에
-          // 토브렌 소개 카드(newly=true)가 떴는데 서술은 직전 장소 인물만 그림
-          // (V8 "카드=수상한 창고 관리인 서술에 없음").
-          const mentionedInNarrative = (npcId: string): boolean => {
-            const def = this.content.getNpc(npcId);
-            if (!def) return false;
-            const names = [
-              def.name,
-              def.unknownAlias,
-              def.shortAlias,
-              ...(def.aliases ?? []),
-            ].filter((n): n is string => !!n && n.length >= 2);
-            // 결함 B (2026-07-11): includes는 "토브렌" 속 '브렌'처럼 다른 이름의
-            // 부분 문자열에 오매칭. 앞 경계(한글 아님)만 요구 — 한국어는 이름 뒤에
-            // 조사가 붙으므로 뒤 경계는 걸지 않는다.
-            return names.some((n) => {
-              const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              return new RegExp(`(?<![가-힣])${esc}`).test(narrative);
-            });
-          };
-          if (
-            !expectedNpcId ||
-            existingPortrait.npcId !== expectedNpcId ||
-            !mentionedInNarrative(expectedNpcId)
-          ) {
-            ui.npcPortrait = null;
-            srChanged = true;
-          }
-        }
-
-        if (srChanged) {
-          updatedSr.ui = ui;
-          await this.db
-            .update(turns)
-            .set({ serverResult: updatedSr as any })
-            .where(eq(turns.id, pending.id));
-        }
-      }
-
       // 6. DONE 저장 (토큰 통계 + 프롬프트 포함)
       // 5.10. 별칭 반복 후처리: 본문 내 unknownAlias 2회차+ → shortAlias/대명사
       if (narrative) {
@@ -3213,6 +3049,183 @@ ${npcList}`,
           }
         }
       }
+
+      // 5.13. speakingNpc + npcPortrait를 LLM '최종본' 기반으로 재결정
+      //   (카드 정합 4차 실측 2026-07-12: 5.9 위치에서는 5.11 자기소개 삽입
+      //    등 후단 생성 마커가 판정에 반영되지 않아 카드 미정정 — 후처리
+      //    최후단으로 이동. 원래 5.9 주석은 역사 참조용으로 유지)
+      {
+        // 카드 정합 분석 (2026-07-11) 결함 A: 기존 수집 지점(B-1/B-2/콜론 승격)은
+        // 서버 중간 형식 마커만 잡아 — 스트리밍 경로의 완전형 @[표시명|url] 마커가
+        // _appearedNpcIds에 안 잡혀 "실제 등장 NPC로 카드 교체" 로직이 죽어 있었다
+        // (실측 T4: 카드=브렌 유지, 서술=토브렌만). 완전형 마커를 역해석해 보충.
+        {
+          const fullMarkerRe = /@\[([^\]|]+)(?:\|[^\]]*)?\]/g;
+          let fm: RegExpExecArray | null;
+          while ((fm = fullMarkerRe.exec(narrative)) !== null) {
+            const display = fm[1].trim();
+            if (!display || display === '무명 인물') continue;
+            for (const n of this.content.getAllNpcs()) {
+              if (
+                n.name === display ||
+                n.unknownAlias === display ||
+                n.shortAlias === display ||
+                (n.aliases ?? []).includes(display)
+              ) {
+                _appearedNpcIds.add(n.npcId);
+                break;
+              }
+            }
+          }
+        }
+        const updatedSr = { ...serverResult } as Record<string, unknown>;
+        const ui = { ...((updatedSr.ui as Record<string, unknown>) ?? {}) };
+        let srChanged = false;
+
+        // speakingNpc 갱신 (첫 번째 @마커 기반)
+        const markerMatch = narrative.match(/@\[([^\]|]+)(?:\|([^\]]+))?\]/);
+        if (markerMatch) {
+          const actualName = markerMatch[1].trim();
+          const actualImg = markerMatch[2]?.trim() || undefined;
+          if (
+            actualName.length > 0 &&
+            actualName.length <= 20 &&
+            !actualName.includes('"')
+          ) {
+            // npcId 역매핑: name/aliases/unknownAlias/shortAlias/imageUrl 순서로 시도
+            // (bug 322aa1a3 — 마커는 정확한데 npcId가 null이라 conversationLock 작동 안 함)
+            let resolvedNpcId: string | null = null;
+            const allNpcs = this.content.getAllNpcs();
+            for (const n of allNpcs) {
+              if (
+                n.name === actualName ||
+                n.unknownAlias === actualName ||
+                n.shortAlias === actualName ||
+                n.aliases?.includes(actualName)
+              ) {
+                resolvedNpcId = n.npcId;
+                break;
+              }
+            }
+            if (!resolvedNpcId && actualImg) {
+              const matched = Object.entries(NPC_PORTRAITS).find(
+                ([, url]) => url === actualImg,
+              );
+              if (matched) resolvedNpcId = matched[0];
+            }
+            ui.speakingNpc = {
+              npcId: resolvedNpcId,
+              displayName: actualName,
+              imageUrl:
+                actualImg && actualImg.startsWith('/') ? actualImg : undefined,
+            };
+            // primaryNpcId carry-over: 다음 턴 conversationLock 시드
+            if (resolvedNpcId) {
+              const ctx = (ui.actionContext ?? {}) as Record<string, unknown>;
+              if (ctx.primaryNpcId == null) {
+                ui.actionContext = { ...ctx, primaryNpcId: resolvedNpcId };
+              }
+            }
+            srChanged = true;
+          }
+        }
+
+        // npcPortrait 갱신: 서술에 실제 등장한 NPC만 카드 표시
+        const existingPortrait = ui.npcPortrait as
+          | { npcId?: string }
+          | undefined;
+        if (existingPortrait && _appearedNpcIds.size > 0) {
+          if (
+            existingPortrait.npcId &&
+            !_appearedNpcIds.has(existingPortrait.npcId)
+          ) {
+            const newPortraitNpc = [..._appearedNpcIds].find(
+              (id) => _portraits[id],
+            );
+            if (newPortraitNpc) {
+              this.logger.debug(
+                `[CardResolve] turn=${pending.turnNo} 카드 교체: ${existingPortrait.npcId} → ${newPortraitNpc} (appeared=${[..._appearedNpcIds].join(',')})`,
+              );
+              const npcDef = this.content.getNpc(newPortraitNpc);
+              const npcState = _npcStatesRef?.[newPortraitNpc];
+              ui.npcPortrait = {
+                npcId: newPortraitNpc,
+                npcName:
+                  npcState && npcDef && _getNpcDisplayNameFn
+                    ? _getNpcDisplayNameFn(npcState, npcDef, pending.turnNo)
+                    : (npcDef?.name ?? newPortraitNpc),
+                imageUrl: _portraits[newPortraitNpc],
+                isNewlyIntroduced:
+                  npcState?.introduced &&
+                  npcState?.introducedAtTurn === pending.turnNo,
+              };
+            } else {
+              this.logger.debug(
+                `[CardResolve] turn=${pending.turnNo} 카드 제거: ${existingPortrait.npcId} (appeared에 초상화 보유 NPC 없음)`,
+              );
+              ui.npcPortrait = null;
+            }
+            srChanged = true;
+          }
+        } else if (existingPortrait && _appearedNpcIds.size === 0) {
+          const actionCtx = ui.actionContext as
+            | Record<string, unknown>
+            | undefined;
+          const speakingNpc = ui.speakingNpc as
+            | Record<string, unknown>
+            | undefined;
+          const expectedNpcId =
+            llmContext.focusedNpcId ??
+            (actionCtx?.primaryNpcId as string | undefined) ??
+            (speakingNpc?.npcId as string | undefined) ??
+            null;
+          // Focused NPC turns can produce valid dialogue without an @ marker
+          // after post-processing. Keep the server-selected portrait when it
+          // still matches the focused/primary NPC instead of blanking the card.
+          //
+          // 카드-서술 정합 정밀화 (2026-07-11): 일치하더라도 서술 본문에 그 NPC의
+          // 이름/별칭이 전혀 언급되지 않으면 카드를 제거한다 — 실측: 장소 진입 턴에
+          // 토브렌 소개 카드(newly=true)가 떴는데 서술은 직전 장소 인물만 그림
+          // (V8 "카드=수상한 창고 관리인 서술에 없음").
+          const mentionedInNarrative = (npcId: string): boolean => {
+            const def = this.content.getNpc(npcId);
+            if (!def) return false;
+            const names = [
+              def.name,
+              def.unknownAlias,
+              def.shortAlias,
+              ...(def.aliases ?? []),
+            ].filter((n): n is string => !!n && n.length >= 2);
+            // 결함 B (2026-07-11): includes는 "토브렌" 속 '브렌'처럼 다른 이름의
+            // 부분 문자열에 오매칭. 앞 경계(한글 아님)만 요구 — 한국어는 이름 뒤에
+            // 조사가 붙으므로 뒤 경계는 걸지 않는다.
+            return names.some((n) => {
+              const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              return new RegExp(`(?<![가-힣])${esc}`).test(narrative);
+            });
+          };
+          const keepCard =
+            !!expectedNpcId &&
+            existingPortrait.npcId === expectedNpcId &&
+            mentionedInNarrative(expectedNpcId);
+          this.logger.debug(
+            `[CardResolve] turn=${pending.turnNo} 마커0 분기: 카드=${existingPortrait.npcId} expected=${expectedNpcId ?? 'null'} → ${keepCard ? '유지(본문 언급)' : '제거'}`,
+          );
+          if (!keepCard) {
+            ui.npcPortrait = null;
+            srChanged = true;
+          }
+        }
+
+        if (srChanged) {
+          updatedSr.ui = ui;
+          await this.db
+            .update(turns)
+            .set({ serverResult: updatedSr as any })
+            .where(eq(turns.id, pending.id));
+        }
+      }
+
 
       // architecture/44 §이슈② — 런 전역 narrativeThemes 기록 (독립 블록)
       // narrative 에서 @NPC_ID "대사" / @[이름|URL] "대사" 패턴을 추출해
