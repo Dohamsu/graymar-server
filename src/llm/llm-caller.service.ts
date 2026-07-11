@@ -202,6 +202,8 @@ export class LlmCallerService {
       maxTokens: params.maxTokens,
       temperature: params.temperature,
       model: lightConfig.model,
+      // nano 감사 1번 (2026-07-11): 전역 60초 대신 경량 전용 타임아웃
+      timeoutMs: lightConfig.timeoutMs,
     };
 
     try {

@@ -85,13 +85,24 @@ export class ClaudeProvider implements LlmProvider {
       content: m.content,
     }));
 
-    const response = await client.messages.create({
-      model,
-      max_tokens: request.maxTokens,
-      temperature: request.temperature,
-      ...(systemBlocks.length > 0 ? { system: systemBlocks } : {}),
-      messages,
-    });
+    // 요청 단위 타임아웃 (nano 감사 1번) — 동적 import 타입이 requestOptions
+    // 인자를 모르므로 호출 시그니처만 캐스팅
+    const createWithOptions = client.messages.create.bind(
+      client.messages,
+    ) as unknown as (
+      body: Record<string, unknown>,
+      options?: { timeout?: number },
+    ) => ReturnType<typeof client.messages.create>;
+    const response = await createWithOptions(
+      {
+        model,
+        max_tokens: request.maxTokens,
+        temperature: request.temperature,
+        ...(systemBlocks.length > 0 ? { system: systemBlocks } : {}),
+        messages,
+      },
+      request.timeoutMs ? { timeout: request.timeoutMs } : undefined,
+    );
 
     const textBlock = response.content?.find((b) => b.type === 'text');
     const text: string = textBlock?.text ?? '';

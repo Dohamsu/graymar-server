@@ -107,6 +107,7 @@ export class NanoDirectorService {
         maxTokens: 180,
         temperature: 0.9,
         model: lightConfig.model,
+        timeoutMs: lightConfig.timeoutMs,
       });
 
       if (!result.response?.text) {

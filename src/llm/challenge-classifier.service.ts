@@ -113,6 +113,7 @@ export class ChallengeClassifierService {
         maxTokens: 50,
         temperature: 0.2,
         model: lightConfig.model,
+        timeoutMs: lightConfig.timeoutMs,
       });
 
       if (!result.success || !result.response?.text) {

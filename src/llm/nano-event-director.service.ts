@@ -138,6 +138,7 @@ export class NanoEventDirectorService {
         maxTokens: 300,
         temperature: 0.8,
         model: lightConfig.model,
+        timeoutMs: lightConfig.timeoutMs,
       });
 
       if (!result.response?.text) return null;

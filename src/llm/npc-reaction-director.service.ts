@@ -180,21 +180,39 @@ export class NpcReactionDirectorService {
       const userMsg = this.buildUserMessage(ctx);
       const lightConfig = this.configService.getLightModelConfig();
 
-      const result = await this.llmCaller.call({
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMsg },
-        ],
-        maxTokens: 250,
-        temperature: 0.7,
-        model: lightConfig.model,
-      });
-
-      if (!result.success || !result.response?.text) {
-        return this.buildFallback(ctx, 'no response');
+      // nano 감사 3번 (2026-07-11): 파싱 실패 10.4%(63/604 실측, 전부 parse
+      // failed) — 1회 실패 즉시 fallback이면 그 턴 톤/반응 사전 결정이 무작위
+      // 기본값이 된다. JSON 형식 리마인더와 함께 1회 재시도.
+      let parsed: ReturnType<typeof this.parseResponse> = null;
+      for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
+        const result = await this.llmCaller.call({
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            {
+              role: 'user',
+              content:
+                attempt === 0
+                  ? userMsg
+                  : userMsg +
+                    '\n\n⚠️ 이전 출력이 JSON 형식이 아니었습니다. 다른 텍스트 없이 유효한 JSON 하나만 출력하세요.',
+            },
+          ],
+          maxTokens: 250,
+          temperature: attempt === 0 ? 0.7 : 0.4,
+          model: lightConfig.model,
+        timeoutMs: lightConfig.timeoutMs,
+        });
+        if (!result.success || !result.response?.text) {
+          if (attempt === 1) return this.buildFallback(ctx, 'no response');
+          continue;
+        }
+        parsed = this.parseResponse(result.response.text);
+        if (!parsed && attempt === 0) {
+          this.logger.debug(
+            `[NpcReaction] parse 실패 — 재시도 (npc=${ctx.npcDisplayName})`,
+          );
+        }
       }
-
-      const parsed = this.parseResponse(result.response.text);
       if (!parsed) {
         return this.buildFallback(ctx, 'parse failed');
       }

@@ -207,8 +207,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processTurn(pending: typeof turns.$inferSelect): Promise<void> {
-    // 락 획득
-    await this.db
+    // 락 획득 — nano 감사 2번 (2026-07-11): CAS 조건(PENDING)만 있고 갱신 행 수를
+    // 확인하지 않아, wake() 즉시 트리거와 1초 interval 폴링이 같은 PENDING 턴을
+    // 동시에 select하면 둘 다 진입해 이중 LLM 호출·서술 2벌 생성 (실측 7/650턴).
+    // 0행 갱신 = 다른 사이클이 선점 → 즉시 반환.
+    const locked = await this.db
       .update(turns)
       .set({
         llmStatus: 'RUNNING',
@@ -216,7 +219,14 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         llmLockOwner: WORKER_ID,
         llmAttempts: (pending.llmAttempts ?? 0) + 1,
       })
-      .where(and(eq(turns.id, pending.id), eq(turns.llmStatus, 'PENDING')));
+      .where(and(eq(turns.id, pending.id), eq(turns.llmStatus, 'PENDING')))
+      .returning({ id: turns.id });
+    if (locked.length === 0) {
+      this.logger.debug(
+        `[LockRace] turn=${pending.turnNo} run=${pending.runId} — 다른 폴링 사이클이 선점, 스킵`,
+      );
+      return;
+    }
 
     const serverResult = pending.serverResult;
     if (!serverResult) {

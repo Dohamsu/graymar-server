@@ -334,6 +334,7 @@ export class DialogueGeneratorService {
       maxTokens: 100,
       temperature: 0.8,
       model: dialogueModel,
+        timeoutMs: 10000, // nano 감사 1번 — 26B 대사 생성 상한 (전역 60초 대체)
     });
 
     if (!result.success || !result.response?.text) {
@@ -365,6 +366,7 @@ export class DialogueGeneratorService {
         maxTokens: 100,
         temperature: 0.7,
         model: dialogueModel,
+        timeoutMs: 10000, // nano 감사 1번 — 26B 대사 생성 상한 (전역 60초 대체)
       });
       if (retry.success && retry.response?.text) {
         const retryDialogue = retry.response.text
@@ -475,6 +477,7 @@ export class DialogueGeneratorService {
         maxTokens: 120,
         temperature: 0.7,
         model: dialogueModel,
+        timeoutMs: 10000, // nano 감사 1번 — 26B 대사 생성 상한 (전역 60초 대체)
       });
       if (result.success && result.response?.text) {
         const d = result.response.text

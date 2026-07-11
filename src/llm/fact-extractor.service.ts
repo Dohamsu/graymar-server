@@ -105,6 +105,7 @@ export class FactExtractorService {
       maxTokens: 300,
       temperature: 0.3, // 낮은 온도로 일관된 추출
       model: lightConfig.model,
+        timeoutMs: lightConfig.timeoutMs,
     });
 
     if (!result.success || !result.response?.text) return [];

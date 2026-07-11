@@ -196,6 +196,8 @@ export class LlmIntentParserService implements OnModuleInit {
         maxTokens: 256,
         temperature: 0,
         model: this.intentModel,
+        // nano 감사 1번 (2026-07-11): intent는 턴 응답 동기 경로 — 짧은 상한 필수
+        timeoutMs: 5000,
         reasoningEffort: 'low',
       }),
       new Promise<null>((resolve) =>

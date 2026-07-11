@@ -14,6 +14,8 @@ export interface LlmProviderRequest {
   model?: string;
   reasoningEffort?: 'low' | 'medium' | 'high'; // GPT-5/o-series reasoning 강도
   responseFormat?: 'text' | 'json_object'; // JSON 구조화 출력 모드
+  /** 요청 단위 타임아웃 (nano 감사 1번 2026-07-11) — 미지정 시 전역 LLM_TIMEOUT_MS */
+  timeoutMs?: number;
 }
 
 export interface LlmProviderResponse {

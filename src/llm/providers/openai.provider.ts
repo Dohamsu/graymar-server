@@ -145,7 +145,9 @@ export class OpenAIProvider implements LlmProvider {
         ? { response_format: { type: 'json_object' as const } }
         : {}),
       ...openRouterParams,
-    } as any);
+    } as any,
+    // 요청 단위 타임아웃 — nano 계열은 전역 60초 대신 짧은 상한 (nano 감사 1번)
+    request.timeoutMs ? ({ timeout: request.timeoutMs } as any) : undefined);
 
     const choice = completion.choices[0];
     const text = choice?.message?.content ?? '';
