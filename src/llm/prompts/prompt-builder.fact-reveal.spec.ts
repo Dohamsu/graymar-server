@@ -307,4 +307,37 @@ describe('PromptBuilderService — 엔딩 턴 피날레 디렉티브 (2026-07-11
   it('endingResult 없는 일반 턴은 피날레 디렉티브 미발화', () => {
     expect(build(baseSr())).not.toContain('마지막 장면');
   });
+
+  it('엔딩 턴은 NPC 소개 연출 비활성 — 별칭 유지 경로로 전환', () => {
+    content.setNpc('NPC_HARLUN', {
+      npcId: 'NPC_HARLUN',
+      name: '하를룬',
+      unknownAlias: '투박한 노동자',
+      role: '부두 노동자',
+      gender: 'male',
+      tier: 'CORE',
+    });
+    const ctxWithIntro = baseCtx({
+      npcInjection: { npcIds: ['NPC_HARLUN'] },
+      newlyIntroducedNpcIds: ['NPC_HARLUN'],
+      newlyEncounteredNpcIds: ['NPC_HARLUN'],
+    });
+    const srEnding = baseSr({
+      ui: {
+        resolveOutcome: 'SUCCESS',
+        actionContext: { parsedType: 'TALK' },
+        endingResult: { endingType: 'NATURAL' },
+      },
+    });
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(ctxWithIntro, srEnding, '말을 건다', 'ACTION'),
+    );
+    expect(text).not.toContain('[자기소개]');
+    expect(text).not.toContain('이름 공개');
+    // 일반 턴에서는 소개 지시가 발화되어야 함 (가드가 과잉 차단하지 않는지)
+    const textNormal = promptText(
+      promptBuilder.buildNarrativePrompt(ctxWithIntro, baseSr(), '말을 건다', 'ACTION'),
+    );
+    expect(textNormal).toContain('자기소개');
+  });
 });

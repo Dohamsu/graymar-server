@@ -142,6 +142,16 @@ export class PromptBuilderService {
       | import('../npc-reaction-director.service.js').NpcReactionResult
       | null,
   ): LlmMessage[] {
+    // 엔딩 확정 턴은 NPC 소개 연출 비활성 (2026-07-11 피날레 후속):
+    // 다음 턴이 없어 소개가 무의미하고, 실패 시 "내 이름은 {별칭}이오" 환각이
+    // 마지막 장면에 그대로 남는다 (완주 런 실측). 소개 목록을 비우면
+    // [첫 만남 — 이름 미공개] 별칭 유지 경로로 자연 전환된다.
+    if (
+      (sr.ui as Record<string, unknown>)?.endingResult &&
+      (ctx.newlyIntroducedNpcIds?.length ?? 0) > 0
+    ) {
+      ctx = { ...ctx, newlyIntroducedNpcIds: [] };
+    }
     const messages: LlmMessage[] = [];
     const isHub = sr.node.type === 'HUB';
     // 질문 턴 (개선 3): NPC 첫 대사가 질문의 직접 답으로 시작하도록 강제하고,

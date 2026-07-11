@@ -2846,7 +2846,9 @@ ${npcList}`,
                       // 연출에 실패하면 서버가 제3자 호명 문장을 말미에 덧붙여
                       // 소개를 확정한다 (LLM 원칙 6: 서버 로직 우선. 실측: Gemma가
                       // avoid 경로 지시에도 5연속 미준수 — 프롬프트만으론 종결 불가).
-                      if (attempts >= 2) {
+                      // 엔딩 확정 턴은 IntroFallback 문장 삽입 금지 — 피날레
+                      // 여운 뒤에 제3자 호명 문장이 붙어 종결을 파괴한다
+                      if (attempts >= 2 && !isEndingTurn) {
                         const alias = npcDef.unknownAlias ?? '그 인물';
                         narrative = `${narrative.trimEnd()}\n\n그때 근처를 지나던 누군가가 ${alias}${korParticle(alias, '을', '를')} 향해 "${npcDef.name}!" 하고 짧게 부르고는 제 갈 길을 갔다.`;
                         npcStatesRef[npcId].pendingIntroduction = false;
