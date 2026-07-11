@@ -613,3 +613,97 @@ describe('P3 — 무명 화자 라벨 제거 (실측: 행상인 1: "…")', () =
     expect(p3_stripAnonymousSpeakerLabels(input)).toBe(input);
   });
 });
+
+// ─── 무명 오귀속 정밀화 2026-07-11: 콜론 라벨 유일성 축약 매칭 ───
+// llm-worker.service.ts resolveColonLabelNpc 로직 복제
+
+interface ColonNpc {
+  npcId: string;
+  name?: string;
+  unknownAlias?: string;
+  shortAlias?: string;
+  aliases?: string[];
+}
+
+function resolveColonLabel(alias: string, allNpcs: ColonNpc[]): string | null {
+  const a = alias.trim();
+  if (a.length < 2) return null;
+  const tiers: Array<(n: ColonNpc) => boolean> = [
+    (n) =>
+      a === n.name ||
+      a === n.unknownAlias ||
+      a === n.shortAlias ||
+      (n.aliases ?? []).includes(a),
+    (n) =>
+      (!!n.name && n.name.length >= 2 && a.includes(n.name)) ||
+      (!!n.unknownAlias && a.includes(n.unknownAlias)),
+    (n) => {
+      if (!n.unknownAlias) return false;
+      const words = n.unknownAlias.split(/\s+/);
+      for (let k = 1; k <= Math.min(2, words.length); k++) {
+        if (a === words.slice(-k).join(' ')) return true;
+      }
+      return false;
+    },
+  ];
+  for (const pred of tiers) {
+    const candidates = allNpcs.filter(pred);
+    if (candidates.length === 1) return candidates[0].npcId;
+    if (candidates.length > 1) return null;
+  }
+  return null;
+}
+
+describe('콜론 라벨 유일성 축약 매칭 (무명 오귀속 정밀화)', () => {
+  const NPCS: ColonNpc[] = [
+    {
+      npcId: 'NPC_MAIREL',
+      name: '마이렐 단 경',
+      unknownAlias: '권위적인 야간 경비 책임자',
+      aliases: ['마이렐', '마이렐 경'],
+    },
+    { npcId: 'NPC_OWEN_KEEPER', name: '오웬', unknownAlias: '무뚝뚝한 선술집 주인' },
+    { npcId: 'NPC_ROSA', name: '로사', unknownAlias: '다정한 보육원 여인' },
+    { npcId: 'NPC_SERA_DOCKS', name: '세라', unknownAlias: '그을린 얼굴의 부두 여인' },
+    { npcId: 'NPC_BG_BEGGAR', unknownAlias: '구걸하는 여인' },
+    { npcId: 'NPC_CAPTAIN_BREN', name: '브렌 대위', unknownAlias: '단정한 제복의 장교' },
+    { npcId: 'NPC_GUARD_CAPTAIN', name: '경비대장', unknownAlias: '수염 짙은 경비대 장교' },
+  ];
+
+  it('실측 T11/T12: 축약 "책임자" → 마이렐 유일 승격 (기존엔 무명)', () => {
+    expect(resolveColonLabel('책임자', NPCS)).toBe('NPC_MAIREL');
+  });
+
+  it('축약 2단어 "경비 책임자" → 마이렐', () => {
+    expect(resolveColonLabel('경비 책임자', NPCS)).toBe('NPC_MAIREL');
+  });
+
+  it('실측 T23/T31 유형: "주인" → 오웬 유일 승격', () => {
+    expect(resolveColonLabel('주인', NPCS)).toBe('NPC_OWEN_KEEPER');
+  });
+
+  it('다중 후보 "여인"(3 NPC) → null (무명 유지, 오귀속 방지)', () => {
+    expect(resolveColonLabel('여인', NPCS)).toBeNull();
+  });
+
+  it('다중 후보 "장교"(2 NPC) → null', () => {
+    expect(resolveColonLabel('장교', NPCS)).toBeNull();
+  });
+
+  it('기존 동작 보존: 정확 일치·별칭 전체 포함은 그대로 승격', () => {
+    expect(resolveColonLabel('마이렐 단 경', NPCS)).toBe('NPC_MAIREL');
+    expect(resolveColonLabel('마이렐', NPCS)).toBe('NPC_MAIREL');
+    // 라벨이 별칭 전체를 포함 (기존 방향, 수식어+실명 조합)
+    expect(resolveColonLabel('단정한 제복의 장교 하위크', NPCS)).toBe(
+      'NPC_CAPTAIN_BREN',
+    );
+  });
+
+  it('콘텐츠 외 즉흥 인물("창고지기") → null (기존 무명 정규화 유지)', () => {
+    expect(resolveColonLabel('창고지기', NPCS)).toBeNull();
+  });
+
+  it('2자 미만 라벨 → null', () => {
+    expect(resolveColonLabel('그', NPCS)).toBeNull();
+  });
+});

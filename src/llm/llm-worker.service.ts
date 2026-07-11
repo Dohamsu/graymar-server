@@ -2001,29 +2001,66 @@ ${npcList}`,
           //   LLM 이 즉흥 생성한 콘텐츠 외 인물("창고지기", "견습공")을 검증 없이 마커로
           //   올리면 npcId 미해석 유령 화자가 되어 대화 연속이 끊긴다 (arch/46 계열,
           //   MARKER_NPCID_NULL 감사 발견 2026-07-08). 미매칭이면 무명 인물(실루엣)로 정규화.
-          const isKnownNpcAlias = (alias: string): boolean => {
+          //   무명 오귀속 정밀화 (2026-07-11): Gemma가 별칭 축약형("책임자: …")으로
+          //   라벨을 쓰면 기존 단방향 포함(라벨 ⊇ 별칭)이 전부 미매칭 → primary NPC
+          //   연속 발화의 마지막 대사가 무명 처리 (실측 6건/27턴, T11·12 마이렐).
+          //   extractNpcUtterances의 양방향 매칭과 정합: 축약(라벨 = unknownAlias
+          //   단어 접미 / shortAlias)을 추가하되 **유일 매칭일 때만** 승격 —
+          //   '여인'(3 NPC)·'장교'(2 NPC) 같은 다중 후보는 현행대로 무명 유지라
+          //   새 오귀속 위험 없이 구제만 추가된다 (단조 개선). 승격 시 라벨 그대로가
+          //   아니라 표시명+초상화 완전 마커로 생성 (기존엔 초상화 미해석).
+          const resolveColonLabelNpc = (
+            alias: string,
+          ): { npcId: string; displayName: string } | null => {
             const a = alias.trim();
-            if (a.length < 2) return false;
-            for (const n of this.content.getAllNpcs()) {
-              if (
+            if (a.length < 2) return null;
+            const allNpcs = this.content.getAllNpcs();
+            const tiers: Array<(n: (typeof allNpcs)[number]) => boolean> = [
+              // Tier 1: 정확 일치
+              (n) =>
                 a === n.name ||
                 a === n.unknownAlias ||
                 a === n.shortAlias ||
-                (n.aliases ?? []).includes(a) ||
-                (n.name && n.name.length >= 2 && a.includes(n.name)) ||
-                (n.unknownAlias && a.includes(n.unknownAlias))
-              ) {
-                return true;
+                (n.aliases ?? []).includes(a),
+              // Tier 2: 라벨이 이름/별칭 전체를 포함 (기존 방향)
+              (n) =>
+                (!!n.name && n.name.length >= 2 && a.includes(n.name)) ||
+                (!!n.unknownAlias && a.includes(n.unknownAlias)),
+              // Tier 3: 축약 — 라벨 = unknownAlias 마지막 1~2단어 접미
+              (n) => {
+                if (!n.unknownAlias) return false;
+                const words = n.unknownAlias.split(/\s+/);
+                for (let k = 1; k <= Math.min(2, words.length); k++) {
+                  if (a === words.slice(-k).join(' ')) return true;
+                }
+                return false;
+              },
+            ];
+            for (const pred of tiers) {
+              const candidates = allNpcs.filter(pred);
+              if (candidates.length === 1) {
+                const n = candidates[0];
+                const npcState = npcStates[n.npcId];
+                const displayName = npcState
+                  ? getNpcDisplayName(npcState, n, pending.turnNo)
+                  : (n.unknownAlias ?? n.name ?? a);
+                return { npcId: n.npcId, displayName };
               }
+              if (candidates.length > 1) return null; // 다중 → 무명 유지 (오귀속 방지)
             }
-            return false;
+            return null;
           };
           narrative = narrative.replace(
             /(^|[\n.!?,])\s*([가-힣][가-힣 ]{0,20}):\s*(["\u201C])/g,
-            (_m, pre, alias: string, q) =>
-              isKnownNpcAlias(alias)
-                ? `${pre}@[${alias}] ${q}`
-                : `${pre}@[무명 인물] ${q}`,
+            (_m, pre, alias: string, q) => {
+              const resolved = resolveColonLabelNpc(alias);
+              if (!resolved) return `${pre}@[무명 인물] ${q}`;
+              appearedNpcIds.add(resolved.npcId);
+              const portrait = portraits[resolved.npcId] ?? '';
+              return portrait
+                ? `${pre}@[${resolved.displayName}|${portrait}] ${q}`
+                : `${pre}@[${resolved.displayName}] ${q}`;
+            },
           );
 
           // B-2: @[NPC_ID] "대사" 또는 @[RONEN] "대사" → @[표시이름|초상화URL] "대사"
