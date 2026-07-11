@@ -256,3 +256,55 @@ describe('PromptBuilderService — architecture/58 fact 공개/보류 블록', (
     expect(text).not.toContain('[NPC 정보 보류]');
   });
 });
+
+describe('PromptBuilderService — 엔딩 턴 피날레 디렉티브 (2026-07-11)', () => {
+  let promptBuilder: PromptBuilderService;
+  let content: FakeContent;
+
+  beforeEach(() => {
+    content = new FakeContent();
+    promptBuilder = new PromptBuilderService(
+      content as any,
+      new FakeTokenBudget() as any,
+    );
+  });
+
+  const build = (sr: ServerResultV1): string =>
+    promptText(
+      promptBuilder.buildNarrativePrompt(
+        baseCtx({}),
+        sr,
+        '조심스럽게 잠입한다',
+        'ACTION',
+      ),
+    );
+
+  it('ui.endingResult 존재 → [마지막 장면] 디렉티브 + endingType 톤', () => {
+    const sr = baseSr({
+      ui: {
+        resolveOutcome: 'SUCCESS',
+        actionContext: { parsedType: 'SNEAK' },
+        endingResult: { endingType: 'NATURAL' },
+      },
+    });
+    const text = build(sr);
+    expect(text).toContain('마지막 장면');
+    expect(text).toContain('매듭이 지어진 안도');
+    expect(text).toContain('새 인물·새 단서·새 질문');
+  });
+
+  it('미정의 endingType은 기본 톤으로 fallback', () => {
+    const sr = baseSr({
+      ui: {
+        resolveOutcome: 'SUCCESS',
+        actionContext: { parsedType: 'SNEAK' },
+        endingResult: { endingType: 'SOMETHING_NEW' },
+      },
+    });
+    expect(build(sr)).toContain('한 장(章)이 닫히는 여운');
+  });
+
+  it('endingResult 없는 일반 턴은 피날레 디렉티브 미발화', () => {
+    expect(build(baseSr())).not.toContain('마지막 장면');
+  });
+});

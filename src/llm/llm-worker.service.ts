@@ -434,7 +434,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           ? startNpcReaction(preKnownReactionNpcId)
           : null;
 
-      if (!nanoEventHint && nanoEventCtx && this.nanoEventDirector) {
+      // 엔딩 확정 턴은 nano 이벤트/선택지 생성 스킵 — 클라가 엔딩 화면으로
+      // 전환되어 선택지가 쓰이지 않는다 (2026-07-11 피날레 작업의 부수 최적화)
+      const isEndingTurn = !!(serverResult.ui as Record<string, unknown>)
+        ?.endingResult;
+      if (!nanoEventHint && nanoEventCtx && this.nanoEventDirector && !isEndingTurn) {
         try {
           const nanoResult =
             await this.nanoEventDirector.generate(nanoEventCtx);

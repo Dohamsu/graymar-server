@@ -2683,6 +2683,32 @@ export class PromptBuilderService {
       );
     }
 
+    // 엔딩 턴 피날레 (2026-07-11): RUN_ENDED 확정 턴의 서술이 일반 행동 묘사로
+    // 잘리던 것(완주 2런 실측) — 프롤로그 3막 지시와 대칭으로 종결 지시를 준다.
+    // 통계/에필로그는 EndingScreen(ui.endingResult) 몫 — 서술은 장면의 매듭만.
+    const endingResultForFinale = (sr.ui as Record<string, unknown>)
+      ?.endingResult as { endingType?: string } | undefined;
+    if (endingResultForFinale) {
+      const endingToneMap: Record<string, string> = {
+        NATURAL: '매듭이 지어진 안도 — 길었던 조사가 끝났다는 여운',
+        DEADLINE: '시간에 쫓겨 닫히는 문 — 다 하지 못한 일의 아쉬움과 체념',
+        PLAYER_CHOICE: '스스로 내린 결정의 무게 — 돌이킬 수 없는 선택의 뒷맛',
+        DEFEAT: '패배의 쓴맛 — 그러나 도시는 아무 일 없다는 듯 계속된다',
+      };
+      const tone =
+        endingToneMap[endingResultForFinale.endingType ?? ''] ??
+        '한 장(章)이 닫히는 여운';
+      factsParts.push(
+        [
+          '[서술 지시] 이것은 이 여정의 **마지막 장면**입니다. 이번 서술로 이야기가 끝납니다.',
+          '- 이번 행동의 결과를 매듭짓고 장면을 닫으세요. 새 인물·새 단서·새 질문·다음 행동 유도는 금지합니다.',
+          '- NPC 대사는 작별·마무리 성격만 허용하고, 정보 제시는 금지합니다.',
+          `- 종결 톤: ${tone}.`,
+          '- 마지막 문단은 여운으로 닫으세요: 주인공이 이 도시에서 보낸 시간이 스치는 감각 묘사 1~2문장 (요약·통계·작별 인사말 나열 금지).',
+        ].join('\n'),
+      );
+    }
+
     // 프롤로그 힌트 (첫 장면)
     if (sr.turnNo === 0) {
       factsParts.push(
