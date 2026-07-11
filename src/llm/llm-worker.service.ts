@@ -103,6 +103,14 @@ const VALID_CHOICE_AFFORDANCES = new Set([
   'SEARCH',
 ]);
 
+/**
+ * 무명 화자 라벨 제거 regex (P3 + 2단어 확장) — spec이 직접 import해 복제
+ * drift를 방지한다 (테스트 감사 2026-07-12: 복제본이 1단어 구버전으로 어긋난
+ * 실증 후 export 방식으로 전환).
+ */
+export const ANON_SPEAKER_LABEL_RE =
+  /(^|\n)\s*[가-힣A-Za-z]{2,6}(?:\s[가-힣A-Za-z]{1,6})?\s?\d{0,2}\s*[:：]\s*(?=["“])/g;
+
 @Injectable()
 export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LlmWorkerService.name);
@@ -3895,11 +3903,8 @@ ${npcList}`,
    * 이미 화자 맥락을 서술하므로("행상인 두 명이 수군거린다") 대사만 남겨도 자연.
    */
   private stripAnonymousSpeakerLabels(narrative: string): string {
-    // 공백 포함 2단어 라벨도 커버 (실측: "익명 인물 1:")
-    return narrative.replace(
-      /(^|\n)\s*[가-힣A-Za-z]{2,6}(?:\s[가-힣A-Za-z]{1,6})?\s?\d{0,2}\s*[:：]\s*(?=["“])/g,
-      '$1',
-    );
+    // 공백 포함 2단어 라벨도 커버 (실측: "익명 인물 1:") — 정본: ANON_SPEAKER_LABEL_RE
+    return narrative.replace(ANON_SPEAKER_LABEL_RE, '$1');
   }
 
   private stripAliasPrefixDup(narrative: string): string {

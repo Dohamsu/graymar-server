@@ -6,6 +6,8 @@
  * Step F: NPC 불일치 교정 (line 1767-1832)
  */
 
+import { ANON_SPEAKER_LABEL_RE } from './llm-worker.service.js';
+
 // ─── Step E 로직 복제 ───
 
 interface NpcNameEntry {
@@ -551,10 +553,9 @@ function p3_stripFusedAliasPrefix(
 }
 
 function p3_stripAnonymousSpeakerLabels(narrative: string): string {
-  return narrative.replace(
-    /(^|\n)\s*[가-힣A-Za-z]{2,6}\s?\d{0,2}\s*[:：]\s*(?=["“])/g,
-    '$1',
-  );
+  // 테스트 감사 2026-07-12: 복제본이 1단어 구버전으로 drift — 정본 import로 전환
+  ANON_SPEAKER_LABEL_RE.lastIndex = 0;
+  return narrative.replace(ANON_SPEAKER_LABEL_RE, '$1');
 }
 
 describe('P3 — 접두 융합 별칭 복구 (실측: 토단정한/투단정한 제복의 장교)', () => {
@@ -865,11 +866,10 @@ describe('완주 평가 ③ — 이름/별칭 뒤 조사 교정', () => {
 });
 
 describe('완주 평가 ③ — 공백 포함 화자 라벨 제거', () => {
-  const strip = (n: string): string =>
-    n.replace(
-      /(^|\n)\s*[가-힣A-Za-z]{2,6}(?:\s[가-힣A-Za-z]{1,6})?\s?\d{0,2}\s*[:：]\s*(?=["“])/g,
-      '$1',
-    );
+  const strip = (n: string): string => {
+    ANON_SPEAKER_LABEL_RE.lastIndex = 0;
+    return n.replace(ANON_SPEAKER_LABEL_RE, '$1');
+  };
 
   it('실측 T21: "익명 인물 1:" 라벨 제거', () => {
     const input = '인부들의 목소리가 흘러온다.\n\n익명 인물 1: "하역 장소는 확인했다."';
