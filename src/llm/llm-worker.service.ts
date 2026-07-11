@@ -549,13 +549,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       //   재등장 공개는 기존 외부 경로(제3자 호명/단서) 유지. 엔딩 턴 제외.
       let introDialogue: { npcId: string; text: string } | null = null;
       {
+        // 임계 도달로 트리거된 모든 소개가 대상 — 첫 만남 여부 무관.
+        // (CAUTIOUS 2회/CALCULATING 3회 NPC는 소개 턴이 첫 만남이 아니라서
+        //  첫-만남 한정 조건이 이들을 구 경로로 흘려보냄 — 실측 하를룬 T20)
         const newlyIntroduced = llmContext.newlyIntroducedNpcIds ?? [];
-        const newlyEncountered = new Set(
-          llmContext.newlyEncounteredNpcIds ?? [],
-        );
-        const firstMeetIntroId = newlyIntroduced.find((id) =>
-          newlyEncountered.has(id),
-        );
+        const firstMeetIntroId = newlyIntroduced[0] ?? null;
         const isEndingTurnForIntroGen = !!(
           serverResult.ui as Record<string, unknown>
         )?.endingResult;

@@ -744,6 +744,15 @@ export class PromptBuilderService {
             introAttempts: stIntro?.introAttempts,
           });
         } else if (isNewlyIntroduced && !isNewlyEncountered) {
+          // 임계 도달 소개는 만남 횟수와 무관하게 자기소개 통일 (이름 공개 기획)
+          if (ctx.introDialogue && ctx.introDialogue.npcId === npc.npcId) {
+            return [
+              `- ${npc.name}${title} ${idTag}: ${npc.role} [자기소개 — 사전 확정 대사] — 지금까지 "${alias}"로 불려온 이 인물이 이번 턴 대화 중 아래 대사로 비로소 자신을 소개합니다.`,
+              `    "${ctx.introDialogue.text}"`,
+              `    이 대사를 자연스러운 위치에 거의 그대로 포함하세요. 실명 "${npc.name}"은 반드시 유지합니다.`,
+              `    자기소개 이전 서술에서는 "${alias}"로 지칭하고, 이후에는 "${npc.name}"을 사용하세요.`,
+            ].join('\n');
+          }
           const stIntro = ctx.npcStates?.[npc.npcId];
           return buildIntroDirective({
             name: npc.name,
