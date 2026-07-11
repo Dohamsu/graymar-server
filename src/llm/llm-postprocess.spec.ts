@@ -533,3 +533,83 @@ describe('Detect: 어색한 분사구 비문', () => {
     expect(detectBrokenParticiple(input)).toEqual([]);
   });
 });
+
+// ─── P3 2026-07-11: 접두 융합 별칭 복구 + 무명 화자 라벨 제거 ───
+// llm-worker.service.ts stripFusedAliasPrefix / stripAnonymousSpeakerLabels 로직 복제
+
+function p3_stripFusedAliasPrefix(
+  narrative: string,
+  aliases: string[],
+): string {
+  for (const alias of aliases) {
+    if (!alias || alias.length < 4 || !narrative.includes(alias)) continue;
+    const esc = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|[\\s"“”'')(.,!?…])([가-힣]{1,2})(${esc})`, 'g');
+    narrative = narrative.replace(re, (_m, pre, _fused, hit) => `${pre}${hit}`);
+  }
+  return narrative;
+}
+
+function p3_stripAnonymousSpeakerLabels(narrative: string): string {
+  return narrative.replace(
+    /(^|\n)\s*[가-힣A-Za-z]{2,6}\s?\d{0,2}\s*[:：]\s*(?=["“])/g,
+    '$1',
+  );
+}
+
+describe('P3 — 접두 융합 별칭 복구 (실측: 토단정한/투단정한 제복의 장교)', () => {
+  const ALIASES = [
+    '단정한 제복의 장교', // 브렌 대위
+    '수상한 창고 관리인', // 토브렌
+    '권위적인 야간 경비 책임자', // 마이렐
+  ];
+
+  it('실측 T15: "투단정한 제복의 장교 하위크" → 접두 제거', () => {
+    const input = '투단정한 제복의 장교 하위크가 골목 끝쪽 벽에 기대어 서서';
+    expect(p3_stripFusedAliasPrefix(input, ALIASES)).toBe(
+      '단정한 제복의 장교 하위크가 골목 끝쪽 벽에 기대어 서서',
+    );
+  });
+
+  it('실측 T16: 문장 중간 "…는 토단정한 제복의 장교는…" → 접두 제거', () => {
+    const input = '어스름 속에서 토단정한 제복의 장교는 당신을 살핀다.';
+    expect(p3_stripFusedAliasPrefix(input, ALIASES)).toBe(
+      '어스름 속에서 단정한 제복의 장교는 당신을 살핀다.',
+    );
+  });
+
+  it('정상 수식(공백 있음)은 보존: "뭔가 수상한 창고 관리인"', () => {
+    const input = '뭔가 수상한 창고 관리인이 다가온다.';
+    expect(p3_stripFusedAliasPrefix(input, ALIASES)).toBe(input);
+  });
+
+  it('별칭 없는 본문은 무변경', () => {
+    const input = '시장 거리의 소음이 밤공기를 채운다.';
+    expect(p3_stripFusedAliasPrefix(input, ALIASES)).toBe(input);
+  });
+});
+
+describe('P3 — 무명 화자 라벨 제거 (실측: 행상인 1: "…")', () => {
+  it('실측 T23: 대본 형식 라벨 2건 제거, 대사는 보존', () => {
+    const input = `지나가는 행상인 두 명이 낮은 목소리로 수군거린다.
+
+행상인 1: "그곳이 하역 장소라는 소문이 확실하오."
+
+행상인 2: "물건이 어떤 경로로 시장에 풀리는지 알아내야 하오."`;
+    const out = p3_stripAnonymousSpeakerLabels(input);
+    expect(out).not.toContain('행상인 1:');
+    expect(out).not.toContain('행상인 2:');
+    expect(out).toContain('"그곳이 하역 장소라는 소문이 확실하오."');
+    expect(out).toContain('"물건이 어떤 경로로 시장에 풀리는지 알아내야 하오."');
+  });
+
+  it('문장 중간의 콜론(시간 표기 등)은 보존', () => {
+    const input = '벽보에는 집결 시각: 자정이라고 적혀 있다.';
+    expect(p3_stripAnonymousSpeakerLabels(input)).toBe(input);
+  });
+
+  it('따옴표가 뒤따르지 않는 줄 시작 라벨은 보존', () => {
+    const input = '행상인 둘: 시장의 눈과 귀 노릇을 하는 자들이다.';
+    expect(p3_stripAnonymousSpeakerLabels(input)).toBe(input);
+  });
+});

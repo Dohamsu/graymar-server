@@ -2728,6 +2728,12 @@ ${npcList}`,
         narrative = this.stripAliasPrefixDup(narrative);
       }
 
+      // 5.10.12. 접두 융합 별칭 복구 + 무명 화자 라벨 제거 (P3 2026-07-11)
+      if (narrative) {
+        narrative = this.stripFusedAliasPrefix(narrative);
+        narrative = this.stripAnonymousSpeakerLabels(narrative);
+      }
+
       // 5.11. NPC 소개 롤백 + appearanceCount 증가
       //   - 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
       //   - appearanceCount: LLM 서술에 @마커로 등장한 NPC 카운터 +1 (반복 호칭 고착 방지)
@@ -3573,6 +3579,44 @@ ${npcList}`,
    * dedupe 초입과 최종 저장 직전 두 곳에서 호출 — 후단 단계가 중복을
    * 만들어도 최종본을 보장한다 (T5 실측: dedupe 이후 잔존 사례).
    */
+  /**
+   * P3 2026-07-11 — 공백 없는 접두 융합 별칭 복구.
+   * 실측: "토단정한 제복의 장교 하위크" — 브렌 대위의 unknownAlias("단정한
+   * 제복의 장교") 앞에 토브렌 조각('토')이 공백 없이 융합된 크로스 NPC 환각이
+   * 마커 밖 본문에 노출. 알려진 unknownAlias 직전에 한글 1~2자가 밀착해 있으면
+   * (앞 경계: 문두/공백/문장부호) 접두를 제거해 별칭만 남긴다.
+   * 정상 문장("뭔가 수상한 창고 관리인")은 접두 앞에 공백이 있어 걸리지 않는다.
+   */
+  private stripFusedAliasPrefix(narrative: string): string {
+    const allNpcs = this.content.getAllNpcs?.() ?? [];
+    for (const npc of allNpcs) {
+      const alias = npc.unknownAlias;
+      if (!alias || alias.length < 4 || !narrative.includes(alias)) continue;
+      const esc = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(^|[\\s"“”'')(.,!?…])([가-힣]{1,2})(${esc})`, 'g');
+      narrative = narrative.replace(re, (match, pre, fused, aliasHit) => {
+        this.logger.log(
+          `[AliasFusion] 접두 융합 복구: "${fused}${alias.slice(0, 12)}…" → "${alias.slice(0, 12)}…"`,
+        );
+        return `${pre}${aliasHit}`;
+      });
+    }
+    return narrative;
+  }
+
+  /**
+   * P3 2026-07-11 — 무명 화자 라벨 제거.
+   * 실측: 행상인 대화가 마커 규약 밖의 대본 형식(`행상인 1: "…"`)으로 노출.
+   * 줄 시작의 짧은 라벨+콜론이 따옴표 대사 직전에 붙은 경우만 제거 — 앞 문장이
+   * 이미 화자 맥락을 서술하므로("행상인 두 명이 수군거린다") 대사만 남겨도 자연.
+   */
+  private stripAnonymousSpeakerLabels(narrative: string): string {
+    return narrative.replace(
+      /(^|\n)\s*[가-힣A-Za-z]{2,6}\s?\d{0,2}\s*[:：]\s*(?=["“])/g,
+      '$1',
+    );
+  }
+
   private stripAliasPrefixDup(narrative: string): string {
     const allNpcsForPrefix = this.content.getAllNpcs?.() ?? [];
     for (const npc of allNpcsForPrefix) {
@@ -3613,6 +3657,7 @@ ${npcList}`,
         turnNo,
       );
       text = this.stripAliasPrefixDup(text);
+      text = this.stripFusedAliasPrefix(text);
     }
     return text === ev.text ? ev : { ...ev, text };
   }
