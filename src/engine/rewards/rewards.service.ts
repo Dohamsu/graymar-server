@@ -268,14 +268,23 @@ export class RewardsService {
    * LOCATION 판정 장비 드랍 롤 — 장소별 드랍 테이블에서 확률 롤.
    * SEARCH, STEAL, FIGHT 등 GOLD_ACTIONS + SUCCESS/PARTIAL 시 호출.
    */
-  rollLocationEquipmentDrop(locationId: string, rng: Rng): EquipmentDropResult {
+  rollLocationEquipmentDrop(
+    locationId: string,
+    rng: Rng,
+    ownedBaseItemIds?: Set<string>,
+  ): EquipmentDropResult {
     const droppedInstances: ItemInstance[] = [];
     const locationDrops =
       this.contentLoader.getLocationEquipmentDrops(locationId);
     if (!locationDrops) return { droppedInstances };
 
     for (const drop of locationDrops.drops) {
-      if (rng.next() < drop.chance) {
+      // P4 2026-07-11 — 보유 중복 감쇠: 이미 가진 baseItemId는 확률 ×0.3
+      // (실측: 좁은 드랍 풀에서 EQ_RUSTY_BLADE ×2 등 동일 장비 중복).
+      // rng 호출 횟수는 동일하므로 결정론(seed+cursor)에 영향 없음.
+      const owned = ownedBaseItemIds?.has(drop.baseItemId) ?? false;
+      const chance = owned ? drop.chance * 0.3 : drop.chance;
+      if (rng.next() < chance) {
         const instance = this.affixService.createItemInstance(
           drop.baseItemId,
           locationId,
@@ -287,6 +296,25 @@ export class RewardsService {
     }
 
     return { droppedInstances };
+  }
+
+  /**
+   * P4 2026-07-11 — 퀘스트 전환 장비 보상 인스턴스 생성 (경제 루프 v1 확장).
+   * quest.json rewards.transitionEquipment의 baseItemId를 지급용 인스턴스로.
+   * 대화·조사 중심 실플레이(86%)에서 장비 시스템이 완전 유휴이던 것을
+   * 핵심 루프(questState 전환)에 연결 — 서사 명분: 의뢰인의 경비 지원.
+   */
+  grantQuestEquipment(
+    baseItemId: string,
+    rng: Rng,
+  ): ItemInstance | null {
+    const item = this.contentLoader.getItem(baseItemId);
+    if (!item) return null;
+    return this.affixService.createItemInstance(
+      baseItemId,
+      'QUEST_REWARD',
+      rng,
+    );
   }
 
   /** DEFEAT: 보상 몰수 */

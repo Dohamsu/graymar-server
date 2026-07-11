@@ -22,6 +22,8 @@ interface QuestData {
   rewards?: {
     factGold?: number;
     transitionGold?: Record<string, number>;
+    /** P4 — 단계 전환 장비 보상 ("from→to": baseItemId). 의뢰인의 경비 지원 */
+    transitionEquipment?: Record<string, string>;
   };
 }
 
@@ -93,6 +95,12 @@ export class QuestProgressionService {
   getTransitionGoldReward(from: string, to: string): number {
     const quest = this.content.getQuestData() as QuestData | null;
     return quest?.rewards?.transitionGold?.[`${from}→${to}`] ?? 0;
+  }
+
+  /** P4 — 단계 전환 장비 보상 baseItemId (미정의 시 null) */
+  getTransitionEquipmentReward(from: string, to: string): string | null {
+    const quest = this.content.getQuestData() as QuestData | null;
+    return quest?.rewards?.transitionEquipment?.[`${from}→${to}`] ?? null;
   }
 
   /**

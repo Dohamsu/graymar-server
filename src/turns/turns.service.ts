@@ -2895,9 +2895,17 @@ export class TurnsService {
     // 턴에도 장비가 드랍됐다 (실측: "안녕하시오" 턴에 부두 만도). 주석의 원설계
     // (GOLD_ACTIONS + SUCCESS/PARTIAL)대로 rewardsEligible 게이트 적용.
     if (rewardsEligible && resolveResult.outcome !== 'FAIL') {
+      // P4 — 보유 중복 감쇠용 baseItemId 집합 (가방 + 장착)
+      const ownedBaseIds = new Set<string>([
+        ...(updatedRunState.equipmentBag ?? []).map((e) => e.baseItemId),
+        ...Object.values(updatedRunState.equipped ?? {})
+          .filter((e): e is NonNullable<typeof e> => !!e)
+          .map((e) => e.baseItemId),
+      ]);
       const equipDrop = this.rewardsService.rollLocationEquipmentDrop(
         locationId,
         rng,
+        ownedBaseIds,
       );
       if (equipDrop.droppedInstances.length > 0) {
         if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
@@ -3148,6 +3156,8 @@ export class TurnsService {
     // 86%가 대화·조사 턴이라 GOLD_ACTIONS 게이트만으로는 골드 소스가 사실상 없다
     // (2026-07-11 실측: 30일 441턴 중 골드 이벤트 4건). 핵심 루프에 소스를 연결한다.
     let questGoldReward = 0;
+    // P4 — 단계 전환 장비 보상 (quest.json rewards.transitionEquipment, 의뢰 경비 지원)
+    const questEquipmentRewards: string[] = [];
     // 정보 보류 시그널 — NPC가 미공개 fact를 보류/거부한 턴. nano 선택지에 BRIBE 유도 (싱크).
     let bribeOpportunityNpcId: string | null = null;
     // architecture/58 — NPC 경로 발견 fact를 serverResult.ui.questReveal로 전달 (기록·서술 단일화)
@@ -3369,6 +3379,12 @@ export class TurnsService {
             currentQuestState,
             transition.newState,
           );
+          const transitionEq =
+            this.questProgression.getTransitionEquipmentReward(
+              currentQuestState,
+              transition.newState,
+            );
+          if (transitionEq) questEquipmentRewards.push(transitionEq);
           this.logger.log(
             `[Quest] ${currentQuestState} -> ${transition.newState}`,
           );
@@ -3460,6 +3476,12 @@ export class TurnsService {
                         currentQuestState,
                         recheck.newState,
                       );
+                    const recheckEq =
+                      this.questProgression.getTransitionEquipmentReward(
+                        currentQuestState,
+                        recheck.newState,
+                      );
+                    if (recheckEq) questEquipmentRewards.push(recheckEq);
                     this.logger.log(
                       `[Quest] Auto-transition: ${currentQuestState} -> ${recheck.newState}`,
                     );
@@ -3825,6 +3847,28 @@ export class TurnsService {
       );
     }
 
+    // P4 — 단계 전환 장비 보상 지급 (의뢰인의 경비 지원, quest.json 정의라 유한)
+    const questEquipmentGranted: import('../db/types/equipment.js').ItemInstance[] =
+      [];
+    for (const baseItemId of questEquipmentRewards) {
+      const inst = this.rewardsService.grantQuestEquipment(baseItemId, rng);
+      if (!inst) continue;
+      if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+      updatedRunState.equipmentBag.push(inst);
+      allEquipmentAdded.push(inst);
+      questEquipmentGranted.push(inst);
+      this.recordItemMemory(
+        updatedRunState,
+        inst,
+        turnNo,
+        '의뢰 지원 장비 (퀘스트 진전 보상)',
+        locationId,
+      );
+      this.logger.log(
+        `[Quest] 지원 장비 지급: ${inst.displayName} (${baseItemId})`,
+      );
+    }
+
     // summary.short: "이번 턴의 핵심 한 문장" — 행동 + 판정결과만 (sceneFrame 분리하여 중복 전달 방지)
     const outcomeLabel =
       resolveResult.outcome === 'SUCCESS'
@@ -3982,6 +4026,20 @@ export class TurnsService {
         kind: 'GOLD',
         text: `[사례금] 조사 진전의 대가 ${questGoldReward}골드`,
         tags: ['GOLD', 'GOLD_REWARD', 'QUEST_REWARD'],
+      });
+    }
+    // P4 — 전환 장비 보상 연출 (드랍 [장비]와 출처 구분)
+    for (const inst of questEquipmentGranted) {
+      result.events.push({
+        id: `quest_eq_${inst.instanceId.slice(0, 8)}`,
+        kind: 'LOOT',
+        text: `[사례금] 의뢰 지원 장비 — ${inst.displayName}`,
+        tags: ['LOOT', 'EQUIPMENT_DROP', 'QUEST_REWARD'],
+        data: {
+          baseItemId: inst.baseItemId,
+          instanceId: inst.instanceId,
+          displayName: inst.displayName,
+        } as Record<string, unknown>,
       });
     }
     // 아이템 획득 연출 이벤트 — 드랍 + payload itemRewards 통합 단일 경로 (점검 2026-07-09).
