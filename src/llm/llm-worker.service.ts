@@ -2571,6 +2571,29 @@ ${npcList}`,
 
       // 5.9 speakingNpc + npcPortrait를 LLM 출력 기반으로 재결정
       {
+        // 카드 정합 분석 (2026-07-11) 결함 A: 기존 수집 지점(B-1/B-2/콜론 승격)은
+        // 서버 중간 형식 마커만 잡아 — 스트리밍 경로의 완전형 @[표시명|url] 마커가
+        // _appearedNpcIds에 안 잡혀 "실제 등장 NPC로 카드 교체" 로직이 죽어 있었다
+        // (실측 T4: 카드=브렌 유지, 서술=토브렌만). 완전형 마커를 역해석해 보충.
+        {
+          const fullMarkerRe = /@\[([^\]|]+)(?:\|[^\]]*)?\]/g;
+          let fm: RegExpExecArray | null;
+          while ((fm = fullMarkerRe.exec(narrative)) !== null) {
+            const display = fm[1].trim();
+            if (!display || display === '무명 인물') continue;
+            for (const n of this.content.getAllNpcs()) {
+              if (
+                n.name === display ||
+                n.unknownAlias === display ||
+                n.shortAlias === display ||
+                (n.aliases ?? []).includes(display)
+              ) {
+                _appearedNpcIds.add(n.npcId);
+                break;
+              }
+            }
+          }
+        }
         const updatedSr = { ...serverResult } as Record<string, unknown>;
         const ui = { ...((updatedSr.ui as Record<string, unknown>) ?? {}) };
         let srChanged = false;
@@ -2683,7 +2706,13 @@ ${npcList}`,
               def.shortAlias,
               ...(def.aliases ?? []),
             ].filter((n): n is string => !!n && n.length >= 2);
-            return names.some((n) => narrative.includes(n));
+            // 결함 B (2026-07-11): includes는 "토브렌" 속 '브렌'처럼 다른 이름의
+            // 부분 문자열에 오매칭. 앞 경계(한글 아님)만 요구 — 한국어는 이름 뒤에
+            // 조사가 붙으므로 뒤 경계는 걸지 않는다.
+            return names.some((n) => {
+              const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              return new RegExp(`(?<![가-힣])${esc}`).test(narrative);
+            });
           };
           if (
             !expectedNpcId ||

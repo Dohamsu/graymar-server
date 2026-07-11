@@ -882,3 +882,59 @@ describe('완주 평가 ③ — 공백 포함 화자 라벨 제거', () => {
     expect(strip('\n행상인 1: "소문이 확실하오."')).not.toContain('행상인 1:');
   });
 });
+
+// ─── 카드 정합 분석 2026-07-11: mentioned 앞 경계 + 완전형 마커 역해석 ───
+
+describe('카드 정합 — mentioned 앞 경계 (부분 문자열 오매칭 차단)', () => {
+  const mentioned = (narrative: string, names: string[]): boolean =>
+    names.some((n) => {
+      const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`(?<![가-힣])${esc}`).test(narrative);
+    });
+
+  it('실측 T4: "토브렌 하위크" 서술에서 브렌 alias 오매칭 차단', () => {
+    expect(
+      mentioned('수상한 토브렌 하위크가 웃는다.', ['브렌', '브렌 대위']),
+    ).toBe(false);
+  });
+
+  it('정당한 언급("브렌이 말했다")은 통과 — 뒤 조사 허용', () => {
+    expect(mentioned('브렌이 말했다.', ['브렌'])).toBe(true);
+    expect(mentioned('그때 브렌 대위가 나타났다.', ['브렌 대위'])).toBe(true);
+  });
+});
+
+describe('카드 정합 — 완전형 마커 역해석 수집 (결함 A)', () => {
+  const NPCS = [
+    { npcId: 'NPC_TOBREN', name: '토브렌 하위크', unknownAlias: '수상한 창고 관리인' },
+    { npcId: 'NPC_EDRIC_VEIL', name: '에드릭 베일', unknownAlias: '날카로운 눈매의 회계사' },
+  ];
+  const collect = (narrative: string): Set<string> => {
+    const out = new Set<string>();
+    const re = /@\[([^\]|]+)(?:\|[^\]]*)?\]/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(narrative)) !== null) {
+      const d = m[1].trim();
+      if (!d || d === '무명 인물') continue;
+      for (const n of NPCS) {
+        if (n.name === d || n.unknownAlias === d) {
+          out.add(n.npcId);
+          break;
+        }
+      }
+    }
+    return out;
+  };
+
+  it('실측 T4: 완전형 별칭 마커에서 등장 NPC 수집', () => {
+    const narr =
+      '@[수상한 창고 관리인|/npc-portraits/tobren.webp] "…" 그리고 @[날카로운 눈매의 회계사] "…"';
+    const ids = collect(narr);
+    expect(ids.has('NPC_TOBREN')).toBe(true);
+    expect(ids.has('NPC_EDRIC_VEIL')).toBe(true);
+  });
+
+  it('무명 마커는 수집 제외', () => {
+    expect(collect('@[무명 인물] "…"').size).toBe(0);
+  });
+});
