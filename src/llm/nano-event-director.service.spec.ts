@@ -289,6 +289,20 @@ describe('NanoEventDirectorService', () => {
       expect(msg).toContain('Alice');
     });
 
+    it('bribeOpportunity -> [정보 보류 국면] + BRIBE 선택지 지시 (경제 루프 2026-07-11)', () => {
+      const ctx = makeCtx({ bribeOpportunity: { npcId: 'NPC_A' } });
+      const msg = callBuild(service, ctx);
+      expect(msg).toContain('[정보 보류 국면]');
+      expect(msg).toContain('Alice'); // presentNpcs 표시명 해석
+      expect(msg).toContain('"BRIBE"');
+      expect(msg).toContain('npcId "NPC_A"');
+    });
+
+    it('bribeOpportunity 없음 -> 보류 블록 미포함', () => {
+      const msg = callBuild(service, makeCtx({}));
+      expect(msg).not.toContain('[정보 보류 국면]');
+    });
+
     it('targetNpcId -> includes "[NPC 지정]"', () => {
       const ctx = makeCtx({ targetNpcId: 'NPC_B' });
       const msg = callBuild(service, ctx);
