@@ -321,7 +321,16 @@ export function sanitizeNpcNamesForTurn(
   if (!text) return text;
   let result = text;
   for (const [npcId, state] of Object.entries(npcStates)) {
-    if (isNameRevealed(state, currentTurnNo)) continue; // 이미 공개됨 → 치환 불필요
+    // 소개 턴 포함 공개 취급 (이름 공개 기획 2026-07-11): 소개 턴 본문의 실명은
+    // 자기소개 연출(사전 확정 대사)의 필수 요소 — 여기서 별칭으로 되치환하면
+    // 자기소개가 파괴된다 (실측: "내 이름은 날카로운 눈매의 회계사이라 하오" /
+    // "토토브렌" 텍스트 파손). 마커 표시명의 2턴 분리는 getNpcDisplayName·
+    // IntroMarkerNorm이, 연출 없는 조용한 노출 방지는 IntroRollback이 담당.
+    const revealedOrIntroTurn =
+      state.introduced &&
+      (state.introducedAtTurn === undefined ||
+        currentTurnNo >= state.introducedAtTurn);
+    if (revealedOrIntroTurn) continue;
     const npcDef = getNpcDef(npcId);
     if (!npcDef?.name) continue;
     const alias = npcDef.unknownAlias || '낯선 인물';

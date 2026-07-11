@@ -385,9 +385,26 @@ describe('R7 — 스트림 세그먼트 문장 새니타이즈 (미공개 실명
     expect(out).toContain('눈치 빠른 전령 소년');
   });
 
-  it('소개 턴(2턴 분리)에도 실명 차단 — isNameRevealed 인지', () => {
+  it('소개 턴 실명은 보존 — 자기소개 연출 필수 요소 (이름 공개 기획 2026-07-11)', () => {
+    // 구 정책(소개 턴에도 차단)은 사전 확정 자기소개 대사를 파괴했다
+    // (실측: "내 이름은 날카로운 눈매의 회계사이라 하오" / "토토브렌" 파손).
+    // 소개 턴 표시명 2턴 분리는 getNpcDisplayName·IntroMarkerNorm이,
+    // 연출 없는 조용한 노출 방지는 IntroRollback이 담당.
     const states = {
       NPC_SD_ORPHAN: baseState({ introduced: true, introducedAtTurn: 5 }),
+    };
+    const out = sanitizeNpcNamesForTurn(
+      '핍이 고개를 들었다. "내 이름은 핍이야."',
+      states,
+      getDef,
+      5,
+    );
+    expect(out).toContain('내 이름은 핍이야');
+  });
+
+  it('미소개(introduced=false) 실명은 여전히 차단', () => {
+    const states = {
+      NPC_SD_ORPHAN: baseState({ introduced: false }),
     };
     const out = sanitizeNpcNamesForTurn('핍이 고개를 들었다.', states, getDef, 5);
     expect(out).not.toContain('핍이 ');

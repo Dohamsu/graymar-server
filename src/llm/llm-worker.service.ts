@@ -2919,6 +2919,28 @@ ${npcList}`,
                       npcStatesRef[npcId]
                     ) {
                       const alias = npcDef.unknownAlias ?? '그 인물';
+                      // LLM이 이름 자리에 별칭을 넣은 자기소개가 이미 있으면
+                      // (실측 T6: "내 이름은 날카로운 눈매의 회계사이라 하오")
+                      // 그 대사의 별칭만 실명으로 교정하고 삽입은 생략 — 이중 소개 방지.
+                      const escAliasFix = alias.replace(
+                        /[.*+?^${}()|[\]\\]/g,
+                        '\\$&',
+                      );
+                      const aliasIntroRe = new RegExp(
+                        `(["\u201C][^"\u201D]*(?:내\\s*이름은|나는|저는)[^"\u201D]*)${escAliasFix}([^"\u201D]*["\u201D])`,
+                      );
+                      if (aliasIntroRe.test(narrative)) {
+                        narrative = narrative.replace(
+                          aliasIntroRe,
+                          `$1${npcDef.name}$2`,
+                        );
+                        npcStatesRef[npcId].pendingIntroduction = false;
+                        changed = true;
+                        this.logger.log(
+                          `[IntroDialogueFix] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — 별칭 자기소개를 실명으로 교정 (삽입 생략)`,
+                        );
+                        continue;
+                      }
                       const portrait = NPC_PORTRAITS[npcId] ?? '';
                       const marker = portrait
                         ? `@[${alias}|${portrait}]`
