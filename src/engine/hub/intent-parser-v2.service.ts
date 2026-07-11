@@ -1056,7 +1056,7 @@ export class IntentParserV2Service {
     }
 
     // 장소명 + 이동 맥락 복합 감지 → MOVE_LOCATION 강제 부스트
-    if (this.detectLocationBasedMove(input)) {
+    if (this.detectLocationBasedMove(input) || this.detectPureMoveIntent(input)) {
       const existing = hitCounts.get('MOVE_LOCATION') ?? 0;
       hitCounts.set('MOVE_LOCATION', existing + 10); // 키워드 히트보다 훨씬 높은 가중치
       if (!firstSeenOrder.includes('MOVE_LOCATION')) {
@@ -1076,7 +1076,8 @@ export class IntentParserV2Service {
     if (
       firstSeenOrder[0] === 'MOVE_LOCATION' &&
       (hitCounts.get('MOVE_LOCATION') ?? 0) === 1 &&
-      !this.detectLocationBasedMove(input)
+      !this.detectLocationBasedMove(input) &&
+      !this.detectPureMoveIntent(input) // 무목적지 순수 이동 문장은 1-hit이어도 유지 (P1)
     ) {
       firstSeenOrder.splice(0, 1);
     }
@@ -1118,6 +1119,28 @@ export class IntentParserV2Service {
    * "항만 쪽으로 간다", "시장에 가 보자", "경비대로 향한다" 등
    * 장소명이 입력에 있고, 그 뒤에 이동 접미사가 붙으면 MOVE_LOCATION 판정
    */
+  /**
+   * 무목적지 순수 이동 상용구 감지 — "다른 장소로 이동한다", "여기를 떠난다" 등
+   * 문장 **전체**가 이동 표현으로만 구성된 경우 (P1 2026-07-11: 목적지 장소명이
+   * 없어 detectLocationBasedMove에 안 걸리고, LLM이 TALK로 오판해 26턴 갇힌 실측).
+   * 전체 매칭(^…$)이라 "장부 사건, 부두 쪽…" 류 문장 속 1-hit 오탐(불변식 21의
+   * 취지)과는 충돌하지 않는다.
+   */
+  detectPureMoveIntent(input: string): boolean {
+    const text = input.trim().replace(/[.!~\s]+$/, '');
+    if (text.length === 0 || text.length > 25) return false;
+    // 한글 음절 합성 주의: "떠나"는 "떠난다"의 prefix가 아니다 (떠+난) — 활용형 계열로 명시
+    const PURE_MOVE_RES = [
+      // "다른 장소로 이동한다" / "다른 곳으로 간다" / "딴 데로 가자"
+      /^(그럼\s*|이제\s*|이만\s*)*(다른|딴)\s*(장소|곳|데)(으로|로)?\s*(이동|떠[나난날]|옮[기긴길]|움직[이인일]|향[하한할]|가[자겠니]|간다|갑니다|갈)[가-힣]*$/,
+      // "여기를 떠난다" / "이곳에서 벗어난다" / "이 장소를 나간다"
+      /^(그럼\s*|이제\s*|이만\s*)*(여기|이곳|이\s*장소)(를|에서|서)?\s*(떠[나난날]|벗어[나난날]|나[가간갈]|뜬다|뜨자)[가-힣]*$/,
+      // "이동한다" / "자리를 옮긴다" / "발걸음을 옮긴다"
+      /^(그럼\s*|이제\s*|이만\s*)*(자리를|발걸음을)?\s*(이동|옮[기긴길])[가-힣]*$/,
+    ];
+    return PURE_MOVE_RES.some((re) => re.test(text));
+  }
+
   detectLocationBasedMove(input: string): boolean {
     for (const locName of LOCATION_NAMES) {
       const idx = input.indexOf(locName);

@@ -348,9 +348,12 @@ export class LlmIntentParserService implements OnModuleInit {
       } else if (
         this.keywordParser.detectLocationBasedMove(
           inputText.toLowerCase().trim(),
-        )
+        ) ||
+        this.keywordParser.detectPureMoveIntent(inputText)
       ) {
-        // 장소명+이동접미사 복합감지 → KW 신뢰
+        // 장소명+이동접미사 복합감지 또는 무목적지 순수 이동 상용구
+        // ("다른 장소로 이동한다" — P1 2026-07-11: LLM이 TALK로 오판해
+        // 이동이 대화에 흡수, 26턴 단일 장소 갇힘 실측) → KW 신뢰
         actionType = keywordResult.actionType;
         mergeSource = 'KW_OVERRIDE';
       } else {
