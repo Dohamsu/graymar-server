@@ -2830,6 +2830,29 @@ ${npcList}`,
         narrative = this.stripAnonymousSpeakerLabels(narrative);
       }
 
+      // 5.10.13. 소개 턴 실명 마커 정규화 (이름 공개 기획 후속 2026-07-11)
+      //   사전 확정 대사 지시가 실명을 프롬프트에 노출하면서 LLM이 마커
+      //   표시명에 실명을 쓰는 케이스 실측 (@[토브렌 하위크] — 소개 턴은
+      //   별칭 마커여야 하는 2턴 분리 위반). 마커 표시명만 별칭으로 되돌리고
+      //   대사 본문 속 실명(자기소개)은 유지한다.
+      if (narrative) {
+        const uiDataForMarker = serverResult.ui as Record<string, unknown>;
+        const introIds =
+          (uiDataForMarker?.newlyIntroducedNpcIds as string[]) ?? [];
+        for (const npcId of introIds) {
+          const def = this.content.getNpc(npcId);
+          if (!def?.name || !def.unknownAlias) continue;
+          const esc = def.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const re = new RegExp(`@\\[${esc}(\\||\\])`, 'g');
+          if (re.test(narrative)) {
+            narrative = narrative.replace(re, `@[${def.unknownAlias}$1`);
+            this.logger.debug(
+              `[IntroMarkerNorm] turn=${pending.turnNo} ${npcId} — 소개 턴 실명 마커 → 별칭 정규화`,
+            );
+          }
+        }
+      }
+
       // 5.11. NPC 소개 롤백 + appearanceCount 증가
       //   - 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
       //   - appearanceCount: LLM 서술에 @마커로 등장한 NPC 카운터 +1 (반복 호칭 고착 방지)
@@ -2873,7 +2896,20 @@ ${npcList}`,
                 for (const npcId of newlyIntroduced) {
                   const npcDef = this.content.getNpc(npcId);
                   if (!npcDef?.name) continue;
-                  if (!narrative.includes(npcDef.name)) {
+                  // 이름 공개 기획: 사전 확정 대사 대상은 "실명이 대사(따옴표)
+                  // 안에 등장"해야 자기소개 성사 — 마커 표시명에만 실명이 있는
+                  // 케이스(T20 실측)를 성공으로 오판정하지 않는다.
+                  const escName = npcDef.name.replace(
+                    /[.*+?^${}()|[\]\\]/g,
+                    '\\$&',
+                  );
+                  const introSucceeded =
+                    introDialogue?.npcId === npcId
+                      ? new RegExp(
+                          `["\u201C][^"\u201D]*${escName}[^"\u201D]*["\u201D]`,
+                        ).test(narrative)
+                      : narrative.includes(npcDef.name);
+                  if (!introSucceeded) {
                     // 이름 공개 기획 (2026-07-11, arch/65) — 첫 만남 소개는
                     // 사전 확정 대사로 즉시 마감: 롤백-재시도 사이클 없이
                     // 그 턴에 본인 자기소개를 서버가 삽입 (3단 사다리 [3]층).

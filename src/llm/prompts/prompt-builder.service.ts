@@ -728,6 +728,7 @@ export class PromptBuilderService {
               `    "${ctx.introDialogue.text}"`,
               `    이 대사를 자연스러운 위치에 거의 그대로 포함하세요. 실명 "${npc.name}"은 반드시 유지합니다.`,
               `    자기소개 이전 서술에서는 "${alias}"로 지칭하고, 이후에는 "${npc.name}"을 사용하세요.`,
+              `    ⚠️ 대사 마커의 표시명은 이번 턴 내내 "${alias}"를 유지하세요 (@[${alias}|…] — 실명은 대사 내용 안에서만).`,
             ].join('\n');
           }
           // 사전 대사 생성 불가 시(예외) 기존 연출 경로 fallback
@@ -751,6 +752,7 @@ export class PromptBuilderService {
               `    "${ctx.introDialogue.text}"`,
               `    이 대사를 자연스러운 위치에 거의 그대로 포함하세요. 실명 "${npc.name}"은 반드시 유지합니다.`,
               `    자기소개 이전 서술에서는 "${alias}"로 지칭하고, 이후에는 "${npc.name}"을 사용하세요.`,
+              `    ⚠️ 대사 마커의 표시명은 이번 턴 내내 "${alias}"를 유지하세요 (@[${alias}|…] — 실명은 대사 내용 안에서만).`,
             ].join('\n');
           }
           const stIntro = ctx.npcStates?.[npc.npcId];
