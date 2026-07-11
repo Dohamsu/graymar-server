@@ -341,3 +341,58 @@ describe('PromptBuilderService — 엔딩 턴 피날레 디렉티브 (2026-07-11
     expect(textNormal).toContain('자기소개');
   });
 });
+
+describe('PromptBuilderService — 사전 확정 자기소개 지시 (이름 공개 기획)', () => {
+  let promptBuilder: PromptBuilderService;
+  let content: FakeContent;
+
+  beforeEach(() => {
+    content = new FakeContent();
+    content.setNpc('NPC_MAIREL', {
+      npcId: 'NPC_MAIREL',
+      name: '마이렐 단 경',
+      unknownAlias: '권위적인 야간 경비 책임자',
+      role: '야간 경비 책임자',
+      gender: 'male',
+      tier: 'CORE',
+    });
+    promptBuilder = new PromptBuilderService(
+      content as any,
+      new FakeTokenBudget() as any,
+    );
+  });
+
+  const introCtx = (withDialogue: boolean) =>
+    baseCtx({
+      npcInjection: { npcIds: ['NPC_MAIREL'] },
+      newlyIntroducedNpcIds: ['NPC_MAIREL'],
+      newlyEncounteredNpcIds: ['NPC_MAIREL'],
+      npcStates: { NPC_MAIREL: { posture: 'CALCULATING' } },
+      ...(withDialogue
+        ? {
+            introDialogue: {
+              npcId: 'NPC_MAIREL',
+              text: '알아둬서 나쁠 것 없겠지. 마이렐 단 경이오.',
+            },
+          }
+        : {}),
+    });
+
+  it('introDialogue 존재 → 사전 확정 대사 지시 (경계 성향도 자기소개 통일)', () => {
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(introCtx(true), baseSr(), '말을 건다', 'ACTION'),
+    );
+    expect(text).toContain('[자기소개 — 사전 확정 대사]');
+    expect(text).toContain('알아둬서 나쁠 것 없겠지. 마이렐 단 경이오.');
+    // 기존 외부 경로 지시는 미발화
+    expect(text).not.toContain('제3자 호명');
+  });
+
+  it('introDialogue 부재(생성 실패) → 기존 연출 경로 fallback', () => {
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(introCtx(false), baseSr(), '말을 건다', 'ACTION'),
+    );
+    // CALCULATING 첫 시도 → 기존 avoidSelf 외부 경로
+    expect(text).toContain('제3자 호명');
+  });
+});

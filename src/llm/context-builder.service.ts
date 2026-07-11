@@ -91,6 +91,8 @@ export interface LlmContext {
   introducedNpcIds: string[]; // 이미 소개된 NPC
   newlyIntroducedNpcIds: string[]; // 이번 턴 이름 공개되는 NPC
   newlyEncounteredNpcIds: string[]; // 이번 턴 처음 만나는 NPC
+  /** 이름 공개 기획(arch/65): 첫 만남 소개 턴의 사전 확정 자기소개 대사 (워커가 주입) */
+  introDialogue?: { npcId: string; text: string } | null;
   // Structured Memory v2
   structuredSummary: string | null; // visitLog 기반 이야기 요약
   npcJournalText: string | null; // NPC 관계 일지

@@ -543,6 +543,43 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         // E안: NpcSignatureGenerator 비활성화 — 톤 3축은 NpcReaction에 통합됨
       }
 
+      // 3.45. 자기소개 대사 사전 생성 (이름 공개 기획 2026-07-11 — arch/65)
+      //   첫 만남 소개 턴(전 성향 통일): nano가 실명 포함 대사를 사전 확정 →
+      //   프롬프트 positive 주입([2]) + 실패 시 서버 직접 삽입([3])에 공용.
+      //   재등장 공개는 기존 외부 경로(제3자 호명/단서) 유지. 엔딩 턴 제외.
+      let introDialogue: { npcId: string; text: string } | null = null;
+      {
+        const newlyIntroduced = llmContext.newlyIntroducedNpcIds ?? [];
+        const newlyEncountered = new Set(
+          llmContext.newlyEncounteredNpcIds ?? [],
+        );
+        const firstMeetIntroId = newlyIntroduced.find((id) =>
+          newlyEncountered.has(id),
+        );
+        const isEndingTurnForIntroGen = !!(
+          serverResult.ui as Record<string, unknown>
+        )?.endingResult;
+        if (firstMeetIntroId && !isEndingTurnForIntroGen) {
+          try {
+            const gen = await this.dialogueGenerator.generateIntroDialogue({
+              npcId: firstMeetIntroId,
+              npcState: llmContext.npcStates?.[firstMeetIntroId],
+              situationContext:
+                pending.rawInput ?? llmContext.locationContext ?? '',
+              turnNo: pending.turnNo,
+            });
+            if (gen) {
+              introDialogue = { npcId: firstMeetIntroId, text: gen.text };
+              llmContext.introDialogue = introDialogue;
+            }
+          } catch (err) {
+            this.logger.warn(
+              `[IntroDialogue] 사전 생성 실패 (기존 경로 fallback): ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        }
+      }
+
       // 3.5. 프롬프트 메시지 조립
       const config = this.configService.get();
       const isCombat = pending.nodeType === 'COMBAT';
@@ -2839,6 +2876,27 @@ ${npcList}`,
                   const npcDef = this.content.getNpc(npcId);
                   if (!npcDef?.name) continue;
                   if (!narrative.includes(npcDef.name)) {
+                    // 이름 공개 기획 (2026-07-11, arch/65) — 첫 만남 소개는
+                    // 사전 확정 대사로 즉시 마감: 롤백-재시도 사이클 없이
+                    // 그 턴에 본인 자기소개를 서버가 삽입 (3단 사다리 [3]층).
+                    if (
+                      introDialogue?.npcId === npcId &&
+                      !isEndingTurn &&
+                      npcStatesRef[npcId]
+                    ) {
+                      const alias = npcDef.unknownAlias ?? '그 인물';
+                      const portrait = NPC_PORTRAITS[npcId] ?? '';
+                      const marker = portrait
+                        ? `@[${alias}|${portrait}]`
+                        : `@[${alias}]`;
+                      narrative = `${narrative.trimEnd()}\n\n${alias}${korParticle(alias, '이', '가')} 잠시 뜸을 들이더니 입을 연다.\n\n${marker} "${introDialogue.text}"`;
+                      npcStatesRef[npcId].pendingIntroduction = false;
+                      changed = true;
+                      this.logger.log(
+                        `[IntroDialogueInsert] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — 서술 미반영, 사전 확정 자기소개 대사 삽입으로 소개 확정`,
+                      );
+                      continue; // introduced/introducedAtTurn 유지
+                    }
                     if (npcStatesRef[npcId]) {
                       const attempts =
                         npcStatesRef[npcId].introAttempts ?? 0;

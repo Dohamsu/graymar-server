@@ -718,7 +718,19 @@ export class PromptBuilderService {
         const idTag = `[ID:${npc.npcId}, ${genderTag}, 대명사:${pronoun}]`;
 
         if (isNewlyIntroduced && isNewlyEncountered) {
-          // architecture/64 튜닝: posture/실패 이력 기반 연출 경로 분기
+          // 이름 공개 기획 (2026-07-11, arch/65): 첫 만남 소개는 전 성향
+          // 자기소개 통일 — 워커가 사전 확정한 대사를 positive로 주입.
+          // (기존 경로 분기는 메인 LLM의 소개 이행률 0%로 폐지 — 재등장 공개만
+          // buildIntroDirective 외부 경로 유지)
+          if (ctx.introDialogue && ctx.introDialogue.npcId === npc.npcId) {
+            return [
+              `- ${npc.name}${title} ${idTag}: ${npc.role} [자기소개 — 사전 확정 대사] — 이 인물의 이름은 "${npc.name}"이며, 이번 턴 대화 중 아래 대사로 자신을 소개합니다.`,
+              `    "${ctx.introDialogue.text}"`,
+              `    이 대사를 자연스러운 위치에 거의 그대로 포함하세요. 실명 "${npc.name}"은 반드시 유지합니다.`,
+              `    자기소개 이전 서술에서는 "${alias}"로 지칭하고, 이후에는 "${npc.name}"을 사용하세요.`,
+            ].join('\n');
+          }
+          // 사전 대사 생성 불가 시(예외) 기존 연출 경로 fallback
           const stIntro = ctx.npcStates?.[npc.npcId];
           return buildIntroDirective({
             name: npc.name,

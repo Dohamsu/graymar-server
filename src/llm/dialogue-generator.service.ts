@@ -8,6 +8,7 @@ import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { NPCState } from '../db/types/npc-state.js';
 import { getNpcDisplayName } from '../db/types/npc-state.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
+import { korParticle } from '../common/korean.js';
 
 /** dialogue_slot의 의도 enum */
 export type DialogueIntent =
@@ -400,6 +401,104 @@ export class DialogueGeneratorService {
       speakerId: input.slot.speaker_id,
       portraitUrl: NPC_PORTRAITS[input.slot.speaker_id] ?? '',
     };
+  }
+
+  /**
+   * 자기소개 대사 사전 생성 (이름 공개 기획 2026-07-11 — arch/65).
+   *
+   * 메인 LLM의 자유 서술에 소개를 맡기면 이름 지시가 희석되어 실패한다
+   * (IntroRollback 43회 실측, 자기소개 성사 0건). 좁은 태스크(대사 1~2문장에
+   * 실명 포함)로 분리해 nano가 사전 생성하고 서버가 코드로 검증한다.
+   * 3단 사다리의 [1]층 — 반환 대사는 프롬프트 주입([2]) 및 실패 시
+   * 서버 직접 삽입([3])에 공용. npcDef 부재 외에는 항상 대사를 보장한다
+   * (LLM 2회 실패 시 어체별 템플릿).
+   */
+  async generateIntroDialogue(input: {
+    npcId: string;
+    npcState: NPCState | undefined;
+    situationContext: string;
+    turnNo: number;
+  }): Promise<{ text: string; source: 'llm' | 'template' } | null> {
+    const npcDef = this.content.getNpc(input.npcId);
+    if (!npcDef?.name) return null;
+    const name = npcDef.name;
+    const register =
+      ((npcDef.personality as Record<string, unknown>)
+        ?.speechRegister as string) ?? 'HAOCHE';
+    const rule = REGISTER_RULES[register] ?? REGISTER_RULES['HAOCHE'];
+    const posture =
+      input.npcState?.posture ?? (npcDef as { posture?: string }).posture ?? '';
+    const POSTURE_TONE: Record<string, string> = {
+      FRIENDLY: '선선하고 따뜻하게, 먼저 손을 내밀듯',
+      CAUTIOUS: '짧고 건조하게, 필요한 만큼만',
+      FEARFUL: '머뭇거리며 조심스럽게, 목소리를 낮춰',
+      CALCULATING: '상대를 재는 듯 여유롭게, 알아둬서 나쁠 것 없다는 투로',
+      HOSTILE: '마지못해 퉁명스럽게, 경계를 풀지 않은 채',
+    };
+    const tone = POSTURE_TONE[posture] ?? '자연스럽게';
+
+    const validate = (d: string): boolean =>
+      d.length >= 5 &&
+      d.length <= 160 &&
+      d.includes(name) &&
+      validateSpeechRegister(d, register);
+
+    const dialogueModel =
+      process.env.LLM_DIALOGUE_MODEL ??
+      process.env.LLM_ALTERNATE_MODEL ??
+      this.configService.getLightModelConfig().model;
+    const userMsg = [
+      `[NPC] ${name} — ${npcDef.role ?? ''}`,
+      `[성격 톤] ${tone}`,
+      `[어체] ${rule.name} — 문장은 반드시 ${rule.endings} 중 하나로 끝냅니다. 금지: ${rule.forbidden}`,
+      `[상황] ${input.situationContext.slice(0, 150)}`,
+      '',
+      `이 인물이 상대에게 처음으로 자기 이름을 밝히는 자기소개 대사 1~2문장을 쓰세요.`,
+      `필수: 대사 안에 실명 "${name}"이 정확히 포함되어야 합니다. 별칭·직함으로 대체 금지.`,
+      `대사 본문만 출력 (따옴표·설명 없이).`,
+    ].join('\n');
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await this.llmCaller.call({
+        messages: [
+          { role: 'system', content: DIALOGUE_SYSTEM },
+          {
+            role: 'user',
+            content:
+              attempt === 0
+                ? userMsg
+                : userMsg +
+                  `\n\n⚠️ 이전 출력에 실명 "${name}"이 없거나 어체가 틀렸습니다. 두 조건을 반드시 지키세요.`,
+          },
+        ],
+        maxTokens: 120,
+        temperature: 0.7,
+        model: dialogueModel,
+      });
+      if (result.success && result.response?.text) {
+        const d = result.response.text
+          .trim()
+          .replace(/^[""\u201C]+|[""\u201D]+$/g, '');
+        if (validate(d)) {
+          this.logger.debug(
+            `[IntroDialogue] ${input.npcId} llm 생성: "${d.slice(0, 40)}…"`,
+          );
+          return { text: d.slice(0, 160), source: 'llm' };
+        }
+      }
+    }
+
+    // 어체별 자기소개 템플릿 (최종 보장 — 항상 본인 발화)
+    const INTRO_TEMPLATES: Record<string, string> = {
+      HAOCHE: `${name}${korParticle(name, '이', '')}라 하오. 그리 알아두시오.`,
+      HAPSYO: `${name}${korParticle(name, '이', '')}라고 합니다.`,
+      HAEYO: `저는 ${name}${korParticle(name, '이', '')}에요.`,
+      BANMAL: `난 ${name}${korParticle(name, '이', '')}야.`,
+      HAECHE: `${name}${korParticle(name, '이', '')}라 하네.`,
+    };
+    const text = INTRO_TEMPLATES[register] ?? INTRO_TEMPLATES['HAOCHE'];
+    this.logger.debug(`[IntroDialogue] ${input.npcId} 템플릿 fallback`);
+    return { text, source: 'template' };
   }
 
   /**
