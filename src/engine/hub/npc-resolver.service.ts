@@ -521,7 +521,8 @@ export class NpcResolverService {
       const prevAction = prev.actionType as string | undefined;
       if (!prevNpc) continue;
       // 작별 인사로 닫힌 대화는 잠금을 잇지 않는다 (대화 행위 감지 — 개선 1)
-      if (prev.dialogueAct === 'FAREWELL') break;
+      // NPC 쪽 작별 발화도 동일 (P2 2026-07-11 — 워커가 npcFarewell 마킹)
+      if (prev.dialogueAct === 'FAREWELL' || prev.npcFarewell === true) break;
       if (SOCIAL_ACTIONS.has(prevAction ?? '')) return prevNpc;
       break;
     }
@@ -537,7 +538,8 @@ export class NpcResolverService {
       const prevAction = prev.actionType as string | undefined;
       if (!prevNpc) continue;
       // 작별 인사로 닫힌 대화는 잠금을 잇지 않는다 (대화 행위 감지 — 개선 1)
-      if (prev.dialogueAct === 'FAREWELL') break;
+      // NPC 쪽 작별 발화도 동일 (P2 2026-07-11 — 워커가 npcFarewell 마킹)
+      if (prev.dialogueAct === 'FAREWELL' || prev.npcFarewell === true) break;
       if (SOCIAL_ACTIONS.has(prevAction ?? '')) {
         return prevNpc;
       }

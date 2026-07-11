@@ -42,7 +42,10 @@ import {
 } from './npc-reaction-director.service.js';
 import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
-import { collectRecentNpcUtterances } from './npc-utterance.util.js';
+import {
+  collectRecentNpcUtterances,
+  extractNpcUtterances,
+} from './npc-utterance.util.js';
 import {
   pushNarrativeTheme,
   type NarrativeThemeEntry,
@@ -2921,6 +2924,59 @@ ${npcList}`,
               return changed;
             },
           );
+        }
+      }
+
+      // 5.12. NPC 작별 발화 → 대화 잠금 해제 마킹 (P2 2026-07-11)
+      //   NPC가 대사로 대화를 닫으면("이만 가봐야겠소") 다음 턴부터 잠금을 잇지
+      //   않는다. 플레이어 FAREWELL(불변식 26)과 대칭 — 실측: 토브렌이 작별을
+      //   고하고도 대화 잠금으로 25턴 상주. actionHistory의 해당 NPC 마지막
+      //   엔트리에 npcFarewell을 마킹하고 findConversationLock이 break 한다.
+      if (narrative && runSession?.runState) {
+        const primaryNpcIdForFarewell = (
+          (serverResult.ui as Record<string, unknown>)?.actionContext as
+            | { primaryNpcId?: string | null }
+            | undefined
+        )?.primaryNpcId;
+        const farewellNpcDef = primaryNpcIdForFarewell
+          ? this.content.getNpc(primaryNpcIdForFarewell)
+          : undefined;
+        if (primaryNpcIdForFarewell && farewellNpcDef) {
+          const { isNpcFarewellUtterance } = await import(
+            '../common/dialogue-act.js'
+          );
+          const utterances = extractNpcUtterances(narrative, {
+            npcId: primaryNpcIdForFarewell,
+            displayNames: [
+              farewellNpcDef.name,
+              (farewellNpcDef as { unknownAlias?: string }).unknownAlias ?? '',
+              (farewellNpcDef as { shortAlias?: string }).shortAlias ?? '',
+            ].filter((n) => n),
+          });
+          const lastUtterance = utterances[utterances.length - 1];
+          if (lastUtterance && isNpcFarewellUtterance(lastUtterance)) {
+            await this.applyRunStatePatch(
+              pending.runId,
+              'NpcFarewell',
+              (rs) => {
+                const history = rs.actionHistory as
+                  | Array<Record<string, unknown>>
+                  | undefined;
+                if (!history) return false;
+                for (let i = history.length - 1; i >= 0; i--) {
+                  if (history[i].primaryNpcId === primaryNpcIdForFarewell) {
+                    if (history[i].npcFarewell === true) return false;
+                    history[i].npcFarewell = true;
+                    return true;
+                  }
+                }
+                return false;
+              },
+            );
+            this.logger.log(
+              `[NpcFarewell] turn=${pending.turnNo} ${primaryNpcIdForFarewell} 작별 발화 감지 — 대화 잠금 해제 마킹 ("${lastUtterance.slice(0, 30)}…")`,
+            );
+          }
         }
       }
 

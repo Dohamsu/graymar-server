@@ -34,6 +34,22 @@ const INFO_REQUEST_RE =
 const FAREWELL_RE =
   /(잘\s*있으시|잘\s*계시|잘\s*지내시|가\s*보겠|가보겠|이만\s*(가|물러|실례)|또\s*(들르|들리|오겠|뵙|보(겠|자|세))|다음에\s*(또|보|뵙|들르)|작별|안녕히|먼저\s*가\s*보|일어나\s*보겠)/;
 
+/**
+ * NPC 발화의 작별 표현 — P2 2026-07-11: NPC가 대화를 닫으면("이만 가봐야겠소")
+ * 대화 잠금을 잇지 않는다. 플레이어용 FAREWELL_RE에 NPC 특유의 자리 뜨기
+ * 표현(용무·바쁨 핑계)을 더한다. 실측: 토브렌이 작별을 고하고도 25턴 상주.
+ */
+const NPC_FAREWELL_EXTRA_RE =
+  /(가\s*봐야|가봐야|볼일이\s*있어|이쯤\s*하(고|지)|그만\s*가\s*보|나중에\s*(다시|또)\s*(이야기|보|얘기)|다음에\s*(다시\s*)?(이야기|얘기)하|바빠서\s*이만|물러가\s*보)/;
+
+/** NPC 대사 1건이 작별/대화 종결 표현인지 */
+export function isNpcFarewellUtterance(
+  utterance: string | null | undefined,
+): boolean {
+  if (!utterance) return false;
+  return FAREWELL_RE.test(utterance) || NPC_FAREWELL_EXTRA_RE.test(utterance);
+}
+
 const GREETING_RE =
   /(안녕하(시오|십니까|세요)|반갑(소|습니다|구려)|처음\s*(뵙|봬|왔|와\s*봤)|인사(드리|하러|나\s*하)|좋은\s*(아침|저녁|밤)\s*이(오|요|외다))/;
 

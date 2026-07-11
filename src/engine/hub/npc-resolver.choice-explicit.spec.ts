@@ -106,3 +106,54 @@ describe('NpcResolver — CHOICE 명시 NPC 우선 (arch/65 Step 0)', () => {
     expect(r.source).not.toBe('CHOICE_EXPLICIT');
   });
 });
+
+describe('NpcResolver — NPC 작별 발화 잠금 해제 (P2 2026-07-11)', () => {
+  const service = new NpcResolverService(
+    new FakeContent() as never,
+    new FakeWhereabouts() as never,
+  );
+
+  it('npcFarewell 마킹된 대화는 잠금을 잇지 않는다 (토브렌 25턴 상주 재현 방지)', () => {
+    const r = service.resolve(
+      choiceCtx({
+        inputType: 'ACTION',
+        rawInput: '주변을 살펴본다',
+        intent: { actionType: 'OBSERVE', tone: 'NEUTRAL' } as never,
+        actionHistory: [
+          { primaryNpcId: 'NPC_ROSA', actionType: 'TALK' },
+          // NPC가 작별 발화 → 워커가 npcFarewell 마킹
+          { primaryNpcId: 'NPC_ROSA', actionType: 'TALK', npcFarewell: true },
+        ],
+        candidateEvent: { eventId: 'EVT_X', payload: {} },
+      }),
+    );
+    expect(r.source).not.toBe('CONVERSATION_LOCK');
+    expect(r.npcId).not.toBe('NPC_ROSA');
+  });
+
+  it('작별 이후 새 SOCIAL 턴이 쌓이면 다시 잠금 성립 (재대화 허용)', () => {
+    const r = service.resolve(
+      choiceCtx({
+        inputType: 'ACTION',
+        rawInput: '주변을 살펴본다',
+        intent: { actionType: 'OBSERVE', tone: 'NEUTRAL' } as never,
+        actionHistory: [
+          { primaryNpcId: 'NPC_ROSA', actionType: 'TALK', npcFarewell: true },
+          // 플레이어가 다시 말을 걸어 새 대화 성립
+          { primaryNpcId: 'NPC_ROSA', actionType: 'PERSUADE' },
+        ],
+        candidateEvent: { eventId: 'EVT_X', payload: {} },
+      }),
+    );
+    expect(r.source).toBe('CONVERSATION_LOCK');
+    expect(r.npcId).toBe('NPC_ROSA');
+  });
+
+  it('findLockFromHistory도 npcFarewell에서 끊긴다', () => {
+    const lock = service.findLockFromHistory(
+      [{ primaryNpcId: 'NPC_ROSA', actionType: 'TALK', npcFarewell: true }],
+      'TALK',
+    );
+    expect(lock).toBeNull();
+  });
+});

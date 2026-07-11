@@ -113,3 +113,36 @@ describe('isQuestionInput', () => {
     expect(isQuestionInput(undefined)).toBe(false);
   });
 });
+
+describe('isNpcFarewellUtterance — NPC 작별 발화 감지 (P2 2026-07-11)', () => {
+  const { isNpcFarewellUtterance } = require('./dialogue-act.js') as {
+    isNpcFarewellUtterance: (u: string | null | undefined) => boolean;
+  };
+
+  it.each([
+    '내 딸아이가 보내온 편지를 읽어야 해서 이만 가봐야겠소.', // 실측: 토브렌 T10
+    '이만 물러가겠소.',
+    '그럼 잘 있으시오.',
+    '볼일이 있어 가야겠군.',
+    '다음에 다시 이야기하지.',
+    '바빠서 이만 실례하겠소.',
+    '나중에 또 보세.',
+  ])('작별: "%s" → true', (u) => {
+    expect(isNpcFarewellUtterance(u)).toBe(true);
+  });
+
+  it.each([
+    '어서 오시오. 무슨 일로 왔소?',
+    '장부에 대해 아는 게 있소만, 쉽게 말할 수는 없지.',
+    '요즘 부두 경비가 삼엄하오.',
+    '그대의 눈매가 예사롭지 않구려.',
+    '', // 빈 문자열
+  ])('비작별: "%s" → false', (u) => {
+    expect(isNpcFarewellUtterance(u)).toBe(false);
+  });
+
+  it('null/undefined → false', () => {
+    expect(isNpcFarewellUtterance(null)).toBe(false);
+    expect(isNpcFarewellUtterance(undefined)).toBe(false);
+  });
+});

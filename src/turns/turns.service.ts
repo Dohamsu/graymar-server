@@ -971,6 +971,10 @@ export class TurnsService {
         const prevNpc = prev.primaryNpcId as string | undefined;
         const prevAction = prev.actionType as string | undefined;
         if (!prevNpc) continue;
+        // 작별로 닫힌 대화는 다운그레이드 가드도 잇지 않는다 (P2 2026-07-11)
+        if (prev.dialogueAct === 'FAREWELL' || prev.npcFarewell === true) {
+          break;
+        }
         if (SOCIAL_FOR_LOCK.has(prevAction ?? '')) {
           prevSocialNpc = prevNpc;
         }
