@@ -707,3 +707,65 @@ describe('콜론 라벨 유일성 축약 매칭 (무명 오귀속 정밀화)', (
     expect(resolveColonLabel('그', NPCS)).toBeNull();
   });
 });
+
+// ─── 카드-서술 정합 정밀화 2026-07-11: 마커 0 턴의 카드 유지 조건 ───
+// llm-worker.service.ts 5.9 npcPortrait 갱신의 mentionedInNarrative 로직 복제
+
+function cardKeptWithoutMarker(
+  narrative: string,
+  expectedNpcId: string | null,
+  portraitNpcId: string,
+  npcDefs: Record<string, { name?: string; unknownAlias?: string; shortAlias?: string; aliases?: string[] }>,
+): boolean {
+  const mentioned = (npcId: string): boolean => {
+    const def = npcDefs[npcId];
+    if (!def) return false;
+    const names = [
+      def.name,
+      def.unknownAlias,
+      def.shortAlias,
+      ...(def.aliases ?? []),
+    ].filter((n): n is string => !!n && n.length >= 2);
+    return names.some((n) => narrative.includes(n));
+  };
+  return (
+    !!expectedNpcId && portraitNpcId === expectedNpcId && mentioned(expectedNpcId)
+  );
+}
+
+describe('카드-서술 정합 — 마커 0 턴 카드 유지 조건 (2026-07-11)', () => {
+  const DEFS = {
+    NPC_TOBREN: {
+      name: '토브렌 하위크',
+      unknownAlias: '수상한 창고 관리인',
+      aliases: ['토브렌', '하위크'],
+    },
+    NPC_MAIREL: {
+      name: '마이렐 단 경',
+      unknownAlias: '권위적인 야간 경비 책임자',
+    },
+  };
+
+  it('실측: 진입 턴 서술에 토브렌 언급 0 → 카드 제거 (기존엔 primary 일치로 유지)', () => {
+    const narr =
+      '경비 책임자가 뒤를 돌아보며 경계하는 모습이 눈에 띈다. 짐을 옮기던 노동자가 곁을 지나간다.';
+    expect(cardKeptWithoutMarker(narr, 'NPC_TOBREN', 'NPC_TOBREN', DEFS)).toBe(
+      false,
+    );
+  });
+
+  it('마커 없어도 별칭이 본문에 언급되면 카드 유지 (기존 예외 의도 보존)', () => {
+    const narr =
+      '수상한 창고 관리인은 말없이 짐을 나르며 당신의 시선을 피한다.';
+    expect(cardKeptWithoutMarker(narr, 'NPC_TOBREN', 'NPC_TOBREN', DEFS)).toBe(
+      true,
+    );
+  });
+
+  it('primary 불일치는 기존대로 제거', () => {
+    const narr = '수상한 창고 관리인이 다가온다.';
+    expect(cardKeptWithoutMarker(narr, 'NPC_MAIREL', 'NPC_TOBREN', DEFS)).toBe(
+      false,
+    );
+  });
+});

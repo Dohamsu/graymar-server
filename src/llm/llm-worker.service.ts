@@ -2618,7 +2618,27 @@ ${npcList}`,
           // Focused NPC turns can produce valid dialogue without an @ marker
           // after post-processing. Keep the server-selected portrait when it
           // still matches the focused/primary NPC instead of blanking the card.
-          if (!expectedNpcId || existingPortrait.npcId !== expectedNpcId) {
+          //
+          // 카드-서술 정합 정밀화 (2026-07-11): 일치하더라도 서술 본문에 그 NPC의
+          // 이름/별칭이 전혀 언급되지 않으면 카드를 제거한다 — 실측: 장소 진입 턴에
+          // 토브렌 소개 카드(newly=true)가 떴는데 서술은 직전 장소 인물만 그림
+          // (V8 "카드=수상한 창고 관리인 서술에 없음").
+          const mentionedInNarrative = (npcId: string): boolean => {
+            const def = this.content.getNpc(npcId);
+            if (!def) return false;
+            const names = [
+              def.name,
+              def.unknownAlias,
+              def.shortAlias,
+              ...(def.aliases ?? []),
+            ].filter((n): n is string => !!n && n.length >= 2);
+            return names.some((n) => narrative.includes(n));
+          };
+          if (
+            !expectedNpcId ||
+            existingPortrait.npcId !== expectedNpcId ||
+            !mentionedInNarrative(expectedNpcId)
+          ) {
             ui.npcPortrait = null;
             srChanged = true;
           }
