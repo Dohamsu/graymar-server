@@ -769,3 +769,116 @@ describe('카드-서술 정합 — 마커 0 턴 카드 유지 조건 (2026-07-11
     );
   });
 });
+
+// ─── 완주 평가 ③ 2026-07-11: 별칭조각+실명 융합 / 조사 교정 / 2단어 라벨 ───
+// llm-worker.service.ts stripAliasFragmentBeforeName / fixNpcNameParticles 로직 복제
+
+const EVAL3_NPCS = [
+  { name: '토브렌 하위크', unknownAlias: '수상한 창고 관리인' },
+  { name: '에드릭 베일', unknownAlias: '날카로운 눈매의 회계사' },
+  { name: '마이렐 단 경', unknownAlias: '권위적인 야간 경비 책임자' },
+];
+
+function eval3_stripAliasFragment(narrative: string): string {
+  for (const npc of EVAL3_NPCS) {
+    if (!narrative.includes(npc.name)) continue;
+    const words = npc.unknownAlias.split(/\s+/);
+    if (words.length < 2) continue;
+    const escName = npc.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (let k = Math.min(2, words.length - 1); k >= 1; k--) {
+      const frag = words.slice(0, k).join(' ');
+      const escFrag = frag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      narrative = narrative.replace(
+        new RegExp(`${escFrag}\\s?(${escName})`, 'g'),
+        '$1',
+      );
+    }
+  }
+  return narrative;
+}
+
+function eval3_fixParticles(narrative: string): string {
+  const PAIRS: Array<[string, string]> = [
+    ['이', '가'],
+    ['은', '는'],
+    ['을', '를'],
+    ['과', '와'],
+  ];
+  const hasBatchim = (w: string): boolean => {
+    const ch = w.charCodeAt(w.length - 1);
+    if (ch < 0xac00 || ch > 0xd7a3) return false;
+    return (ch - 0xac00) % 28 > 0;
+  };
+  for (const npc of EVAL3_NPCS) {
+    for (const nm of [npc.name, npc.unknownAlias]) {
+      if (!nm || !narrative.includes(nm)) continue;
+      const withB = hasBatchim(nm);
+      const esc = nm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      for (const [b, noB] of PAIRS) {
+        const wrong = withB ? noB : b;
+        const right = withB ? b : noB;
+        narrative = narrative.replace(
+          new RegExp(`(${esc})${wrong}(?=[\\s,.!?"“”])`, 'g'),
+          `$1${right}`,
+        );
+      }
+    }
+  }
+  return narrative;
+}
+
+describe('완주 평가 ③ — 별칭 조각+실명 융합 정규화', () => {
+  it('실측 T19: "수상한 토브렌 하위크" → "토브렌 하위크"', () => {
+    expect(
+      eval3_stripAliasFragment('수상한 토브렌 하위크이 갑자기 고개를 돌린다.'),
+    ).toBe('토브렌 하위크이 갑자기 고개를 돌린다.');
+  });
+
+  it('정상 별칭 전체("수상한 창고 관리인")는 무변경', () => {
+    const t = '수상한 창고 관리인이 다가온다.';
+    expect(eval3_stripAliasFragment(t)).toBe(t);
+  });
+});
+
+describe('완주 평가 ③ — 이름/별칭 뒤 조사 교정', () => {
+  it('실측: "하위크이" → "하위크가" (무받침+이)', () => {
+    expect(eval3_fixParticles('토브렌 하위크이 갑자기 웃는다.')).toBe(
+      '토브렌 하위크가 갑자기 웃는다.',
+    );
+  });
+
+  it('실측 T33: "회계사이 익숙한" → "회계사가 익숙한"', () => {
+    expect(
+      eval3_fixParticles('날카로운 눈매의 회계사이 익숙한 탁자에 앉아 있다.'),
+    ).toBe('날카로운 눈매의 회계사가 익숙한 탁자에 앉아 있다.');
+  });
+
+  it('올바른 조사는 무변경 ("마이렐 단 경이", "회계사가")', () => {
+    const t = '마이렐 단 경이 말한다. 날카로운 눈매의 회계사가 웃는다.';
+    expect(eval3_fixParticles(t)).toBe(t);
+  });
+
+  it('경계 아닌 위치(단어 내부)는 무변경', () => {
+    const t = '토브렌 하위크의 창고';
+    expect(eval3_fixParticles(t)).toBe(t);
+  });
+});
+
+describe('완주 평가 ③ — 공백 포함 화자 라벨 제거', () => {
+  const strip = (n: string): string =>
+    n.replace(
+      /(^|\n)\s*[가-힣A-Za-z]{2,6}(?:\s[가-힣A-Za-z]{1,6})?\s?\d{0,2}\s*[:：]\s*(?=["“])/g,
+      '$1',
+    );
+
+  it('실측 T21: "익명 인물 1:" 라벨 제거', () => {
+    const input = '인부들의 목소리가 흘러온다.\n\n익명 인물 1: "하역 장소는 확인했다."';
+    const out = strip(input);
+    expect(out).not.toContain('익명 인물 1:');
+    expect(out).toContain('"하역 장소는 확인했다."');
+  });
+
+  it('기존 1단어 라벨("행상인 1:")도 계속 제거', () => {
+    expect(strip('\n행상인 1: "소문이 확실하오."')).not.toContain('행상인 1:');
+  });
+});

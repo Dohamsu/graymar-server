@@ -562,8 +562,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             const gen = await this.dialogueGenerator.generateIntroDialogue({
               npcId: firstMeetIntroId,
               npcState: llmContext.npcStates?.[firstMeetIntroId],
-              situationContext:
-                pending.rawInput ?? llmContext.locationContext ?? '',
+              // 완주 평가 ③-4: rawInput(예: "물건을 훔친다")을 그대로 주면
+              // nano가 그 행동을 승인하는 대사를 생성 ("가져가셔도 좋습니다"
+              // 실측) — 장소 중심 중립 문맥으로 전달
+              situationContext: `${llmContext.locationContext ?? '거리'}에서 상대와 처음 마주한 상황`,
               turnNo: pending.turnNo,
             });
             if (gen) {
@@ -2827,6 +2829,8 @@ ${npcList}`,
       // 5.10.12. 접두 융합 별칭 복구 + 무명 화자 라벨 제거 (P3 2026-07-11)
       if (narrative) {
         narrative = this.stripFusedAliasPrefix(narrative);
+        narrative = this.stripAliasFragmentBeforeName(narrative);
+        narrative = this.fixNpcNameParticles(narrative);
         narrative = this.stripAnonymousSpeakerLabels(narrative);
       }
 
@@ -3782,14 +3786,79 @@ ${npcList}`,
   }
 
   /**
+   * 완주 평가 ③ 신규 (2026-07-11) — 별칭 조각 + 실명 융합 정규화.
+   * 소개 턴 본문 실명 허용(arch/66) 이후 LLM이 별칭의 선행 수식어와 실명을
+   * 이어 붙이는 케이스 실측: "수상한 토브렌 하위크" (unknownAlias '수상한 창고
+   * 관리인'의 앞단어 + name). 별칭 선행 단어(1~2개) + 실명 밀착 → 실명만 남긴다.
+   */
+  private stripAliasFragmentBeforeName(narrative: string): string {
+    for (const npc of this.content.getAllNpcs()) {
+      if (!npc.name || !npc.unknownAlias || !narrative.includes(npc.name))
+        continue;
+      const words = npc.unknownAlias.split(/\s+/);
+      if (words.length < 2) continue;
+      const escName = npc.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      for (let k = Math.min(2, words.length - 1); k >= 1; k--) {
+        const frag = words.slice(0, k).join(' ');
+        const escFrag = frag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(`${escFrag}\\s?(${escName})`, 'g');
+        if (re.test(narrative)) {
+          narrative = narrative.replace(re, '$1');
+          this.logger.debug(
+            `[AliasFragFix] "${frag} ${npc.name.slice(0, 10)}…" → 실명 정규화`,
+          );
+        }
+      }
+    }
+    return narrative;
+  }
+
+  /**
+   * 완주 평가 ③ 신규 (2026-07-11) — NPC 이름/별칭 뒤 주격·목적격 조사 교정.
+   * 실측: "하위크이 갑자기"(무받침+이), "회계사이 익숙한"(무받침+이).
+   * 이름 직후 조사+경계 패턴만 대상이라 오탐 여지 최소 — 받침 규칙에 맞는
+   * 조사로만 치환한다.
+   */
+  private fixNpcNameParticles(narrative: string): string {
+    const PAIRS: Array<[string, string]> = [
+      ['이', '가'],
+      ['은', '는'],
+      ['을', '를'],
+      ['과', '와'],
+    ];
+    const hasBatchim = (word: string): boolean => {
+      const ch = word.charCodeAt(word.length - 1);
+      if (ch < 0xac00 || ch > 0xd7a3) return false;
+      return (ch - 0xac00) % 28 > 0;
+    };
+    for (const npc of this.content.getAllNpcs()) {
+      for (const nm of [npc.name, npc.unknownAlias]) {
+        if (!nm || nm.length < 2 || !narrative.includes(nm)) continue;
+        const withB = hasBatchim(nm);
+        const esc = nm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        for (const [b, noB] of PAIRS) {
+          const wrong = withB ? noB : b;
+          const right = withB ? b : noB;
+          const re = new RegExp(`(${esc})${wrong}(?=[\\s,.!?"“”])`, 'g');
+          if (re.test(narrative)) {
+            narrative = narrative.replace(re, `$1${right}`);
+          }
+        }
+      }
+    }
+    return narrative;
+  }
+
+  /**
    * P3 2026-07-11 — 무명 화자 라벨 제거.
    * 실측: 행상인 대화가 마커 규약 밖의 대본 형식(`행상인 1: "…"`)으로 노출.
    * 줄 시작의 짧은 라벨+콜론이 따옴표 대사 직전에 붙은 경우만 제거 — 앞 문장이
    * 이미 화자 맥락을 서술하므로("행상인 두 명이 수군거린다") 대사만 남겨도 자연.
    */
   private stripAnonymousSpeakerLabels(narrative: string): string {
+    // 공백 포함 2단어 라벨도 커버 (실측: "익명 인물 1:")
     return narrative.replace(
-      /(^|\n)\s*[가-힣A-Za-z]{2,6}\s?\d{0,2}\s*[:：]\s*(?=["“])/g,
+      /(^|\n)\s*[가-힣A-Za-z]{2,6}(?:\s[가-힣A-Za-z]{1,6})?\s?\d{0,2}\s*[:：]\s*(?=["“])/g,
       '$1',
     );
   }
