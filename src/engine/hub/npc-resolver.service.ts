@@ -35,6 +35,7 @@ import {
 // ──────────────────────────────────────────────────────────────
 
 export type NpcResolutionSource =
+  | 'CHOICE_EXPLICIT' // 선택지 payload의 NPC 지정 (nano sourceNpcId 등) — 구조화된 명시 지정
   | 'STRONG_EXPLICIT_NAME' // 실명 또는 unknownAlias 전체 매칭
   | 'STRONG_PARTICLE' // "X에게/X와/X을" 호명 조사 패턴
   | 'MEDIUM_ROLE_KEYWORD' // 명시 roleKeywords
@@ -68,6 +69,10 @@ export interface NpcResolutionContext {
   nodeType: 'LOCATION' | 'COMBAT' | 'EVENT' | 'REST' | 'HUB';
   inputType: 'ACTION' | 'CHOICE';
   runState?: { worldState?: { npcLocations?: Record<string, string> } } | null;
+  /** CHOICE 선택지 payload가 지정한 NPC (nano sourceNpcId / 이벤트 npcId).
+   *  플레이어가 그 NPC의 선택지를 명시적으로 클릭한 것이므로 대화 잠금보다 우선
+   *  (경제 루프 검증에서 BRIBE 선택지의 뇌물 대상이 잠금 NPC로 어긋난 갭 — arch/65) */
+  choiceNpcId?: string | null;
 }
 
 export interface NpcResolution {
@@ -148,6 +153,22 @@ export class NpcResolverService {
 
     // CHOICE 입력은 명시적 선택지라 사용자 자유 호명 매칭 skip — lock 또는 이벤트만 사용
     const isChoice = ctx.inputType === 'CHOICE';
+
+    // ── Step 0: 선택지 명시 NPC (CHOICE + payload NPC 지정) ──
+    // 구조화된 지정이라 텍스트 오탐 여지가 없다. 대화 잠금보다 우선하지 않으면
+    // "쥐왕에게 은화를 내민다" 선택지의 뇌물이 잠금 상대에게 가는 어긋남 발생 (arch/65).
+    if (isChoice && ctx.choiceNpcId) {
+      const choiceNpc = allNpcs.find((n) => n.npcId === ctx.choiceNpcId);
+      if (choiceNpc) {
+        return {
+          npcId: choiceNpc.npcId,
+          source: 'CHOICE_EXPLICIT',
+          confidence: 0.95,
+          alternatives,
+          lockApplied: false,
+        };
+      }
+    }
 
     // 잠금 NPC — Step 1 언급 질문 가드와 Step 3~5에서 공용
     const lockNpcId = this.findConversationLock(ctx);

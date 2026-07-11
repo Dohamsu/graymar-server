@@ -2421,6 +2421,11 @@ export class TurnsService {
         nodeType: 'LOCATION',
         inputType: body.input.type as 'ACTION' | 'CHOICE',
         runState,
+        // 선택지가 NPC를 명시 지정한 경우 (nano sourceNpcId / 이벤트 npcId) — arch/65
+        choiceNpcId:
+          ((choicePayload?.sourceNpcId ?? choicePayload?.npcId) as
+            | string
+            | undefined) ?? null,
       });
       npcResolutionSource = resolution.source;
       npcResolutionConfidence = resolution.confidence;
