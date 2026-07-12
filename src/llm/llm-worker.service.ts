@@ -3161,6 +3161,32 @@ ${npcList}`,
               const ctx = (ui.actionContext ?? {}) as Record<string, unknown>;
               if (ctx.primaryNpcId == null) {
                 ui.actionContext = { ...ctx, primaryNpcId: resolvedNpcId };
+                // 전 장소 순회 검증 (2026-07-12 ①): serverResult만 고치면
+                // runState.actionHistory에는 null이 남아 다음 턴 잠금이 형성되지
+                // 않는다 — 잠금 공백에 이벤트 자유 배정이 침입해 화자 점프
+                // (실측 T15: 마이렐 대화 중 "떠돌이 용병이오" → 취객 소환).
+                // 같은 턴 엔트리의 primaryNpcId를 CAS 채널로 보충.
+                await this.applyRunStatePatch(
+                  pending.runId,
+                  'LockSeed',
+                  (rs) => {
+                    const history = rs.actionHistory as
+                      | Array<Record<string, unknown>>
+                      | undefined;
+                    if (!history) return false;
+                    for (let i = history.length - 1; i >= 0; i--) {
+                      if (history[i].turnNo === pending.turnNo) {
+                        if (history[i].primaryNpcId != null) return false;
+                        history[i].primaryNpcId = resolvedNpcId;
+                        return true;
+                      }
+                    }
+                    return false;
+                  },
+                );
+                this.logger.debug(
+                  `[LockSeed] turn=${pending.turnNo} actionHistory primaryNpcId 보충: ${resolvedNpcId}`,
+                );
               }
             }
             srChanged = true;
