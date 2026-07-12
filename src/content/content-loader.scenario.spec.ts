@@ -108,6 +108,16 @@ describe('ContentLoader — 시나리오 팩 계약 (architecture/63)', () => {
     expect(loader.getLocationDisplayName('LOC_NOPE')).toBe('LOC_NOPE');
   });
 
+  it('아크 루트 커밋 선택지 — 3루트 라벨 존재 (arch/68 부록 F)', () => {
+    const rcs = loader.getArcRouteCommitChoices();
+    expect(rcs.map((r) => r.route).sort()).toEqual([
+      'ALLY_GUARD',
+      'EXPOSE_CORRUPTION',
+      'PROFIT_FROM_CHAOS',
+    ]);
+    for (const rc of rcs) expect(rc.label.length).toBeGreaterThan(4);
+  });
+
   describe('silverdeen_v1 팩 로드 + 전환 격리', () => {
     beforeAll(async () => {
       await loader.loadScenario('silverdeen_v1');
@@ -121,6 +131,10 @@ describe('ContentLoader — 시나리오 팩 계약 (architecture/63)', () => {
       expect(loader.getAllLocations()).toHaveLength(5);
       expect(loader.getAllNpcs()).toHaveLength(12);
       expect(loader.getGraph()).toHaveLength(0);
+    });
+
+    it('아크 자산 없는 팩 — 커밋 선택지 미노출 계약 (arch/68 부록 F)', () => {
+      expect(loader.getArcRouteCommitChoices()).toEqual([]);
     });
 
     it('전환 시 graymar 항목 잔존 없음 (loadAll clear 회귀)', () => {

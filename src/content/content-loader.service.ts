@@ -702,6 +702,32 @@ export class ContentLoaderService implements OnModuleInit {
     return this.arcEvents[route] ?? [];
   }
 
+  /**
+   * 아크 루트 커밋 선택지 (1-A, arch/68 부록 F) — arc_events.json 최상위
+   * routeCommitChoices. 팩에 없으면 [] (silverdeen처럼 아크 자산 없는 팩은
+   * HUB에 커밋 선택지가 노출되지 않는다 — 팩 계약).
+   */
+  getArcRouteCommitChoices(): Array<{
+    route: string;
+    label: string;
+    hint: string;
+  }> {
+    const raw = (
+      this.arcEvents as unknown as Record<
+        string,
+        Record<string, { label?: string; hint?: string }> | unknown
+      >
+    )['routeCommitChoices'];
+    if (!raw || Array.isArray(raw) || typeof raw !== 'object') return [];
+    return Object.entries(raw as Record<string, { label?: string; hint?: string }>)
+      .filter(([, v]) => !!v?.label)
+      .map(([route, v]) => ({
+        route,
+        label: v.label!,
+        hint: v.hint ?? '',
+      }));
+  }
+
   // --- Phase 4: Set/Shop 메서드 ---
 
   getSet(id: string): SetDefinitionData | undefined {

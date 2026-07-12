@@ -585,12 +585,38 @@ export class SceneShellService {
     return this.contentLoader.getSceneShell(locationId, timePhase, hubSafety);
   }
 
-  buildHubChoices(ws: WorldState, _arcState: ArcState): ChoiceItem[] {
+  buildHubChoices(
+    ws: WorldState,
+    arcState: ArcState,
+    questState?: string | null,
+  ): ChoiceItem[] {
+    const choices: ChoiceItem[] = [];
+
+    // 아크 루트 커밋 선택지 (1-A, arch/68 부록 F) — 퀘스트 중반(S3+)에
+    // 루트 미커밋이면 명시 분기를 선두 노출. 3연속 완주 실측에서 아크가
+    // 전부 NONE("스쳐간 이방인")이라 12분기 에필로그가 사장되던 동선 보강.
+    // 콘텐츠(routeCommitChoices) 없는 팩(실버딘)은 자동 미노출.
+    const questStage = questState
+      ? parseInt(questState.match(/^S(\d)/)?.[1] ?? '0', 10)
+      : 0;
+    if (questStage >= 3 && !arcState.currentRoute) {
+      for (const rc of this.contentLoader.getArcRouteCommitChoices()) {
+        choices.push({
+          id: `arc_commit_${rc.route.toLowerCase()}`,
+          label: rc.label,
+          hint: rc.hint,
+          action: {
+            type: 'CHOICE' as const,
+            payload: { arcRoute: rc.route },
+          },
+        });
+      }
+    }
+
     // architecture/63: locations.json hubAccessible 파생 (구 4개 하드코딩).
     // 라벨은 "{장소명}(으)로 향한다", hint는 locations.json hubHint.
-    const choices: ChoiceItem[] = this.contentLoader
-      .getHubAccessibleLocations()
-      .map((loc) => ({
+    choices.push(
+      ...this.contentLoader.getHubAccessibleLocations().map((loc) => ({
         id: this.contentLoader.hubChoiceIdFor(loc.locationId),
         label: `${loc.name}${korParticleRo(loc.name)} 향한다`,
         hint: loc.hubHint ?? loc.description,
@@ -598,7 +624,8 @@ export class SceneShellService {
           type: 'CHOICE' as const,
           payload: { locationId: loc.locationId },
         },
-      }));
+      })),
+    );
 
     // Heat 해결 옵션 (Heat 30 이상일 때만 표시)
     if (ws.hubHeat >= 30) {

@@ -1799,10 +1799,15 @@ export class PromptBuilderService {
     }
 
     // 장소 도착 턴: NPC 대사 금지 (환경 묘사만)
+    // 3-B (arch/68 후속, 2026-07-12): ACTION "다른 장소로 이동한다"
+    // (MOVE_LOCATION) 도착 턴이 inputType==='SYSTEM' 한정에 걸리지 않아
+    // LLM이 즉흥 환영 인사를 지어내고 화자 미배정 → 무명 마커가 되던 구멍.
+    // MOVE 이벤트가 실린 이동 전용 턴이면 입력 타입 무관 도착 디렉티브 적용.
+    const hasMoveEvent = filteredEvents.some((e) => e.kind === 'MOVE');
     const isMoveOnly =
       filteredEvents.length > 0 &&
       filteredEvents.every((e) => e.kind === 'MOVE' || e.kind === 'SYSTEM') &&
-      inputType === 'SYSTEM';
+      (inputType === 'SYSTEM' || hasMoveEvent);
     if (isMoveOnly) {
       factsParts.push(
         '⚠️ 이것은 **새 장소 도착** 장면입니다. 직전 턴까지 함께 있던 인물들은 이전 장소에 남았습니다 — 이 장면에 등장·언급시키지 마세요 (배경 활동 포함). NPC가 먼저 대화를 시작하지 마세요. 이 장소의 환경 묘사와 분위기만 서술하고, 인물은 아래 [등장 가능 NPC 목록]에 있는 이들의 배경 활동(지나가기, 일하기)까지만 허용하며 대사는 금지합니다.',

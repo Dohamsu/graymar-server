@@ -404,6 +404,61 @@ export class TurnsService {
 
     const choiceId = body.input.choiceId;
 
+    // 아크 루트 커밋 (1-A, arch/68 부록 F) — HUB 노출 arc_commit_* 선택.
+    // 정적 이벤트(arcRouteTag) 운에 의존하던 route 진입을 명시 분기로 보강.
+    if (choiceId.startsWith('arc_commit_')) {
+      const commit = this.content
+        .getArcRouteCommitChoices()
+        .find((rc) => `arc_commit_${rc.route.toLowerCase()}` === choiceId);
+      if (!commit) {
+        throw new InvalidInputError(`Unknown arc commit choice: ${choiceId}`);
+      }
+      let newArc = this.arcService.switchRoute(
+        arcState,
+        commit.route as import('../db/types/index.js').ArcRoute,
+      );
+      // 명시 선택은 강한 의지 — 초기 결의 +2 (잠금 3 직전, 배신 여지는 유지)
+      newArc = this.arcService.progressCommitment(newArc, 2);
+      updatedRunState.arcState = newArc;
+
+      const hubChoices = this.sceneShellService.buildHubChoices(
+        ws,
+        newArc,
+        updatedRunState.questState,
+      );
+      const result = this.buildHubActionResult(
+        turnNo,
+        currentNode,
+        `마음을 정했다 — ${commit.label}`,
+        hubChoices,
+        ws,
+      );
+      result.events.push({
+        id: `arc_commit_${turnNo}`,
+        kind: 'SYSTEM',
+        text: `[노선] ${commit.label}`,
+        tags: ['ARC_COMMIT', commit.route],
+      });
+
+      await this.commitTurnRecord(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        choiceId,
+        result,
+        updatedRunState,
+        body.options?.skipLlm,
+      );
+      return {
+        accepted: true,
+        turnNo,
+        serverResult: result,
+        llm: { status: 'PENDING' as LlmStatus, narrative: null },
+        meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
+      };
+    }
+
     // LOCATION 이동 — architecture/63: locations.json hubAccessible 파생
     // (go_ choiceId 규약, HUB 노출 장소만 — 구 locationMap 4곳과 동일 범위)
     const hubChoiceLoc = this.content.getHubChoiceLocation(choiceId);
@@ -524,6 +579,7 @@ export class TurnsService {
       const hubChoices = this.sceneShellService.buildHubChoices(
         updatedRunState.worldState!,
         arcState,
+        updatedRunState.questState,
       );
       const result = this.buildHubActionResult(
         turnNo,
@@ -567,6 +623,7 @@ export class TurnsService {
       const hubChoices = this.sceneShellService.buildHubChoices(
         updatedRunState.worldState!,
         arcState,
+        updatedRunState.questState,
       );
       const result = this.buildHubActionResult(
         turnNo,
@@ -597,7 +654,7 @@ export class TurnsService {
 
     // 프롤로그 의뢰 수락
     if (choiceId === 'accept_quest') {
-      const hubChoices = this.sceneShellService.buildHubChoices(ws, arcState);
+      const hubChoices = this.sceneShellService.buildHubChoices(ws, arcState, updatedRunState.questState);
       const result: ServerResultV1 = {
         ...this.buildSystemResult(turnNo, currentNode, '의뢰를 수락했다.'),
         // architecture/63: scenario.json prologue.accept 스크립트
@@ -813,6 +870,7 @@ export class TurnsService {
         turnNo + 1,
         ws,
         arcState,
+        updatedRunState.questState,
       );
       transition.enterResult.turnNo = turnNo + 1;
       await this.db.insert(turns).values({
@@ -1053,6 +1111,7 @@ export class TurnsService {
         turnNo + 1,
         hubWs,
         arcState,
+        updatedRunState.questState,
       );
       transition.enterResult.turnNo = turnNo + 1;
       await this.db.insert(turns).values({
@@ -3035,6 +3094,16 @@ export class TurnsService {
         intent.actionType === 'SHOP' ||
         (intent.actionType === 'TRADE' &&
           /구매|구입|매입|사겠|사고 싶|사줘|산다|[을를] 사/.test(rawInput));
+      // 파서가 target을 못 뽑은 구매 입력("체력 강장제를 구매한다" →
+      // TRADE, target 없음 실측) — 현 장소 재고 이름을 원문과 직접 대조해 보충
+      if (isBuyIntent && !intent.target) {
+        const matched = this.content
+          .getShopsByLocation(locationId)
+          .flatMap((sd) => economy.shopStocks[sd.shopId]?.items ?? [])
+          .map((si) => this.content.getItem(si.itemId)?.name)
+          .find((nm): nm is string => !!nm && rawInput.includes(nm));
+        if (matched) intent.target = matched;
+      }
       if (isBuyIntent && intent.target) {
         const targetItemId = intent.target.toUpperCase().replace(/\s+/g, '_');
         // 현재 장소의 상점에서 아이템 찾기

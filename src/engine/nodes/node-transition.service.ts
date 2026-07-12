@@ -179,6 +179,7 @@ export class NodeTransitionService {
     turnNo: number,
     ws: WorldState,
     arcState: ArcState,
+    questState?: string | null,
   ): Promise<NodeTransitionResult> {
     const nextIndex = await this.getNextNodeIndex(runId);
 
@@ -213,7 +214,7 @@ export class NodeTransitionService {
     });
     if (!newNode) throw new InternalError('Failed to create HUB node');
 
-    const hubChoices = this.sceneShell.buildHubChoices(ws, arcState);
+    const hubChoices = this.sceneShell.buildHubChoices(ws, arcState, questState);
 
     const enterResult: ServerResultV1 = {
       version: 'server_result_v1',
