@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call */
 // architecture/57 — 보조 NPC 끼어들기 억제용 focusedNpcId / recentAuxSpeakers 회귀 테스트.
 //   메인 NPC 대화 집중 모드 진입 + 직전 끼어든 보조 NPC 추적 로직만 단위로 검증.
 //   build() 통합 경로(npcRelationFacts 필터 / locationContext 인물 라인 생략) 는

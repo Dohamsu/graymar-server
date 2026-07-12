@@ -1,4 +1,8 @@
-import { detectDialogueAct, isQuestionInput } from './dialogue-act.js';
+import {
+  detectDialogueAct,
+  isNpcFarewellUtterance,
+  isQuestionInput,
+} from './dialogue-act.js';
 
 describe('detectDialogueAct', () => {
   describe('GREETING', () => {
@@ -115,10 +119,6 @@ describe('isQuestionInput', () => {
 });
 
 describe('isNpcFarewellUtterance — NPC 작별 발화 감지 (P2 2026-07-11)', () => {
-  const { isNpcFarewellUtterance } = require('./dialogue-act.js') as {
-    isNpcFarewellUtterance: (u: string | null | undefined) => boolean;
-  };
-
   it.each([
     '내 딸아이가 보내온 편지를 읽어야 해서 이만 가봐야겠소.', // 실측: 토브렌 T10
     '이만 물러가겠소.',

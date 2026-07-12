@@ -204,7 +204,7 @@ export class RunParticipantsService {
   async addMidJoinMember(
     runId: string,
     userId: string,
-    partyId: string,
+    _partyId: string,
   ): Promise<void> {
     // 이미 참가 중인지 확인
     const existing = await this.db.query.runParticipants.findFirst({

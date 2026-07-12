@@ -184,15 +184,15 @@ describe('sanitizeNpcNamesForTurn', () => {
   });
 
   it('한 글자 NPC 실명이 독립 토큰으로 나올 때는 별칭으로 치환한다', () => {
-    expect(sanitizeNpcNamesForTurn('벅이 고개를 끄덕인다.', npcStates, getNpcDef, 1)).toBe(
-      '덩치 큰 하역 인부이 고개를 끄덕인다.',
-    );
+    expect(
+      sanitizeNpcNamesForTurn('벅이 고개를 끄덕인다.', npcStates, getNpcDef, 1),
+    ).toBe('덩치 큰 하역 인부이 고개를 끄덕인다.');
   });
 
   it('선택지 라벨의 미소개 한 글자 NPC 실명도 별칭으로 치환한다', () => {
-    expect(replaceNpcNameWithAlias('벅에게 말을 건다', '벅', '덩치 큰 하역 인부')).toBe(
-      '덩치 큰 하역 인부에게 말을 건다',
-    );
+    expect(
+      replaceNpcNameWithAlias('벅에게 말을 건다', '벅', '덩치 큰 하역 인부'),
+    ).toBe('덩치 큰 하역 인부에게 말을 건다');
   });
 
   it('unknownAlias 내부에 포함된 aliases 항목을 다시 unknownAlias로 확장하지 않는다', () => {

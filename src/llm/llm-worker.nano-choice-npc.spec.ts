@@ -54,31 +54,46 @@ describe('sanitizeNanoChoiceNpcsCore — nano 선택지 NPC 오염 교정', () =
     const logs: string[] = [];
     const out = sanitizeNanoChoiceNpcsCore(
       [
-        choice('nano_6_0', '그에게 은화 몇 닢을 슬쩍 밀어 넣는다', 'BRIBE', 'NPC_INFO_BROKER'),
+        choice(
+          'nano_6_0',
+          '그에게 은화 몇 닢을 슬쩍 밀어 넣는다',
+          'BRIBE',
+          'NPC_INFO_BROKER',
+        ),
         choice('nano_6_1', '그의 말을 더 듣고 싶다', 'TALK', 'NPC_EDRIC_VEIL'),
-        choice('nano_6_2', '멀리서 주변을 살핀다', 'OBSERVE', 'NPC_INFO_BROKER'),
+        choice(
+          'nano_6_2',
+          '멀리서 주변을 살핀다',
+          'OBSERVE',
+          'NPC_INFO_BROKER',
+        ),
       ],
       lockCtx,
       lookup,
       (m) => logs.push(m),
     );
-    expect(src(out[1]!)).toBe('NPC_INFO_BROKER'); // 오염 교정
-    expect(src(out[0]!)).toBe('NPC_INFO_BROKER'); // 정합 유지
+    expect(src(out[1])).toBe('NPC_INFO_BROKER'); // 오염 교정
+    expect(src(out[0])).toBe('NPC_INFO_BROKER'); // 정합 유지
     expect(logs).toHaveLength(1);
   });
 
   it('지목형 선택지(라벨에 NPC 이름/별칭 명시)는 nano 배정을 존중', () => {
     const out = sanitizeNanoChoiceNpcsCore(
       [
-        choice('nano_0', '회계사에게 장부에 대해 묻는다', 'TALK', 'NPC_EDRIC_VEIL'),
+        choice(
+          'nano_0',
+          '회계사에게 장부에 대해 묻는다',
+          'TALK',
+          'NPC_EDRIC_VEIL',
+        ),
         choice('nano_1', '에드릭 베일을 찾아간다', 'TALK', 'NPC_EDRIC_VEIL'),
       ],
       lockCtx,
       lookup,
       () => {},
     );
-    expect(src(out[0]!)).toBe('NPC_EDRIC_VEIL');
-    expect(src(out[1]!)).toBe('NPC_EDRIC_VEIL');
+    expect(src(out[0])).toBe('NPC_EDRIC_VEIL');
+    expect(src(out[1])).toBe('NPC_EDRIC_VEIL');
   });
 
   it('비대화 affordance(OBSERVE 등)는 교정 대상이 아니다', () => {
@@ -88,7 +103,7 @@ describe('sanitizeNanoChoiceNpcsCore — nano 선택지 NPC 오염 교정', () =
       lookup,
       () => {},
     );
-    expect(src(out[0]!)).toBe('NPC_EDRIC_VEIL');
+    expect(src(out[0])).toBe('NPC_EDRIC_VEIL');
   });
 
   it('이번 턴이 대화 계열이 아니면(SNEAK 등) 게이트 미작동', () => {
@@ -98,7 +113,7 @@ describe('sanitizeNanoChoiceNpcsCore — nano 선택지 NPC 오염 교정', () =
       lookup,
       () => {},
     );
-    expect(src(out[0]!)).toBe('NPC_EDRIC_VEIL');
+    expect(src(out[0])).toBe('NPC_EDRIC_VEIL');
   });
 
   it('작별 턴(npcFarewell)은 잠금이 닫히므로 교정하지 않는다', () => {
@@ -108,7 +123,7 @@ describe('sanitizeNanoChoiceNpcsCore — nano 선택지 NPC 오염 교정', () =
       lookup,
       () => {},
     );
-    expect(src(out[0]!)).toBe('NPC_EDRIC_VEIL');
+    expect(src(out[0])).toBe('NPC_EDRIC_VEIL');
   });
 
   it('lockNpcId 없으면(비대면 턴) 무개입', () => {
@@ -118,7 +133,7 @@ describe('sanitizeNanoChoiceNpcsCore — nano 선택지 NPC 오염 교정', () =
       lookup,
       () => {},
     );
-    expect(src(out[0]!)).toBe('NPC_EDRIC_VEIL');
+    expect(src(out[0])).toBe('NPC_EDRIC_VEIL');
   });
 
   it('sourceNpcId 없는 선택지(go_hub 등)는 건드리지 않는다', () => {
@@ -128,6 +143,6 @@ describe('sanitizeNanoChoiceNpcsCore — nano 선택지 NPC 오염 교정', () =
       lookup,
       () => {},
     );
-    expect(src(out[0]!)).toBeUndefined();
+    expect(src(out[0])).toBeUndefined();
   });
 });

@@ -9,7 +9,7 @@ class FakeRng {
   constructor(private readonly values: number[]) {}
   private i = 0;
   next(): number {
-    return this.values[Math.min(this.i++, this.values.length - 1)]!;
+    return this.values[Math.min(this.i++, this.values.length - 1)];
   }
   range(min: number, _max: number): number {
     return min;

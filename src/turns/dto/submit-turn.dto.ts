@@ -6,12 +6,14 @@ const PROMPT_INJECTION_PATTERNS = [
   /<\|im_(?:start|end)\|>/i, // ChatML 제어 토큰
   /<\|system\|>/i,
   /```(?:system|prompt|role)/i,
+  // eslint-disable-next-line no-control-regex -- 제어문자 차단이 목적인 의도적 패턴
   /[\u0000-\u0008\u000B-\u001F\u007F]/, // 제어문자 (\t, \n, \r 제외)
 ];
 
 function sanitizeRawInput(raw: string): string {
   let s = raw;
   // 제어문자 제거
+  // eslint-disable-next-line no-control-regex -- 제어문자 제거가 목적인 의도적 패턴
   s = s.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '');
   // 시스템 태그 모방을 일반 텍스트로 중화 (대괄호 제거)
   s = s.replace(/\[(SYSTEM|INST|USER|ASSISTANT)\]/gi, '($1)');

@@ -20,26 +20,20 @@ describe('QuestProgression — 사례금 보상 (경제 루프)', () => {
   it('graymar_v1 — factGold와 전환 사례금이 quest.json rewards에서 조회된다', () => {
     runInScenarioContext('graymar_v1', () => {
       expect(quest.getFactGoldReward()).toBe(5);
-      expect(
-        quest.getTransitionGoldReward('S0_ARRIVE', 'S1_GET_ANGLE'),
-      ).toBe(10);
-      expect(
-        quest.getTransitionGoldReward('S4_CONFRONT', 'S5_RESOLVE'),
-      ).toBe(25);
+      expect(quest.getTransitionGoldReward('S0_ARRIVE', 'S1_GET_ANGLE')).toBe(
+        10,
+      );
+      expect(quest.getTransitionGoldReward('S4_CONFRONT', 'S5_RESOLVE')).toBe(
+        25,
+      );
       // 정의되지 않은 전환은 0 (지급 없음)
       expect(quest.getTransitionGoldReward('S0_ARRIVE', 'S5_RESOLVE')).toBe(0);
       // P4 — 전환 장비 보상: 정의된 전환만 baseItemId, 나머지 null
       expect(
-        quest.getTransitionEquipmentReward(
-          'S1_GET_ANGLE',
-          'S2_PROVE_TAMPER',
-        ),
+        quest.getTransitionEquipmentReward('S1_GET_ANGLE', 'S2_PROVE_TAMPER'),
       ).toBe('EQ_PATROL_ARMOR');
       expect(
-        quest.getTransitionEquipmentReward(
-          'S3_TRACE_ROUTE',
-          'S4_CONFRONT',
-        ),
+        quest.getTransitionEquipmentReward('S3_TRACE_ROUTE', 'S4_CONFRONT'),
       ).toBe('EQ_SCOUTS_GOGGLES');
       expect(
         quest.getTransitionEquipmentReward('S0_ARRIVE', 'S1_GET_ANGLE'),
@@ -50,9 +44,9 @@ describe('QuestProgression — 사례금 보상 (경제 루프)', () => {
   it('silverdeen_v1 — 팩별 rewards가 컨텍스트로 격리 조회된다', () => {
     runInScenarioContext('silverdeen_v1', () => {
       expect(quest.getFactGoldReward()).toBe(5);
-      expect(
-        quest.getTransitionGoldReward('S0_ARRIVE', 'S1_GET_ANGLE'),
-      ).toBe(10);
+      expect(quest.getTransitionGoldReward('S0_ARRIVE', 'S1_GET_ANGLE')).toBe(
+        10,
+      );
     });
   });
 

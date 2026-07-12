@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import {
   NpcReactionDirectorService,
   type NpcReactionContext,
@@ -64,7 +64,7 @@ describe('NpcReactionDirectorService', () => {
       npcRole: '상인',
       personalityCore: '경계심 많은 중년',
       speechStyle: '하오체, 짧고 단호한 말투',
-      signature: ['눈을 가늘게 뜬다'],
+      // signature 필드는 arch/56(어휘 anchor 유발)으로 NpcReactionContext에서 제거됨
       softSpot: '딸 이야기',
       innerConflict: '돈과 양심 사이',
       npcState: makeNpcState(),
@@ -282,7 +282,7 @@ describe('NpcReactionDirectorService', () => {
           ],
         }),
       );
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
       const userMsg = mockLlmCaller.call.mock.calls[0][0].messages[1]
         .content as string;
       expect(userMsg).toContain('[이 NPC 최근 대화 흐름');
@@ -313,7 +313,7 @@ describe('NpcReactionDirectorService', () => {
           ],
         }),
       );
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
       const userMsg = mockLlmCaller.call.mock.calls[0][0].messages[1]
         .content as string;
       expect(userMsg).toContain('[최근 플레이어 행동');
@@ -336,7 +336,7 @@ describe('NpcReactionDirectorService', () => {
           recentNpcDialogues: [longText, longText],
         }),
       );
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+
       const userMsg = mockLlmCaller.call.mock.calls[0][0].messages[1]
         .content as string;
       // T-1: 220자 + 말줄임표

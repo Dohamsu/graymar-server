@@ -5,6 +5,8 @@ import { StatusService } from '../status/status.service.js';
 import { HitService } from './hit.service.js';
 import { DamageService } from './damage.service.js';
 import { EnemyAiService } from './enemy-ai.service.js';
+import { AffixService } from '../rewards/affix.service.js';
+import { EquipmentService } from '../rewards/equipment.service.js';
 import type { ContentLoaderService } from '../../content/content-loader.service.js';
 import type { ItemDefinition } from '../../content/content.types.js';
 import type { BattleStateV1 } from '../../db/types/index.js';
@@ -116,9 +118,14 @@ function makeDefaultBattleState(
   };
 }
 
+// 기본 6스탯은 필수 필드 충족용 — 전투 수치는 아래 파생값(atk/def/...)이
+// 명시돼 있어 deriveCombatStats 를 타지 않으므로 판정 결과에 영향 없음.
+const BASE_SIX = { str: 12, dex: 10, wit: 8, con: 10, per: 7, cha: 8 };
+
 const defaultPlayerStats: PermanentStats = {
   maxHP: 100,
   maxStamina: 5,
+  ...BASE_SIX,
   atk: 15,
   def: 10,
   acc: 5,
@@ -133,6 +140,7 @@ const defaultEnemyStats: Record<string, PermanentStats> = {
   enemy_01: {
     maxHP: 50,
     maxStamina: 5,
+    ...BASE_SIX,
     atk: 10,
     def: 5,
     acc: 5,
@@ -148,6 +156,7 @@ describe('CombatService', () => {
   let service: CombatService;
 
   beforeEach(() => {
+    const contentLoader = mockContentLoader();
     service = new CombatService(
       new RngService(),
       new StatsService(),
@@ -155,7 +164,8 @@ describe('CombatService', () => {
       new HitService(),
       new DamageService(),
       new EnemyAiService(),
-      mockContentLoader(),
+      contentLoader,
+      new EquipmentService(contentLoader, new AffixService(contentLoader)),
     );
   });
 
@@ -390,6 +400,7 @@ describe('CombatService', () => {
         enemy_01: {
           maxHP: 50,
           maxStamina: 5,
+          ...BASE_SIX,
           atk: 200,
           def: 5,
           acc: 50,

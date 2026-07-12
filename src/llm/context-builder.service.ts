@@ -2518,7 +2518,7 @@ export class ContextBuilderService {
   /** NPC 아젠다 목격 힌트: 이번 턴에 진행된 아젠다 중 플레이어가 같은 장소에 있는 것 */
   private buildAgendaWitnessHint(
     runState: Record<string, unknown> | null | undefined,
-    serverResult: ServerResultV1,
+    _serverResult: ServerResultV1,
   ): string | null {
     if (!runState?.worldState) return null;
     const ws = runState.worldState as Record<string, unknown>;

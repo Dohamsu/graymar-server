@@ -30,7 +30,9 @@ describe('Narrative Pipeline Integration Tests (PR8)', () => {
     mockAiTurnLog as any,
   );
   const intentMemory = new IntentMemoryService();
-  const memoryRenderer = new MemoryRendererService();
+  // MemoryRenderer 는 content 를 로어북 키워드 조회에만 사용 — 이 스위트 범위 밖이라 빈 mock
+  const mockContent = { getAllNpcs: () => [] } as any;
+  const memoryRenderer = new MemoryRendererService(mockContent);
   const eventMatcher = new EventMatcherService();
   const eventDirector = new EventDirectorService(eventMatcher);
   const proceduralEvent = new ProceduralEventService();

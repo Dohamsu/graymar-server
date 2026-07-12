@@ -8,6 +8,7 @@ import { fakeScenarioAccessors } from './testing/fake-scenario-meta.js';
 import { PromptBuilderService } from './prompt-builder.service.js';
 import type { LlmContext } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
+import type { NPCState } from '../../db/types/npc-state.js';
 
 type NpcDef = Record<string, unknown>;
 class FakeContent {
@@ -137,7 +138,8 @@ const baseCtx = (overrides: Partial<LlmContext> = {}): LlmContext =>
     ...overrides,
   }) as LlmContext;
 
-const baseSr = (overrides: Partial<ServerResultV1> = {}): ServerResultV1 =>
+// overrides 는 최소 형태의 부분 SR (ui 등 부분 객체 허용) — 최종 unknown 캐스팅과 일관
+const baseSr = (overrides: Record<string, unknown> = {}): ServerResultV1 =>
   ({
     server: 'graymar',
     rngCursor: 0,
@@ -283,7 +285,10 @@ describe('PromptBuilderService — 엔딩 턴 피날레 디렉티브 (2026-07-11
     const sr = baseSr({
       ui: {
         resolveOutcome: 'SUCCESS',
-        actionContext: { parsedType: 'SNEAK' },
+        actionContext: {
+          parsedType: 'SNEAK',
+          originalInput: '조심스럽게 잠입한다',
+        },
         endingResult: { endingType: 'NATURAL' },
       },
     });
@@ -297,7 +302,10 @@ describe('PromptBuilderService — 엔딩 턴 피날레 디렉티브 (2026-07-11
     const sr = baseSr({
       ui: {
         resolveOutcome: 'SUCCESS',
-        actionContext: { parsedType: 'SNEAK' },
+        actionContext: {
+          parsedType: 'SNEAK',
+          originalInput: '조심스럽게 잠입한다',
+        },
         endingResult: { endingType: 'SOMETHING_NEW' },
       },
     });
@@ -318,7 +326,6 @@ describe('PromptBuilderService — 엔딩 턴 피날레 디렉티브 (2026-07-11
       tier: 'CORE',
     });
     const ctxWithIntro = baseCtx({
-      npcInjection: { npcIds: ['NPC_HARLUN'] },
       newlyIntroducedNpcIds: ['NPC_HARLUN'],
       newlyEncounteredNpcIds: ['NPC_HARLUN'],
       introDialogue: { npcId: 'NPC_HARLUN', text: '하를룬이라 하오.' },
@@ -334,7 +341,12 @@ describe('PromptBuilderService — 엔딩 턴 피날레 디렉티브 (2026-07-11
       },
     });
     const text = promptText(
-      promptBuilder.buildNarrativePrompt(ctxWithIntro, srFarewell, '이만 가보겠소', 'ACTION'),
+      promptBuilder.buildNarrativePrompt(
+        ctxWithIntro,
+        srFarewell,
+        '이만 가보겠소',
+        'ACTION',
+      ),
     );
     expect(text).not.toContain('자기소개');
     expect(text).not.toContain('하를룬이라 하오');
@@ -350,25 +362,34 @@ describe('PromptBuilderService — 엔딩 턴 피날레 디렉티브 (2026-07-11
       tier: 'CORE',
     });
     const ctxWithIntro = baseCtx({
-      npcInjection: { npcIds: ['NPC_HARLUN'] },
       newlyIntroducedNpcIds: ['NPC_HARLUN'],
       newlyEncounteredNpcIds: ['NPC_HARLUN'],
     });
     const srEnding = baseSr({
       ui: {
         resolveOutcome: 'SUCCESS',
-        actionContext: { parsedType: 'TALK' },
+        actionContext: { parsedType: 'TALK', originalInput: '말을 건다' },
         endingResult: { endingType: 'NATURAL' },
       },
     });
     const text = promptText(
-      promptBuilder.buildNarrativePrompt(ctxWithIntro, srEnding, '말을 건다', 'ACTION'),
+      promptBuilder.buildNarrativePrompt(
+        ctxWithIntro,
+        srEnding,
+        '말을 건다',
+        'ACTION',
+      ),
     );
     expect(text).not.toContain('[자기소개]');
     expect(text).not.toContain('이름 공개');
     // 일반 턴에서는 소개 지시가 발화되어야 함 (가드가 과잉 차단하지 않는지)
     const textNormal = promptText(
-      promptBuilder.buildNarrativePrompt(ctxWithIntro, baseSr(), '말을 건다', 'ACTION'),
+      promptBuilder.buildNarrativePrompt(
+        ctxWithIntro,
+        baseSr(),
+        '말을 건다',
+        'ACTION',
+      ),
     );
     expect(textNormal).toContain('자기소개');
   });
@@ -396,10 +417,11 @@ describe('PromptBuilderService — 사전 확정 자기소개 지시 (이름 공
 
   const introCtx = (withDialogue: boolean) =>
     baseCtx({
-      npcInjection: { npcIds: ['NPC_MAIREL'] },
       newlyIntroducedNpcIds: ['NPC_MAIREL'],
       newlyEncounteredNpcIds: ['NPC_MAIREL'],
-      npcStates: { NPC_MAIREL: { posture: 'CALCULATING' } },
+      npcStates: {
+        NPC_MAIREL: { posture: 'CALCULATING' } as unknown as NPCState,
+      },
       ...(withDialogue
         ? {
             introDialogue: {
@@ -412,7 +434,12 @@ describe('PromptBuilderService — 사전 확정 자기소개 지시 (이름 공
 
   it('introDialogue 존재 → 사전 확정 대사 지시 (경계 성향도 자기소개 통일)', () => {
     const text = promptText(
-      promptBuilder.buildNarrativePrompt(introCtx(true), baseSr(), '말을 건다', 'ACTION'),
+      promptBuilder.buildNarrativePrompt(
+        introCtx(true),
+        baseSr(),
+        '말을 건다',
+        'ACTION',
+      ),
     );
     expect(text).toContain('[자기소개 — 사전 확정 대사]');
     expect(text).toContain('알아둬서 나쁠 것 없겠지. 마이렐 단 경이오.');
@@ -422,7 +449,12 @@ describe('PromptBuilderService — 사전 확정 자기소개 지시 (이름 공
 
   it('introDialogue 부재(생성 실패) → 기존 연출 경로 fallback', () => {
     const text = promptText(
-      promptBuilder.buildNarrativePrompt(introCtx(false), baseSr(), '말을 건다', 'ACTION'),
+      promptBuilder.buildNarrativePrompt(
+        introCtx(false),
+        baseSr(),
+        '말을 건다',
+        'ACTION',
+      ),
     );
     // CALCULATING 첫 시도 → 기존 avoidSelf 외부 경로
     expect(text).toContain('제3자 호명');

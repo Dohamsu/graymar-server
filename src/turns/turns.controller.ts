@@ -70,7 +70,7 @@ export class TurnsController {
   streamTurn(
     @Param('runId') runId: string,
     @Param('turnNo') turnNo: string,
-    @UserId() userId: string,
+    @UserId() _userId: string,
   ): Observable<{ data: string }> {
     const tn = parseInt(turnNo, 10);
     return this.streamBroker.getChannel(runId, tn).pipe(

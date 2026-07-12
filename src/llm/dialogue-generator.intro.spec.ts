@@ -29,14 +29,18 @@ class FakeConfig {
     return { model: 'test-model' };
   }
 }
-const makeService = (responses: Array<string | null>): DialogueGeneratorService => {
+const makeService = (
+  responses: Array<string | null>,
+): DialogueGeneratorService => {
   let i = 0;
   const caller = {
-    call: async () => {
+    call: () => {
       const text = responses[Math.min(i++, responses.length - 1)];
-      return text
-        ? { success: true, response: { text } }
-        : { success: false, response: null };
+      return Promise.resolve(
+        text
+          ? { success: true, response: { text } }
+          : { success: false, response: null },
+      );
     },
   };
   return new DialogueGeneratorService(

@@ -1,133 +1,19 @@
 /**
  * Player-First 로직 단위 테스트
  *
- * turns.service.ts의 private 메서드(determineTurnMode, extractTargetNpcFromInput)를
- * 순수 함수로 복제하여 로직만 검증한다.
+ * export 정본(determineTurnModeCore, extractTargetNpcCore)을 직접 import — 복제 drift 방지.
+ * (이전에는 turns.service.ts private 메서드를 사본으로 복제했으나,
+ *  bug 4620 aliases/shortAlias 매칭 + arch/49 RISKY_FRAGMENTS가 사본에 반영되지 않는
+ *  drift가 발생하여 정본 참조로 전환 — arch/67 부록 B 방침)
  */
 
-// ── TurnMode enum 복제 ──
-enum TurnMode {
-  PLAYER_DIRECTED = 'PLAYER_DIRECTED',
-  CONVERSATION_CONT = 'CONVERSATION_CONT',
-  WORLD_EVENT = 'WORLD_EVENT',
-}
-
-// ── determineTurnMode 로직 복제 ──
-interface TurnModeInput {
-  earlyTargetNpcId: string | null;
-  intentV3TargetNpcId: string | null;
-  actionType: string;
-  lastPrimaryNpcId: string | null;
-  contextNpcId: string | null;
-  isFirstTurnAtLocation: boolean;
-  incidentPressureHigh: boolean;
-  questFactTrigger: boolean;
-}
-
-const SOCIAL_ACTIONS = new Set([
-  'TALK',
-  'PERSUADE',
-  'BRIBE',
-  'THREATEN',
-  'HELP',
-  'INVESTIGATE',
-  'OBSERVE',
-  'TRADE',
-]);
-
-function determineTurnMode(ctx: TurnModeInput): TurnMode {
-  // 1) 플레이어가 NPC를 명시적으로 지목
-  if (ctx.earlyTargetNpcId || ctx.intentV3TargetNpcId) {
-    if (ctx.isFirstTurnAtLocation) {
-      return TurnMode.WORLD_EVENT;
-    }
-    return TurnMode.PLAYER_DIRECTED;
-  }
-
-  // 2) 대화 연속 (SOCIAL_ACTION + 이전 대화 NPC 존재)
-  if (ctx.lastPrimaryNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
-    if (ctx.isFirstTurnAtLocation) {
-      return TurnMode.WORLD_EVENT;
-    }
-    return TurnMode.CONVERSATION_CONT;
-  }
-
-  // 2b) 맥락 NPC 연결
-  if (ctx.contextNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
-    if (ctx.isFirstTurnAtLocation) {
-      return TurnMode.WORLD_EVENT;
-    }
-    return TurnMode.CONVERSATION_CONT;
-  }
-
-  // 3) 강제 세계 이벤트
-  if (
-    ctx.isFirstTurnAtLocation ||
-    ctx.incidentPressureHigh ||
-    ctx.questFactTrigger
-  ) {
-    return TurnMode.WORLD_EVENT;
-  }
-
-  // 4) 기본값
-  return TurnMode.PLAYER_DIRECTED;
-}
-
-// ── extractTargetNpcFromInput 로직 복제 ──
-interface MockNpc {
-  npcId: string;
-  name: string | null;
-  unknownAlias: string | null;
-}
-
-function extractTargetNpcFromInput(
-  rawInput: string,
-  inputType: string,
-  allNpcs: MockNpc[],
-): string | null {
-  if (inputType !== 'ACTION' || !rawInput) return null;
-
-  const inputLower = rawInput.toLowerCase();
-
-  // Pass 1: 실명 또는 별칭 전체 매칭
-  for (const npc of allNpcs) {
-    if (npc.name && inputLower.includes(npc.name.toLowerCase()))
-      return npc.npcId;
-    if (npc.unknownAlias && inputLower.includes(npc.unknownAlias.toLowerCase()))
-      return npc.npcId;
-  }
-
-  // Pass 2: "~에게" 패턴
-  const egeMatch = rawInput.match(/(.+?)에게/);
-  if (egeMatch) {
-    const targetWord = egeMatch[1].trim().toLowerCase();
-    for (const npc of allNpcs) {
-      if (npc.name && targetWord.includes(npc.name.toLowerCase()))
-        return npc.npcId;
-      const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
-      if (
-        aliasKw.some(
-          (kw: string) =>
-            kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
-        )
-      )
-        return npc.npcId;
-    }
-  }
-
-  // Pass 3: 별칭 키워드 부분 매칭 (3자 이상)
-  for (const npc of allNpcs) {
-    const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
-    if (
-      aliasKw.some(
-        (kw: string) => kw.length >= 3 && inputLower.includes(kw.toLowerCase()),
-      )
-    )
-      return npc.npcId;
-  }
-
-  return null;
-}
+import {
+  TurnMode,
+  determineTurnModeCore as determineTurnMode,
+  extractTargetNpcCore as extractTargetNpcFromInput,
+  type TurnModeContext as TurnModeInput,
+  type TargetNpcCandidate as MockNpc,
+} from './turns.service.js';
 
 // ── 테스트 헬퍼 ──
 function baseCtx(overrides: Partial<TurnModeInput> = {}): TurnModeInput {
@@ -588,5 +474,75 @@ describe('extractTargetNpcFromInput', () => {
     expect(
       extractTargetNpcFromInput('에드릭에게 말한다', 'ACTION', []),
     ).toBeNull();
+  });
+
+  // ── Pass 1: shortAlias / aliases 매칭 (bug 4620) ──
+  const npcsWithShortAlias: MockNpc[] = [
+    {
+      npcId: 'NPC_D',
+      name: '하위크 브렌트',
+      unknownAlias: '험상궂은 문지기',
+      shortAlias: '문지기',
+      aliases: ['하위크'],
+    },
+  ];
+
+  it('shortAlias 매칭: "문지기를 부른다" → NPC_D', () => {
+    expect(
+      extractTargetNpcFromInput(
+        '문지기를 부른다',
+        'ACTION',
+        npcsWithShortAlias,
+      ),
+    ).toBe('NPC_D');
+  });
+
+  it('aliases 매칭: "하위크한테 묻는다" → NPC_D (단독 별칭)', () => {
+    expect(
+      extractTargetNpcFromInput(
+        '하위크한테 묻는다',
+        'ACTION',
+        npcsWithShortAlias,
+      ),
+    ).toBe('NPC_D');
+  });
+
+  it('aliases "~에게" 패턴: "하위크에게 다가간다" → NPC_D', () => {
+    expect(
+      extractTargetNpcFromInput(
+        '하위크에게 다가간다',
+        'ACTION',
+        npcsWithShortAlias,
+      ),
+    ).toBe('NPC_D');
+  });
+
+  // ── Pass 3: RISKY_FRAGMENTS 제외 (arch/49 환경 명사 false positive 방지) ──
+  const npcsWithRiskyAlias: MockNpc[] = [
+    {
+      npcId: 'NPC_E',
+      name: null,
+      unknownAlias: '향수 냄새가 강한 미망인',
+    },
+  ];
+
+  it('RISKY_FRAGMENTS 제외: "냄새가 강한 약초를 살핀다" → null (환경 표현)', () => {
+    expect(
+      extractTargetNpcFromInput(
+        '냄새가 강한 약초를 살핀다',
+        'ACTION',
+        npcsWithRiskyAlias,
+      ),
+    ).toBeNull();
+  });
+
+  it('RISKY_FRAGMENTS 비해당 키워드는 매칭: "미망인을 찾아간다" → NPC_E', () => {
+    expect(
+      extractTargetNpcFromInput(
+        '미망인을 찾아간다',
+        'ACTION',
+        npcsWithRiskyAlias,
+      ),
+    ).toBe('NPC_E');
   });
 });

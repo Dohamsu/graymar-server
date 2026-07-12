@@ -108,7 +108,7 @@ export class ConsequenceProcessorService {
             text: sigText,
             createdAtClock: ws.globalClock,
           });
-          ws.signalFeed = sf as any;
+          ws.signalFeed = sf as unknown as typeof ws.signalFeed;
         }
 
         // === 임계값 트리거: 장소 수치 → 조건 자동 발동 ===

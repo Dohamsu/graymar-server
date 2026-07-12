@@ -1,15 +1,11 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { partyTurnActions } from '../db/schema/party-turn-actions.js';
 import { partyMembers } from '../db/schema/party-members.js';
 import { runSessions } from '../db/schema/run-sessions.js';
 import { turns } from '../db/schema/index.js';
 import { users } from '../db/schema/users.js';
-import {
-  BadRequestError,
-  NotFoundError,
-} from '../common/errors/game-errors.js';
 import { PartyStreamService } from './party-stream.service.js';
 import { ChatService } from './chat.service.js';
 import { TurnsService } from '../turns/turns.service.js';
@@ -64,12 +60,12 @@ export class PartyTurnService {
   /**
    * 새 턴을 시작한다. 30초 타이머 + 경고 이벤트 등록.
    */
-  async startTurn(
+  startTurn(
     runId: string,
     turnNo: number,
     partyId: string,
     memberUserIds: string[],
-  ): Promise<void> {
+  ): void {
     // 기존 타이머 정리
     this.clearTimer(runId);
 
@@ -120,7 +116,7 @@ export class PartyTurnService {
   private async autoSubmitForAiMembers(
     runId: string,
     turnNo: number,
-    partyId: string,
+    _partyId: string,
   ): Promise<void> {
     const aiSet = this.aiControlled.get(runId);
     if (!aiSet || aiSet.size === 0) return;
@@ -167,7 +163,7 @@ export class PartyTurnService {
     partyId: string,
     inputType: string,
     rawInput: string,
-    idempotencyKey: string,
+    _idempotencyKey: string,
   ): Promise<{
     accepted: boolean;
     allSubmitted: boolean;
@@ -264,7 +260,7 @@ export class PartyTurnService {
   private async checkAllSubmitted(
     runId: string,
     turnNo: number,
-    partyId: string,
+    _partyId: string,
   ) {
     const submittedActions = await this.getSubmittedActions(runId, turnNo);
     const submittedUserIds = submittedActions.map((a) => a.userId);
@@ -507,11 +503,14 @@ export class PartyTurnService {
       `[resolveTurn] submitting: leader=${leaderId.slice(0, 8)} turnNo=${turnNo} input="${combinedInput.slice(0, 60)}"`,
     );
     try {
-      const turnResult = await this.turnsService.submitTurn(runId, leaderId, {
+      const turnResult = (await this.turnsService.submitTurn(runId, leaderId, {
         input: { type: 'ACTION' as const, text: combinedInput },
         expectedNextTurnNo: turnNo,
         idempotencyKey: `party-${runId}-${turnNo}`,
-      });
+      })) as {
+        serverResult?: unknown;
+        llm?: { status?: string } | null;
+      };
 
       // 6. 턴 레코드에 partyActions 저장 (LLM Worker가 참조)
       await this.db

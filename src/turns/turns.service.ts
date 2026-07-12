@@ -3,13 +3,179 @@
 // Player-First Event Engine: 이벤트가 유저를 끌고가지 않고, 유저가 게임을 끌고간다
 
 /** LOCATION 턴 모드 — 이벤트 매칭 전에 결정되어 파이프라인을 분기 */
-enum TurnMode {
+export enum TurnMode {
   /** 플레이어가 NPC/행동을 명시 → 이벤트 매칭 스킵, NPC 직접 상호작용 */
   PLAYER_DIRECTED = 'PLAYER_DIRECTED',
   /** 대화 연속 중 → 이벤트 매칭 스킵, 같은 NPC 유지 */
   CONVERSATION_CONT = 'CONVERSATION_CONT',
   /** 세계 이벤트 트리거 → 기존 이벤트 매칭 파이프라인 */
   WORLD_EVENT = 'WORLD_EVENT',
+}
+
+// ── Player-First 정본 순수 함수 (spec 이 직접 import — 복제 drift 방지) ──
+
+export interface TurnModeContext {
+  earlyTargetNpcId: string | null;
+  intentV3TargetNpcId: string | null;
+  actionType: string;
+  lastPrimaryNpcId: string | null;
+  /** 직전 턴의 primaryNpcId (행동 종류 무관 — FIGHT 후에도 유지) */
+  contextNpcId: string | null;
+  isFirstTurnAtLocation: boolean;
+  incidentPressureHigh: boolean;
+  questFactTrigger: boolean;
+}
+
+const SOCIAL_ACTIONS = new Set([
+  'TALK',
+  'PERSUADE',
+  'BRIBE',
+  'THREATEN',
+  'HELP',
+  'INVESTIGATE',
+  'OBSERVE',
+  'TRADE',
+]);
+
+export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
+  // 1) 플레이어가 NPC를 명시적으로 지목
+  if (ctx.earlyTargetNpcId || ctx.intentV3TargetNpcId) {
+    if (ctx.isFirstTurnAtLocation) {
+      return TurnMode.WORLD_EVENT;
+    }
+    return TurnMode.PLAYER_DIRECTED;
+  }
+
+  // 2) 대화 연속 (SOCIAL_ACTION + 이전 대화 NPC 존재)
+  if (ctx.lastPrimaryNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
+    if (ctx.isFirstTurnAtLocation) {
+      return TurnMode.WORLD_EVENT;
+    }
+    return TurnMode.CONVERSATION_CONT;
+  }
+
+  // 2b) 맥락 NPC 연결 — FIGHT/STEAL 후 TALK 시 직전 NPC를 대화 대상으로 유지
+  // "이게 뭔지 대답해" 같이 대상 미명시 + 직전 턴에 NPC가 있었으면 맥락 연결
+  if (ctx.contextNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
+    if (ctx.isFirstTurnAtLocation) {
+      return TurnMode.WORLD_EVENT;
+    }
+    return TurnMode.CONVERSATION_CONT;
+  }
+
+  // 3) 강제 세계 이벤트 (축소된 조건)
+  if (
+    ctx.isFirstTurnAtLocation ||
+    ctx.incidentPressureHigh ||
+    ctx.questFactTrigger
+  ) {
+    return TurnMode.WORLD_EVENT;
+  }
+
+  // 4) 기본값: 플레이어 주도 (이벤트 강제 없음)
+  return TurnMode.PLAYER_DIRECTED;
+}
+
+export interface TargetNpcCandidate {
+  npcId: string;
+  name?: string | null;
+  unknownAlias?: string | null;
+  shortAlias?: string | null;
+  aliases?: string[];
+}
+
+// Pass 3 환경 명사 false positive 방지 (architecture/49)
+// "냄새가" → 향수 냄새가 강한 미망인 같은 매칭은 환경 표현이지 NPC 호명 아님.
+const RISKY_FRAGMENTS = new Set([
+  '젊은',
+  '늙은',
+  '냄새가',
+  '강한',
+  '약한',
+  '큰',
+  '작은',
+  '조용한',
+  '시끄러운',
+  '빠른',
+  '느린',
+  '뜨거운',
+  '차가운',
+  '날카로운',
+  '풋풋한',
+  '투박한',
+  '거친',
+  '부드러운',
+  '다정한',
+  '향수',
+]);
+
+export function extractTargetNpcCore(
+  rawInput: string,
+  inputType: string,
+  allNpcs: TargetNpcCandidate[],
+): string | null {
+  if (inputType !== 'ACTION' || !rawInput) return null;
+
+  const inputLower = rawInput.toLowerCase();
+
+  // Pass 1: 실명/unknownAlias/aliases/shortAlias 전체 매칭 (bug 4620)
+  //   이전엔 name/unknownAlias만 검사 — aliases/shortAlias 누락으로 "하위크"
+  //   같은 단독 별칭 입력 시 타깃 NPC 식별 실패했음.
+  for (const npc of allNpcs) {
+    if (npc.name && inputLower.includes(npc.name.toLowerCase()))
+      return npc.npcId;
+    if (npc.unknownAlias && inputLower.includes(npc.unknownAlias.toLowerCase()))
+      return npc.npcId;
+    if (npc.shortAlias && inputLower.includes(npc.shortAlias.toLowerCase()))
+      return npc.npcId;
+    if (npc.aliases && npc.aliases.length > 0) {
+      for (const al of npc.aliases) {
+        if (al && al.length >= 2 && inputLower.includes(al.toLowerCase()))
+          return npc.npcId;
+      }
+    }
+  }
+
+  // Pass 2: "~에게" 패턴
+  const egeMatch = rawInput.match(/(.+?)에게/);
+  if (egeMatch) {
+    const targetWord = egeMatch[1].trim().toLowerCase();
+    for (const npc of allNpcs) {
+      if (npc.name && targetWord.includes(npc.name.toLowerCase()))
+        return npc.npcId;
+      const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
+      if (
+        aliasKw.some(
+          (kw: string) =>
+            kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
+        )
+      )
+        return npc.npcId;
+      // aliases도 "에게" 패턴 타겟 비교
+      if (npc.aliases && npc.aliases.length > 0) {
+        for (const al of npc.aliases) {
+          if (al && al.length >= 2 && targetWord.includes(al.toLowerCase()))
+            return npc.npcId;
+        }
+      }
+    }
+  }
+
+  // Pass 3: 별칭 키워드 부분 매칭 (3자 이상, RISKY_FRAGMENTS 제외)
+  for (const npc of allNpcs) {
+    const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
+    if (
+      aliasKw.some(
+        (kw: string) =>
+          kw.length >= 3 &&
+          !RISKY_FRAGMENTS.has(kw) &&
+          inputLower.includes(kw.toLowerCase()),
+      )
+    )
+      return npc.npcId;
+  }
+
+  return null;
 }
 
 import { korParticle, korParticleRo } from '../common/korean.js';
@@ -130,7 +296,6 @@ import { CampaignsService } from '../campaigns/campaigns.service.js';
 import {
   initNPCState,
   getNpcDisplayName,
-  isNameRevealed,
   shouldIntroduce,
   resolveNpcPlaceholders,
   recordNpcEncounter,
@@ -654,7 +819,11 @@ export class TurnsService {
 
     // 프롤로그 의뢰 수락
     if (choiceId === 'accept_quest') {
-      const hubChoices = this.sceneShellService.buildHubChoices(ws, arcState, updatedRunState.questState);
+      const hubChoices = this.sceneShellService.buildHubChoices(
+        ws,
+        arcState,
+        updatedRunState.questState,
+      );
       const result: ServerResultV1 = {
         ...this.buildSystemResult(turnNo, currentNode, '의뢰를 수락했다.'),
         // architecture/63: scenario.json prologue.accept 스크립트
@@ -1758,7 +1927,6 @@ export class TurnsService {
         // 직전 2턴 요약
         const recentSummaryParts = actionHistory.slice(-2).map((h, i) => {
           const ah = h as Record<string, unknown>;
-          const t = actionHistory.length - 2 + i + 1;
           return `T${turnNo - (actionHistory.length - (actionHistory.length - 2 + i))}: ${ah.eventId ?? '자유행동'} (${ah.actionType})`;
         });
 
@@ -1767,7 +1935,6 @@ export class TurnsService {
           | Record<string, unknown>
           | undefined;
         const lastNpcId = (lastEntry?.primaryNpcId as string) ?? null;
-        const lastNpcDef = lastNpcId ? this.content.getNpc(lastNpcId) : null;
 
         // sourceNpcId from choice payload (NPC 연속성)
         const choiceSourceNpcId =
@@ -2933,8 +3100,7 @@ export class TurnsService {
         !!(eventPrimaryNpc ?? intentV3.targetNpcId) &&
         GIFT_RE.test(rawInput);
       if (isGiftEligible) {
-        const amount =
-          intent.specifiedGold ?? QUEST_BALANCE.GIFT_DEFAULT_GOLD;
+        const amount = intent.specifiedGold ?? QUEST_BALANCE.GIFT_DEFAULT_GOLD;
         giftGoldCost = -Math.min(amount, Math.max(0, updatedRunState.gold));
         if (giftGoldCost < 0) {
           this.logger.log(
@@ -4287,7 +4453,6 @@ export class TurnsService {
     if (primaryNpcIdForSpeaking) {
       // NPC 지정 이벤트 — displayName/imageUrl 결정
       const npcStateForSpeaking = npcStates[primaryNpcIdForSpeaking];
-      const npcDefForSpeaking = this.content.getNpc(primaryNpcIdForSpeaking);
       // 초상화 표시 조건: 첫 만남(enc>=1) 또는 소개완료(introduced) → 무조건 표시
       const showPortrait = npcStateForSpeaking
         ? (npcStateForSpeaking.encounterCount ?? 0) >= 1 ||
@@ -4400,8 +4565,7 @@ export class TurnsService {
         marks: (finalWs.narrativeMarks ?? [])
           .filter((m: any) => m.npcId === npcId)
           .map((m: any) => m.type),
-      }),
-    );
+      }));
     if (npcEmotionalUIs.length > 0) {
       (result.ui as any).npcEmotional = npcEmotionalUIs;
     }
@@ -6770,64 +6934,8 @@ export class TurnsService {
   }
 
   // ── Player-First: 턴 모드 결정 ──
-  private determineTurnMode(ctx: {
-    earlyTargetNpcId: string | null;
-    intentV3TargetNpcId: string | null;
-    actionType: string;
-    lastPrimaryNpcId: string | null;
-    /** 직전 턴의 primaryNpcId (행동 종류 무관 — FIGHT 후에도 유지) */
-    contextNpcId: string | null;
-    isFirstTurnAtLocation: boolean;
-    incidentPressureHigh: boolean;
-    questFactTrigger: boolean;
-  }): TurnMode {
-    const SOCIAL_ACTIONS = new Set([
-      'TALK',
-      'PERSUADE',
-      'BRIBE',
-      'THREATEN',
-      'HELP',
-      'INVESTIGATE',
-      'OBSERVE',
-      'TRADE',
-    ]);
-
-    // 1) 플레이어가 NPC를 명시적으로 지목
-    if (ctx.earlyTargetNpcId || ctx.intentV3TargetNpcId) {
-      if (ctx.isFirstTurnAtLocation) {
-        return TurnMode.WORLD_EVENT;
-      }
-      return TurnMode.PLAYER_DIRECTED;
-    }
-
-    // 2) 대화 연속 (SOCIAL_ACTION + 이전 대화 NPC 존재)
-    if (ctx.lastPrimaryNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
-      if (ctx.isFirstTurnAtLocation) {
-        return TurnMode.WORLD_EVENT;
-      }
-      return TurnMode.CONVERSATION_CONT;
-    }
-
-    // 2b) 맥락 NPC 연결 — FIGHT/STEAL 후 TALK 시 직전 NPC를 대화 대상으로 유지
-    // "이게 뭔지 대답해" 같이 대상 미명시 + 직전 턴에 NPC가 있었으면 맥락 연결
-    if (ctx.contextNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
-      if (ctx.isFirstTurnAtLocation) {
-        return TurnMode.WORLD_EVENT;
-      }
-      return TurnMode.CONVERSATION_CONT;
-    }
-
-    // 3) 강제 세계 이벤트 (축소된 조건)
-    if (
-      ctx.isFirstTurnAtLocation ||
-      ctx.incidentPressureHigh ||
-      ctx.questFactTrigger
-    ) {
-      return TurnMode.WORLD_EVENT;
-    }
-
-    // 4) 기본값: 플레이어 주도 (이벤트 강제 없음)
-    return TurnMode.PLAYER_DIRECTED;
+  private determineTurnMode(ctx: TurnModeContext): TurnMode {
+    return determineTurnModeCore(ctx);
   }
 
   // ── Player-First: 입력 텍스트에서 NPC 추출 (turnMode 결정용) ──
@@ -6835,106 +6943,10 @@ export class TurnsService {
     rawInput: string,
     inputType: string,
   ): string | null {
-    if (inputType !== 'ACTION' || !rawInput) return null;
-
-    const inputLower = rawInput.toLowerCase();
-    const allNpcs = this.content.getAllNpcs();
-
-    // Pass 1: 실명/unknownAlias/aliases/shortAlias 전체 매칭 (bug 4620)
-    //   이전엔 name/unknownAlias만 검사 — aliases/shortAlias 누락으로 "하위크"
-    //   같은 단독 별칭 입력 시 타깃 NPC 식별 실패했음.
-    for (const npc of allNpcs) {
-      if (npc.name && inputLower.includes(npc.name.toLowerCase()))
-        return npc.npcId;
-      if (
-        npc.unknownAlias &&
-        inputLower.includes(npc.unknownAlias.toLowerCase())
-      )
-        return npc.npcId;
-      if (
-        (npc as Record<string, unknown>).shortAlias &&
-        inputLower.includes(
-          ((npc as Record<string, unknown>).shortAlias as string).toLowerCase(),
-        )
-      )
-        return npc.npcId;
-      const aliases = (npc as Record<string, unknown>).aliases as
-        | string[]
-        | undefined;
-      if (aliases && aliases.length > 0) {
-        for (const al of aliases) {
-          if (al && al.length >= 2 && inputLower.includes(al.toLowerCase()))
-            return npc.npcId;
-        }
-      }
-    }
-
-    // Pass 2: "~에게" 패턴
-    const egeMatch = rawInput.match(/(.+?)에게/);
-    if (egeMatch) {
-      const targetWord = egeMatch[1].trim().toLowerCase();
-      for (const npc of allNpcs) {
-        if (npc.name && targetWord.includes(npc.name.toLowerCase()))
-          return npc.npcId;
-        const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
-        if (
-          aliasKw.some(
-            (kw: string) =>
-              kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
-          )
-        )
-          return npc.npcId;
-        // aliases도 "에게" 패턴 타겟 비교
-        const aliases = (npc as Record<string, unknown>).aliases as
-          | string[]
-          | undefined;
-        if (aliases && aliases.length > 0) {
-          for (const al of aliases) {
-            if (al && al.length >= 2 && targetWord.includes(al.toLowerCase()))
-              return npc.npcId;
-          }
-        }
-      }
-    }
-
-    // Pass 3: 별칭 키워드 부분 매칭 (3자 이상)
-    // architecture/49 — 환경 명사 false positive 방지용 RISKY_FRAGMENTS 제외.
-    // "냄새가" → 향수 냄새가 강한 미망인 같은 매칭은 환경 표현이지 NPC 호명 아님.
-    const RISKY_FRAGMENTS = new Set([
-      '젊은',
-      '늙은',
-      '냄새가',
-      '강한',
-      '약한',
-      '큰',
-      '작은',
-      '조용한',
-      '시끄러운',
-      '빠른',
-      '느린',
-      '뜨거운',
-      '차가운',
-      '날카로운',
-      '풋풋한',
-      '투박한',
-      '거친',
-      '부드러운',
-      '다정한',
-      '향수',
-    ]);
-    for (const npc of allNpcs) {
-      const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
-      if (
-        aliasKw.some(
-          (kw: string) =>
-            kw.length >= 3 &&
-            !RISKY_FRAGMENTS.has(kw) &&
-            inputLower.includes(kw.toLowerCase()),
-        )
-      )
-        return npc.npcId;
-    }
-
-    return null;
+    return extractTargetNpcCore(
+      rawInput,
+      inputType,
+      this.content.getAllNpcs() as TargetNpcCandidate[],
+    );
   }
 }

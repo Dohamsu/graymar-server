@@ -26,8 +26,8 @@ const THUMB_WIDTH = 128;
 const THUMB_HEIGHT = 160;
 /** WebP 품질 */
 const WEBP_QUALITY = 85;
-/** 최대 업로드 크기 (5MB) */
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+/** 최대 업로드 크기 (5MB) — 검증 배선 전 문서용 상수 */
+const _MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 /** Rate-limit: 세션(IP)당 최대 생성 횟수 (임시 해제: 100) */
 const MAX_PER_IP = 100;

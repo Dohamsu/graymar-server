@@ -1,6 +1,7 @@
 import { ContextBuilderService } from './context-builder.service.js';
 
 describe('ContextBuilderService.buildDeadlineContext', () => {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- 정적 순수 함수 (this 미사용)
   const build = ContextBuilderService.buildDeadlineContext;
 
   it('mainArcClock이 undefined이면 null', () => {

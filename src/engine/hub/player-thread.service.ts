@@ -118,8 +118,7 @@ export class PlayerThreadService {
       thread.actionCount > 0
         ? Math.round((thread.successCount / thread.actionCount) * 100)
         : 0;
-    const locName =
-      this.content.getLocationShortName(thread.locationId);
+    const locName = this.content.getLocationShortName(thread.locationId);
     return `${locName}에서 ${thread.approachVector} 접근 ${thread.actionCount}회 (성공률 ${rate}%)`;
   }
 

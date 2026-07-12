@@ -22,10 +22,10 @@ describe('워커 5.12 — NPC 작별 감지 체인 (실측 서술 fixture)', () 
       displayNames: ['토브렌 하위크', '수상한 창고 관리인', '관리인'],
     });
     expect(utterances.length).toBe(2);
-    const last = utterances[utterances.length - 1]!;
+    const last = utterances[utterances.length - 1];
     expect(isNpcFarewellUtterance(last)).toBe(true);
     // 첫 대사(비작별)는 감지되지 않아야 — 마지막 대사만 판정하는 이유
-    expect(isNpcFarewellUtterance(utterances[0]!)).toBe(false);
+    expect(isNpcFarewellUtterance(utterances[0])).toBe(false);
   });
 
   it('작별 대사가 마지막이 아니면(작별 후 대화 재개) 마지막 대사 기준 false', () => {
@@ -38,7 +38,7 @@ describe('워커 5.12 — NPC 작별 감지 체인 (실측 서술 fixture)', () 
       npcId: 'NPC_TOBREN',
       displayNames: ['토브렌 하위크'],
     });
-    const last = utterances[utterances.length - 1]!;
+    const last = utterances[utterances.length - 1];
     expect(isNpcFarewellUtterance(last)).toBe(false);
   });
 });

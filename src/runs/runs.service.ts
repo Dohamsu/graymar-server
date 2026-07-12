@@ -734,7 +734,7 @@ export class RunsService {
         };
         // 프롤로그 말풍선 — architecture/63: scenario.json prologue 필드
         const prologueMeta = this.content.getPrologueMeta();
-        (enterResult.ui as any).speakingNpc = {
+        (enterResult.ui as unknown as Record<string, unknown>).speakingNpc = {
           npcId: prologueMeta.npcId,
           displayName: prologueMeta.displayName,
           imageUrl: prologueMeta.imageUrl,
@@ -1126,15 +1126,10 @@ export class RunsService {
     // ui.npcEmotional이 없어 도감이 비어 보이는 갭을 메운다.
     // turns.service의 조립과 동일 기준: 조우(encounterCount) 또는
     // 서술 등장(appearanceCount)한 NPC만, 표시명은 공개 상태 반영.
-    const rsForDossier = run.runState as
-      | {
-          npcStates?: Record<
-            string,
-            import('../db/types/npc-state.js').NPCState
-          >;
-          worldState?: { narrativeMarks?: { npcId?: string; type: string }[] };
-        }
-      | null;
+    const rsForDossier = run.runState as {
+      npcStates?: Record<string, import('../db/types/npc-state.js').NPCState>;
+      worldState?: { narrativeMarks?: { npcId?: string; type: string }[] };
+    } | null;
     const dossierMarks = rsForDossier?.worldState?.narrativeMarks ?? [];
     const npcEmotional = Object.entries(rsForDossier?.npcStates ?? {})
       .filter(
@@ -1150,9 +1145,7 @@ export class RunsService {
         suspicion: npc.emotional?.suspicion ?? 0,
         attachment: npc.emotional?.attachment ?? 0,
         posture: npc.posture,
-        marks: dossierMarks
-          .filter((m) => m.npcId === npcId)
-          .map((m) => m.type),
+        marks: dossierMarks.filter((m) => m.npcId === npcId).map((m) => m.type),
       }));
 
     return {

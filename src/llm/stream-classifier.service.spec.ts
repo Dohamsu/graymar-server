@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 /**
  * StreamClassifierService 단위 테스트
  *
@@ -82,9 +83,9 @@ describe('StreamClassifierService — feed() + flush()', () => {
 
   it('NPC 호칭 + 대사 → dialogue에 npcName 포함', () => {
     const svc = makeSvc();
-    // NPC 호칭과 대사가 같은 문장 내에 있어야 함 (마침표+공백이 중간에 없음)
-    const text = '날카로운 눈매의 회계사가 "이건 비밀이오" 라고 속삭였다.\n';
-    // 위는 인용조사(라고)가 붙어서 narration 처리됨. 직접 대사 형태로 수정:
+    // NPC 호칭과 대사가 같은 문장 내에 있어야 함 (마침표+공백이 중간에 없음).
+    // '…"이건 비밀이오" 라고 속삭였다' 처럼 인용조사(라고)가 붙으면 narration
+    // 처리되므로 직접 대사 형태를 사용한다.
     const text2 = '날카로운 눈매의 회계사가 입을 열었다 "이건 비밀이오."\n';
     const events = feedAll(svc, text2);
     const dialogue = events.find((e) => e.type === 'dialogue');
@@ -270,7 +271,6 @@ describe('StreamClassifierService — feed() + flush()', () => {
   });
 
   it('가장 가까운 NPC가 매칭됨 (거리 기반)', () => {
-    const svc = makeSvc();
     // 로넨이 대사에 가장 가까움 (에드릭은 멀리)
     // "에드릭"은 에드릭 후보의 names에 포함, 로넨도 로넨 후보의 names에 포함
     // 하지만 "에드릭은...외쳤다" 에서 "외쳤"이 에드릭 뒤에도 있어서 보너스 적용됨

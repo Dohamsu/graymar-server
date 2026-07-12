@@ -1056,7 +1056,10 @@ export class IntentParserV2Service {
     }
 
     // 장소명 + 이동 맥락 복합 감지 → MOVE_LOCATION 강제 부스트
-    if (this.detectLocationBasedMove(input) || this.detectPureMoveIntent(input)) {
+    if (
+      this.detectLocationBasedMove(input) ||
+      this.detectPureMoveIntent(input)
+    ) {
       const existing = hitCounts.get('MOVE_LOCATION') ?? 0;
       hitCounts.set('MOVE_LOCATION', existing + 10); // 키워드 히트보다 훨씬 높은 가중치
       if (!firstSeenOrder.includes('MOVE_LOCATION')) {

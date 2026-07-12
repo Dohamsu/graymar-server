@@ -715,11 +715,13 @@ export class ContentLoaderService implements OnModuleInit {
     const raw = (
       this.arcEvents as unknown as Record<
         string,
-        Record<string, { label?: string; hint?: string }> | unknown
+        Record<string, { label?: string; hint?: string }>
       >
     )['routeCommitChoices'];
     if (!raw || Array.isArray(raw) || typeof raw !== 'object') return [];
-    return Object.entries(raw as Record<string, { label?: string; hint?: string }>)
+    return Object.entries(
+      raw as Record<string, { label?: string; hint?: string }>,
+    )
       .filter(([, v]) => !!v?.label)
       .map(([route, v]) => ({
         route,

@@ -363,30 +363,8 @@ describe('EventMatcherService — targetNpcId 가중치', () => {
     // EVT_LOW: 11 - 50 = max(1, -39) = 1
     // EVT_HIGH: 11 + 50 = 61
     // 둘 다 선택 가능해야 함 (최소 1 보장)
-    let lowCount = 0;
-    for (let i = 0; i < 200; i++) {
-      const rng = new Rng(`seed-min-${i}`, 0);
-      const result = service.matchWithIncidentContext(
-        events,
-        'LOC_MARKET',
-        intent,
-        ws,
-        arcState,
-        emptyAgenda,
-        {},
-        10,
-        rng,
-        [],
-        routing,
-        undefined,
-        'NPC_TARGET',
-      );
-      if (result?.eventId === 'EVT_LOW') lowCount++;
-    }
-
-    // 1:61 비율 → 200회 중 lowCount > 0 (최소 1 보장으로 선택 가능)
-    // 하지만 매우 드물므로 "0이 아닐 수도 있다"보다는 "null 반환이 없다" 확인
-    // 중요: 결과가 null이 아님을 확인 (최소값 1 보장 = 항상 선택 가능)
+    // 1:61 비율이라 EVT_LOW 실제 당첨은 매우 드묾 — 당첨 횟수 대신
+    // "null 반환이 없다"(최소값 1 보장 = 항상 선택 가능)를 확인한다.
     for (let i = 0; i < 10; i++) {
       const rng = new Rng(`seed-notnull-${i}`, 0);
       const result = service.matchWithIncidentContext(

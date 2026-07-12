@@ -351,7 +351,8 @@ export class NpcResolverService {
                 {
                   npcId: matched[0].npcId,
                   source: 'MEDIUM_ROLE_KEYWORD',
-                  reason: '언급 질문 가드 — 역할 키워드 후보를 잠금 유지로 강등',
+                  reason:
+                    '언급 질문 가드 — 역할 키워드 후보를 잠금 유지로 강등',
                 },
               ],
               lockApplied: true,

@@ -6,7 +6,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
-import type { ServerResultV1 } from '../db/types/index.js';
 
 export interface NanoEventResult {
   npc: string; // NPC 표시명
@@ -209,8 +208,9 @@ export class NanoEventDirectorService {
     // 서술 맥락 (Dual-Track: 서술 완료 후 선택지 생성 시)
     // P1 — 앞 300자만 보내면 서술 끝의 NPC 질문/제안이 선택지에 반영되지 않는다
     // (실측: NPC가 질문으로 턴을 닫아도 응답 선택지 0개). 머리 150 + 꼬리 350 결합.
-    if ((ctx as any).narrativeText) {
-      const nt = (ctx as any).narrativeText as string;
+    const ntRaw = (ctx as unknown as Record<string, unknown>).narrativeText;
+    if (typeof ntRaw === 'string' && ntRaw) {
+      const nt = ntRaw;
       const narrativePreview =
         nt.length <= 500
           ? nt

@@ -200,7 +200,7 @@ export class NpcReactionDirectorService {
           maxTokens: 250,
           temperature: attempt === 0 ? 0.7 : 0.4,
           model: lightConfig.model,
-        timeoutMs: lightConfig.timeoutMs,
+          timeoutMs: lightConfig.timeoutMs,
         });
         if (!result.success || !result.response?.text) {
           if (attempt === 1) return this.buildFallback(ctx, 'no response');

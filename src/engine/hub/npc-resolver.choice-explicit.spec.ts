@@ -3,7 +3,6 @@
 //   대화 잠금보다 그 NPC를 우선한다 (실측: 쥐왕 BRIBE 선택지의 뇌물이
 //   잠금 상대 로사에게 가는 어긋남).
 
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { NpcResolverService } from './npc-resolver.service.js';
 import type { NpcResolutionContext } from './npc-resolver.service.js';
 

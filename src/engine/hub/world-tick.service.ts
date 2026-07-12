@@ -217,12 +217,13 @@ export class WorldTickService {
       );
       // 진행된 아젠다를 ws에 저장 (LLM 목격 힌트용)
       if (agendaResults.length > 0) {
-        (updated as any).recentAgendaEvents = agendaResults
-          .map((r) => ({
-            npcId: r.npcId,
-            signal: r.signalEmitted,
-          }))
-          .filter((r) => r.signal);
+        (updated as unknown as Record<string, unknown>).recentAgendaEvents =
+          agendaResults
+            .map((r) => ({
+              npcId: r.npcId,
+              signal: r.signalEmitted,
+            }))
+            .filter((r) => r.signal);
       }
     }
 

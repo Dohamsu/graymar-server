@@ -333,7 +333,7 @@ export class LlmIntentParserService implements OnModuleInit {
     inputText: string,
     insistenceCount: number,
     repeatedType: string | null,
-    npcsAtLocation?: NpcForIntent[],
+    _npcsAtLocation?: NpcForIntent[],
   ): ParsedIntentV2 {
     const kwAndLlmDisagree = keywordResult.actionType !== llmResult.actionType;
 

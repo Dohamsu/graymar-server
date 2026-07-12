@@ -8,6 +8,10 @@ import type {
   LlmProviderResponse,
 } from '../types/index.js';
 import type { LlmConfig } from '../types/index.js';
+import type {
+  ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionCreateParamsStreaming,
+} from 'openai/resources/chat/completions';
 
 /** Responses API 응답 타입 (필요 필드만 정의) */
 interface ResponsesApiResponse {
@@ -131,23 +135,25 @@ export class OpenAIProvider implements LlmProvider {
     // GPT-5 계열은 max_completion_tokens, 이전 모델은 max_tokens
     const isGpt5 = /^gpt-5/.test(model);
     const openRouterParams = this.buildOpenRouterParams(model);
-    const completion = await client.chat.completions.create({
-      model,
-      messages: request.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-      ...(isGpt5
-        ? { max_completion_tokens: request.maxTokens }
-        : { max_tokens: request.maxTokens }),
-      temperature: request.temperature,
-      ...(request.responseFormat === 'json_object'
-        ? { response_format: { type: 'json_object' as const } }
-        : {}),
-      ...openRouterParams,
-    } as any,
-    // 요청 단위 타임아웃 — nano 계열은 전역 60초 대신 짧은 상한 (nano 감사 1번)
-    request.timeoutMs ? ({ timeout: request.timeoutMs } as any) : undefined);
+    const completion = await client.chat.completions.create(
+      {
+        model,
+        messages: request.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+        ...(isGpt5
+          ? { max_completion_tokens: request.maxTokens }
+          : { max_tokens: request.maxTokens }),
+        temperature: request.temperature,
+        ...(request.responseFormat === 'json_object'
+          ? { response_format: { type: 'json_object' as const } }
+          : {}),
+        ...openRouterParams,
+      } as ChatCompletionCreateParamsNonStreaming,
+      // 요청 단위 타임아웃 — nano 계열은 전역 60초 대신 짧은 상한 (nano 감사 1번)
+      request.timeoutMs ? { timeout: request.timeoutMs } : undefined,
+    );
 
     const choice = completion.choices[0];
     const text = choice?.message?.content ?? '';
@@ -257,7 +263,7 @@ export class OpenAIProvider implements LlmProvider {
           ? { response_format: { type: 'json_object' as const } }
           : {}),
         ...openRouterParams,
-      } as any,
+      } as ChatCompletionCreateParamsStreaming,
       { signal: firstTokenAbort.signal },
     );
 

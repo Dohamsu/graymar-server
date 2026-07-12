@@ -157,10 +157,6 @@ export class NpcDialogueMarkerService {
     // 직전 @마커 대사에서 NPC ID를 추출 (연속 대사 전파용)
     const preMarkerMatch = narrative.match(/@([A-Z][A-Z_0-9]+)\s*["\u201C]/);
     const preMarkerNpcId = preMarkerMatch ? preMarkerMatch[1] : null;
-    // @[표시이름|URL] 형태에서도 추출
-    const preMarkerBracket = narrative.match(
-      /@\[([^\]|]+)(?:\|[^\]]+)?\]\s*["\u201C]/,
-    );
     if (preMarkerNpcId) lastMatchedNpcId = preMarkerNpcId;
 
     for (let i = 0; i < dialogues.length; i++) {
@@ -580,11 +576,10 @@ export class NpcDialogueMarkerService {
 
   private buildCandidateList(
     npcStates: Record<string, NPCState>,
-    eventNpcIds?: string[],
+    _eventNpcIds?: string[],
   ): NpcCandidate[] {
-    const eventNpcSet = new Set(eventNpcIds ?? []);
     const candidates: NpcCandidate[] = [];
-    for (const [npcId, state] of Object.entries(npcStates)) {
+    for (const npcId of Object.keys(npcStates)) {
       // npcStates에 있는 모든 NPC를 후보에 포함 (enc=0이어도 문맥 매칭 가능)
       const def = this.content.getNpc(npcId);
       if (!def) continue;

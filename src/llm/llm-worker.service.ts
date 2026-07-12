@@ -52,7 +52,6 @@ import {
 } from '../db/types/narrative-theme.js';
 import {
   DialogueGeneratorService,
-  type DialogueSlot,
   type DialogueIntent,
 } from './dialogue-generator.service.js';
 import type { ServerResultV1, ChoiceItem } from '../db/types/index.js';
@@ -154,7 +153,11 @@ export function sanitizeNanoChoiceNpcsCore(
     const payload = c.action?.payload as Record<string, unknown> | undefined;
     const src = payload?.sourceNpcId as string | undefined;
     if (!src || src === ctx.lockNpcId) continue;
-    if (!NANO_CHOICE_CONV_AFFORDANCES.has(String(payload?.affordance ?? '')))
+    if (
+      !NANO_CHOICE_CONV_AFFORDANCES.has(
+        String((payload?.affordance as string | undefined) ?? ''),
+      )
+    )
       continue;
     const target = npcLookup(src);
     const mentioned = [
@@ -169,6 +172,278 @@ export function sanitizeNanoChoiceNpcsCore(
     );
   }
   return choices;
+}
+
+// ─── 후처리 정본 코어 (spec 직접 import — 복제 drift 방지, 테스트 감사 2026-07-13) ───
+// 인라인 블록/private 메서드로 있던 순수 문자열 로직을 export 함수로 추출.
+// 클래스 쪽은 위임만 하고, content/logger 의존은 인자로 주입받는다.
+
+export interface NpcNameLike {
+  npcId?: string;
+  name?: string | null;
+  unknownAlias?: string | null;
+  shortAlias?: string | null;
+  aliases?: string[];
+}
+
+/** Step E — 대사 내부 "NPC이름: " 프리픽스 제거 (긴 이름 먼저 매칭) */
+export function removeNpcPrefixInQuotesCore(
+  narrative: string,
+  allNpcs: NpcNameLike[],
+): string {
+  const npcNamePatterns = allNpcs
+    .flatMap((n) => [n.name, n.unknownAlias, n.shortAlias])
+    .filter((name): name is string => !!name && name.length >= 2)
+    .sort((a, b) => b.length - a.length); // 긴 이름 먼저 매칭
+
+  for (const npcName of npcNamePatterns) {
+    // 따옴표 안의 "NPC이름: " 또는 "NPC이름:" 패턴 제거
+    const escaped = npcName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(["\\u201C])${escaped}\\s*[:：]\\s*`, 'g');
+    narrative = narrative.replace(pattern, '$1');
+  }
+  return narrative;
+}
+
+/**
+ * Step F 본체 — 서술의 첫 @마커 NPC가 primaryNpcId와 다르면 마커+본문을 교정.
+ * corrected 가 null 이 아니면 교정이 발생한 것 (호출부가 로깅).
+ */
+export function fixNpcMismatchCore(
+  narrative: string,
+  primaryNpcId: string | null,
+  portraits: Record<string, string>,
+  npcStates: Record<string, { introduced?: boolean }>,
+  getNpcDef: (id: string) => NpcNameLike | undefined,
+  appearedNpcIds: Set<string>,
+): {
+  narrative: string;
+  appearedNpcIds: Set<string>;
+  corrected: { wrongName: string; correctName: string } | null;
+} {
+  if (!primaryNpcId) {
+    return { narrative, appearedNpcIds, corrected: null };
+  }
+
+  const primaryDef = getNpcDef(primaryNpcId);
+  const primaryAlias = primaryDef?.unknownAlias ?? primaryDef?.name;
+  const primaryPortrait = portraits[primaryNpcId] ?? '';
+
+  if (!primaryAlias) {
+    return { narrative, appearedNpcIds, corrected: null };
+  }
+
+  // 서술의 첫 번째 @마커 NPC 확인
+  const firstMarker = narrative.match(/@\[([^\]|]+)(?:\|([^\]]+))?\]/);
+  if (!firstMarker) {
+    return { narrative, appearedNpcIds, corrected: null };
+  }
+
+  const markerName = firstMarker[1].trim();
+  // primaryNpcId의 이름/별칭과 다르면 교정 필요
+  const isMatchPrimary =
+    markerName === primaryAlias ||
+    markerName === primaryDef?.name ||
+    markerName === primaryDef?.shortAlias;
+
+  if (isMatchPrimary) {
+    return { narrative, appearedNpcIds, corrected: null };
+  }
+
+  // 다른 NPC가 등장 — 마커를 primaryNpcId의 별칭으로 교체
+  const wrongName = markerName;
+  const wrongImg = firstMarker[2]?.trim() ?? '';
+  const npcState = npcStates[primaryNpcId];
+  const isRevealed = npcState?.introduced === true;
+  const correctName = isRevealed
+    ? (primaryDef?.name ?? primaryAlias)
+    : primaryAlias;
+  const correctMarker = primaryPortrait
+    ? `@[${correctName}|${primaryPortrait}]`
+    : `@[${correctName}]`;
+  const wrongMarkerPattern = wrongImg
+    ? `@[${wrongName}|${wrongImg}]`
+    : `@[${wrongName}]`;
+
+  // 모든 잘못된 마커 교체
+  narrative = narrative.split(wrongMarkerPattern).join(correctMarker);
+  // 이미지 없는 버전도 교체
+  if (wrongImg) {
+    narrative = narrative.split(`@[${wrongName}]`).join(correctMarker);
+  }
+
+  // 서술 본문에서도 잘못된 NPC 호칭을 교체 (마커 외부)
+  if (wrongName.length >= 4) {
+    narrative = narrative.split(wrongName).join(correctName);
+  }
+
+  // appearedNpcIds 교정
+  appearedNpcIds.add(primaryNpcId);
+
+  return { narrative, appearedNpcIds, corrected: { wrongName, correctName } };
+}
+
+/**
+ * Step G (5.10.9c) — 문장 종결부(한글+.!?) 뒤 공백 누락 보정 (verify57 회귀).
+ * 숫자/소수점/따옴표/마커는 한글 조건에 걸리지 않아 영향 없음.
+ */
+export function insertSpaceAfterSentenceCore(text: string): string {
+  if (!text) return text;
+  return text.replace(/([가-힣][.!?])(?=[가-힣])/g, '$1 ');
+}
+
+/**
+ * 콜론 라벨 3-Tier 유일성 매칭 (무명 오귀속 정밀화 2026-07-11).
+ * Tier 1 정확 일치 → Tier 2 라벨이 이름/별칭 전체 포함 → Tier 3 축약
+ * (unknownAlias 마지막 1~2단어). 각 tier에서 후보가 정확히 1명일 때만 승격,
+ * 다중 후보면 null (무명 유지 — 오귀속 방지).
+ */
+export function resolveColonLabelNpcCore<T extends NpcNameLike>(
+  alias: string,
+  allNpcs: T[],
+): T | null {
+  const a = alias.trim();
+  if (a.length < 2) return null;
+  const tiers: Array<(n: T) => boolean> = [
+    // Tier 1: 정확 일치
+    (n) =>
+      a === n.name ||
+      a === n.unknownAlias ||
+      a === n.shortAlias ||
+      (n.aliases ?? []).includes(a),
+    // Tier 2: 라벨이 이름/별칭 전체를 포함 (기존 방향)
+    (n) =>
+      (!!n.name && n.name.length >= 2 && a.includes(n.name)) ||
+      (!!n.unknownAlias && a.includes(n.unknownAlias)),
+    // Tier 3: 축약 — 라벨 = unknownAlias 마지막 1~2단어 접미
+    (n) => {
+      if (!n.unknownAlias) return false;
+      const words = n.unknownAlias.split(/\s+/);
+      for (let k = 1; k <= Math.min(2, words.length); k++) {
+        if (a === words.slice(-k).join(' ')) return true;
+      }
+      return false;
+    },
+  ];
+  for (const pred of tiers) {
+    const candidates = allNpcs.filter(pred);
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) return null; // 다중 → 무명 유지 (오귀속 방지)
+  }
+  return null;
+}
+
+/**
+ * 카드-서술 정합 (2026-07-11) — 서술 본문에 NPC 이름/별칭 언급 여부.
+ * 결함 B: includes 는 "토브렌" 속 '브렌'처럼 다른 이름의 부분 문자열에
+ * 오매칭. 앞 경계(한글 아님)만 요구 — 한국어는 이름 뒤에 조사가 붙으므로
+ * 뒤 경계는 걸지 않는다.
+ */
+export function npcMentionedInNarrativeCore(
+  narrative: string,
+  def: NpcNameLike | undefined,
+): boolean {
+  if (!def) return false;
+  const names = [
+    def.name,
+    def.unknownAlias,
+    def.shortAlias,
+    ...(def.aliases ?? []),
+  ].filter((n): n is string => !!n && n.length >= 2);
+  return names.some((n) => {
+    const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?<![가-힣])${esc}`).test(narrative);
+  });
+}
+
+/**
+ * P3 2026-07-11 — 공백 없는 접두 융합 별칭 복구.
+ * 알려진 unknownAlias 직전에 한글 1~2자가 밀착해 있으면(앞 경계: 문두/공백/
+ * 문장부호) 접두를 제거해 별칭만 남긴다. 정상 문장("뭔가 수상한 창고 관리인")은
+ * 접두 앞에 공백이 있어 걸리지 않는다.
+ */
+export function stripFusedAliasPrefixCore(
+  narrative: string,
+  aliases: Array<string | null | undefined>,
+  onFix?: (fused: string, alias: string) => void,
+): string {
+  for (const alias of aliases) {
+    if (!alias || alias.length < 4 || !narrative.includes(alias)) continue;
+    const esc = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|[\\s"“”'')(.,!?…])([가-힣]{1,2})(${esc})`, 'g');
+    narrative = narrative.replace(re, (_match, pre, fused, aliasHit) => {
+      onFix?.(fused as string, alias);
+      return `${pre}${aliasHit}`;
+    });
+  }
+  return narrative;
+}
+
+/**
+ * 완주 평가 ③ (2026-07-11) — 별칭 조각 + 실명 융합 정규화.
+ * 별칭 선행 단어(1~2개) + 실명 밀착 → 실명만 남긴다.
+ * (실측: "수상한 토브렌 하위크" = unknownAlias 앞단어 + name)
+ */
+export function stripAliasFragmentBeforeNameCore(
+  narrative: string,
+  npcs: NpcNameLike[],
+  onFix?: (frag: string, name: string) => void,
+): string {
+  for (const npc of npcs) {
+    if (!npc.name || !npc.unknownAlias || !narrative.includes(npc.name))
+      continue;
+    const words = npc.unknownAlias.split(/\s+/);
+    if (words.length < 2) continue;
+    const escName = npc.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (let k = Math.min(2, words.length - 1); k >= 1; k--) {
+      const frag = words.slice(0, k).join(' ');
+      const escFrag = frag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`${escFrag}\\s?(${escName})`, 'g');
+      if (re.test(narrative)) {
+        narrative = narrative.replace(re, '$1');
+        onFix?.(frag, npc.name);
+      }
+    }
+  }
+  return narrative;
+}
+
+/**
+ * 완주 평가 ③ (2026-07-11) — NPC 이름/별칭 뒤 주격·목적격 조사 교정.
+ * 이름 직후 조사+경계 패턴만 대상이라 오탐 여지 최소 — 받침 규칙에 맞는
+ * 조사로만 치환. (실측: "하위크이 갑자기", "회계사이 익숙한")
+ */
+export function fixNpcNameParticlesCore(
+  narrative: string,
+  npcs: NpcNameLike[],
+): string {
+  const PAIRS: Array<[string, string]> = [
+    ['이', '가'],
+    ['은', '는'],
+    ['을', '를'],
+    ['과', '와'],
+  ];
+  const hasBatchim = (word: string): boolean => {
+    const ch = word.charCodeAt(word.length - 1);
+    if (ch < 0xac00 || ch > 0xd7a3) return false;
+    return (ch - 0xac00) % 28 > 0;
+  };
+  for (const npc of npcs) {
+    for (const nm of [npc.name, npc.unknownAlias]) {
+      if (!nm || nm.length < 2 || !narrative.includes(nm)) continue;
+      const withB = hasBatchim(nm);
+      const esc = nm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      for (const [b, noB] of PAIRS) {
+        const wrong = withB ? noB : b;
+        const right = withB ? b : noB;
+        const re = new RegExp(`(${esc})${wrong}(?=[\\s,.!?"“”])`, 'g');
+        if (re.test(narrative)) {
+          narrative = narrative.replace(re, `$1${right}`);
+        }
+      }
+    }
+  }
+  return narrative;
 }
 
 @Injectable()
@@ -516,7 +791,12 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       // 전환되어 선택지가 쓰이지 않는다 (2026-07-11 피날레 작업의 부수 최적화)
       const isEndingTurn = !!(serverResult.ui as Record<string, unknown>)
         ?.endingResult;
-      if (!nanoEventHint && nanoEventCtx && this.nanoEventDirector && !isEndingTurn) {
+      if (
+        !nanoEventHint &&
+        nanoEventCtx &&
+        this.nanoEventDirector &&
+        !isEndingTurn
+      ) {
         try {
           const nanoResult =
             await this.nanoEventDirector.generate(nanoEventCtx);
@@ -1301,7 +1581,6 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
         // P1b. 메타 서술 제거 — 턴 번호 노출, "플레이어가" 3인칭 호칭
         {
-          let metaFixCount = 0;
           // "턴 N에서" / "턴 N에" / "턴N에서" → 문장 단위 삭제는 위험하므로 해당 구절만 제거
           const beforeMeta = narrative;
           narrative = narrative
@@ -1323,7 +1602,6 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             // "(활성 단서: ...)" 시스템 메모 노출 제거
             .replace(/\(활성 단서:[^)]*\)\s?/g, '');
           if (narrative !== beforeMeta) {
-            metaFixCount = 1;
             violations.push('AUTO_FIX: META_NARRATION');
           }
         }
@@ -2055,7 +2333,6 @@ ${npcList}`,
           // Step B: @NPC_ID / @[NPC_ID] / @[RONEN] → @[표시이름|초상화URL] 변환
           const { NPC_PORTRAITS: portraits } =
             await import('../db/types/npc-portraits.js');
-          const { isNameRevealed } = await import('../db/types/npc-state.js');
 
           // B-0: 잔여물 제거
           narrative = narrative.replace(/@마커/g, '');
@@ -2138,46 +2415,20 @@ ${npcList}`,
           //   '여인'(3 NPC)·'장교'(2 NPC) 같은 다중 후보는 현행대로 무명 유지라
           //   새 오귀속 위험 없이 구제만 추가된다 (단조 개선). 승격 시 라벨 그대로가
           //   아니라 표시명+초상화 완전 마커로 생성 (기존엔 초상화 미해석).
+          // 정본: resolveColonLabelNpcCore (3-Tier 유일성 매칭)
           const resolveColonLabelNpc = (
             alias: string,
           ): { npcId: string; displayName: string } | null => {
-            const a = alias.trim();
-            if (a.length < 2) return null;
-            const allNpcs = this.content.getAllNpcs();
-            const tiers: Array<(n: (typeof allNpcs)[number]) => boolean> = [
-              // Tier 1: 정확 일치
-              (n) =>
-                a === n.name ||
-                a === n.unknownAlias ||
-                a === n.shortAlias ||
-                (n.aliases ?? []).includes(a),
-              // Tier 2: 라벨이 이름/별칭 전체를 포함 (기존 방향)
-              (n) =>
-                (!!n.name && n.name.length >= 2 && a.includes(n.name)) ||
-                (!!n.unknownAlias && a.includes(n.unknownAlias)),
-              // Tier 3: 축약 — 라벨 = unknownAlias 마지막 1~2단어 접미
-              (n) => {
-                if (!n.unknownAlias) return false;
-                const words = n.unknownAlias.split(/\s+/);
-                for (let k = 1; k <= Math.min(2, words.length); k++) {
-                  if (a === words.slice(-k).join(' ')) return true;
-                }
-                return false;
-              },
-            ];
-            for (const pred of tiers) {
-              const candidates = allNpcs.filter(pred);
-              if (candidates.length === 1) {
-                const n = candidates[0];
-                const npcState = npcStates[n.npcId];
-                const displayName = npcState
-                  ? getNpcDisplayName(npcState, n, pending.turnNo)
-                  : (n.unknownAlias ?? n.name ?? a);
-                return { npcId: n.npcId, displayName };
-              }
-              if (candidates.length > 1) return null; // 다중 → 무명 유지 (오귀속 방지)
-            }
-            return null;
+            const n = resolveColonLabelNpcCore(
+              alias,
+              this.content.getAllNpcs(),
+            );
+            if (!n) return null;
+            const npcState = npcStates[n.npcId];
+            const displayName = npcState
+              ? getNpcDisplayName(npcState, n, pending.turnNo)
+              : (n.unknownAlias ?? n.name ?? alias.trim());
+            return { npcId: n.npcId, displayName };
           };
           narrative = narrative.replace(
             /(^|[\n.!?,])\s*([가-힣][가-힣 ]{0,20}):\s*(["\u201C])/g,
@@ -2388,28 +2639,12 @@ ${npcList}`,
             }
           }
 
-          // Step E: 대사 내부 "NPC이름: " 프리픽스 제거
-          // LLM이 대사 텍스트 안에 화자 이름을 "NPC이름: 대사내용" 형태로 삽입하는 경우 제거
+          // Step E: 대사 내부 "NPC이름: " 프리픽스 제거 (정본: removeNpcPrefixInQuotesCore)
           // 예: @[에드릭 베일] "날카로운 눈매의 회계사: 이 서류는..." → @[에드릭 베일] "이 서류는..."
-          {
-            const allNpcs = this.content.getAllNpcs();
-            const npcNamePatterns = allNpcs
-              .flatMap((n) =>
-                [n.name, n.unknownAlias, n.shortAlias].filter(Boolean),
-              )
-              .filter((name) => name && name.length >= 2)
-              .sort((a, b) => b!.length - a!.length); // 긴 이름 먼저 매칭
-
-            for (const npcName of npcNamePatterns) {
-              // 따옴표 안의 "NPC이름: " 또는 "NPC이름:" 패턴 제거
-              const escaped = npcName!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              const pattern = new RegExp(
-                `(["\\u201C])${escaped}\\s*[:：]\\s*`,
-                'g',
-              );
-              narrative = narrative.replace(pattern, '$1');
-            }
-          }
+          narrative = removeNpcPrefixInQuotesCore(
+            narrative,
+            this.content.getAllNpcs(),
+          );
 
           // Step F: primaryNpcId 또는 speakingNpc와 LLM 출력 NPC 불일치 교정
           // 서버가 배정한 NPC와 LLM이 등장시킨 NPC가 다르면 마커+서술을 교정
@@ -2511,65 +2746,20 @@ ${npcList}`,
                   ?.speakingNpc as Record<string, unknown>
               )?.npcId) as string | null;
 
-            if (primaryNpcId) {
-              const primaryDef = this.content.getNpc(primaryNpcId);
-              const primaryAlias = primaryDef?.unknownAlias ?? primaryDef?.name;
-              const primaryPortrait = portraits[primaryNpcId] ?? '';
-
-              if (primaryAlias) {
-                // 서술의 첫 번째 @마커 NPC 확인
-                const firstMarker = narrative.match(
-                  /@\[([^\]|]+)(?:\|([^\]]+))?\]/,
-                );
-                if (firstMarker) {
-                  const markerName = firstMarker[1].trim();
-                  // primaryNpcId의 이름/별칭과 다르면 교정 필요
-                  const isMatchPrimary =
-                    markerName === primaryAlias ||
-                    markerName === primaryDef?.name ||
-                    markerName === primaryDef?.shortAlias;
-
-                  if (!isMatchPrimary) {
-                    // 다른 NPC가 등장 — 마커를 primaryNpcId의 별칭으로 교체
-                    const wrongName = markerName;
-                    const wrongImg = firstMarker[2]?.trim() ?? '';
-                    const npcState = npcStates[primaryNpcId];
-                    const isRevealed = npcState?.introduced === true;
-                    const correctName = isRevealed
-                      ? (primaryDef?.name ?? primaryAlias)
-                      : primaryAlias;
-                    const correctMarker = primaryPortrait
-                      ? `@[${correctName}|${primaryPortrait}]`
-                      : `@[${correctName}]`;
-                    const wrongMarkerPattern = wrongImg
-                      ? `@[${wrongName}|${wrongImg}]`
-                      : `@[${wrongName}]`;
-
-                    // 모든 잘못된 마커 교체
-                    narrative = narrative
-                      .split(wrongMarkerPattern)
-                      .join(correctMarker);
-                    // 이미지 없는 버전도 교체
-                    if (wrongImg) {
-                      narrative = narrative
-                        .split(`@[${wrongName}]`)
-                        .join(correctMarker);
-                    }
-
-                    // 서술 본문에서도 잘못된 NPC 호칭을 교체 (마커 외부)
-                    if (wrongName.length >= 4) {
-                      narrative = narrative.split(wrongName).join(correctName);
-                    }
-
-                    // appearedNpcIds 교정
-                    appearedNpcIds.add(primaryNpcId);
-
-                    this.logger.log(
-                      `[NpcMismatch] LLM이 ${wrongName}를 등장시켰으나 primaryNpcId=${primaryNpcId}(${correctName})로 교정`,
-                    );
-                  }
-                }
-              }
+            // 정본: fixNpcMismatchCore
+            const fixed = fixNpcMismatchCore(
+              narrative,
+              primaryNpcId,
+              portraits,
+              npcStates,
+              (id) => this.content.getNpc(id),
+              appearedNpcIds,
+            );
+            narrative = fixed.narrative;
+            if (fixed.corrected) {
+              this.logger.log(
+                `[NpcMismatch] LLM이 ${fixed.corrected.wrongName}를 등장시켰으나 primaryNpcId=${primaryNpcId}(${fixed.corrected.correctName})로 교정`,
+              );
             }
           }
 
@@ -2757,7 +2947,7 @@ ${npcList}`,
       //   실패해 서술이 한 덩어리로 렌더링됨. 한글 + .!? + 한글 사이에 공백 삽입.
       //   숫자/소수점/따옴표/마커는 한글 조건에 걸리지 않아 영향 없음.
       if (narrative) {
-        narrative = narrative.replace(/([가-힣][.!?])(?=[가-힣])/g, '$1 ');
+        narrative = insertSpaceAfterSentenceCore(narrative);
       }
 
       // 5.10.10. 복합 호칭 hallucination 제거 (bug 4636, 4655 JSON 외부화)
@@ -2905,8 +3095,7 @@ ${npcList}`,
                       continue; // introduced/introducedAtTurn 유지
                     }
                     if (npcStatesRef[npcId]) {
-                      const attempts =
-                        npcStatesRef[npcId].introAttempts ?? 0;
+                      const attempts = npcStatesRef[npcId].introAttempts ?? 0;
                       // architecture/64 튜닝: 결정론적 마감 — LLM이 2회 연속
                       // 연출에 실패하면 서버가 제3자 호명 문장을 말미에 덧붙여
                       // 소개를 확정한다 (LLM 원칙 6: 서버 로직 우선. 실측: Gemma가
@@ -3077,9 +3266,8 @@ ${npcList}`,
           ? this.content.getNpc(primaryNpcIdForFarewell)
           : undefined;
         if (primaryNpcIdForFarewell && farewellNpcDef) {
-          const { isNpcFarewellUtterance } = await import(
-            '../common/dialogue-act.js'
-          );
+          const { isNpcFarewellUtterance } =
+            await import('../common/dialogue-act.js');
           const utterances = extractNpcUtterances(narrative, {
             npcId: primaryNpcIdForFarewell,
             displayNames: [
@@ -3124,7 +3312,8 @@ ${npcList}`,
         try {
           const prevNarr = recentRows?.[0]?.llmOutput ?? '';
           if (prevNarr) {
-            const curUtterRe = /@\[[^\]|]+(?:\|[^\]]*)?\]\s*["“]([^"”]{20,})["”]/g;
+            const curUtterRe =
+              /@\[[^\]|]+(?:\|[^\]]*)?\]\s*["“]([^"”]{20,})["”]/g;
             let um: RegExpExecArray | null;
             while ((um = curUtterRe.exec(narrative)) !== null) {
               const line = um[1];
@@ -3306,23 +3495,9 @@ ${npcList}`,
           // 이름/별칭이 전혀 언급되지 않으면 카드를 제거한다 — 실측: 장소 진입 턴에
           // 토브렌 소개 카드(newly=true)가 떴는데 서술은 직전 장소 인물만 그림
           // (V8 "카드=수상한 창고 관리인 서술에 없음").
-          const mentionedInNarrative = (npcId: string): boolean => {
-            const def = this.content.getNpc(npcId);
-            if (!def) return false;
-            const names = [
-              def.name,
-              def.unknownAlias,
-              def.shortAlias,
-              ...(def.aliases ?? []),
-            ].filter((n): n is string => !!n && n.length >= 2);
-            // 결함 B (2026-07-11): includes는 "토브렌" 속 '브렌'처럼 다른 이름의
-            // 부분 문자열에 오매칭. 앞 경계(한글 아님)만 요구 — 한국어는 이름 뒤에
-            // 조사가 붙으므로 뒤 경계는 걸지 않는다.
-            return names.some((n) => {
-              const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              return new RegExp(`(?<![가-힣])${esc}`).test(narrative);
-            });
-          };
+          // 정본: npcMentionedInNarrativeCore (결함 B — 앞 경계 오매칭 방지)
+          const mentionedInNarrative = (npcId: string): boolean =>
+            npcMentionedInNarrativeCore(narrative, this.content.getNpc(npcId));
           const keepCard =
             !!expectedNpcId &&
             existingPortrait.npcId === expectedNpcId &&
@@ -3340,11 +3515,12 @@ ${npcList}`,
           updatedSr.ui = ui;
           await this.db
             .update(turns)
-            .set({ serverResult: updatedSr as any })
+            .set({
+              serverResult: updatedSr as unknown as ServerResultV1,
+            })
             .where(eq(turns.id, pending.id));
         }
       }
-
 
       // architecture/44 §이슈② — 런 전역 narrativeThemes 기록 (독립 블록)
       // narrative 에서 @NPC_ID "대사" / @[이름|URL] "대사" 패턴을 추출해
@@ -3480,7 +3656,8 @@ ${npcList}`,
             | undefined;
           if (nanoCtx2) {
             // 서술 텍스트를 NanoEventDirector에 전달
-            (nanoCtx2 as any).narrativeText = narrative;
+            (nanoCtx2 as unknown as Record<string, unknown>).narrativeText =
+              narrative;
             const nanoResult2 = await this.nanoEventDirector.generate(nanoCtx2);
             if (nanoResult2 && nanoResult2.choices.length >= 3) {
               // P5 — 서버 기본 선택지에만 붙던 예상 보정치(modifier) 중 프리셋
@@ -3821,10 +3998,13 @@ ${npcList}`,
       // LLM이 JSON에서 잘못된 이스케이프를 사용하는 경우 정리
       const cleaned = candidate
         .replace(/\\'/g, "'") // \' → ' (JSON에서 불필요한 이스케이프)
+        // eslint-disable-next-line no-control-regex -- 제어문자 제거가 목적인 의도적 패턴
         .replace(/[\x00-\x1F\x7F]/g, (ch) =>
           ch === '\n' || ch === '\t' ? ch : '',
         ); // 제어문자 제거
-      const parsed = JSON.parse(cleaned);
+      const parsed = JSON.parse(cleaned) as {
+        segments?: Array<{ type?: string; speaker_id?: string; text?: string }>;
+      };
       if (!parsed.segments || !Array.isArray(parsed.segments)) return null;
       for (const seg of parsed.segments) {
         if (!seg.type) return null;
@@ -3836,7 +4016,7 @@ ${npcList}`,
         if (!seg.text) return null;
         if (seg.type !== 'narration' && seg.type !== 'dialogue') return null;
       }
-      return parsed as NarrativeJsonOutput;
+      return parsed as unknown as NarrativeJsonOutput;
     } catch {
       return null;
     }
@@ -4022,20 +4202,16 @@ ${npcList}`,
    * 정상 문장("뭔가 수상한 창고 관리인")은 접두 앞에 공백이 있어 걸리지 않는다.
    */
   private stripFusedAliasPrefix(narrative: string): string {
+    // 정본: stripFusedAliasPrefixCore
     const allNpcs = this.content.getAllNpcs?.() ?? [];
-    for (const npc of allNpcs) {
-      const alias = npc.unknownAlias;
-      if (!alias || alias.length < 4 || !narrative.includes(alias)) continue;
-      const esc = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(`(^|[\\s"“”'')(.,!?…])([가-힣]{1,2})(${esc})`, 'g');
-      narrative = narrative.replace(re, (match, pre, fused, aliasHit) => {
+    return stripFusedAliasPrefixCore(
+      narrative,
+      allNpcs.map((npc) => npc.unknownAlias),
+      (fused, alias) =>
         this.logger.log(
           `[AliasFusion] 접두 융합 복구: "${fused}${alias.slice(0, 12)}…" → "${alias.slice(0, 12)}…"`,
-        );
-        return `${pre}${aliasHit}`;
-      });
-    }
-    return narrative;
+        ),
+    );
   }
 
   /**
@@ -4045,25 +4221,15 @@ ${npcList}`,
    * 관리인'의 앞단어 + name). 별칭 선행 단어(1~2개) + 실명 밀착 → 실명만 남긴다.
    */
   private stripAliasFragmentBeforeName(narrative: string): string {
-    for (const npc of this.content.getAllNpcs()) {
-      if (!npc.name || !npc.unknownAlias || !narrative.includes(npc.name))
-        continue;
-      const words = npc.unknownAlias.split(/\s+/);
-      if (words.length < 2) continue;
-      const escName = npc.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      for (let k = Math.min(2, words.length - 1); k >= 1; k--) {
-        const frag = words.slice(0, k).join(' ');
-        const escFrag = frag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const re = new RegExp(`${escFrag}\\s?(${escName})`, 'g');
-        if (re.test(narrative)) {
-          narrative = narrative.replace(re, '$1');
-          this.logger.debug(
-            `[AliasFragFix] "${frag} ${npc.name.slice(0, 10)}…" → 실명 정규화`,
-          );
-        }
-      }
-    }
-    return narrative;
+    // 정본: stripAliasFragmentBeforeNameCore
+    return stripAliasFragmentBeforeNameCore(
+      narrative,
+      this.content.getAllNpcs(),
+      (frag, name) =>
+        this.logger.debug(
+          `[AliasFragFix] "${frag} ${name.slice(0, 10)}…" → 실명 정규화`,
+        ),
+    );
   }
 
   /**
@@ -4073,33 +4239,8 @@ ${npcList}`,
    * 조사로만 치환한다.
    */
   private fixNpcNameParticles(narrative: string): string {
-    const PAIRS: Array<[string, string]> = [
-      ['이', '가'],
-      ['은', '는'],
-      ['을', '를'],
-      ['과', '와'],
-    ];
-    const hasBatchim = (word: string): boolean => {
-      const ch = word.charCodeAt(word.length - 1);
-      if (ch < 0xac00 || ch > 0xd7a3) return false;
-      return (ch - 0xac00) % 28 > 0;
-    };
-    for (const npc of this.content.getAllNpcs()) {
-      for (const nm of [npc.name, npc.unknownAlias]) {
-        if (!nm || nm.length < 2 || !narrative.includes(nm)) continue;
-        const withB = hasBatchim(nm);
-        const esc = nm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        for (const [b, noB] of PAIRS) {
-          const wrong = withB ? noB : b;
-          const right = withB ? b : noB;
-          const re = new RegExp(`(${esc})${wrong}(?=[\\s,.!?"“”])`, 'g');
-          if (re.test(narrative)) {
-            narrative = narrative.replace(re, `$1${right}`);
-          }
-        }
-      }
-    }
-    return narrative;
+    // 정본: fixNpcNameParticlesCore
+    return fixNpcNameParticlesCore(narrative, this.content.getAllNpcs());
   }
 
   /**
@@ -4300,7 +4441,10 @@ ${npcList}`,
       if (!changed) return;
       const updated = await this.db
         .update(runSessions)
-        .set({ runState: working as any })
+        .set({
+          runState:
+            working as unknown as import('../db/types/permanent-stats.js').RunState,
+        })
         .where(
           and(
             eq(runSessions.id, runId),

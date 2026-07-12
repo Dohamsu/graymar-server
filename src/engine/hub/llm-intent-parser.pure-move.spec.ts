@@ -1,10 +1,10 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 // P1 2026-07-11 — 무목적지 순수 이동 상용구 회귀 테스트.
 //   "다른 장소로 이동한다"(playtest 기본 이동 문구이자 자연스러운 유저 표현)를
 //   LLM이 TALK로 오판 → merge에서 LLM 승 → 이동이 대화에 흡수, 26턴 단일 장소
 //   갇힘 실측. 문장 전체가 이동 상용구인 경우 KW_OVERRIDE로 이동을 보장하되,
 //   문장 속 1-hit 오탐(불변식 21 취지)은 그대로 LLM 신뢰를 유지한다.
 
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { IntentParserV2Service } from './intent-parser-v2.service.js';
 import { LlmIntentParserService } from './llm-intent-parser.service.js';
 

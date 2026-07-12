@@ -304,10 +304,7 @@ export class RewardsService {
    * 대화·조사 중심 실플레이(86%)에서 장비 시스템이 완전 유휴이던 것을
    * 핵심 루프(questState 전환)에 연결 — 서사 명분: 의뢰인의 경비 지원.
    */
-  grantQuestEquipment(
-    baseItemId: string,
-    rng: Rng,
-  ): ItemInstance | null {
+  grantQuestEquipment(baseItemId: string, rng: Rng): ItemInstance | null {
     const item = this.contentLoader.getItem(baseItemId);
     if (!item) return null;
     return this.affixService.createItemInstance(

@@ -129,6 +129,11 @@ export type ActionContext = {
   approachVector?: string; // ApproachVector (SOCIAL, STEALTH 등)
   goalText?: string; // 목표 텍스트
   targetNpcId?: string; // IntentParser가 파싱한 대상 NPC ID
+  // Player-First / 대화 행위 확장 (turns.service buildLocationResult 가 기록)
+  turnMode?: string; // PLAYER_DIRECTED | CONVERSATION_CONT | WORLD_EVENT
+  dialogueAct?: string; // 순수 사교 발화 (GREETING/WELLBEING/THANKS/FAREWELL)
+  eventId?: string; // 매칭된 이벤트 ID
+  primaryNpcId?: string | null; // 이 턴 주 NPC
 };
 
 // --- Resolve Breakdown (판정 주사위 분해) ---
@@ -223,6 +228,8 @@ export type UIBundle = {
   worldDeltaSummary?: WorldDeltaSummaryUI;
   // User-Driven System v3 확장
   playerThreads?: PlayerThread[];
+  /** 엔딩 확정 턴 결과 (turns.service 기록, llm-worker·prompt-builder 소비 — arch/65 부록 D) */
+  endingResult?: import('./ending.js').EndingResult;
 };
 
 // --- Choice ---

@@ -55,7 +55,7 @@ function baseResult(
       inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
       meta: {
         battle: { phase: 'TURN', rngConsumed: 0 },
-        position: {},
+        position: { env: [] },
       },
     },
     ui: {
@@ -70,7 +70,7 @@ function baseResult(
       battleEnded: false,
       ...flagsOverride,
     } as ServerResultV1['flags'],
-  } as ServerResultV1;
+  } as unknown as ServerResultV1;
 }
 
 function serialize(messages: { role: string; content: string }[]): string {
