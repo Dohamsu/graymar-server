@@ -1062,7 +1062,11 @@ export class PromptBuilderService {
     const factsParts: string[] = [];
 
     // NanoEventDirector 컨셉 주입 (최우선 — 이벤트 방향을 먼저 잡도록)
-    if (nanoEventHint) {
+    // concept 빈 문자열 = NanoConceptGuard가 뇌물 오염 등으로 서술 방향을
+    // 억제한 경우(arch/68 부록 K). "이 방향으로 서술" 헤더를 빈 채로 내보내면
+    // 오히려 LLM이 혼란하므로, concept 없으면 방향 지시 블록 전체를 스킵한다
+    // (fact 전달 지시는 별도 유지 — 아래 fact 블록).
+    if (nanoEventHint && nanoEventHint.concept) {
       const conceptParts: string[] = ['[이벤트 컨셉 — 이 방향으로 서술하세요]'];
       conceptParts.push(nanoEventHint.concept);
       if (nanoEventHint.npc) {

@@ -251,6 +251,7 @@ export class NanoEventDirectorService {
         `[정보 보류 국면] ${bribeNpc?.displayName ?? '상대'}은(는) 무언가 알고 있지만 입을 열지 않았습니다.`,
         `선택지 3개 중 정확히 1개는 이 인물에게 대가를 제시하는 금전 접근으로 만드세요 — affordance "BRIBE", npcId "${ctx.bribeOpportunity.npcId}".`,
         `라벨은 노골적인 "뇌물"이라는 단어 대신 "은화 몇 닢을 슬쩍 밀어 넣는다", "수고비를 얹어 다시 묻는다" 같은 자연스러운 표현으로.`,
+        `⚠️ 이 금전 접근은 '선택지'로만 제시하세요. concept·opening·npcGesture(서술 방향)에는 뇌물/은화 지불 장면을 넣지 마세요 — 플레이어는 아직 뇌물을 주지 않았습니다. 서술 방향은 플레이어의 이번 행동("${ctx.rawInput}", ${ctx.actionType})을 따릅니다.`,
       );
     }
 
@@ -467,6 +468,30 @@ export class NanoEventDirectorService {
         affordance: 'OBSERVE',
         npcId: null,
       });
+    }
+
+    // 5. 컨셉 게이트 (arch/68 부록 K — 버그 f4bf2e66).
+    //   bribeOpportunity는 '선택지 전용' 힌트인데 nano가 이를 이벤트 컨셉(서술
+    //   방향)으로 확대하는 실측: 플레이어가 OBSERVE(관찰)를 선택했는데 컨셉이
+    //   "은화 몇 닢을 슬쩍 밀어 넣는다" → 뇌물 서술 생성(판정 OBSERVE와 불일치,
+    //   Player-First 위반). 플레이어 행동이 금전/강압 계열이 아닌데 서술 지시
+    //   필드가 뇌물 신호를 담으면 그 필드만 비운다 — 선택지(BRIBE 노출)는 유지.
+    const coerciveActions = new Set(['BRIBE', 'THREATEN', 'STEAL']);
+    if (!coerciveActions.has(ctx.actionType)) {
+      const BRIBE_SIGNAL =
+        /은화|밀어\s*넣|뇌물|매수|수고비|대가를|한몫|금전|돈을\s*(?:쥐|건네|내밀|얹)/;
+      const tainted =
+        BRIBE_SIGNAL.test(result.concept) ||
+        BRIBE_SIGNAL.test(result.opening) ||
+        BRIBE_SIGNAL.test(result.npcGesture);
+      if (tainted) {
+        result.concept = '';
+        result.opening = '';
+        result.npcGesture = '';
+        this.logger.warn(
+          `[NanoConceptGuard] actionType=${ctx.actionType}인데 서술 지시가 뇌물 신호 — 컨셉/opening/gesture 억제 (선택지 유지)`,
+        );
+      }
     }
 
     return result;

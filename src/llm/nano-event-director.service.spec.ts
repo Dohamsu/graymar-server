@@ -185,6 +185,44 @@ describe('NanoEventDirectorService', () => {
       expect(v.npcId).toBe('NPC_A');
     });
 
+    // NanoConceptGuard (arch/68 부록 K — 버그 f4bf2e66)
+    it('OBSERVE 턴 + 뇌물 컨셉 -> concept/opening/gesture 억제, 선택지 유지', () => {
+      const result = makeResult({
+        concept: '은화 몇 닢을 슬쩍 밀어 넣으며 정보를 요구한다',
+        opening: '작은 은화가 그의 손에 스며든다.',
+        npcGesture: '은화를 밀어 넣으며 고개를 숙인다',
+        choices: [
+          { label: '은화를 밀어 넣는다', affordance: 'BRIBE', npcId: 'NPC_A' },
+          { label: '더 캐묻는다', affordance: 'INVESTIGATE', npcId: 'NPC_A' },
+          { label: '주변을 살핀다', affordance: 'OBSERVE', npcId: null },
+        ],
+      });
+      const ctx = makeCtx({ actionType: 'OBSERVE', rawInput: '그의 행동을 관찰한다' });
+      const v = callValidate(service, result, ctx);
+      expect(v.concept).toBe('');
+      expect(v.opening).toBe('');
+      expect(v.npcGesture).toBe('');
+      // 선택지(BRIBE 노출)는 유지 — bribeOpportunity 의도 보존
+      expect(v.choices.some((c) => c.affordance === 'BRIBE')).toBe(true);
+    });
+
+    it('BRIBE 턴 + 뇌물 컨셉 -> 정합이므로 유지', () => {
+      const result = makeResult({
+        concept: '은화 몇 닢을 슬쩍 밀어 넣으며 정보를 요구한다',
+        opening: '작은 은화가 그의 손에 스며든다.',
+      });
+      const ctx = makeCtx({ actionType: 'BRIBE', rawInput: '은화를 밀어 넣는다' });
+      const v = callValidate(service, result, ctx);
+      expect(v.concept).not.toBe(''); // 행동=컨셉이라 억제 안 됨
+    });
+
+    it('OBSERVE 턴 + 정상 컨셉 -> 유지', () => {
+      const result = makeResult({ concept: '상인이 낮은 목소리로 소문을 흘린다' });
+      const ctx = makeCtx({ actionType: 'OBSERVE' });
+      const v = callValidate(service, result, ctx);
+      expect(v.concept).toBe('상인이 낮은 목소리로 소문을 흘린다');
+    });
+
     it('invalid fact -> set to null', () => {
       const result = makeResult({
         fact: 'FACT_NONEXISTENT',
