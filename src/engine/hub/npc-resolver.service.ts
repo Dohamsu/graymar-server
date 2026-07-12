@@ -110,7 +110,7 @@ const PARTICLE_RE = /(.+?)(에게|께|와|하고|한테)\s/;
  * 오탐 시 실패 모드는 "잠금 NPC 유지"라 대화가 끊기지 않는 보수적 방향.
  */
 const MENTION_QUESTION_RE =
-  /어디|에\s*대해|에\s*관해|누구|만나려면|만날\s*수\s*있|아시오|아십니까|아는가|들어봤|들어본/;
+  /어디|에\s*대해|에\s*관해|누구|만나려면|만날\s*수\s*있|아시오|아십니까|아는가|들어봤|들어본|얼마나|얼마를|[가이]\s*말한|말했던|말하던|라고\s*하던/;
 
 /** WEAK 매칭 시 제외할 일반 형용사/환경 명사. */
 const RISKY_FRAGMENTS = new Set([
@@ -272,7 +272,37 @@ export class NpcResolverService {
         );
       }
       // 1b. "X에게/X와/X께" 호명 조사 패턴
+      // 자유 대화 검증 (2026-07-12): 잠금 대화 중 "부두 노동자들에게 얼마나
+      // 쥐여줘야..."처럼 제3자를 조사와 함께 언급하는 질문은 화자 전환이
+      // 아니라 잠금 NPC에게 묻는 것 — 언급 질문 가드를 1b에도 적용.
       const particleCandidates = this.matchParticleAll(ctx, allNpcs);
+      if (
+        particleCandidates.length > 0 &&
+        lockNpcId &&
+        particleCandidates.every((n) => n.npcId !== lockNpcId) &&
+        MENTION_QUESTION_RE.test(ctx.rawInput)
+      ) {
+        const lockNpc = allNpcs.find((n) => n.npcId === lockNpcId);
+        if (lockNpc) {
+          return this.applyWhereabouts(
+            {
+              npcId: lockNpcId,
+              source: 'CONVERSATION_LOCK',
+              confidence: 0.85,
+              alternatives: [
+                {
+                  npcId: particleCandidates[0].npcId,
+                  source: 'STRONG_PARTICLE',
+                  reason: '언급 질문 가드 — 조사 패턴 후보를 잠금 유지로 강등',
+                },
+              ],
+              lockApplied: true,
+            },
+            lockNpc,
+            ctx,
+          );
+        }
+      }
       if (particleCandidates.length > 0) {
         const localFirst = particleCandidates.find((npc) =>
           this.isAtLocation(
@@ -302,6 +332,35 @@ export class NpcResolverService {
     // ── Step 3: MEDIUM 신호 (명시 roleKeywords) ──
     if (!isChoice) {
       const matched = this.matchRoleKeywords(inputLower, allNpcs);
+      // 언급 질문 가드 (자유 대화 검증 2026-07-12): "부두 노동자가 말한 창고"
+      // 같은 3인칭 언급이 역할 키워드로 그 NPC를 소환하지 않도록
+      if (
+        matched.length > 0 &&
+        lockNpcId &&
+        matched.every((n) => n.npcId !== lockNpcId) &&
+        MENTION_QUESTION_RE.test(ctx.rawInput)
+      ) {
+        const lockNpc = allNpcs.find((n) => n.npcId === lockNpcId);
+        if (lockNpc) {
+          return this.applyWhereabouts(
+            {
+              npcId: lockNpcId,
+              source: 'CONVERSATION_LOCK',
+              confidence: 0.8,
+              alternatives: [
+                {
+                  npcId: matched[0].npcId,
+                  source: 'MEDIUM_ROLE_KEYWORD',
+                  reason: '언급 질문 가드 — 역할 키워드 후보를 잠금 유지로 강등',
+                },
+              ],
+              lockApplied: true,
+            },
+            lockNpc,
+            ctx,
+          );
+        }
+      }
       if (matched.length > 0) {
         // 같은 location 우선
         const localFirst = matched.find((npc) =>

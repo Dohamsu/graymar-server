@@ -308,6 +308,38 @@ describe('PromptBuilderService — 엔딩 턴 피날레 디렉티브 (2026-07-11
     expect(build(baseSr())).not.toContain('마지막 장면');
   });
 
+  it('작별(FAREWELL) 턴은 NPC 소개 연출 비활성 — 이월 (자유 대화 검증 2026-07-12)', () => {
+    content.setNpc('NPC_HARLUN', {
+      npcId: 'NPC_HARLUN',
+      name: '하를룬',
+      unknownAlias: '투박한 노동자',
+      role: '부두 노동자',
+      gender: 'male',
+      tier: 'CORE',
+    });
+    const ctxWithIntro = baseCtx({
+      npcInjection: { npcIds: ['NPC_HARLUN'] },
+      newlyIntroducedNpcIds: ['NPC_HARLUN'],
+      newlyEncounteredNpcIds: ['NPC_HARLUN'],
+      introDialogue: { npcId: 'NPC_HARLUN', text: '하를룬이라 하오.' },
+    });
+    const srFarewell = baseSr({
+      ui: {
+        resolveOutcome: 'SUCCESS',
+        actionContext: {
+          parsedType: 'TALK',
+          originalInput: '이만 가보겠소',
+          dialogueAct: 'FAREWELL',
+        },
+      },
+    });
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(ctxWithIntro, srFarewell, '이만 가보겠소', 'ACTION'),
+    );
+    expect(text).not.toContain('자기소개');
+    expect(text).not.toContain('하를룬이라 하오');
+  });
+
   it('엔딩 턴은 NPC 소개 연출 비활성 — 별칭 유지 경로로 전환', () => {
     content.setNpc('NPC_HARLUN', {
       npcId: 'NPC_HARLUN',

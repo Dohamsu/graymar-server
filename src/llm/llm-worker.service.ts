@@ -575,7 +575,17 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         const isEndingTurnForIntroGen = !!(
           serverResult.ui as Record<string, unknown>
         )?.endingResult;
-        if (firstMeetIntroId && !isEndingTurnForIntroGen) {
+        // 작별 턴 소개 이월 (자유 대화 검증 2026-07-12) — 프롬프트 가드와 쌍
+        const dialogueActForIntroGen = (
+          (serverResult.ui as Record<string, unknown>)?.actionContext as
+            | { dialogueAct?: string }
+            | undefined
+        )?.dialogueAct;
+        if (
+          firstMeetIntroId &&
+          !isEndingTurnForIntroGen &&
+          dialogueActForIntroGen !== 'FAREWELL'
+        ) {
           try {
             const gen = await this.dialogueGenerator.generateIntroDialogue({
               npcId: firstMeetIntroId,
@@ -3047,6 +3057,33 @@ ${npcList}`,
               `[NpcFarewell] turn=${pending.turnNo} ${primaryNpcIdForFarewell} 작별 발화 감지 — 대화 잠금 해제 마킹 ("${lastUtterance.slice(0, 30)}…")`,
             );
           }
+        }
+      }
+
+      // 5.12.5. 직전 대사 재탕 감지 센서 (자유 대화 검증 2026-07-12 ③)
+      //   이어받기 positive 주입에 반복 금지 지시가 있음에도 Gemma가 직전 턴
+      //   대사를 거의 그대로 복창하는 케이스 실측 (T9). 빈도 계측용 경고 로그 —
+      //   상습화되면 재시도/사후 치환 도입 판단.
+      if (narrative) {
+        try {
+          const prevNarr = recentRows?.[0]?.llmOutput ?? '';
+          if (prevNarr) {
+            const curUtterRe = /@\[[^\]|]+(?:\|[^\]]*)?\]\s*["“]([^"”]{20,})["”]/g;
+            let um: RegExpExecArray | null;
+            while ((um = curUtterRe.exec(narrative)) !== null) {
+              const line = um[1];
+              // 직전 턴 원문에 20자+ 연속 구간이 그대로 존재 → 재탕 의심
+              const probe = line.slice(0, Math.min(30, line.length));
+              if (prevNarr.includes(probe)) {
+                this.logger.warn(
+                  `[DialogueRepeat] turn=${pending.turnNo} 직전 턴 대사 재탕 의심: "${probe}…"`,
+                );
+                break;
+              }
+            }
+          }
+        } catch {
+          /* 계측 실패는 무시 */
         }
       }
 

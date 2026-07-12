@@ -3896,20 +3896,18 @@ export class TurnsService {
         eventSceneFrame: resolvedSceneFrame,
         eventMatchPolicy: event.matchPolicy,
         eventId: event.eventId,
-        // Player-First: 텍스트 매칭(extractTargetNpcFromInput)이 성공하면 intentV3 오파싱 override
-        //   (bug 4624) IntentParserV2가 "하위크의 소매" 같은 구를 NPC_BG_FISHMONGER로
-        //   오인식하는 경우 방지. LOCATION 분기의 earlyTargetNpcId는 스코프가 다르므로 재계산.
-        primaryNpcId:
-          this.extractTargetNpcFromInput(rawInput, body.input.type) ??
-          event.payload.primaryNpcId ??
-          null,
+        // 자유 대화 검증 (2026-07-12) ①-b: 여기서 extractTargetNpcFromInput을
+        // 재계산하면 NpcResolver(단일 권한자, 언급 질문 가드 포함)와 다른 화자가
+        // 표시·LLM 컨텍스트에 실려 actionHistory 기록과 분리된다 (실측 T5:
+        // 기록=에드릭, 표시=하를룬 → T6 잠금 혼선). resolver 결과가 동기화된
+        // event.payload.primaryNpcId를 단일 소스로 사용 (bug 4624 방어는
+        // resolver Step 1a가 동일 매칭으로 대체).
+        primaryNpcId: event.payload.primaryNpcId ?? null,
         goalCategory: intentV3.goalCategory,
         approachVector: intentV3.approachVector,
         goalText: intentV3.goalText,
         targetNpcId:
-          this.extractTargetNpcFromInput(rawInput, body.input.type) ??
-          intentV3.targetNpcId ??
-          undefined,
+          event.payload.primaryNpcId ?? intentV3.targetNpcId ?? undefined,
         turnMode: event.eventId.startsWith('FREE_PLAYER_')
           ? 'PLAYER_DIRECTED'
           : event.eventId.startsWith('FREE_CONV_')

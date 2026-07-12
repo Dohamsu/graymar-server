@@ -157,3 +157,36 @@ describe('NpcResolver — NPC 작별 발화 잠금 해제 (P2 2026-07-11)', () =
     expect(lock).toBeNull();
   });
 });
+
+describe('NpcResolver — 언급 질문 가드 확장 (자유 대화 검증 2026-07-12)', () => {
+  const service = new NpcResolverService(
+    new FakeContent() as never,
+    new FakeWhereabouts() as never,
+  );
+  const lockedOnRosa = (rawInput: string) =>
+    service.resolve(
+      choiceCtx({
+        inputType: 'ACTION',
+        rawInput,
+        intent: { actionType: 'PERSUADE', tone: 'NEUTRAL' } as never,
+        actionHistory: [{ primaryNpcId: 'NPC_ROSA', actionType: 'TALK' }],
+        candidateEvent: { eventId: 'EVT_X', payload: {} },
+      }),
+    );
+
+  it('실측 T5 유형: "쥐왕에게 얼마나 쥐여줘야..." — 조사+언급질문은 잠금 유지', () => {
+    const r = lockedOnRosa('쥐왕에게 얼마나 쥐여줘야 입을 열겠소?');
+    expect(r.npcId).toBe('NPC_ROSA');
+    expect(r.source).toBe('CONVERSATION_LOCK');
+  });
+
+  it('실측 T10 유형: "쥐왕이 말한 창고..." — 언급은 잠금 유지', () => {
+    const r = lockedOnRosa('쥐왕이 말한 창고 주인이 누군지 아시오?');
+    expect(r.npcId).toBe('NPC_ROSA');
+  });
+
+  it('정당한 화자 전환("쥐왕에게 말을 건다")은 여전히 전환', () => {
+    const r = lockedOnRosa('쥐왕에게 말을 건다');
+    expect(r.npcId).toBe('NPC_RAT_KING');
+  });
+});

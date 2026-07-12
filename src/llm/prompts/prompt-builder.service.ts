@@ -146,8 +146,18 @@ export class PromptBuilderService {
     // 다음 턴이 없어 소개가 무의미하고, 실패 시 "내 이름은 {별칭}이오" 환각이
     // 마지막 장면에 그대로 남는다 (완주 런 실측). 소개 목록을 비우면
     // [첫 만남 — 이름 미공개] 별칭 유지 경로로 자연 전환된다.
+    //
+    // 작별(FAREWELL) 턴도 동일 (자유 대화 검증 2026-07-12): 임계 도달이 작별
+    // 턴과 겹치면 "이만 가보겠소" 직후 "반갑소" 자기소개가 붙는 맥락 역전
+    // 실측 — 소개는 5.11 롤백 사이클로 pendingIntroduction 이월되어 다음
+    // 등장 턴에 자연 재시도된다.
+    const uiForIntroGate = sr.ui as Record<string, unknown>;
+    const dialogueActForIntroGate = (
+      uiForIntroGate?.actionContext as { dialogueAct?: string } | undefined
+    )?.dialogueAct;
     if (
-      (sr.ui as Record<string, unknown>)?.endingResult &&
+      (!!uiForIntroGate?.endingResult ||
+        dialogueActForIntroGate === 'FAREWELL') &&
       (ctx.newlyIntroducedNpcIds?.length ?? 0) > 0
     ) {
       ctx = { ...ctx, newlyIntroducedNpcIds: [] };
@@ -549,7 +559,8 @@ export class PromptBuilderService {
 
     // L2 확장: NPC 로스터 — 이번 턴에 등장할 NPC만 선별 (1명 원칙)
     // 우선순위: ① 플레이어 행동에서 NPC 이름/별칭 파싱 ② 이벤트 primaryNpc ③ 이전 턴 대화 NPC ④ 장소 NPC
-    let allNpcs: ReturnType<typeof this.content.getAllNpcs> = [];
+    let allNpcs: import('../../content/content.types.js').NpcDefinition[] =
+      [];
     const targetNpcIds = new Set<string>(); // [NPC 대화 자세] 필터링에도 사용
     if (!isHub) {
       const fullList = this.content.getAllNpcs();
