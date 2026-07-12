@@ -3027,7 +3027,15 @@ export class TurnsService {
       }
 
       // SHOP 액션 시 구매/판매 처리
-      if (intent.actionType === 'SHOP' && intent.target) {
+      // arch/68 부록 E — 구매 경로 부활: KW·LLM 파서 모두 구매 입력을
+      // TRADE로 정규화(normalizeActionType)해 SHOP 분기가 도달 불능이었다
+      // (전 DB SHOP 인텐트 0건·[상점] 이벤트 0건 실측). TRADE라도 원문에
+      // 구매 표현이 있으면 상점 구매를 시도한다.
+      const isBuyIntent =
+        intent.actionType === 'SHOP' ||
+        (intent.actionType === 'TRADE' &&
+          /구매|구입|매입|사겠|사고 싶|사줘|산다|[을를] 사/.test(rawInput));
+      if (isBuyIntent && intent.target) {
         const targetItemId = intent.target.toUpperCase().replace(/\s+/g, '_');
         // 현재 장소의 상점에서 아이템 찾기
         const locationShops = this.content.getShopsByLocation(locationId);
@@ -3122,7 +3130,9 @@ export class TurnsService {
           }
         }
 
-        if (!purchased) {
+        if (!purchased && locationShops.length > 0) {
+          // 상점 없는 장소의 은유 표현("정보를 산다")에는 침묵 — 일반
+          // TRADE 서사가 담당. 상점 앞에서의 실구매 실패만 안내.
           shopActionEvents.push({
             id: `shop_fail_${turnNo}`,
             kind: 'SYSTEM',
