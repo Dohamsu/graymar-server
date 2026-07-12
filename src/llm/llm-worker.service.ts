@@ -2774,17 +2774,11 @@ ${npcList}`,
         }
       }
 
-      // 5.10.11. 별칭 접두 중복 최종 정리 (E) — 후단 단계 생성분 포함 보장
+      // 5.10.11+12. 별칭 아티팩트 정리 (멱등 배리어 1차 — arch/68 부록 J).
+      //   기존 5.10.11(접두 중복) + 5.10.12(융합/조각/조사/무명 라벨)를
+      //   sanitizeAliasArtifacts로 통합. 저장 직전(5.14)에서 동일 호출.
       if (narrative) {
-        narrative = this.stripAliasPrefixDup(narrative);
-      }
-
-      // 5.10.12. 접두 융합 별칭 복구 + 무명 화자 라벨 제거 (P3 2026-07-11)
-      if (narrative) {
-        narrative = this.stripFusedAliasPrefix(narrative);
-        narrative = this.stripAliasFragmentBeforeName(narrative);
-        narrative = this.fixNpcNameParticles(narrative);
-        narrative = this.stripAnonymousSpeakerLabels(narrative);
+        narrative = this.sanitizeAliasArtifacts(narrative);
       }
 
       // 5.10.13. 소개 턴 실명 마커 정규화 (이름 공개 기획 후속 2026-07-11)
@@ -3433,15 +3427,13 @@ ${npcList}`,
         }
       }
 
-      // 5.14. 저장 직전 최종 별칭 정리 (arch/68 부록 H, 2026-07-12).
-      //   5.11(IntroFallback @[별칭] 마커 본문 삽입 — 이 런 9회)이 5.10.11
-      //   stripAliasPrefixDup '이후'에 별칭을 재삽입하면, 삽입 지점 앞에 남은
-      //   별칭 조각과 결합해 접두 중복이 최종본에 새어나온다. 실측: 오웬
-      //   "넉넉한 체구의 넉넉한 체구의 선술집 주인" (사랑방 개방 후 노출 급증).
-      //   재삽입 이후 마지막 방어로 접두 중복·융합을 한 번 더 정리한다.
+      // 5.14. 별칭 아티팩트 정리 (멱등 배리어 최종 — arch/68 부록 H/J).
+      //   5.11(IntroFallback/IntroDialogueInsert)이 5.10 1차 배리어 '이후'에
+      //   별칭을 재삽입하므로(오웬 "넉넉한 체구의 넉넉한 체구의…" 실측),
+      //   저장 직전 동일 배리어로 재삽입분까지 정리. 1차와 같은 함수라
+      //   순서 사각지대가 없다(부록 H는 2종만 재실행 → J에서 5종 전체로).
       if (narrative) {
-        narrative = this.stripAliasPrefixDup(narrative);
-        narrative = this.stripFusedAliasPrefix(narrative);
+        narrative = this.sanitizeAliasArtifacts(narrative);
       }
 
       // llmChoices 는 Track 2 (서술 기반 nano 선택지 재생성) 완료 후
@@ -3995,6 +3987,30 @@ ${npcList}`,
           | undefined,
       (msg) => this.logger.warn(`[NanoChoiceNpcFix] turn=${turnNo} ${msg}`),
     );
+  }
+
+  /**
+   * 별칭 아티팩트 멱등 배리어 (arch/68 부록 J) — 순수 텍스트 정리 5종을
+   * 하나로 묶어 후처리 순서 사각지대를 제거. 5.10(1차)과 저장 직전(최종)
+   * 두 지점에서 '동일 호출'한다. 5.11(IntroFallback/IntroDialogueInsert)이
+   * 별칭을 본문에 재삽입해도 저장 직전 배리어가 다시 정리하므로, 재삽입이
+   * 1차 정리보다 뒤에 온다는 순서 의존성이 무해해진다. 전 함수 멱등 —
+   * 두 번 돌아도 결과 동일(정리 완료분에 재적용 시 no-op).
+   *   - stripAliasPrefixDup: 별칭 접두 중복 ("A A B" → "A B")
+   *   - stripFusedAliasPrefix: 공백 없는 접두 융합 ("토단정한…" → "단정한…")
+   *   - stripAliasFragmentBeforeName: 별칭 조각 + 실명 융합
+   *   - fixNpcNameParticles: 이름 뒤 조사 교정
+   *   - stripAnonymousSpeakerLabels: 무명 화자 콜론 라벨 제거
+   * ※ IntroMarkerNorm(소개 상태 의존, 비멱등)은 배리어 제외 — 5.10.13 유지.
+   */
+  private sanitizeAliasArtifacts(narrative: string): string {
+    if (!narrative) return narrative;
+    narrative = this.stripAliasPrefixDup(narrative);
+    narrative = this.stripFusedAliasPrefix(narrative);
+    narrative = this.stripAliasFragmentBeforeName(narrative);
+    narrative = this.fixNpcNameParticles(narrative);
+    narrative = this.stripAnonymousSpeakerLabels(narrative);
+    return narrative;
   }
 
   /**
