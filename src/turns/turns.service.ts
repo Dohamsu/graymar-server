@@ -2866,7 +2866,7 @@ export class TurnsService {
     let giftGoldCost = 0;
     {
       const GIFT_RE =
-        /(골드|은화|동전|돈|잔돈|몇\s*닢|이걸로|이거라도).{0,14}(주마|줄게|주겠|건네|건넨|쥐여|먹으렴|먹게|사\s*먹|사거라|사라|가지(?:게|거라|렴)|보태)/;
+        /(골드|은화|동전|돈|잔돈|몇\s*닢|이걸로|이거라도).{0,14}(주마|줄게|주겠|건네|건넨|쥐여|먹으렴|먹게|사\s*(?:먹|드시|마시)|드시게|드세요|마시게|한잔\s*(?:사|하)|사거라|사라|가지(?:게|거라|렴)|보태)/;
       const isGiftEligible =
         intent.actionType !== 'BRIBE' &&
         intent.actionType !== 'TRADE' &&
