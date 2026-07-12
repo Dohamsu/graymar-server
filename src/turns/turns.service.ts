@@ -2681,6 +2681,9 @@ export class TurnsService {
     const resolvedTargetNpcId = textMatchedNpcId ?? null;
 
     // effectiveNpcId: (1) 텍스트 매칭 NPC (2) intent.targetNpcId (3) conversationLockedNpcId (4) event.payload.primaryNpcId
+    // 이벤트 정의 원본 NPC (아래에서 payload.primaryNpcId가 덮이기 전 캡처 —
+    // arch/68 부록 L 이벤트-서술 선택지 정합 게이트에 사용)
+    const eventDefinedNpc = event.payload.primaryNpcId ?? null;
     let eventPrimaryNpc = event.payload.primaryNpcId ?? null;
     if (resolvedTargetNpcId) {
       // 입력 텍스트 키워드 또는 IntentParser가 NPC를 지정 → 최우선
@@ -2947,11 +2950,31 @@ export class TurnsService {
     const npcResolve = (text: string) =>
       resolveNpcPlaceholders(text, npcStates, (id) => this.content.getNpc(id));
     const resolvedSceneFrame = npcResolve(event.payload.sceneFrame);
-    const resolvedChoices = event.payload.choices?.map((c: any) => ({
-      ...c,
-      label: c.label ? npcResolve(c.label) : c.label,
-      hint: c.hint ? npcResolve(c.hint) : c.hint,
-    }));
+    let resolvedChoices: any[] | undefined = event.payload.choices?.map(
+      (c: any) => ({
+        ...c,
+        label: c.label ? npcResolve(c.label) : c.label,
+        hint: c.hint ? npcResolve(c.hint) : c.hint,
+      }),
+    );
+
+    // A안 게이트 (arch/68 부록 L — 버그 185a8ddd) — 이벤트 고유 선택지가
+    // 서술 화자와 다른 NPC를 전제하는 분열 차단. 유저가 텍스트로 특정 NPC를
+    // 명시 지목(resolvedTargetNpcId)했는데 그게 이벤트 정의 NPC와 다르면,
+    // 이벤트 payload.choices(그 이벤트 NPC를 전제)를 폐기하고 서술 NPC 기준
+    // 기본 선택지로 대체한다. 실측: 유저가 정보상과 대화 중인데 첫 진입
+    // WORLD_EVENT로 음유시인 조우 이벤트가 매칭 → 서술은 정보상, 선택지는
+    // 음유시인. (이벤트 NPC를 콘텐츠에 명시해 서술 화자와 정합시키는 것과 병행.)
+    if (
+      resolvedTargetNpcId &&
+      eventDefinedNpc &&
+      resolvedTargetNpcId !== eventDefinedNpc
+    ) {
+      resolvedChoices = undefined;
+      this.logger.warn(
+        `[EventChoiceGate] 유저 지목(${resolvedTargetNpcId}) ≠ 이벤트 NPC(${eventDefinedNpc}) — 이벤트 고유 선택지 폐기, 서술 NPC 기준 기본 선택지 사용`,
+      );
+    }
 
     // === Narrative Engine v1: Narrative Marks 체크 ===
     const markConditions = this.content.getNarrativeMarkConditions();
