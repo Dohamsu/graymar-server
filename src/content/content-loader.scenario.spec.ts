@@ -18,11 +18,17 @@ describe('ContentLoader — 시나리오 팩 계약 (architecture/63)', () => {
     expect(graph[0].nodeId).toBe('common_s0');
   });
 
-  it('HUB 이동 선택지 — 구 하드코딩 4곳과 id·순서 일치', () => {
+  it('HUB 이동 선택지 — 4곳 + 거점 사랑방(arch/68 부록 B) id·순서 일치', () => {
     const ids = loader
       .getHubAccessibleLocations()
       .map((l) => loader.hubChoiceIdFor(l.locationId));
-    expect(ids).toEqual(['go_market', 'go_guard', 'go_harbor', 'go_slums']);
+    expect(ids).toEqual([
+      'go_market',
+      'go_guard',
+      'go_harbor',
+      'go_slums',
+      'go_tavern',
+    ]);
   });
 
   it('go_hub 선택지 — 라벨/힌트 단일 소스 (구 리터럴 문면)', () => {

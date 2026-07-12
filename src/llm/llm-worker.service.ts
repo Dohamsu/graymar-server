@@ -111,6 +111,66 @@ const VALID_CHOICE_AFFORDANCES = new Set([
 export const ANON_SPEAKER_LABEL_RE =
   /(^|\n)\s*[가-힣A-Za-z]{2,6}(?:\s[가-힣A-Za-z]{1,6})?\s?\d{0,2}\s*[:：]\s*(?=["“])/g;
 
+/** NanoChoiceNpcFix 대상 affordance — 대화 잠금 유지 계열과 동일 집합 */
+export const NANO_CHOICE_CONV_AFFORDANCES = new Set([
+  'TALK',
+  'PERSUADE',
+  'BRIBE',
+  'THREATEN',
+  'HELP',
+]);
+
+/**
+ * NanoChoiceNpcFix 코어 (arch/68 부록 D — 버그 리포트 5f31d803, 2026-07-12)
+ * 대화 연속 턴에서 nano가 대화 계열 선택지에 현재 대화 상대가 아닌
+ * sourceNpcId를 배정하면(컨텍스트 오염 — 실측: 정보상 대화 중 "그의 말을
+ * 더 듣고 싶다"에 에드릭 배정) NpcResolver Step 0(CHOICE_EXPLICIT)이
+ * payload를 그대로 신뢰해 다음 턴 화자가 점프한다. 이번 턴 대화 상대
+ * (= 다음 턴 잠금 기준)로 교정. 라벨이 해당 NPC의 이름/별칭을 명시하는
+ * 지목형 선택지는 플레이어 의도로 보고 존중. 작별 턴(npcFarewell)은
+ * 잠금이 닫히므로 게이트를 걷지 않는다.
+ * spec이 직접 import (복제 drift 방지 — export 정본 원칙).
+ */
+export function sanitizeNanoChoiceNpcsCore(
+  choices: ChoiceItem[],
+  ctx: {
+    lockNpcId: string | null;
+    parsedType: string | null;
+    npcFarewell: boolean;
+  },
+  npcLookup: (
+    id: string,
+  ) =>
+    | { name?: string; unknownAlias?: string; shortAlias?: string }
+    | undefined,
+  log: (msg: string) => void,
+): ChoiceItem[] {
+  if (ctx.npcFarewell) return choices;
+  if (!ctx.lockNpcId) return choices;
+  if (!NANO_CHOICE_CONV_AFFORDANCES.has(String(ctx.parsedType ?? ''))) {
+    return choices; // 이번 턴이 대화 계열이 아니면 잠금 기준 없음
+  }
+  for (const c of choices) {
+    const payload = c.action?.payload as Record<string, unknown> | undefined;
+    const src = payload?.sourceNpcId as string | undefined;
+    if (!src || src === ctx.lockNpcId) continue;
+    if (!NANO_CHOICE_CONV_AFFORDANCES.has(String(payload?.affordance ?? '')))
+      continue;
+    const target = npcLookup(src);
+    const mentioned = [
+      target?.name,
+      target?.unknownAlias,
+      target?.shortAlias,
+    ].some((n) => !!n && n.length >= 2 && c.label.includes(n));
+    if (mentioned) continue; // 지목형 선택지 — nano 배정 존중
+    payload!.sourceNpcId = ctx.lockNpcId;
+    log(
+      `choice="${c.label.slice(0, 24)}" ${src} → ${ctx.lockNpcId} (대화 연속 sourceNpcId 오염 교정)`,
+    );
+  }
+  return choices;
+}
+
 @Injectable()
 export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LlmWorkerService.name);
@@ -3012,6 +3072,7 @@ ${npcList}`,
       //   않는다. 플레이어 FAREWELL(불변식 26)과 대칭 — 실측: 토브렌이 작별을
       //   고하고도 대화 잠금으로 25턴 상주. actionHistory의 해당 NPC 마지막
       //   엔트리에 npcFarewell을 마킹하고 findConversationLock이 break 한다.
+      let npcFarewellDetectedThisTurn = false;
       if (narrative && runSession?.runState) {
         const primaryNpcIdForFarewell = (
           (serverResult.ui as Record<string, unknown>)?.actionContext as
@@ -3053,6 +3114,7 @@ ${npcList}`,
                 return false;
               },
             );
+            npcFarewellDetectedThisTurn = true;
             this.logger.log(
               `[NpcFarewell] turn=${pending.turnNo} ${primaryNpcIdForFarewell} 작별 발화 감지 — 대화 잠금 해제 마킹 ("${lastUtterance.slice(0, 30)}…")`,
             );
@@ -3470,9 +3532,14 @@ ${npcList}`,
 
       // Track 2 완료 후 최종 선택지 결정 — DB 와 stream 이 동일 값을 참조해야
       // 클라가 클릭한 nano_${turnNo}_${idx} 가 서버 매칭과 일치한다.
-      const finalChoices =
+      // NanoChoiceNpcFix — nano 선택지 sourceNpcId 오염 교정 후 확정 (버그 5f31d803)
+      const finalChoices = this.sanitizeNanoChoiceNpcs(
         this.pendingNanoChoices.get(`${pending.runId}:${pending.turnNo}`) ??
-        llmChoices;
+          llmChoices,
+        serverResult,
+        pending.turnNo,
+        npcFarewellDetectedThisTurn,
+      );
 
       await this.db
         .update(turns)
@@ -3883,6 +3950,42 @@ ${npcList}`,
    * dedupe 초입과 최종 저장 직전 두 곳에서 호출 — 후단 단계가 중복을
    * 만들어도 최종본을 보장한다 (T5 실측: dedupe 이후 잔존 사례).
    */
+  /**
+   * NanoChoiceNpcFix (arch/68 부록 D — 버그 리포트 5f31d803, 2026-07-12)
+   * 대화 연속 턴에서 nano가 대화 계열 선택지에 현재 대화 상대가 아닌
+   * sourceNpcId를 배정하면(컨텍스트 오염 — 실측: 정보상 대화 중 "그의 말을
+   * 더 듣고 싶다"에 에드릭 배정) NpcResolver Step 0(CHOICE_EXPLICIT)이
+   * payload를 그대로 신뢰해 다음 턴 화자가 점프한다. 이번 턴 대화 상대
+   * (= 다음 턴 잠금 기준)로 교정. 라벨이 해당 NPC의 이름/별칭을 명시하는
+   * 지목형 선택지는 플레이어 의도로 보고 존중. 작별 턴(npcFarewell)은
+   * 잠금이 닫히므로 게이트를 걷지 않는다.
+   */
+  private sanitizeNanoChoiceNpcs(
+    choices: ChoiceItem[] | null,
+    serverResult: ServerResultV1,
+    turnNo: number,
+    npcFarewellDetected: boolean,
+  ): ChoiceItem[] | null {
+    if (!choices) return choices;
+    const actionCtx = (serverResult.ui as Record<string, unknown>)
+      ?.actionContext as
+      | { parsedType?: string; primaryNpcId?: string | null }
+      | undefined;
+    return sanitizeNanoChoiceNpcsCore(
+      choices,
+      {
+        lockNpcId: actionCtx?.primaryNpcId ?? null,
+        parsedType: actionCtx?.parsedType ?? null,
+        npcFarewell: npcFarewellDetected,
+      },
+      (id) =>
+        this.content.getNpc(id) as
+          | { name?: string; unknownAlias?: string; shortAlias?: string }
+          | undefined,
+      (msg) => this.logger.warn(`[NanoChoiceNpcFix] turn=${turnNo} ${msg}`),
+    );
+  }
+
   /**
    * P3 2026-07-11 — 공백 없는 접두 융합 별칭 복구.
    * 실측: "토단정한 제복의 장교 하위크" — 브렌 대위의 unknownAlias("단정한
