@@ -428,3 +428,45 @@ describe('PromptBuilderService — 사전 확정 자기소개 지시 (이름 공
     expect(text).toContain('제3자 호명');
   });
 });
+
+describe('PromptBuilderService — 플레이어 자기 정보 주입 (순회 검증 ②)', () => {
+  let promptBuilder: PromptBuilderService;
+
+  beforeEach(() => {
+    promptBuilder = new PromptBuilderService(
+      new FakeContent() as any,
+      new FakeTokenBudget() as any,
+    );
+  });
+
+  it('playerDisclosures 존재 → 밝힌 정보 블록 + 모순 금지 지시', () => {
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(
+        baseCtx({
+          playerDisclosures: [
+            { text: '나는 떠돌이 용병이오', turnNo: 5 },
+            { text: '이 시장은 처음', turnNo: 4 },
+          ],
+        }),
+        baseSr(),
+        '말을 건다',
+        'ACTION',
+      ),
+    );
+    expect(text).toContain('플레이어가 이미 밝힌 자기 정보');
+    expect(text).toContain('나는 떠돌이 용병이오');
+    expect(text).toContain('모순되는 질문');
+  });
+
+  it('빈 목록이면 블록 미발화', () => {
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(
+        baseCtx({ playerDisclosures: [] }),
+        baseSr(),
+        '말을 건다',
+        'ACTION',
+      ),
+    );
+    expect(text).not.toContain('플레이어가 이미 밝힌');
+  });
+});

@@ -84,6 +84,8 @@ export interface RunState {
   npcRelations?: Record<string, number>; // npcId -> 0~100
   eventCooldowns?: Record<string, number>; // eventId -> lastUsedTurnNo
   actionHistory?: ActionHistoryEntry[]; // 고집(insistence) 시스템용 행동 이력
+  /** 순회 검증 ② (2026-07-12): 플레이어가 밝힌 자기 정보 (최근 5건) — NPC 모순 질문 방지용 프롬프트 주입 */
+  playerDisclosures?: Array<{ text: string; turnNo: number }>;
   // Phase 2: NPC/관계/행동 상태
   npcStates?: Record<string, import('./npc-state.js').NPCState>;
   relationships?: Record<string, import('./npc-state.js').Relationship>;

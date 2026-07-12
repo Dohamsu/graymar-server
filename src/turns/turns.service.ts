@@ -2798,6 +2798,31 @@ export class TurnsService {
     // cooldown 업데이트
     const newCooldowns = { ...cooldowns, [event.eventId]: turnNo };
 
+    // 순회 검증 ② (2026-07-12): 플레이어가 밝힌 자기 정보 축적 — "나는 떠돌이
+    // 용병이오", "이 시장은 처음이오" 류를 runState에 쌓아 프롬프트로 주입,
+    // NPC가 이미 들은 정보와 모순되는 질문("그대도 오래 계셨다면")을 방지.
+    if (body.input.type === 'ACTION') {
+      const DISCLOSURE_RES = [
+        /(?:나는|난|저는|내가)\s+([^,.!?"]{2,28}(?:이오|이요|요|이다|일세|하오|소|용병|사람))/,
+        /((?:이\s*(?:도시|시장|동네|곳|거리)|여기|이곳)(?:은|는|엔|에는)?\s*처음[^,.!?"]{0,10})/,
+        /((?:일거리|일감|의뢰)[^,.!?"]{0,12}(?:찾|구하)[^,.!?"]{0,8})/,
+      ];
+      for (const re of DISCLOSURE_RES) {
+        const m = rawInput.match(re);
+        if (m?.[1]) {
+          const text = m[1].trim().slice(0, 40);
+          const list = updatedRunState.playerDisclosures ?? [];
+          if (!list.some((d) => d.text === text)) {
+            updatedRunState.playerDisclosures = [
+              ...list,
+              { text, turnNo },
+            ].slice(-5);
+          }
+          break;
+        }
+      }
+    }
+
     // 행동 이력 업데이트 (고집 시스템 + FALLBACK 페널티 + 선택지 중복 방지)
     const eventPrimaryNpcId = (event.payload as Record<string, unknown>)
       ?.primaryNpcId as string | undefined;
@@ -2834,8 +2859,35 @@ export class TurnsService {
         })
       : { gold: 0, items: [], exp: 0 };
 
-    // 골드: BRIBE/TRADE 비용(음수) + 보상(양수) 합산
-    const totalGoldDelta = resolveResult.goldDelta + locationReward.gold;
+    // 순회 검증 ③ (2026-07-12): 플레이어→NPC 금전 증여 감지 — "이걸로 빵
+    // 사 먹으렴", "은화를 쥐여준다" 류 증여 서술이 골드 미차감으로 수용되던
+    // 회색지대. 대화계 턴 + NPC 존재 + 증여 표현일 때 명시 금액(specifiedGold)
+    // 또는 기본 소액(config)을 차감한다. BRIBE/TRADE는 기존 경로가 담당.
+    let giftGoldCost = 0;
+    {
+      const GIFT_RE =
+        /(골드|은화|동전|돈|잔돈|몇\s*닢|이걸로|이거라도).{0,14}(주마|줄게|주겠|건네|건넨|쥐여|먹으렴|먹게|사\s*먹|사거라|사라|가지(?:게|거라|렴)|보태)/;
+      const isGiftEligible =
+        intent.actionType !== 'BRIBE' &&
+        intent.actionType !== 'TRADE' &&
+        body.input.type === 'ACTION' &&
+        !!(eventPrimaryNpc ?? intentV3.targetNpcId) &&
+        GIFT_RE.test(rawInput);
+      if (isGiftEligible) {
+        const amount =
+          intent.specifiedGold ?? QUEST_BALANCE.GIFT_DEFAULT_GOLD;
+        giftGoldCost = -Math.min(amount, Math.max(0, updatedRunState.gold));
+        if (giftGoldCost < 0) {
+          this.logger.log(
+            `[Gift] 금전 증여 감지: ${giftGoldCost}G (input="${rawInput.slice(0, 30)}")`,
+          );
+        }
+      }
+    }
+
+    // 골드: BRIBE/TRADE 비용(음수) + 증여(음수) + 보상(양수) 합산
+    const totalGoldDelta =
+      resolveResult.goldDelta + giftGoldCost + locationReward.gold;
     if (totalGoldDelta !== 0) {
       updatedRunState.gold = Math.max(0, updatedRunState.gold + totalGoldDelta);
     }

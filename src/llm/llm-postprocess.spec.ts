@@ -938,3 +938,57 @@ describe('카드 정합 — 완전형 마커 역해석 수집 (결함 A)', () =>
     expect(collect('@[무명 인물] "…"').size).toBe(0);
   });
 });
+
+// ─── 순회 검증 ②③ 2026-07-12: 자기 공개 감지 / 증여 감지 (turns.service 로직 복제) ───
+
+describe('자기 공개 감지 패턴 (순회 검증 ②)', () => {
+  const DISCLOSURE_RES = [
+    /(?:나는|난|저는|내가)\s+([^,.!?"]{2,28}(?:이오|이요|요|이다|일세|하오|소|용병|사람))/,
+    /((?:이\s*(?:도시|시장|동네|곳|거리)|여기|이곳)(?:은|는|엔|에는)?\s*처음[^,.!?"]{0,10})/,
+    /((?:일거리|일감|의뢰)[^,.!?"]{0,12}(?:찾|구하)[^,.!?"]{0,8})/,
+  ];
+  const detect = (input: string): string | null => {
+    for (const re of DISCLOSURE_RES) {
+      const m = input.match(re);
+      if (m?.[1]) return m[1].trim();
+    }
+    return null;
+  };
+
+  it.each([
+    ['나는 떠돌이 용병이오. 일거리를 찾는 중이지', '떠돌이 용병'],
+    ['실례하오, 처음 온 사람인데... 이 시장은 처음이오', '처음'],
+    ['일거리를 찾아 여기까지 왔소', '일거리를 찾'],
+  ])('감지: "%s"', (input, expectFrag) => {
+    const d = detect(input);
+    expect(d).not.toBeNull();
+    expect(d).toContain(expectFrag);
+  });
+
+  it('자기 공개 아닌 문장은 미감지', () => {
+    expect(detect('창고 주인이 누군지 아시오?')).toBeNull();
+    expect(detect('주변을 살핀다')).toBeNull();
+  });
+});
+
+describe('금전 증여 감지 (순회 검증 ③)', () => {
+  const GIFT_RE =
+    /(골드|은화|동전|돈|잔돈|몇\s*닢|이걸로|이거라도).{0,14}(주마|줄게|주겠|건네|건넨|쥐여|먹으렴|먹게|사\s*먹|사거라|사라|가지(?:게|거라|렴)|보태)/;
+
+  it.each([
+    '배고프면 이걸로 빵이라도 사 먹으렴',
+    '은화 몇 닢을 쥐여준다',
+    '동전 몇 개를 건네며 말한다',
+    '이거라도 보태 쓰게',
+  ])('증여: "%s" → 감지', (input) => {
+    expect(GIFT_RE.test(input)).toBe(true);
+  });
+
+  it.each([
+    '돈을 벌 방법이 있소?',
+    '골드가 얼마나 필요하오?',
+    '은화가 부족하군',
+  ])('비증여: "%s" → 미감지', (input) => {
+    expect(GIFT_RE.test(input)).toBe(false);
+  });
+});

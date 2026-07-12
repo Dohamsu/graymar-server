@@ -1809,6 +1809,18 @@ export class PromptBuilderService {
       );
     }
 
+    // 순회 검증 ② (2026-07-12): 플레이어가 밝힌 자기 정보 — NPC가 이미 들은
+    // 내용과 모순되는 질문("그대도 오래 계셨다면") 방지 (명시적 주입, LLM 원칙 1)
+    if (!isHub && ctx.playerDisclosures && ctx.playerDisclosures.length > 0) {
+      factsParts.push(
+        [
+          `[플레이어가 이미 밝힌 자기 정보 — 근처 NPC는 들어서 알고 있음]`,
+          ...ctx.playerDisclosures.map((d) => `- "${d.text}"`),
+          `NPC는 위 정보와 모순되는 질문이나 가정(예: 신분을 다시 묻기, 이미 밝힌 사실과 반대되는 전제)을 하지 않습니다.`,
+        ].join('\n'),
+      );
+    }
+
     // toneHint
     factsParts.push(`[분위기] ${sr.ui.toneHint}`);
 
