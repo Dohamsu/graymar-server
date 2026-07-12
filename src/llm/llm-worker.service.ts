@@ -3433,6 +3433,17 @@ ${npcList}`,
         }
       }
 
+      // 5.14. 저장 직전 최종 별칭 정리 (arch/68 부록 H, 2026-07-12).
+      //   5.11(IntroFallback @[별칭] 마커 본문 삽입 — 이 런 9회)이 5.10.11
+      //   stripAliasPrefixDup '이후'에 별칭을 재삽입하면, 삽입 지점 앞에 남은
+      //   별칭 조각과 결합해 접두 중복이 최종본에 새어나온다. 실측: 오웬
+      //   "넉넉한 체구의 넉넉한 체구의 선술집 주인" (사랑방 개방 후 노출 급증).
+      //   재삽입 이후 마지막 방어로 접두 중복·융합을 한 번 더 정리한다.
+      if (narrative) {
+        narrative = this.stripAliasPrefixDup(narrative);
+        narrative = this.stripFusedAliasPrefix(narrative);
+      }
+
       // llmChoices 는 Track 2 (서술 기반 nano 선택지 재생성) 완료 후
       // 최종 finalChoices 로 한 번만 저장한다. 여기서 미리 저장하면
       // DB 는 Track 1 결과, stream emit 은 Track 2 결과로 desync 가 발생함.

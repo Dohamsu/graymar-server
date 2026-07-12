@@ -112,6 +112,34 @@ describe('shouldIntroduce', () => {
         ),
       ).toBe(false);
     });
+
+    // A안 (arch/68 부록 H) — 우호 상주 조기 소개
+    it('FRIENDLY + encounterCount=0 + appearanceCount=3 → true (거점 상주 조기 소개)', () => {
+      expect(
+        shouldIntroduce(
+          npc({ encounterCount: 0, appearanceCount: 3, posture: 'FRIENDLY' }),
+          'FRIENDLY',
+        ),
+      ).toBe(true);
+    });
+
+    it('FEARFUL + appearanceCount=3 → true (첫만남 소개 성향)', () => {
+      expect(
+        shouldIntroduce(
+          npc({ encounterCount: 0, appearanceCount: 3, posture: 'FEARFUL' }),
+          'FEARFUL',
+        ),
+      ).toBe(true);
+    });
+
+    it('CAUTIOUS + appearanceCount=3 → false (우호 아님, 5회 유지)', () => {
+      expect(
+        shouldIntroduce(
+          npc({ encounterCount: 0, appearanceCount: 3, posture: 'CAUTIOUS' }),
+          'CAUTIOUS',
+        ),
+      ).toBe(false);
+    });
   });
 
   describe('이미 introduced=true / BACKGROUND 티어 guard', () => {

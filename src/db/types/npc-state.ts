@@ -400,10 +400,15 @@ export function shouldIntroduce(
   // BACKGROUND 티어 NPC는 소개하지 않음 (배경 인물은 별칭 유지)
   if (npcTier === 'BACKGROUND') return false;
 
-  // 반복 호칭 고착 방지: LLM 서술에 5회 이상 등장했으면 posture 무관 강제 소개.
+  // 반복 호칭 고착 방지 + 거점 상주 우호 NPC 조기 소개 (arch/68 부록 H).
   //   encounterCount(primaryNpcId 기준)와 별개로 동작 — 같은 LOCATION 세션에서는
   //   encounterCount가 증가하지 않지만 LLM 서술에는 반복 등장하는 경우 구제.
-  if ((npcState.appearanceCount ?? 0) >= 5) return true;
+  //   FRIENDLY/FEARFUL(첫만남 소개 성향)은 서술 3회에 소개 — 사랑방 개방 후
+  //   오웬(선술집 주인, 긴 별칭 "넉넉한 체구의 선술집 주인")이 배경으로만
+  //   반복 등장하며 끝까지 미소개되던 문제 실측(arch/68 부록 F 런). 그 외는 5회.
+  const appearThreshold =
+    posture === 'FRIENDLY' || posture === 'FEARFUL' ? 3 : 5;
+  if ((npcState.appearanceCount ?? 0) >= appearThreshold) return true;
 
   const count = npcState.encounterCount ?? 0;
   switch (posture) {
