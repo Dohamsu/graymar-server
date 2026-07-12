@@ -1,6 +1,7 @@
 // HUB/LOCATION 노드 전환 서비스 (DAG 대체)
 
 import { Inject, Injectable } from '@nestjs/common';
+import { korParticleRo } from '../../common/korean.js';
 import { and, eq, max } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../../db/drizzle.module.js';
 import {
@@ -128,7 +129,7 @@ export class NodeTransitionService {
         {
           id: `enter_loc_${nextIndex}`,
           kind: 'MOVE',
-          text: `${locationName}(으)로 이동했다.`,
+          text: `${locationName}${korParticleRo(locationName)} 이동했다.`,
           tags: ['LOCATION_ENTER', locationId],
         },
       ],

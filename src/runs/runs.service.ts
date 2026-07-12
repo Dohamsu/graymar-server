@@ -36,7 +36,7 @@ import {
   type PermanentStats,
   DEFAULT_PERMANENT_STATS,
 } from '../db/types/index.js';
-import { initNPCState } from '../db/types/npc-state.js';
+import { initNPCState, getNpcDisplayName } from '../db/types/npc-state.js';
 import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
 import { AffixService } from '../engine/rewards/affix.service.js';
@@ -1122,6 +1122,39 @@ export class RunsService {
       ? recentTurns[recentTurns.length - 1]?.turnNo
       : undefined;
 
+    // NPC 도감 복원 번들 — 이어하기 시 마지막 턴이 이동/HUB 턴이면
+    // ui.npcEmotional이 없어 도감이 비어 보이는 갭을 메운다.
+    // turns.service의 조립과 동일 기준: 조우(encounterCount) 또는
+    // 서술 등장(appearanceCount)한 NPC만, 표시명은 공개 상태 반영.
+    const rsForDossier = run.runState as
+      | {
+          npcStates?: Record<
+            string,
+            import('../db/types/npc-state.js').NPCState
+          >;
+          worldState?: { narrativeMarks?: { npcId?: string; type: string }[] };
+        }
+      | null;
+    const dossierMarks = rsForDossier?.worldState?.narrativeMarks ?? [];
+    const npcEmotional = Object.entries(rsForDossier?.npcStates ?? {})
+      .filter(
+        ([, npc]) =>
+          (npc.encounterCount ?? 0) >= 1 || (npc.appearanceCount ?? 0) >= 1,
+      )
+      .map(([npcId, npc]) => ({
+        npcId,
+        npcName: getNpcDisplayName(npc, this.content.getNpc(npcId)),
+        trust: npc.emotional?.trust ?? 0,
+        fear: npc.emotional?.fear ?? 0,
+        respect: npc.emotional?.respect ?? 0,
+        suspicion: npc.emotional?.suspicion ?? 0,
+        attachment: npc.emotional?.attachment ?? 0,
+        posture: npc.posture,
+        marks: dossierMarks
+          .filter((m) => m.npcId === npcId)
+          .map((m) => m.type),
+      }));
+
     return {
       run: {
         id: run.id,
@@ -1150,6 +1183,7 @@ export class RunsService {
         : null,
       lastResult,
       battleState,
+      npcEmotional,
       runState: run.runState ?? null,
       memory: memory
         ? {

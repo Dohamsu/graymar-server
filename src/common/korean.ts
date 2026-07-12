@@ -16,7 +16,14 @@ export function korParticle(
   return (last - 0xac00) % 28 !== 0 ? withBatchim : withoutBatchim;
 }
 
-/** '으로/로' 선택 (ㄹ받침 예외는 미처리 — 장소/명사구 한정 사용) */
+/** '으로/로' 선택 — ㄹ받침 예외 처리 ('마을' → '마을로') */
 export function korParticleRo(word: string): string {
+  if (word) {
+    const last = word.charCodeAt(word.length - 1);
+    // 한글 음절이고 종성이 ㄹ(8)이면 '로'
+    if (last >= 0xac00 && last <= 0xd7a3 && (last - 0xac00) % 28 === 8) {
+      return '로';
+    }
+  }
   return korParticle(word, '으로', '로');
 }

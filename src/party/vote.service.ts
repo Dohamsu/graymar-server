@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { eq, and } from 'drizzle-orm';
+import { korParticleRo } from '../common/korean.js';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { partyVotes } from '../db/schema/party-votes.js';
@@ -236,7 +237,7 @@ export class VoteService {
     if (status === 'APPROVED' && extra?.targetLocationId) {
       await this.chatService.saveSystemMessage(
         partyId,
-        `투표 통과! ${extra.targetLocationName ?? extra.targetLocationId}(으)로 이동합니다.`,
+        `투표 통과! ${extra.targetLocationName ?? extra.targetLocationId}${korParticleRo(extra.targetLocationName ?? extra.targetLocationId)} 이동합니다.`,
       );
 
       // 실제 이동 실행: HUB 턴 제출

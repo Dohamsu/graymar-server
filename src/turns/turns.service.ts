@@ -12,7 +12,7 @@ enum TurnMode {
   WORLD_EVENT = 'WORLD_EVENT',
 }
 
-import { korParticle } from '../common/korean.js';
+import { korParticle, korParticleRo } from '../common/korean.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
@@ -437,7 +437,7 @@ export class TurnsService {
       const hubResult = this.buildSystemResult(
         turnNo,
         currentNode,
-        `${locName}(으)로 향한다.`,
+        `${locName}${korParticleRo(locName)} 향한다.`,
       );
       await this.commitTurnRecord(
         run,
@@ -4046,7 +4046,7 @@ export class TurnsService {
       result.events.push({
         id: `warn_insistence_${turnNo}`,
         kind: 'SYSTEM',
-        text: `분위기가 험악해지고 있다. 같은 행동을 계속하면 ${nextType}(으)로 상황이 격화될 것이다.`,
+        text: `분위기가 험악해지고 있다. 같은 행동을 계속하면 ${nextType}${korParticleRo(nextType)} 상황이 격화될 것이다.`,
         tags: ['warning', 'escalation'],
       });
     }
@@ -4301,9 +4301,15 @@ export class TurnsService {
       }),
     ) as IncidentSummaryUI[];
 
-    // NPC Emotional
-    const npcEmotionalUIs: NpcEmotionalUI[] = Object.entries(npcStates).map(
-      ([npcId, npc]) => ({
+    // NPC Emotional — 도감은 실제로 조우한 인물만 (직접 대면 encounterCount
+    // 또는 서술 @마커 등장 appearanceCount). 미조우 NPC 전원 노출은 스포일러
+    // + 점진 발견(encounterCount 관계 깊이) 무력화.
+    const npcEmotionalUIs: NpcEmotionalUI[] = Object.entries(npcStates)
+      .filter(
+        ([, npc]) =>
+          (npc.encounterCount ?? 0) >= 1 || (npc.appearanceCount ?? 0) >= 1,
+      )
+      .map(([npcId, npc]) => ({
         npcId,
         npcName: npcNames[npcId] ?? npcId,
         trust: npc.emotional.trust,
@@ -5788,7 +5794,7 @@ export class TurnsService {
     const moveResult = this.buildSystemResult(
       turnNo,
       currentNode,
-      `${toName}(으)로 향한다.`,
+      `${toName}${korParticleRo(toName)} 향한다.`,
     );
     await this.commitTurnRecord(
       run,
