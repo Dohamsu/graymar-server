@@ -33,4 +33,11 @@ export const NPC_PORTRAITS: Record<string, string> = {
   NPC_BG_CUSTOMS: '/npc-portraits/customs.webp',
   NPC_BG_FISHMONGER: '/npc-portraits/fishmonger.webp',
   NPC_BG_VAGRANT: '/npc-portraits/vagrant.webp',
+  // 선술집 상주 BG 6명 — 사랑방 개방 후속 (arch/68 부록 G, 2026-07-12)
+  NPC_BG_BARD: '/npc-portraits/tavern_bard.webp',
+  NPC_BG_COOK: '/npc-portraits/tavern_cook.webp',
+  NPC_BG_CAPTAIN_OLD: '/npc-portraits/harbor_captain_pipe.webp',
+  NPC_BG_ARMORER: '/npc-portraits/veteran_swordsmith.webp',
+  NPC_BG_ANTIQUE_DEALER: '/npc-portraits/old_artificer.webp',
+  NPC_BG_WAREHOUSE_GUARD: '/npc-portraits/milo.webp',
 };
