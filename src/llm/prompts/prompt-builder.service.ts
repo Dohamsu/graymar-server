@@ -9,7 +9,10 @@ import {
   getNpcDisplayName,
   condenseSpeechStyle,
 } from '../../db/types/npc-state.js';
-import { getNpcSchedulePhaseEntry } from '../../db/types/npc-schedule.js';
+import {
+  getNpcSchedulePhaseEntry,
+  getNpcCurrentActivity,
+} from '../../db/types/npc-schedule.js';
 import type { LlmMessage } from '../types/index.js';
 import {
   buildIntroDirective,
@@ -2612,14 +2615,24 @@ export class PromptBuilderService {
         const picked =
           candidates[Math.floor(Math.random() * candidates.length)];
         const chatDisplayName = chatNpcDef?.name ?? chatNpcId;
-        factsParts.push(
-          [
-            `[NPC 일상 화제 — 자연 대화 풀]`,
-            `${chatDisplayName}의 평소 화제 (참고): ${picked.text}`,
-            `이 화제를 NPC 말투로 짧게 (1~3문장) 자연스럽게 녹이세요. 강요 금지.`,
-            `※ 단서/사건/임무를 화두로 만들지 마세요. 이번 턴은 일상 대화입니다.`,
-          ].join('\n'),
+        // arch/69 B2 — 현재 활동(schedule)을 화제에 결합. 화제만 툭 던지지
+        // 않고 "지금 하는 일에 얹힌 잡담"으로 삶의 맥락을 준다 (공용 헬퍼 재사용).
+        const chatActivity = getNpcCurrentActivity(
+          chatNpcDef?.schedule,
+          ctx.currentTimePhase,
         );
+        const chatLines = [`[NPC 일상 — 지금 이 순간]`];
+        if (chatActivity) {
+          chatLines.push(`${chatDisplayName}은(는) 지금 ${chatActivity} 중.`);
+        }
+        chatLines.push(
+          `평소 화제 (참고): ${picked.text}`,
+          chatActivity
+            ? `→ 하던 일(${chatActivity})을 이어가며 이 화제를 NPC 말투로 짧게(1~3문장) 흘리듯 녹이세요. 화제만 던지지 말고 지금 상황·손짓에 얹으세요.`
+            : `이 화제를 NPC 말투로 짧게 (1~3문장) 자연스럽게 녹이세요. 강요 금지.`,
+          `※ 단서/사건/임무를 화두로 만들지 마세요. 이번 턴은 일상 대화입니다.`,
+        );
+        factsParts.push(chatLines.join('\n'));
       }
     }
 
