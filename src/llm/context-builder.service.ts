@@ -2372,6 +2372,16 @@ export class ContextBuilderService {
           lines.push(`알려진 사실: ${top}${more}`);
         }
 
+        // arch/69 B3 — 재등장 관계 톤. 만남 로그를 나열만 하면 LLM이 초면처럼
+        // 굴거나(연속성 상실) 매 턴 "지난번…"을 반복(부자연)한다. 2회 이상
+        // 얽힌 사이면 "아는 관계로 대하되 매번 들추진 마라"는 positive 지시로
+        // 자연스러운 연속성을 유도. 선제 금지는 A축(부록 M)과 일관.
+        if (pm.encounters.length >= 2) {
+          lines.push(
+            `※ 이 인물은 당신을 알아본다 — 초면처럼 굴지 말고 아는 사이의 결로 대하되, 지난 일을 매번 들추지 마라. 알려진 사실을 먼저 화두로 꺼내지 말 것(플레이어가 물으면 응대).`,
+          );
+        }
+
         blocks.push(lines.join('\n'));
       } else {
         // personalMemory 없음 — 기본 정보만
