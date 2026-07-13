@@ -888,14 +888,18 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       // 레이턴시 #1 — pre-known NPC면 위에서 Track 1과 병렬 실행된 결과 회수,
       // 아니면 nano 추천 NPC로 직렬 실행 (기존 동작 유지).
       let npcReaction: NpcReactionResult | null = null;
+      // arch/69 B0 — 계측 저장용: 반응이 실제로 어느 NPC 기준인지 추적.
+      let reactionNpcIdUsed: string | null = null;
       if (isReactionTurn) {
         if (parallelReactionPromise) {
           npcReaction = await parallelReactionPromise;
+          reactionNpcIdUsed = preKnownReactionNpcId;
         } else {
           const reactionNpcId =
             (nanoEventHint?.npcId as string | undefined) ?? null;
           if (reactionNpcId) {
             npcReaction = await startNpcReaction(reactionNpcId);
+            reactionNpcIdUsed = reactionNpcId;
           }
         }
         // E안: NpcSignatureGenerator 비활성화 — 톤 3축은 NpcReaction에 통합됨
@@ -3632,6 +3636,18 @@ ${npcList}`,
           },
           llmCompletedAt: new Date(),
           llmPrompt: messages as unknown[],
+          // arch/69 B0 — NpcReaction 계측 저장 (posture별 분포 분석용)
+          llmNpcReaction:
+            npcReaction && reactionNpcIdUsed
+              ? {
+                  npcId: reactionNpcIdUsed,
+                  reactionType: npcReaction.reactionType,
+                  immediateGoal: npcReaction.immediateGoal,
+                  refusalLevel: npcReaction.refusalLevel,
+                  openingStance: npcReaction.openingStance,
+                  source: npcReaction.source,
+                }
+              : null,
         })
         .where(eq(turns.id, pending.id));
 

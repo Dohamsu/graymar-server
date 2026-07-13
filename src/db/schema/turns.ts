@@ -73,6 +73,19 @@ export const turns = pgTable(
     llmCompletedAt: timestamp('llm_completed_at'),
     llmChoices: jsonb('llm_choices').$type<ChoiceItem[]>(),
     llmPrompt: jsonb('llm_prompt').$type<unknown[]>(),
+    /**
+     * arch/69 B0 — NpcReactionDirector 결과 계측용 (posture별 reactionType
+     * 분포·immediateGoal 편향 분석). 휘발성 로그를 대체하는 재현 가능 저장.
+     * 핵심 필드만 (전체 결과가 필요하면 확장). null = 반응 없는 턴.
+     */
+    llmNpcReaction: jsonb('llm_npc_reaction').$type<{
+      npcId: string;
+      reactionType: string;
+      immediateGoal: string;
+      refusalLevel: string;
+      openingStance: string;
+      source: string;
+    }>(),
 
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
