@@ -472,3 +472,34 @@ describe('StreamClassifierService.buildCandidates()', () => {
     expect(ronen!.displayName).toBe('근엄한 위병대장');
   });
 });
+
+// ═══════════════════════════════════════════════════════════
+// arch/68 부록 K 서버판 — 무마커 배경 대사 무명화 (버그 2a447301)
+// ═══════════════════════════════════════════════════════════
+
+describe('StreamClassifierService — 무마커 배경 대사 무명화 (부록 K)', () => {
+  it('화자 등장 후 무마커 배경 대사는 primary fallback 대신 무명', () => {
+    // 에드릭이 primary. 첫 대사는 에드릭 명시 → 이후 배경 술꾼 대사는 무명
+    const svc = makeSvc(ALL_CANDIDATES, 'NPC_EDRIC');
+    const text =
+      '회계사가 헛기침을 했다. "오늘은 이만 물러가시오." ' +
+      '멀리서 지나가던 술꾼 두 명의 목소리가 스친다. ' +
+      '"임금이 맞지 않는 건 누군가 손을 댄 증거지."';
+    const dialogues = feedAll(svc, text).filter((e) => e.type === 'dialogue');
+    expect(dialogues.length).toBe(2);
+    // 첫 대사: 에드릭 (명시 이름 매칭)
+    expect(dialogues[0].npcName).toBe('날카로운 눈매의 회계사');
+    // 배경 대사: 무명 (primary fallback 억제 — 에드릭 오귀속 방지)
+    expect(dialogues[1].npcName).toBeUndefined();
+    expect(dialogues[1].npcImage).toBeUndefined();
+  });
+
+  it('첫 대사는 markerSeen 전이라 primary fallback 유지', () => {
+    // 화자 명시 없는 첫 대사 → primary(에드릭) 배정 (주 NPC 첫 발화)
+    const svc = makeSvc(ALL_CANDIDATES, 'NPC_EDRIC');
+    const text = '어둠 속에서 목소리가 들렸다. "거기 누구요?"';
+    const dialogues = feedAll(svc, text).filter((e) => e.type === 'dialogue');
+    expect(dialogues.length).toBe(1);
+    expect(dialogues[0].npcName).toBe('날카로운 눈매의 회계사');
+  });
+});

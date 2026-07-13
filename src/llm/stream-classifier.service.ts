@@ -49,6 +49,13 @@ export class StreamClassifierService {
   private lastMatchedNpcId: string | null = null;
   private candidates: NpcCandidate[];
   private primaryNpcId: string | null;
+  /**
+   * arch/68 부록 K 서버판 (버그 2a447301) — 이번 스트림에 화자 배정된 대사가
+   * 한 번이라도 나왔는지. 이후 명시 이름·대명사가 없는 무마커 대사는
+   * primaryNpcId fallback 대신 무명 처리해, 배경 대사가 직전 화자 초상화로
+   * 오귀속되는 것을 막는다 (StoryBlock markerSeenInTurn과 정합).
+   */
+  private markerSeen = false;
   /** bug: \n\n 문단 경계가 개별 \n 분할로 쪼개져 paragraphStart 감지 실패
    *  해결: 연속 2개 이상의 빈 \n 경계를 만나면 다음 실제 sentence에 paragraphStart 전파 */
   private pendingParagraphStart = false;
@@ -277,6 +284,9 @@ export class StreamClassifierService {
       if (npc) {
         this.lastMatchedNpcId = npc.npcId;
       }
+      // arch/68 부록 K 서버판 — 대사가 한 번 처리되면 이후 무마커 대사는
+      // 배경 대사 후보. identifySpeaker fallback 가드가 이 플래그를 참조.
+      this.markerSeen = true;
 
       lastEnd = quoteEnd;
     }
@@ -384,6 +394,11 @@ export class StreamClassifierService {
     }
 
     // 4. fallback → primaryNpcId (턴의 주 NPC)
+    // arch/68 부록 K 서버판 (버그 2a447301) — 이미 화자 배정된 대사가 나온
+    // 뒤라면(markerSeen), 명시 이름·대명사 없는 무마커 대사는 배경 대사이므로
+    // primary 로 귀속하지 않고 무명(null)으로 둔다. 첫 대사는 markerSeen 전이라
+    // primary fallback 을 유지(주 NPC 첫 발화).
+    if (this.markerSeen) return null;
     if (this.primaryNpcId) {
       return this.candidates.find((c) => c.npcId === this.primaryNpcId) ?? null;
     }
