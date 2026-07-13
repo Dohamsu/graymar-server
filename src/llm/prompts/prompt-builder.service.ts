@@ -2657,14 +2657,16 @@ export class PromptBuilderService {
           });
           if (mention) {
             const relLines = [
-              `[주변 인물 근황] (화자가 아는 것)`,
+              `[주변 인물 근황] (화자 ${chatDisplayName}이(가) 아는 것)`,
               `${mention.targetName}: ${mention.relationText}`,
             ];
             if (mention.recentSignal) {
               relLines.push(`(최근 소식: ${mention.recentSignal})`);
             }
+            // arch/69 B4 — 근황 대상은 이 장면에 없다. LLM이 그를 화자로
+            // 소환해 대사·@마커를 붙이는 오귀속(T10 실측)을 막는다: 언급만.
             relLines.push(
-              `→ 잡담 중 자연스러우면 한 문장으로만 곁들이세요. 관계 서술 범위 밖의 사건을 만들지 말고, 어색하면 생략하세요.`,
+              `→ ${mention.targetName}은(는) 지금 이 자리에 없다. 화자 ${chatDisplayName}이(가) 잡담 중 그를 스치듯 한 문장으로만 언급하세요. 그 인물을 화자로 세우거나 그의 대사·@마커를 만들지 마세요. 관계 서술 범위 밖의 사건을 만들지 말고, 어색하면 생략하세요.`,
             );
             factsParts.push(relLines.join('\n'));
           }
