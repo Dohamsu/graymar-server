@@ -3043,19 +3043,22 @@ ${npcList}`,
                 for (const npcId of newlyIntroduced) {
                   const npcDef = this.content.getNpc(npcId);
                   if (!npcDef?.name) continue;
-                  // 이름 공개 기획: 사전 확정 대사 대상은 "실명이 대사(따옴표)
-                  // 안에 등장"해야 자기소개 성사 — 마커 표시명에만 실명이 있는
-                  // 케이스(T20 실측)를 성공으로 오판정하지 않는다.
+                  // 이름 공개 기획: 소개 성사는 "실명이 대사(따옴표) 안에 등장"
+                  // 해야 인정 — 자기소개("나는 오웬이오")·제3자 호명("오웬!")은
+                  // 대사 안 실명이지만, 마커 표시명(T20)이나 서술자 평서문 실명
+                  // ("오웬은 술잔을…")은 소개 연출이 아니다.
+                  // arch/69 버그 a6290942 수정: 기존엔 introDialogue 없을 때(nano
+                  // 자기소개 생성 실패) narrative.includes(name)로 판정해, 서술자
+                  // 실명 누출을 소개 성공으로 오판 → IntroFallback/Rollback이 스킵
+                  // 되어 자기소개 없이 이름만 새던 버그(오웬 강제소개 실측). 이제
+                  // introDialogue 유무 무관하게 "대사 안 실명" 기준으로 통일한다.
                   const escName = npcDef.name.replace(
                     /[.*+?^${}()|[\]\\]/g,
                     '\\$&',
                   );
-                  const introSucceeded =
-                    introDialogue?.npcId === npcId
-                      ? new RegExp(
-                          `["\u201C][^"\u201D]*${escName}[^"\u201D]*["\u201D]`,
-                        ).test(narrative)
-                      : narrative.includes(npcDef.name);
+                  const introSucceeded = new RegExp(
+                    `["\u201C][^"\u201D]*${escName}[^"\u201D]*["\u201D]`,
+                  ).test(narrative);
                   if (!introSucceeded) {
                     // 이름 공개 기획 (2026-07-11, arch/65) — 첫 만남 소개는
                     // 사전 확정 대사로 즉시 마감: 롤백-재시도 사이클 없이
