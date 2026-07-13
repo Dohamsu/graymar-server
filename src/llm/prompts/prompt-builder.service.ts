@@ -9,6 +9,7 @@ import {
   getNpcDisplayName,
   condenseSpeechStyle,
 } from '../../db/types/npc-state.js';
+import { getNpcSchedulePhaseEntry } from '../../db/types/npc-schedule.js';
 import type { LlmMessage } from '../types/index.js';
 import {
   buildIntroDirective,
@@ -646,14 +647,11 @@ export class PromptBuilderService {
         const locId = ctx.currentLocationId;
         const phase = ctx.currentTimePhase ?? 'DAY';
         if (locId) {
-          allNpcs = fullList.filter((npc) => {
-            const scheduleDefault = npc.schedule?.default;
-            if (!scheduleDefault) return false;
-            const phaseEntry =
-              scheduleDefault[phase as keyof typeof scheduleDefault] ??
-              scheduleDefault['DAY' as keyof typeof scheduleDefault];
-            return phaseEntry?.locationId === locId;
-          });
+          allNpcs = fullList.filter(
+            (npc) =>
+              getNpcSchedulePhaseEntry(npc.schedule, phase)?.locationId ===
+              locId,
+          );
         }
 
         // 배경 NPC 로테이션 풀 (bug 4671): 세션 내 3회+ 등장한 BG NPC 제외
@@ -700,14 +698,11 @@ export class PromptBuilderService {
         const locId = ctx.currentLocationId;
         const phase = ctx.currentTimePhase ?? 'DAY';
         if (locId) {
-          allNpcs = fullList.filter((npc) => {
-            const scheduleDefault = npc.schedule?.default;
-            if (!scheduleDefault) return false;
-            const phaseEntry =
-              scheduleDefault[phase as keyof typeof scheduleDefault] ??
-              scheduleDefault['DAY' as keyof typeof scheduleDefault];
-            return phaseEntry?.locationId === locId;
-          });
+          allNpcs = fullList.filter(
+            (npc) =>
+              getNpcSchedulePhaseEntry(npc.schedule, phase)?.locationId ===
+              locId,
+          );
         }
       }
     }

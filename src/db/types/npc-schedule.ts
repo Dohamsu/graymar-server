@@ -66,3 +66,26 @@ export interface NpcInteractionDef {
     factText?: string;
   };
 }
+
+/**
+ * arch/69 B1 — schedule의 현재 4상(phase) entry 접근 공용 헬퍼.
+ * prompt-builder(장소 필터) · reaction ctx(활동 텍스트)가 공유해 복제 drift
+ * 방지. phase 미지정/미존재 시 DAY로 fallback (prompt-builder 기존 패턴 보존).
+ */
+export function getNpcSchedulePhaseEntry(
+  schedule: NpcSchedule | undefined | null,
+  phase: string | null | undefined,
+): NpcScheduleEntry | undefined {
+  const sched = schedule?.default;
+  if (!sched) return undefined;
+  const key = (phase ?? 'DAY') as TimePhaseV2;
+  return sched[key] ?? sched['DAY' as TimePhaseV2];
+}
+
+/** 현재 phase의 NPC 활동 텍스트 (없으면 null). arch/69 B1. */
+export function getNpcCurrentActivity(
+  schedule: NpcSchedule | undefined | null,
+  phase: string | null | undefined,
+): string | null {
+  return getNpcSchedulePhaseEntry(schedule, phase)?.activity ?? null;
+}

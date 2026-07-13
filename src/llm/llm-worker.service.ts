@@ -39,6 +39,7 @@ import { NanoEventDirectorService } from './nano-event-director.service.js';
 import {
   NpcReactionDirectorService,
   type NpcReactionResult,
+  buildNpcSelfContextCore,
 } from './npc-reaction-director.service.js';
 import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
@@ -736,6 +737,13 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           actionType: t.parsedIntent?.actionType ?? 'UNKNOWN',
           outcome: t.serverResult?.ui?.resolveOutcome ?? null,
         }));
+        // arch/69 B1 — NPC 자기 목적/활동 조립 (immediateGoal 정보 편향 해소)
+        const selfCtx = buildNpcSelfContextCore({
+          schedule: npcDef.schedule,
+          agenda: npcDef.agenda,
+          phase: llmContext.currentTimePhase,
+          dialogueAct: llmContext.dialogueAct,
+        });
         try {
           const reaction = await this.npcReactionDirector.direct({
             npcId: reactionNpcId,
@@ -745,6 +753,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             speechStyle: npcDef.personality?.speechStyle,
             softSpot: npcDef.personality?.softSpot,
             innerConflict: npcDef.personality?.innerConflict,
+            currentActivity: selfCtx.currentActivity,
+            selfAgenda: selfCtx.selfAgenda,
+            dialogueAct: selfCtx.dialogueAct,
             npcState,
             rawInput: pending.rawInput ?? '',
             actionType: (actionCtxForTarget?.actionType as string) ?? 'TALK',

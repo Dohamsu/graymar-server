@@ -2,8 +2,10 @@
 import {
   NpcReactionDirectorService,
   type NpcReactionContext,
+  buildNpcSelfContextCore,
 } from './npc-reaction-director.service.js';
 import type { NPCState } from '../db/types/npc-state.js';
+import type { NpcSchedule } from '../db/types/npc-schedule.js';
 
 describe('NpcReactionDirectorService', () => {
   let service: NpcReactionDirectorService;
@@ -458,6 +460,60 @@ describe('NpcReactionDirectorService', () => {
         }),
       );
       expect(r!.reactionType).toBe('PROBE');
+    });
+  });
+
+  // arch/69 B1 — NPC 자기 맥락 조립 (immediateGoal 정보 편향 해소)
+  describe('buildNpcSelfContextCore', () => {
+    const ownerSchedule: NpcSchedule = {
+      default: {
+        DAWN: { locationId: 'LOC_TAVERN', activity: '개장 준비', interactable: true },
+        DAY: { locationId: 'LOC_TAVERN', activity: '잔을 닦으며 손님 접대', interactable: true },
+        DUSK: { locationId: 'LOC_TAVERN', activity: '피크 시간 주문 처리', interactable: true },
+        NIGHT: { locationId: 'LOC_TAVERN', activity: '마지막 손님 이야기 듣기', interactable: true },
+      },
+    };
+
+    it('FRIENDLY 상인 장사 중 → currentActivity/selfAgenda 채워짐', () => {
+      const self = buildNpcSelfContextCore({
+        schedule: ownerSchedule,
+        agenda: '평화로운 장사, 중립 지대 유지',
+        phase: 'DAY',
+        dialogueAct: 'GREETING',
+      });
+      expect(self.currentActivity).toBe('잔을 닦으며 손님 접대');
+      expect(self.selfAgenda).toBe('평화로운 장사, 중립 지대 유지');
+      expect(self.dialogueAct).toBe('GREETING');
+    });
+
+    it('phase 미지정 → DAY로 fallback', () => {
+      const self = buildNpcSelfContextCore({ schedule: ownerSchedule, phase: null });
+      expect(self.currentActivity).toBe('잔을 닦으며 손님 접대');
+    });
+
+    it('phase가 schedule에 없으면 DAY fallback (방어)', () => {
+      const self = buildNpcSelfContextCore({ schedule: ownerSchedule, phase: 'UNKNOWN' });
+      expect(self.currentActivity).toBe('잔을 닦으며 손님 접대');
+    });
+
+    it('DUSK phase → 해당 활동', () => {
+      const self = buildNpcSelfContextCore({ schedule: ownerSchedule, phase: 'DUSK' });
+      expect(self.currentActivity).toBe('피크 시간 주문 처리');
+    });
+
+    it('schedule 없음 → currentActivity null', () => {
+      const self = buildNpcSelfContextCore({ schedule: null, agenda: '뭔가', phase: 'DAY' });
+      expect(self.currentActivity).toBeNull();
+      expect(self.selfAgenda).toBe('뭔가');
+    });
+
+    it('agenda 공백/미지정 → selfAgenda null', () => {
+      expect(buildNpcSelfContextCore({ agenda: '   ' }).selfAgenda).toBeNull();
+      expect(buildNpcSelfContextCore({}).selfAgenda).toBeNull();
+    });
+
+    it('dialogueAct 미지정 → null passthrough', () => {
+      expect(buildNpcSelfContextCore({ schedule: ownerSchedule }).dialogueAct).toBeNull();
     });
   });
 });
