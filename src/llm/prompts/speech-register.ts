@@ -49,7 +49,8 @@ export const REGISTER_RULES: Record<string, SpeechRegisterRule> = {
       '"어제 이상한 놈이 여기 있었거든."',
       '"너는 왜 그걸 신경 써?"',
     ],
-    forbidHint: '~합니다 / ~이오 / ~해요',
+    // arch/69 C2.5 — 하오체(세계관 기본값) 종결 침식 방지: ~소·~겠소·~하오 명시
+    forbidHint: '~합니다 / ~이오 / ~하오 / ~소·~겠소 / ~해요',
     playerRef: '너/자네',
   },
   HAPSYO: {
@@ -61,7 +62,9 @@ export const REGISTER_RULES: Record<string, SpeechRegisterRule> = {
       '"이 일은 규정대로 처리하겠습니다."',
       '"무엇을 도와드릴까요?"',
     ],
-    forbidHint: '~이오 / ~해요 / ~야',
+    // arch/69 C2.5 — C2 실측 HAPSYO 위반 52%가 전부 하오체 종결(로넨 "지나치겠소",
+    // 브렌 "묻고 싶소")인데 기존 forbidHint에 ~소 계열이 없었다. 명시 보강.
+    forbidHint: '~이오 / ~하오 / ~소·~겠소·~시오 / ~해요 / ~야',
     playerRef: '당신',
   },
   HAECHE: {
@@ -73,7 +76,8 @@ export const REGISTER_RULES: Record<string, SpeechRegisterRule> = {
       '"알아서 하게. 난 관심 없어."',
       '"쓸데없는 소리 말고 볼일이나 말하지."',
     ],
-    forbidHint: '~합니다 / ~이오 / ~하오 / ~해요',
+    // arch/69 C2.5 — 하오체 종결 침식 방지: ~소·~겠소 명시
+    forbidHint: '~합니다 / ~이오 / ~하오 / ~소·~겠소 / ~해요',
     playerRef: '자네/이봐 (거친 NPC는 짧게, 노인은 자네)',
   },
 };

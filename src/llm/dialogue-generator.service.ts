@@ -137,20 +137,31 @@ const INTENT_GUIDES: Record<DialogueIntent, string> = {
  *  - 한 대사 내 다른 register 혼용 감지 (bug 4636)
  *    예) HAOCHE 인데 첫 문장이 "입니다"로 끝나면 HAPSYO 혼용 → false
  */
-export function validateSpeechRegister(text: string, register: string): boolean {
-  const sentences = text.split(/[.!?…]+/).filter((s) => s.trim().length > 3);
+export function validateSpeechRegister(
+  text: string,
+  register: string,
+): boolean {
+  // arch/69 C2.6 5차 정밀화 — 필터 >3 이 "있소"/"가시오" 같은 짧은 정상 종결문을
+  // 탈락시켜 마지막 문장 판정이 앞 문장으로 밀리던 오검출 수정 (에드릭 실측).
+  const sentences = text.split(/[.!?…]+/).filter((s) => s.trim().length >= 2);
   if (sentences.length === 0) return false;
+
+  // arch/69 C2 — 합쇼체 "~십시오"를 하오체로 오검출하던 버그 수정.
+  //   ① (?<!십)시오 로 "십시오" 제외 ② [소오] → [가-힣]소 로 바꿔 "오"
+  //   종결(십시오·이오 등)이 아니라 "~소" 종결(있소/없소/했소)만 하오체로 감지.
+  const HAOCHE_FOREIGN = /(?:[가-힣]소|이오|하오|되오|(?<!십)시오|겠소)\s*$/;
 
   // 다른 register 의 어미 패턴 — 혼용 감지용
   const FOREIGN_ENDINGS: Record<string, RegExp[]> = {
     HAOCHE: [/(?:합니다|입니다|습니다|겠습니다)\s*$/], // HAPSYO 혼용 금지
     HAEYO: [/(?:합니다|입니다|습니다|겠습니다)\s*$/], // HAPSYO 혼용 금지
-    // arch/69 C2 — 합쇼체 "~십시오"를 하오체로 오검출하던 버그 수정.
-    //   ① (?<!십)시오 로 "십시오" 제외 ② [소오] → [가-힣]소 로 바꿔 "오"
-    //   종결(십시오·이오 등)이 아니라 "~소" 종결(있소/없소/했소)만 하오체로 감지.
-    HAPSYO: [/(?:[가-힣]소|이오|하오|되오|(?<!십)시오|겠소)\s*$/], // HAOCHE 혼용 금지
-    BANMAL: [/(?:합니다|입니다|이오|하오)\s*$/],
-    HAECHE: [/(?:합니다|입니다|이오|하오)\s*$/],
+    HAPSYO: [HAOCHE_FOREIGN], // HAOCHE 혼용 금지
+    // arch/69 C2.5 — 낮춤체(반말·해체)도 문장 중간의 하오체 종결(~소/~겠소 등)
+    // 혼용을 감지한다. 기존엔 이오|하오만 봐서 "했소" 류 침식을 놓쳤음
+    // (HAECHE 계측이 하오체 침식을 과소 집계하던 원인). 합쇼체도 HAOCHE와
+    // 동일하게 습니다|겠습니다까지 감지 (기존 합니다|입니다만은 "있습니다" 누락).
+    BANMAL: [/(?:합니다|입니다|습니다|겠습니다)\s*$/, HAOCHE_FOREIGN],
+    HAECHE: [/(?:합니다|입니다|습니다|겠습니다)\s*$/, HAOCHE_FOREIGN],
   };
 
   // 각 문장의 어미를 검사하여 혼용 감지
@@ -174,19 +185,27 @@ export function validateSpeechRegister(text: string, register: string): boolean 
       return /(?:해요|에요|이에요|세요|거예요|을까요|인가요|죠|네요)\s*$/.test(
         last,
       );
+    // arch/69 C2.5 — 낮춤체 계열(반말·해체)은 어미가 크게 겹치고(지/거든/어/
+    // 잖아…) 인접 혼용이 자연스러워, 계측·재시도 판정에서 상호 허용한다.
+    // "해체 NPC의 반말 어미"를 위반으로 세던 것이 HAECHE 25% 수치의 노이즈
+    // 주성분이었음 (개성 어긋남은 speechStyle 톤 가이드의 몫).
     case 'BANMAL':
-      return /(?:[야해지]|이야|거야|는데|잖아|래|거든|어|었어|았어|겠어)\s*$/.test(
-        last,
+    case 'HAECHE':
+      return (
+        /(?:[야해지]|이야|거야|는데|잖아|래|거든|어|었어|았어|겠어)\s*$/.test(
+          last,
+        ) ||
+        // arch/69 C2.5 재측정 — 낮춤체 의문 어미(건가/인가/는가/을까) 누락 보완
+        /(?:걸|걸세|는걸|네|구먼|게나|게|는군|구나|다네|라네|더라|더라고|그래|라니까|건가|인가|는가|을까)\s*$/.test(
+          last,
+        )
       );
     case 'HAPSYO':
       // arch/69 C3 — 합쇼체 의문형 "습니까/십니까/ㅂ니까" + 격식 문어 의문
       // "인가/는가" 누락으로 오검출하던 것 수정.
-      return /(?:합니다|입니다|습니다|겠습니다|십시오|옵니다|습니까|십니까|ㅂ니까|나이까|인가|는가)\s*$/.test(
-        last,
-      );
-    case 'HAECHE':
-      // arch/69 C2·C3 — 해체 감탄·확인·명령 어미 확장.
-      return /(?:[지야]|거든|는데|이야|걸|걸세|잖아|는걸|어|었어|네|구먼|게나|게|는군|구나|다네|라네|더라|더라고|그래|라니까)\s*$/.test(
+      // arch/69 C2.6 5차 정밀화 — ㅂ니다/ㅂ니까 불규칙 활용(모릅니다/아닙니다/
+      // 겁니까) 누락으로 정상 합쇼체를 오검출하던 것 수정 (브렌·펠릭스 실측).
+      return /(?:[가-힣]니다|[가-힣]니까|십시오|옵니다|나이까|인가|는가)\s*$/.test(
         last,
       );
     default:
