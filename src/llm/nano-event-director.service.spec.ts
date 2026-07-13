@@ -197,7 +197,10 @@ describe('NanoEventDirectorService', () => {
           { label: '주변을 살핀다', affordance: 'OBSERVE', npcId: null },
         ],
       });
-      const ctx = makeCtx({ actionType: 'OBSERVE', rawInput: '그의 행동을 관찰한다' });
+      const ctx = makeCtx({
+        actionType: 'OBSERVE',
+        rawInput: '그의 행동을 관찰한다',
+      });
       const v = callValidate(service, result, ctx);
       expect(v.concept).toBe('');
       expect(v.opening).toBe('');
@@ -211,13 +214,18 @@ describe('NanoEventDirectorService', () => {
         concept: '은화 몇 닢을 슬쩍 밀어 넣으며 정보를 요구한다',
         opening: '작은 은화가 그의 손에 스며든다.',
       });
-      const ctx = makeCtx({ actionType: 'BRIBE', rawInput: '은화를 밀어 넣는다' });
+      const ctx = makeCtx({
+        actionType: 'BRIBE',
+        rawInput: '은화를 밀어 넣는다',
+      });
       const v = callValidate(service, result, ctx);
       expect(v.concept).not.toBe(''); // 행동=컨셉이라 억제 안 됨
     });
 
     it('OBSERVE 턴 + 정상 컨셉 -> 유지', () => {
-      const result = makeResult({ concept: '상인이 낮은 목소리로 소문을 흘린다' });
+      const result = makeResult({
+        concept: '상인이 낮은 목소리로 소문을 흘린다',
+      });
       const ctx = makeCtx({ actionType: 'OBSERVE' });
       const v = callValidate(service, result, ctx);
       expect(v.concept).toBe('상인이 낮은 목소리로 소문을 흘린다');

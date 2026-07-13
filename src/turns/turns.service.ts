@@ -178,6 +178,54 @@ export function extractTargetNpcCore(
   return null;
 }
 
+/**
+ * EventChoiceGate (arch/68 부록 L — 버그 185a8ddd) 정본.
+ * 유저가 텍스트로 특정 NPC를 명시 지목했는데 매칭된 이벤트의 정의 NPC와
+ * 다르면, 그 이벤트 고유 선택지(payload.choices — 이벤트 NPC를 전제)를
+ * 폐기해야 한다 (서술은 지목 NPC, 선택지는 이벤트 NPC로 갈리는 분열 차단).
+ * 실측: 정보상과 대화 중 첫 진입 WORLD_EVENT로 음유시인 조우 이벤트 매칭 →
+ * 서술은 정보상, 선택지는 음유시인.
+ */
+export function shouldDiscardEventChoicesCore(
+  resolvedTargetNpcId: string | null,
+  eventDefinedNpc: string | null,
+): boolean {
+  return (
+    !!resolvedTargetNpcId &&
+    !!eventDefinedNpc &&
+    resolvedTargetNpcId !== eventDefinedNpc
+  );
+}
+
+/**
+ * 대화 잠금 다운그레이드 가드 스캔 (arch/46 §4.2 + 48) 정본.
+ * 직전 턴이 SOCIAL NPC 대화였는지 actionHistory 역순으로 판단한다 —
+ * 대화 중 "부두 쪽 사람들 의심하시오?" 같은 입력이 MOVE_LOCATION/FIGHT로
+ * 오탐되면 이 NPC 기준으로 INVESTIGATE 다운그레이드해 대화 흐름을 유지.
+ * 작별(dialogueAct=FAREWELL / npcFarewell)로 닫힌 대화는 잇지 않는다
+ * (P2 2026-07-11). primaryNpcId 없는 엔트리는 건너뛰고, 첫 유효 엔트리에서
+ * 판정을 끝낸다 (그보다 과거의 대화는 잠금 근거가 아님).
+ */
+export function findDowngradeLockNpcCore(
+  actionHistory: Array<Record<string, unknown>>,
+): string | null {
+  for (let i = actionHistory.length - 1; i >= 0; i--) {
+    const prev = actionHistory[i];
+    const prevNpc = prev.primaryNpcId as string | undefined;
+    const prevAction = prev.actionType as string | undefined;
+    if (!prevNpc) continue;
+    // 작별로 닫힌 대화는 다운그레이드 가드도 잇지 않는다 (P2 2026-07-11)
+    if (prev.dialogueAct === 'FAREWELL' || prev.npcFarewell === true) {
+      return null;
+    }
+    if (SOCIAL_ACTIONS.has(prevAction ?? '')) {
+      return prevNpc;
+    }
+    return null;
+  }
+  return null;
+}
+
 import { korParticle, korParticleRo } from '../common/korean.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 
@@ -1182,31 +1230,10 @@ export class TurnsService {
         (intent.actionType === 'STEAL' &&
           !this.hasExplicitStealIntent(rawInput)))
     ) {
-      let prevSocialNpc: string | null = null;
-      const SOCIAL_FOR_LOCK = new Set([
-        'TALK',
-        'PERSUADE',
-        'BRIBE',
-        'THREATEN',
-        'HELP',
-        'INVESTIGATE',
-        'OBSERVE',
-        'TRADE',
-      ]);
-      for (let i = actionHistory.length - 1; i >= 0; i--) {
-        const prev = actionHistory[i] as Record<string, unknown>;
-        const prevNpc = prev.primaryNpcId as string | undefined;
-        const prevAction = prev.actionType as string | undefined;
-        if (!prevNpc) continue;
-        // 작별로 닫힌 대화는 다운그레이드 가드도 잇지 않는다 (P2 2026-07-11)
-        if (prev.dialogueAct === 'FAREWELL' || prev.npcFarewell === true) {
-          break;
-        }
-        if (SOCIAL_FOR_LOCK.has(prevAction ?? '')) {
-          prevSocialNpc = prevNpc;
-        }
-        break;
-      }
+      // 정본: findDowngradeLockNpcCore (작별로 닫힌 대화는 잇지 않음)
+      const prevSocialNpc = findDowngradeLockNpcCore(
+        actionHistory as Array<Record<string, unknown>>,
+      );
       if (prevSocialNpc) {
         this.logger.log(
           `[대화잠금] ${intent.actionType} 차단: 직전 SOCIAL NPC ${prevSocialNpc} 잠금 우선 → INVESTIGATE 다운그레이드 (input="${rawInput.slice(0, 40)}")`,
@@ -2965,11 +2992,7 @@ export class TurnsService {
     // 기본 선택지로 대체한다. 실측: 유저가 정보상과 대화 중인데 첫 진입
     // WORLD_EVENT로 음유시인 조우 이벤트가 매칭 → 서술은 정보상, 선택지는
     // 음유시인. (이벤트 NPC를 콘텐츠에 명시해 서술 화자와 정합시키는 것과 병행.)
-    if (
-      resolvedTargetNpcId &&
-      eventDefinedNpc &&
-      resolvedTargetNpcId !== eventDefinedNpc
-    ) {
+    if (shouldDiscardEventChoicesCore(resolvedTargetNpcId, eventDefinedNpc)) {
       resolvedChoices = undefined;
       this.logger.warn(
         `[EventChoiceGate] 유저 지목(${resolvedTargetNpcId}) ≠ 이벤트 NPC(${eventDefinedNpc}) — 이벤트 고유 선택지 폐기, 서술 NPC 기준 기본 선택지 사용`,
