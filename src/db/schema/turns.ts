@@ -86,6 +86,19 @@ export const turns = pgTable(
       openingStance: string;
       source: string;
     }>(),
+    /**
+     * arch/69 C2 — 화자 인지 어체 위반 계측 (교정 없음, 측정 전용).
+     * 등장 NPC별 배정 speechRegister 대비 어미 위반율. C3 진행 게이트.
+     */
+    llmSpeechAudit: jsonb('llm_speech_audit').$type<
+      Array<{
+        npcId: string;
+        register: string;
+        total: number;
+        violations: number;
+        violationSamples: string[];
+      }>
+    >(),
 
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },

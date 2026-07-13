@@ -84,3 +84,79 @@ export function collectRecentNpcUtterances(
   }
   return collected; // 최신 → 과거 순
 }
+
+// ─── arch/69 C2 — 화자 인지 어체 계측 (교정 없이 위반만 측정) ───
+
+export interface UtteranceRegisterAudit {
+  npcId: string;
+  register: string;
+  total: number; // 검증한 대사 수
+  violations: number; // 어미 위반 대사 수
+  violationSamples: string[]; // 위반 대사 원문 (최대 3)
+}
+
+/**
+ * 서술의 @마커 대사를 화자별로 묶어, 각 화자의 배정 speechRegister 대비
+ * 어미 위반율을 계측한다. **텍스트는 바꾸지 않는다** (계측 전용, C2).
+ *
+ * - `resolveNpcRegister(label)`: 마커 라벨 → { npcId, register }. 무명·미매칭·
+ *   register 미배정 화자는 `null`을 반환해 **스킵**한다 (보강 1 — getRegisterRule
+ *   하오체 fallback 오검출 방지).
+ * - `validateFn(text, register)`: 대사 1개의 어미 준수 여부 (dialogue-generator
+ *   validateSpeechRegister 주입). NPA arch/55와 동일한 utterance 단위 (보강 2).
+ */
+export function auditUtteranceRegisterCore(
+  narrative: string | null | undefined,
+  resolveNpcRegister: (
+    label: string,
+  ) => { npcId: string; register: string } | null,
+  validateFn: (text: string, register: string) => boolean,
+): UtteranceRegisterAudit[] {
+  if (!narrative) return [];
+
+  // 마커 라벨 → 대사 목록 그룹핑
+  const byLabel = new Map<string, string[]>();
+  BRACKET_MARKER_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = BRACKET_MARKER_RE.exec(narrative)) !== null) {
+    const label = m[1].trim();
+    const line = m[2].trim();
+    if (!label || !line) continue;
+    const arr = byLabel.get(label) ?? [];
+    arr.push(line);
+    byLabel.set(label, arr);
+  }
+
+  // 라벨 → npcId 로 병합 (동일 NPC가 여러 라벨로 등장 가능)
+  const byNpc = new Map<string, { register: string; lines: string[] }>();
+  for (const [label, lines] of byLabel) {
+    const resolved = resolveNpcRegister(label);
+    if (!resolved) continue; // 무명·미배정 스킵
+    const entry = byNpc.get(resolved.npcId) ?? {
+      register: resolved.register,
+      lines: [],
+    };
+    entry.lines.push(...lines);
+    byNpc.set(resolved.npcId, entry);
+  }
+
+  const result: UtteranceRegisterAudit[] = [];
+  for (const [npcId, { register, lines }] of byNpc) {
+    let violations = 0;
+    const samples: string[] = [];
+    for (const line of lines) {
+      if (!validateFn(line, register)) {
+        violations++;
+        if (samples.length < 3) samples.push(line);
+      }
+    }
+    result.push({
+      npcId,
+      register,
+      total: lines.length,
+      violations,
+      violationSamples: samples,
+    });
+  }
+  return result;
+}

@@ -137,7 +137,7 @@ const INTENT_GUIDES: Record<DialogueIntent, string> = {
  *  - 한 대사 내 다른 register 혼용 감지 (bug 4636)
  *    예) HAOCHE 인데 첫 문장이 "입니다"로 끝나면 HAPSYO 혼용 → false
  */
-function validateSpeechRegister(text: string, register: string): boolean {
+export function validateSpeechRegister(text: string, register: string): boolean {
   const sentences = text.split(/[.!?…]+/).filter((s) => s.trim().length > 3);
   if (sentences.length === 0) return false;
 
@@ -145,7 +145,10 @@ function validateSpeechRegister(text: string, register: string): boolean {
   const FOREIGN_ENDINGS: Record<string, RegExp[]> = {
     HAOCHE: [/(?:합니다|입니다|습니다|겠습니다)\s*$/], // HAPSYO 혼용 금지
     HAEYO: [/(?:합니다|입니다|습니다|겠습니다)\s*$/], // HAPSYO 혼용 금지
-    HAPSYO: [/(?:[소오]|이오|하오|시오|겠소)\s*$/], // HAOCHE 혼용 금지
+    // arch/69 C2 — 합쇼체 "~십시오"를 하오체로 오검출하던 버그 수정.
+    //   ① (?<!십)시오 로 "십시오" 제외 ② [소오] → [가-힣]소 로 바꿔 "오"
+    //   종결(십시오·이오 등)이 아니라 "~소" 종결(있소/없소/했소)만 하오체로 감지.
+    HAPSYO: [/(?:[가-힣]소|이오|하오|되오|(?<!십)시오|겠소)\s*$/], // HAOCHE 혼용 금지
     BANMAL: [/(?:합니다|입니다|이오|하오)\s*$/],
     HAECHE: [/(?:합니다|입니다|이오|하오)\s*$/],
   };
@@ -163,7 +166,8 @@ function validateSpeechRegister(text: string, register: string): boolean {
 
   switch (register) {
     case 'HAOCHE':
-      return /(?:하오|이오|시오|겠소|없소|있소|했소|되오|보시오|마시오|드리오|주시오|[소오])\s*$/.test(
+      // arch/69 C2 — 하오체 감탄 어미 "구려/구료" 누락으로 오검출하던 버그 수정.
+      return /(?:하오|이오|시오|겠소|없소|있소|했소|되오|보시오|마시오|드리오|주시오|구려|구료|[소오])\s*$/.test(
         last,
       );
     case 'HAEYO':
@@ -177,7 +181,10 @@ function validateSpeechRegister(text: string, register: string): boolean {
     case 'HAPSYO':
       return /(?:합니다|입니다|습니다|겠습니다|십시오|옵니다)\s*$/.test(last);
     case 'HAECHE':
-      return /(?:[지야]|거든|는데|이야|걸|잖아|는걸|어|었어)\s*$/.test(last);
+      // arch/69 C2 — 해체 감탄·확인 어미 "네/구먼/게나/는군/구나" 누락 수정.
+      return /(?:[지야]|거든|는데|이야|걸|잖아|는걸|어|었어|네|구먼|게나|는군|구나|다네)\s*$/.test(
+        last,
+      );
     default:
       return true; // 알 수 없는 register면 통과
   }

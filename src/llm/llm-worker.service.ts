@@ -46,6 +46,7 @@ import { ThemeClassifierService } from './theme-classifier.service.js';
 import {
   collectRecentNpcUtterances,
   extractNpcUtterances,
+  auditUtteranceRegisterCore,
 } from './npc-utterance.util.js';
 import {
   pushNarrativeTheme,
@@ -53,6 +54,7 @@ import {
 } from '../db/types/narrative-theme.js';
 import {
   DialogueGeneratorService,
+  validateSpeechRegister,
   type DialogueIntent,
 } from './dialogue-generator.service.js';
 import type { ServerResultV1, ChoiceItem } from '../db/types/index.js';
@@ -3616,6 +3618,44 @@ ${npcList}`,
         narrative = this.sanitizeAliasArtifacts(narrative);
       }
 
+      // arch/69 C2 — 화자 인지 어체 위반 계측 (교정 없음, 측정 전용).
+      //   등장 후보 NPC(llmContext.npcStates)의 표시명으로 라벨을 해소해
+      //   배정 register 대비 어미 위반을 집계. 무명·register 미배정은 스킵.
+      let speechAudit: ReturnType<typeof auditUtteranceRegisterCore> = [];
+      try {
+        const auditCandidateIds = Object.keys(llmContext.npcStates ?? {});
+        const resolveNpcRegister = (label: string) => {
+          const low = label.trim().toLowerCase();
+          for (const npcId of auditCandidateIds) {
+            const def = this.content.getNpc(npcId);
+            if (!def) continue;
+            const names = [
+              def.name,
+              def.unknownAlias,
+              def.shortAlias,
+              ...(def.aliases ?? []),
+            ]
+              .filter((n): n is string => !!n && n.length >= 2)
+              .map((n) => n.toLowerCase());
+            const hit = names.some(
+              (n) => low === n || low.includes(n) || n.includes(low),
+            );
+            if (hit) {
+              const register = def.personality?.speechRegister;
+              return register ? { npcId, register } : null; // 미배정 스킵
+            }
+          }
+          return null; // 무명·미매칭 스킵
+        };
+        speechAudit = auditUtteranceRegisterCore(
+          narrative,
+          resolveNpcRegister,
+          validateSpeechRegister,
+        );
+      } catch (err) {
+        this.logger.warn(`[SpeechAudit] error: ${err}`);
+      }
+
       // llmChoices 는 Track 2 (서술 기반 nano 선택지 재생성) 완료 후
       // 최종 finalChoices 로 한 번만 저장한다. 여기서 미리 저장하면
       // DB 는 Track 1 결과, stream emit 은 Track 2 결과로 desync 가 발생함.
@@ -3648,6 +3688,8 @@ ${npcList}`,
                   source: npcReaction.source,
                 }
               : null,
+          // arch/69 C2 — 어체 위반 계측 (텍스트 미변경, C3 게이트용)
+          llmSpeechAudit: speechAudit.length > 0 ? speechAudit : null,
         })
         .where(eq(turns.id, pending.id));
 
