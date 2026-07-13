@@ -29,6 +29,7 @@ import {
 } from '../db/types/npc-state.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { NpcKnowledgeLedger } from '../db/types/npc-knowledge.js';
+import { getNpcSchedulePhaseEntry } from '../db/types/npc-schedule.js';
 import { MemoryRendererService } from './memory-renderer.service.js';
 import { MidSummaryService } from './mid-summary.service.js';
 import { IntentMemoryService } from '../engine/hub/intent-memory.service.js';
@@ -165,6 +166,10 @@ export interface LlmContext {
   questEndingApproach: string | null;
   // NPC 아젠다 목격 힌트 (같은 장소에서 진행된 아젠다)
   agendaWitnessHint: string | null;
+  // arch/69 B4 — 목격 대상 npcId (근황 발화 중복 제외용)
+  agendaWitnessNpcIds: string[];
+  // arch/69 B4 — NPC 아젠다 근황 signal (관계 발화 우선순위/소식용)
+  recentAgendaEvents: Array<{ npcId: string; signal: string }>;
   // 대화 잠금 상태 (연속 대화 턴 정보)
   conversationLock: {
     npcDisplayName: string;
@@ -1843,6 +1848,15 @@ export class ContextBuilderService {
         }
       : null;
 
+    // arch/69 B4 — 목격 힌트를 한 번 계산해 text/npcIds 를 함께 소비
+    const witnessResult = this.buildAgendaWitnessHint(runState, serverResult);
+    // arch/69 B4 — 관계 근황 발화(잡담)용 동적 signal 소스
+    const recentAgendaEvents =
+      ((runState?.worldState as Record<string, unknown> | undefined)
+        ?.recentAgendaEvents as
+        | Array<{ npcId: string; signal: string }>
+        | undefined) ?? [];
+
     return {
       theme: memory?.theme ?? [],
       storySummary: sanitize(memory?.storySummary ?? null),
@@ -1955,7 +1969,10 @@ export class ContextBuilderService {
         runState?.questState === 'S5_RESOLVE'
           ? '이야기가 마무리에 접어들고 있다. 서술의 톤을 클라이맥스로 고조시키세요. 플레이어의 행동이 최종 결과를 결정합니다.'
           : null,
-      agendaWitnessHint: this.buildAgendaWitnessHint(runState, serverResult),
+      agendaWitnessHint: witnessResult?.text ?? null,
+      // arch/69 B4 — 목격 대상 npcId (근황 발화 selectRelationMentionCore 중복 제외용)
+      agendaWitnessNpcIds: witnessResult?.npcIds ?? [],
+      recentAgendaEvents,
       // 대화 잠금 상태
       conversationLock: this.buildConversationLock(runState, turnNoForNames),
       dialogueAct,
@@ -2529,7 +2546,7 @@ export class ContextBuilderService {
   private buildAgendaWitnessHint(
     runState: Record<string, unknown> | null | undefined,
     _serverResult: ServerResultV1,
-  ): string | null {
+  ): { text: string; npcIds: string[] } | null {
     if (!runState?.worldState) return null;
     const ws = runState.worldState as Record<string, unknown>;
     const agendaEvents = ws.recentAgendaEvents as
@@ -2539,31 +2556,34 @@ export class ContextBuilderService {
 
     const playerLocation = ws.currentLocationId as string | undefined;
     if (!playerLocation) return null;
+    const phase = ws.phaseV2 as string | undefined;
 
     // NPC 스케줄에서 현재 장소에 있는 NPC만 필터
     const witnessHints: string[] = [];
+    const witnessNpcIds: string[] = [];
     for (const event of agendaEvents) {
       const npcDef = this.content.getNpc(event.npcId);
       if (!npcDef) continue;
 
-      // NPC의 스케줄 장소 확인
-      const schedule = (npcDef as Record<string, unknown>).schedule as
-        | { default?: string }
-        | undefined;
-      const npcLocation = schedule?.default;
+      // arch/69 B4 — 위치 판정 버그 수정: schedule.default 는 4상(DAWN/DAY/
+      // DUSK/NIGHT) 객체인데 과거 코드가 string 으로 오독해 "객체 !== 문자열"
+      // 이 항상 참 → 전 NPC 탈락 → 목격 힌트가 상시 null 이었다. 현재 phase
+      // 의 장소를 getNpcSchedulePhaseEntry 로 올바르게 판정 (B1 공용 헬퍼).
+      const npcLocation = getNpcSchedulePhaseEntry(
+        npcDef.schedule,
+        phase,
+      )?.locationId;
 
       // 플레이어와 같은 장소이거나, 장소 정보가 없으면 포함
       if (npcLocation && npcLocation !== playerLocation) continue;
 
-      const npcName =
-        ((npcDef as Record<string, unknown>).unknownAlias as string) ??
-        ((npcDef as Record<string, unknown>).name as string) ??
-        event.npcId;
+      const npcName = npcDef.unknownAlias ?? npcDef.name ?? event.npcId;
       witnessHints.push(`${npcName}: ${event.signal}`);
+      witnessNpcIds.push(event.npcId);
     }
 
     if (witnessHints.length === 0) return null;
 
-    return witnessHints.join('\n');
+    return { text: witnessHints.join('\n'), npcIds: witnessNpcIds };
   }
 }

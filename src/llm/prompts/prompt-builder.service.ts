@@ -13,6 +13,7 @@ import {
   getNpcSchedulePhaseEntry,
   getNpcCurrentActivity,
 } from '../../db/types/npc-schedule.js';
+import { selectRelationMentionCore } from '../npc-relation-mention.js';
 import type { LlmMessage } from '../types/index.js';
 import {
   buildIntroDirective,
@@ -2633,6 +2634,41 @@ export class PromptBuilderService {
           `※ 단서/사건/임무를 화두로 만들지 마세요. 이번 턴은 일상 대화입니다.`,
         );
         factsParts.push(chatLines.join('\n'));
+
+        // arch/69 B4 — 관계 근황 발화: 화자가 아는 다른 NPC 소식/관계를 잡담에
+        // 곁들여 "다른 NPC도 각자의 삶을 산다"는 감각을 준다. introduced 대상만
+        // 후보(불변식 15), 목격 대상 중복 제외, 잡담 recentTopics로 회피.
+        const speakerRelations = chatNpcDef?.personality?.npcRelations;
+        if (speakerRelations) {
+          const introducedNpcIds = new Set<string>(
+            Object.entries(ctx.npcStates ?? {})
+              .filter(([, s]) => s?.introduced)
+              .map(([id]) => id),
+          );
+          const mention = selectRelationMentionCore({
+            speakerRelations,
+            introducedNpcIds,
+            recentAgendaEvents: ctx.recentAgendaEvents ?? [],
+            recentTopics: (chatNpcState?.llmSummary?.recentTopics ?? []).map(
+              (t) => t.topic,
+            ),
+            witnessNpcIds: ctx.agendaWitnessNpcIds ?? [],
+            getName: (id) => this.content.getNpc(id)?.name ?? null,
+          });
+          if (mention) {
+            const relLines = [
+              `[주변 인물 근황] (화자가 아는 것)`,
+              `${mention.targetName}: ${mention.relationText}`,
+            ];
+            if (mention.recentSignal) {
+              relLines.push(`(최근 소식: ${mention.recentSignal})`);
+            }
+            relLines.push(
+              `→ 잡담 중 자연스러우면 한 문장으로만 곁들이세요. 관계 서술 범위 밖의 사건을 만들지 말고, 어색하면 생략하세요.`,
+            );
+            factsParts.push(relLines.join('\n'));
+          }
+        }
       }
     }
 
