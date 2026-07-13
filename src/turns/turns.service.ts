@@ -3632,9 +3632,29 @@ export class TurnsService {
               // 정보 요구라 면제 (bypassTrust).
               // 개선 3 — 질문 턴은 확률 무관 완전 차단: 구체적으로 물었는데
               // 무관한 단서로 답하는 문답 불일치가 확률로 새는 것 방지.
+              // 대화 계열 — 명시 주제로 물어야 단서가 나온다 (조사·탐색과 구분)
+              const CONVERSATIONAL_ACTIONS = new Set([
+                'TALK',
+                'PERSUADE',
+                'TRADE',
+                'HELP',
+              ]);
               let fallbackGateBlocked = false;
               if (selected && !selected.matchedByTopic && !bypassTrust) {
-                if (body.input.type === 'ACTION' && isQuestionInput(rawInput)) {
+                if (CONVERSATIONAL_ACTIONS.has(intent.actionType)) {
+                  // A안 (arch/68 부록 M) — 대화 계열은 주제 매칭 없으면 fact 공개
+                  // 완전 차단. NPC가 인사·잡담에 먼저 단서를 흘리는 부자연스러움
+                  // 방지: 플레이어가 그 화제를 명시적으로 물어야(matchedByTopic)
+                  // 공개된다. 조사·탐색(INVESTIGATE/SEARCH/OBSERVE)은 능동 탐색이라
+                  // 아래 확률 fallback을 유지한다. 보류된 fact는 뇌물 기회로 이월.
+                  fallbackGateBlocked = true;
+                  this.logger.debug(
+                    `[Quest] 대화 계열(${intent.actionType}) 비주제 — fact 공개 차단 (선제 단서 방지)`,
+                  );
+                } else if (
+                  body.input.type === 'ACTION' &&
+                  isQuestionInput(rawInput)
+                ) {
                   fallbackGateBlocked = true;
                   this.logger.debug(
                     `[Quest] 질문 턴 — 비주제 fallback 공개 차단 (문답 불일치 방지)`,
