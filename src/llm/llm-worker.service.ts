@@ -1621,24 +1621,13 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
-        // P2. 말투 위반 감지 (대사 내 금지 패턴)
-        const speechViolations =
-          /["""].*?(?:자네|이보게|~일세|말일세|삼가게|하네만|어쩌겠나)["""]|["""].*?(?:해요|세요|합니다|입니다|에요|죠)["""]|["""].*?(?:~야|~해|~지만|~거든|~잖아)["""]/g;
-        const speechMatches = narrative.match(speechViolations);
-        if (speechMatches) {
-          violations.push(`SPEECH_VIOLATION(${speechMatches.length}회)`);
-        }
-
-        // P3. "자네" 직접 치환 (가장 빈번한 위반)
-        if (narrative.includes('자네')) {
-          narrative = narrative.replaceAll('자네', '그대');
-          violations.push('AUTO_FIX: 자네→그대');
-        }
-        // "이보게" → "듣고 계시오"
-        if (narrative.includes('이보게')) {
-          narrative = narrative.replaceAll('이보게', '듣고 계시오');
-          violations.push('AUTO_FIX: 이보게→듣고 계시오');
-        }
+        // arch/69 C1 — 하오체 강제 레거시 제거 (어미 다양화 후속).
+        //   P2 SPEECH_VIOLATION 정규식(자네/해요/합니다/~야 등을 하오체 기준으로
+        //   전부 위반 검출)과 P3 전역 치환(자네→그대, 이보게→듣고 계시오)은
+        //   전 NPC 하오체이던 시절 산물이다. 재배정으로 해체 17명이 된 지금 P3
+        //   전역 치환은 해체의 정상 호칭("자네"·"이보게")을 하오체로 오염시켰다
+        //   (실측: 토브렌 "그대"×6). P2는 검출만 하고 미교정이라 제거해도 기능
+        //   손실이 없다. 화자 인지 어체 검증은 C2(화자별 register 계측)가 대체.
 
         // architecture/51 §B (R1) — 회피 어휘 ≤1회/턴 강제.
         // 2회+ 등장 시 첫 occurrence만 유지 + 나머지는 약한 표현으로 치환.
