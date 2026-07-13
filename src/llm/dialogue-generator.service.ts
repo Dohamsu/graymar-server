@@ -179,10 +179,14 @@ export function validateSpeechRegister(text: string, register: string): boolean 
         last,
       );
     case 'HAPSYO':
-      return /(?:합니다|입니다|습니다|겠습니다|십시오|옵니다)\s*$/.test(last);
+      // arch/69 C3 — 합쇼체 의문형 "습니까/십니까/ㅂ니까" + 격식 문어 의문
+      // "인가/는가" 누락으로 오검출하던 것 수정.
+      return /(?:합니다|입니다|습니다|겠습니다|십시오|옵니다|습니까|십니까|ㅂ니까|나이까|인가|는가)\s*$/.test(
+        last,
+      );
     case 'HAECHE':
-      // arch/69 C2 — 해체 감탄·확인 어미 "네/구먼/게나/는군/구나" 누락 수정.
-      return /(?:[지야]|거든|는데|이야|걸|잖아|는걸|어|었어|네|구먼|게나|는군|구나|다네)\s*$/.test(
+      // arch/69 C2·C3 — 해체 감탄·확인·명령 어미 확장.
+      return /(?:[지야]|거든|는데|이야|걸|걸세|잖아|는걸|어|었어|네|구먼|게나|게|는군|구나|다네|라네|더라|더라고|그래|라니까)\s*$/.test(
         last,
       );
     default:
