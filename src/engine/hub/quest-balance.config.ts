@@ -39,4 +39,8 @@ export const QUEST_BALANCE = {
    *  fact 사례금(quest.json 기본 5G)보다 싸면 정보 구매가 싱크 역할을 못 하므로 소폭 상회 */
   BRIBE_DEFAULT_COST_SUCCESS: 6,
   BRIBE_DEFAULT_COST_PARTIAL: 3,
+
+  /** architecture/71 §4.4: 캠페인 이월 시 소모품 골드 환산율 (sellPrice 기준 배수).
+   *  sellPrice 미정의 시 buyPrice의 절반을 기준가로 사용. */
+  CARRY_CONSUMABLE_GOLD_RATE: 1.0,
 } as const;

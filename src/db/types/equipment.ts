@@ -40,6 +40,19 @@ export interface ItemInstance {
   prefixAffixId?: string; // region_affixes.json 참조
   suffixAffixId?: string;
   displayName: string; // "소금기 밴 밀수업자의 단검 조류의"
+  /**
+   * 캠페인 이월 스냅샷 (architecture/71 §4.4) — baseItemId/affixId가 다른 팩
+   * 콘텐츠라 활성 팩에서 해석 불가할 때 사용하는 동결 데이터.
+   * 시나리오 완주 merge 시점(원 팩 컨텍스트)에 base statBonus + affix FLAT을
+   * 합산해 기록한다. 세트 보너스는 팩 경계를 넘지 않는다(비이월).
+   */
+  carrySnapshot?: {
+    sourceScenarioId: string;
+    slot: EquipmentSlot;
+    rarity: ItemRarity;
+    statBonus: Record<string, number>;
+    narrativeTags?: string[];
+  };
 }
 
 // --- 장착 상태 ---

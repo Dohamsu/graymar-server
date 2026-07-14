@@ -115,8 +115,9 @@ export class RunsService {
       }
 
       carryOver = await this.campaignsService.getCarryOver(campaignId);
-      // 자유 순서 검증 (arch/70 델타 2) — 요청 시나리오가 CURRENT면 허용.
-      // COMPLETED(되돌아가기)·LOCKED(원점 미완)는 거부.
+      // 자유 선택 검증 (architecture/71) — 미완주(AVAILABLE)면 첫 시나리오 포함
+      // 어느 것이든 진입 가능. COMPLETED(되돌아가기)만 거부.
+      // IN_PROGRESS는 위 활성 런 가드가 선행 차단.
       if (scenarioId) {
         const status = await this.campaignsService.getScenarioStatus(
           campaignId,
@@ -125,11 +126,6 @@ export class RunsService {
         if (status === 'COMPLETED') {
           throw new BadRequestError(
             '이미 완료한 시나리오입니다. 되돌아갈 수 없습니다.',
-          );
-        }
-        if (status === 'LOCKED') {
-          throw new BadRequestError(
-            '아직 잠긴 시나리오입니다. 먼저 원점 시나리오를 완료하세요.',
           );
         }
       } else {
@@ -176,8 +172,12 @@ export class RunsService {
     }
 
     // 0-3. 특성 검증 — 첫 시나리오의 신규 입력만 검증. 이월 traitId는 확정값이라 신뢰.
+    // 이월 런은 traitDef를 해석하지 않는다 (architecture/71): traitId는 첫 팩 로컬 ID라
+    // 다른 팩에선 미해석이고, 같은 ID가 우연히 존재하면 maxHpBonus가 이월 스탯에
+    // 이중 적용된다. 런타임 효과는 identity.traitEffects 스냅샷으로 대체.
     const traitId = carriedIdentity?.traitId ?? options?.traitId;
-    const traitDef = traitId ? this.content.getTrait(traitId) : undefined;
+    const traitDef =
+      isFirstScenario && traitId ? this.content.getTrait(traitId) : undefined;
     if (isFirstScenario && options?.traitId && !traitDef) {
       throw new BadRequestError(`Unknown traitId: ${options.traitId}`);
     }
@@ -385,10 +385,11 @@ export class RunsService {
       );
     }
 
-    // 특성 actionBonuses를 프리셋 actionBonuses에 합산
-    const mergedActionBonuses: Record<string, number> = {
-      ...(preset?.actionBonuses ?? {}),
-    };
+    // 특성 actionBonuses를 프리셋 actionBonuses에 합산.
+    // 이월 런은 첫 생성 시 합산된 스냅샷(identity.actionBonuses)을 그대로 사용 (architecture/71)
+    const mergedActionBonuses: Record<string, number> = carriedIdentity
+      ? { ...(carriedIdentity.actionBonuses ?? {}) }
+      : { ...(preset?.actionBonuses ?? {}) };
     if (traitDef?.effects?.actionBonuses) {
       for (const [action, bonus] of Object.entries(
         traitDef.effects.actionBonuses,
@@ -402,9 +403,14 @@ export class RunsService {
     const traitGoldBonus = traitDef?.effects?.goldBonus ?? 0;
 
     // 특성 런타임 효과 저장용 (failToPartialChance, criticalDisabled, lowHpBonus 등)
-    const traitEffects = traitDef?.effects
-      ? { ...traitDef.effects }
-      : undefined;
+    // 이월 런은 identity.traitEffects 스냅샷 (첫 팩 로컬 traitId 미해석 대비)
+    const traitEffects = carriedIdentity?.traitEffects
+      ? ({
+          ...carriedIdentity.traitEffects,
+        } as import('../content/content.types.js').TraitEffects)
+      : traitDef?.effects
+        ? { ...traitDef.effects }
+        : undefined;
 
     // 초기 RunState 결정 — CarryOver 또는 프리셋 기반
     let initialRunState: RunState;
@@ -437,14 +443,26 @@ export class RunsService {
         arcState,
         npcRelations: { ...npcRelations, ...decayedReputation },
         eventCooldowns: {},
-        equipped: {},
-        equipmentBag: [],
+        // architecture/71 §4.4: 장비 이월 — merge 시점에 carrySnapshot 동결됨
+        equipped: itemsCarry
+          ? { ...(carryOver.equipment?.equipped ?? {}) }
+          : {},
+        equipmentBag: itemsCarry ? [...(carryOver.equipment?.bag ?? [])] : [],
         npcStates,
         locationMemories: {},
         incidentMemories: {},
         itemMemories: {},
         questState: 'S0_ARRIVE',
         discoveredQuestFacts: [],
+        // architecture/71: 정체성·특성 효과 이월 — 표시/프롬프트/판정이 같은 캐릭터로 동작
+        characterName,
+        portraitUrl: effPortraitUrl ?? undefined,
+        traitId,
+        traitEffects,
+        actionBonuses:
+          Object.keys(mergedActionBonuses).length > 0
+            ? mergedActionBonuses
+            : undefined,
       };
 
       this.logger.log(
@@ -613,16 +631,27 @@ export class RunsService {
       }
 
       // run_memories INSERT — L0 theme 구성 (architecture/63: scenario.json themeMemories)
+      // architecture/71 §4.5: 이월 런은 첫 프리셋 배경 + 직전 여정 요약으로 주인공 테마 구성
+      const lastCompleted = carryOver?.completedScenarios?.length
+        ? carryOver.completedScenarios[carryOver.completedScenarios.length - 1]
+        : null;
+      const protagonistTheme =
+        preset?.protagonistTheme ??
+        (lastCompleted
+          ? [
+              carriedIdentity?.protagonistTheme ?? '떠돌이 용병.',
+              `직전 여정 — ${lastCompleted.narrativeSummary}`,
+            ]
+              .join(' ')
+              .slice(0, 300)
+          : '이름 없는 용병.');
       const themeEntries = (
         this.content.getScenarioMeta()?.themeMemories ?? []
       ).map((t) => ({
         ...t,
         value: t.value
           .replace('{CHARACTER_NAME}', characterName ?? '이름 없는 용병')
-          .replace(
-            '{PROTAGONIST_THEME}',
-            preset?.protagonistTheme ?? '이름 없는 용병.',
-          ),
+          .replace('{PROTAGONIST_THEME}', protagonistTheme),
       }));
 
       // 특성 정보를 L0 theme에 추가
@@ -725,10 +754,12 @@ export class RunsService {
             const atmospheres = pMeta.atmospheres ?? [''];
             const atmo =
               atmospheres[Math.floor(Math.random() * atmospheres.length)];
+            // architecture/71: 이월 런은 프리셋이 없어 hook 부재 — {HOOK} 라인을
+            // 통째로 생략한다 (빈 따옴표 대사 방지, 화자 어체 훼손 없음).
             const hook = preset?.prologueHook ?? '';
-            const lines = (pMeta.lines ?? []).map((l) =>
-              l.replace('{HOOK}', hook),
-            );
+            const lines = (pMeta.lines ?? [])
+              .filter((l) => hook !== '' || !l.includes('{HOOK}'))
+              .map((l) => l.replace('{HOOK}', hook));
             const display = [atmo, '', ...lines].join('\n');
             return {
               short: pMeta.summaryShort ?? '프롤로그 — 의뢰를 받다.',

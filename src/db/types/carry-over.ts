@@ -1,5 +1,7 @@
 export interface ScenarioResult {
   scenarioId: string;
+  /** 표시용 시나리오 이름 (campaignSummary 조립·이후 팩 서사 참조) */
+  scenarioName?: string;
   scenarioOrder: number;
   runId: string;
   endingType: string;
@@ -63,9 +65,27 @@ export interface CarryOverState {
     traitId: string | null;
     portraitUrl: string | null;
     presetId: string | null;
+    /**
+     * 특성·프리셋 파생 효과 스냅샷 (architecture/71) — traitId/presetId는
+     * 첫 팩 로컬 ID라 다른 팩에서 getTrait/getPreset 해석이 불가하므로,
+     * 런타임 효과를 첫 완주 시점에 동결해 이월한다.
+     */
+    traitEffects?: Record<string, unknown> | null;
+    actionBonuses?: Record<string, number> | null;
+    /** 프리셋 protagonistTheme 원문 — 이후 시나리오 L0 테마 폴백용 */
+    protagonistTheme?: string | null;
   } | null;
   gold: number;
   items: Array<{ itemId: string; qty: number }>;
+  /**
+   * 장비 이월 (architecture/71 §4.4) — 착용 장비 + 가방의 ItemInstance.
+   * 각 인스턴스는 merge 시점에 carrySnapshot(동결 스탯)이 주입되어
+   * 다른 팩에서도 자체 완결로 동작한다.
+   */
+  equipment?: {
+    equipped: import('./equipment.js').EquippedGear;
+    bag: import('./equipment.js').ItemInstance[];
+  } | null;
   finalStats: Record<string, number>;
   finalHp: number;
   finalMaxHp: number;

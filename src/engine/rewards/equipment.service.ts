@@ -28,6 +28,18 @@ export class EquipmentService {
     instance: ItemInstance,
   ): { equipped: EquippedGear; unequippedInstance: ItemInstance | null } {
     const itemDef = this.contentLoader.getItem(instance.baseItemId);
+    // architecture/71 §4.4: 캠페인 이월 장비 — 다른 팩 baseItemId라 활성 팩에서
+    // 미해석. 동결 스냅샷(slot/rarity)으로 착용 판정한다.
+    if (!itemDef && instance.carrySnapshot) {
+      const snap = instance.carrySnapshot;
+      if (snap.rarity === 'LEGENDARY' && snap.slot !== 'RELIC') {
+        return { equipped, unequippedInstance: null };
+      }
+      return {
+        equipped: { ...equipped, [snap.slot]: instance },
+        unequippedInstance: equipped[snap.slot] ?? null,
+      };
+    }
     if (!itemDef || itemDef.type !== 'EQUIPMENT' || !itemDef.slot) {
       return { equipped, unequippedInstance: null };
     }
@@ -72,6 +84,25 @@ export class EquipmentService {
       if (!instance) continue;
 
       const itemDef = this.contentLoader.getItem(instance.baseItemId);
+
+      // architecture/71 §4.4: 이월 장비 — 활성 팩에서 미해석이면 동결 스냅샷 사용
+      // (base statBonus + affix FLAT 합산본, 세트 보너스는 팩 경계 비이월)
+      if (!itemDef && instance.carrySnapshot) {
+        for (const [stat, value] of Object.entries(
+          instance.carrySnapshot.statBonus,
+        )) {
+          if (value === 0) continue;
+          modifiers.push({
+            stat: stat as keyof import('../stats/stats.service.js').StatsSnapshot,
+            op: 'FLAT',
+            value,
+            priority: GEAR_PRIORITY,
+            source: `GEAR:${instance.baseItemId}(carried)`,
+          });
+        }
+        continue;
+      }
+
       if (itemDef?.statBonus) {
         for (const [stat, value] of Object.entries(itemDef.statBonus)) {
           if (value === 0) continue;
@@ -159,6 +190,8 @@ export class EquipmentService {
       const itemDef = this.contentLoader.getItem(instance.baseItemId);
       if (itemDef?.narrativeTags) {
         tags.push(...itemDef.narrativeTags);
+      } else if (instance.carrySnapshot?.narrativeTags) {
+        tags.push(...instance.carrySnapshot.narrativeTags);
       }
     }
     // 최대 6개, 중복 제거
