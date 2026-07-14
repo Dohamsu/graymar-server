@@ -1316,25 +1316,37 @@ export class CombatService {
     return roll + playerSnap.speed + (fleeBonus ?? 0) >= 12 + engagedCount * 2;
   }
 
+  // 힌트 → combat.effect 매핑(콘텐츠 아이템 ID 하드코딩 대신 효과 의미로 파생).
+  // 엔진에 graymar 아이템 ID 리터럴이 박혀 비-graymar 팩 소모품을 인식 못 하던
+  // 버그 근절(불변식 45) — 아이템은 자기 combat.effect 로 스스로를 설명한다.
+  private static readonly HINT_EFFECT: Record<string, string> = {
+    healing: 'HEAL_HP',
+    stamina: 'RESTORE_STAMINA',
+    smoke: 'FLEE_BONUS',
+    poison: 'APPLY_STATUS',
+  };
+
   private resolveItemFromHint(
     hint: string | undefined,
     inventory: Array<{ itemId: string; qty: number }>,
   ): string | null {
-    const HINT_MAP: Record<string, string[]> = {
-      healing: ['ITEM_SUPERIOR_HEALING', 'ITEM_MINOR_HEALING'],
-      stamina: ['ITEM_STAMINA_TONIC'],
-      smoke: ['ITEM_SMOKE_BOMB'],
-      poison: ['ITEM_POISON_NEEDLE'],
-    };
-
-    if (hint && HINT_MAP[hint]) {
-      for (const itemId of HINT_MAP[hint]) {
-        if (inventory.some((i) => i.itemId === itemId && i.qty > 0))
-          return itemId;
-      }
+    const wantEffect = hint ? CombatService.HINT_EFFECT[hint] : undefined;
+    if (wantEffect) {
+      // 해당 효과를 가진 보유 소모품 중 value 높은 순(상급 회복 우선)
+      const best = inventory
+        .filter((i) => i.qty > 0)
+        .map((i) => ({
+          id: i.itemId,
+          def: this.contentLoader.getItem(i.itemId),
+        }))
+        .filter((c) => c.def?.combat?.effect === wantEffect)
+        .sort(
+          (a, b) => (b.def?.combat?.value ?? 0) - (a.def?.combat?.value ?? 0),
+        )[0];
+      if (best) return best.id;
     }
 
-    // fallback: 첫 번째 CONSUMABLE
+    // fallback: 첫 번째 전투 사용 가능 CONSUMABLE
     for (const item of inventory) {
       if (item.qty <= 0) continue;
       const def = this.contentLoader.getItem(item.itemId);

@@ -6,6 +6,7 @@ import type { ItemInstance } from '../../db/types/equipment.js';
 import type { ResolveOutcome } from '../../db/types/resolve-result.js';
 import { Rng } from '../rng/rng.service.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
+import type { ConsumableDropEntry } from '../../content/content.types.js';
 import { AffixService } from './affix.service.js';
 
 export interface RewardInput {
@@ -23,29 +24,9 @@ export interface RewardResult {
   exp: number;
 }
 
-/** v1 드랍 테이블 (간단한 인메모리 정의) */
-interface DropEntry {
-  itemId: string;
-  chance: number; // 0~1
-  qtyMin: number;
-  qtyMax: number;
-}
-
-const BASIC_DROP_TABLE: DropEntry[] = [
-  { itemId: 'ITEM_MINOR_HEALING', chance: 0.3, qtyMin: 1, qtyMax: 1 },
-  { itemId: 'ITEM_STAMINA_TONIC', chance: 0.2, qtyMin: 1, qtyMax: 1 },
-];
-
-const BOSS_DROP_TABLE: DropEntry[] = [
-  { itemId: 'ITEM_MINOR_HEALING', chance: 0.6, qtyMin: 1, qtyMax: 2 },
-  { itemId: 'ITEM_POISON_NEEDLE', chance: 0.25, qtyMin: 1, qtyMax: 1 },
-];
-
-/** LOCATION 전용 드랍 테이블 — 낮은 단계 소모품만 */
-const LOCATION_DROP_TABLE: DropEntry[] = [
-  { itemId: 'ITEM_MINOR_HEALING', chance: 0.6, qtyMin: 1, qtyMax: 1 },
-  { itemId: 'ITEM_STAMINA_TONIC', chance: 0.4, qtyMin: 1, qtyMax: 1 },
-];
+// 소모품 드랍 테이블은 팩별 drop_tables.json 으로 외부화됨(불변식 45).
+// 이전 하드코딩(ITEM_MINOR_HEALING 등)이 비-graymar 팩에 새던 버그 근절 —
+// ContentLoader.getConsumableDropTable('basic'|'boss'|'location') 로 조회.
 
 /**
  * 골드 획득 행위 — 서사적으로 금품을 얻는 것이 논리적인 행동만 포함
@@ -97,13 +78,21 @@ export class RewardsService {
       for (let i = 0; i < input.enemies.length; i++) {
         gold += rng.range(30, 60);
         exp += rng.range(20, 40);
-        this.rollDropTable(BOSS_DROP_TABLE, rng, items);
+        this.rollDropTable(
+          this.contentLoader.getConsumableDropTable('boss'),
+          rng,
+          items,
+        );
       }
     } else {
       // 잡몹: 전투 단위 1회 롤
       gold = rng.range(10, 25) * input.enemies.length;
       exp = rng.range(5, 15) * input.enemies.length;
-      this.rollDropTable(BASIC_DROP_TABLE, rng, items);
+      this.rollDropTable(
+        this.contentLoader.getConsumableDropTable('basic'),
+        rng,
+        items,
+      );
     }
 
     // encounter 보상: 단서 아이템 드랍
@@ -198,14 +187,14 @@ export class RewardsService {
     return { gold, items, exp: 0 };
   }
 
-  /** LOCATION 드랍 테이블에서 아이템 1개 선택 (가중치 기반) */
+  /** LOCATION 드랍 테이블에서 아이템 1개 선택 (가중치 기반, 팩별) */
   private rollLocationDrop(rng: Rng, items: ItemStack[]): void {
-    // 가중치: MINOR_HEALING 60, STAMINA_TONIC 40 → 60% vs 40%
+    const table = this.contentLoader.getConsumableDropTable('location');
+    const first = table[0];
+    if (!first) return; // 팩이 location 드랍 미정의 → 드랍 없음
+    // 원본 가중치 유지: 첫 항목 chance 로 1차 분기, 미달 시 2번째(있으면 그것, 없으면 첫 항목)
     const roll = rng.next();
-    const entry =
-      roll < LOCATION_DROP_TABLE[0].chance
-        ? LOCATION_DROP_TABLE[0]
-        : LOCATION_DROP_TABLE[1];
+    const entry = roll < first.chance ? first : (table[1] ?? first);
     const existing = items.find((i) => i.itemId === entry.itemId);
     if (existing) {
       existing.qty += 1;
@@ -325,7 +314,7 @@ export class RewardsService {
   }
 
   private rollDropTable(
-    table: DropEntry[],
+    table: ConsumableDropEntry[],
     rng: Rng,
     items: ItemStack[],
   ): void {

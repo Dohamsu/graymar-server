@@ -363,6 +363,25 @@ export type EquipmentDropEntry = {
   drops: EquipmentDropItem[];
 };
 
+/**
+ * 소모품 드랍 항목 (전투/장소 판정 보상). 팩별 drop_tables.json 에서 로드.
+ * 엔진 하드코딩 금지(불변식 45) — graymar 아이템 ID 리터럴이 비-graymar 팩에
+ * 새는 버그(star_sand ITEM_STAMINA_TONIC 누출)를 근절하기 위해 외부화됨.
+ */
+export type ConsumableDropEntry = {
+  itemId: string;
+  chance: number; // 0~1
+  qtyMin: number;
+  qtyMax: number;
+};
+
+/** 팩별 소모품 드랍 테이블 3종 (drop_tables.json 최상위 키). */
+export type ConsumableDropTables = {
+  basic: ConsumableDropEntry[]; // 일반 적 처치 드랍
+  boss: ConsumableDropEntry[]; // 보스 처치 드랍
+  location: ConsumableDropEntry[]; // LOCATION 판정 보상 드랍
+};
+
 export type ScenarioMetaContent = {
   scenarioId: string;
   name: string;

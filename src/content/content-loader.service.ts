@@ -17,6 +17,7 @@ import type {
   SetDefinitionData,
   ShopDefinition,
   EquipmentDropEntry,
+  ConsumableDropTables,
   TraitDefinition,
   FactDefinition,
 } from './content.types.js';
@@ -86,6 +87,7 @@ interface ContentPackState {
   shopsByLocation: Map<string, ShopDefinition[]>;
   affixes: RegionAffixDef[];
   equipmentDrops: EquipmentDropEntry[];
+  consumableDropTables: ConsumableDropTables;
   equipDropsByEnemy: Map<string, EquipmentDropEntry>;
   equipDropsByEncounter: Map<string, EquipmentDropEntry>;
   equipDropsByLocation: Map<string, EquipmentDropEntry>;
@@ -132,6 +134,7 @@ function createEmptyPack(): ContentPackState {
     shopsByLocation: new Map(),
     affixes: [],
     equipmentDrops: [],
+    consumableDropTables: { basic: [], boss: [], location: [] },
     equipDropsByEnemy: new Map(),
     equipDropsByEncounter: new Map(),
     equipDropsByLocation: new Map(),
@@ -241,6 +244,9 @@ export class ContentLoaderService implements OnModuleInit {
   private get equipmentDrops() {
     return this.pack().equipmentDrops;
   }
+  private get consumableDropTables() {
+    return this.pack().consumableDropTables;
+  }
   private get equipDropsByEnemy() {
     return this.pack().equipDropsByEnemy;
   }
@@ -328,6 +334,7 @@ export class ContentLoaderService implements OnModuleInit {
       textReplacementsRaw,
       graphRaw,
       factionsRaw,
+      dropTablesRaw,
     ] = await Promise.all([
       readFile(join(dir, 'enemies.json'), 'utf-8'),
       readFile(join(dir, 'encounters.json'), 'utf-8'),
@@ -367,6 +374,8 @@ export class ContentLoaderService implements OnModuleInit {
       readFile(join(dir, 'graph.json'), 'utf-8').catch(() => '[]'),
       // architecture/63: 세력 (선택 파일 — 표시명 파생)
       readFile(join(dir, 'factions.json'), 'utf-8').catch(() => '[]'),
+      // 소모품 드랍 테이블 (팩별 외부화 — 엔진 하드코딩 누출 근절, 불변식 45)
+      readFile(join(dir, 'drop_tables.json'), 'utf-8').catch(() => '{}'),
     ]);
 
     const enemiesList = JSON.parse(enemiesRaw) as EnemyDefinition[];
@@ -449,6 +458,16 @@ export class ContentLoaderService implements OnModuleInit {
         pack.equipDropsByLocation.set(entry.locationId, entry);
       }
     }
+
+    // 소모품 드랍 테이블 로드 (팩별 외부화 — 불변식 45). 키 누락 시 빈 배열.
+    const dropTablesParsed = JSON.parse(
+      dropTablesRaw,
+    ) as Partial<ConsumableDropTables>;
+    pack.consumableDropTables = {
+      basic: dropTablesParsed.basic ?? [],
+      boss: dropTablesParsed.boss ?? [],
+      location: dropTablesParsed.location ?? [],
+    };
 
     // 콘텐츠 무결성 검증: events_v2의 primaryNpcId가 npcs에 존재하는지 확인
     this.validateNpcReferences(pack);
@@ -570,70 +589,9 @@ export class ContentLoaderService implements OnModuleInit {
     return [...this.presets.values()];
   }
 
-  getShopCatalog(shopId?: string): ItemDefinition[] {
-    const id = shopId ?? 'HARBOR_SHOP';
-
-    const shopConfigs: Record<
-      string,
-      { itemIds?: string[]; priceMultiplier: number }
-    > = {
-      HARBOR_SHOP: { priceMultiplier: 1.0 },
-      SHOP_GUILD_ARMS: {
-        itemIds: [
-          'ITEM_MINOR_HEALING',
-          'ITEM_POISON_NEEDLE',
-          'ITEM_SMOKE_BOMB',
-          'ITEM_STAMINA_TONIC',
-          'ITEM_GUILD_BADGE',
-        ],
-        priceMultiplier: 1.0,
-      },
-      SHOP_GUARD_SUPPLY: {
-        itemIds: [
-          'ITEM_MINOR_HEALING',
-          'ITEM_STAMINA_TONIC',
-          'ITEM_GUARD_PERMIT',
-        ],
-        priceMultiplier: 0.8,
-      },
-      SHOP_BLACK_MARKET: {
-        itemIds: [
-          'ITEM_POISON_NEEDLE',
-          'ITEM_SMOKE_BOMB',
-          'ITEM_SUPERIOR_HEALING',
-          'ITEM_STAMINA_TONIC',
-          'ITEM_SMUGGLE_MAP',
-        ],
-        priceMultiplier: 1.5,
-      },
-    };
-
-    const config = shopConfigs[id] ?? shopConfigs['HARBOR_SHOP'];
-
-    let items: ItemDefinition[];
-    if (config.itemIds) {
-      items = config.itemIds
-        .map((itemId) => this.items.get(itemId))
-        .filter((it): it is ItemDefinition => it != null);
-    } else {
-      items = [...this.items.values()].filter(
-        (it) =>
-          (it.type === 'CONSUMABLE' || it.type === 'KEY_ITEM') &&
-          it.buyPrice != null,
-      );
-    }
-
-    if (config.priceMultiplier !== 1.0) {
-      return items.map((it) => ({
-        ...it,
-        buyPrice:
-          it.buyPrice != null
-            ? Math.round(it.buyPrice * config.priceMultiplier)
-            : undefined,
-      }));
-    }
-    return items;
-  }
+  // getShopCatalog 제거(2026-07-14): 호출처 0의 사장 코드였고, 하드코딩된
+  // shopConfigs(SHOP_GUILD_ARMS 등)는 graymar shops.json 실 ID와도 불일치했다.
+  // 상점은 shops.json + getShop/getShopsByLocation 이 정본. (불변식 45)
 
   private validateNpcReferences(pack: ContentPackState): void {
     const orphanNpcs = new Set<string>();
@@ -811,6 +769,17 @@ export class ContentLoaderService implements OnModuleInit {
     locationId: string,
   ): EquipmentDropEntry | undefined {
     return this.equipDropsByLocation.get(locationId);
+  }
+
+  /**
+   * 소모품 드랍 테이블 조회 (팩별 drop_tables.json). 활성 팩 기준.
+   * 엔진 하드코딩 리터럴 대체 — 비-graymar 팩에 graymar 아이템이 새지 않도록
+   * 각 팩이 자기 아이템 ID로 정의한다. 미정의 팩은 빈 배열(드랍 없음).
+   */
+  getConsumableDropTable(
+    kind: 'basic' | 'boss' | 'location',
+  ): ConsumableDropTables[typeof kind] {
+    return this.consumableDropTables[kind];
   }
 
   // --- Narrative Engine v1: Incidents/Endings ---
