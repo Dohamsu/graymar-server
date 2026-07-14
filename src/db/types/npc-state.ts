@@ -320,6 +320,12 @@ export function sanitizeNpcNamesForTurn(
 ): string {
   if (!text) return text;
   let result = text;
+
+  const hidden: Array<{
+    npcId: string;
+    def: { name: string; unknownAlias?: string; aliases?: string[] };
+  }> = [];
+  const revealedNames: string[] = [];
   for (const [npcId, state] of Object.entries(npcStates)) {
     // 소개 턴 포함 공개 취급 (이름 공개 기획 2026-07-11): 소개 턴 본문의 실명은
     // 자기소개 연출(사전 확정 대사)의 필수 요소 — 여기서 별칭으로 되치환하면
@@ -330,30 +336,69 @@ export function sanitizeNpcNamesForTurn(
       state.introduced &&
       (state.introducedAtTurn === undefined ||
         currentTurnNo >= state.introducedAtTurn);
-    if (revealedOrIntroTurn) continue;
     const npcDef = getNpcDef(npcId);
     if (!npcDef?.name) continue;
-    const alias = npcDef.unknownAlias || '낯선 인물';
-    const protectedAliasToken = `__NPC_ALIAS_PROTECT_${npcId}__`;
-    // 실명 치환 — 한 글자 이름은 한국어 단어 내부 오탐 방지
-    if (result.includes(npcDef.name)) {
-      result = replaceNpcNameWithAlias(result, npcDef.name, alias);
+    if (revealedOrIntroTurn) {
+      revealedNames.push(npcDef.name);
+      continue;
     }
+    hidden.push({ npcId, def: npcDef });
+  }
+
+  // Phase A — 공개 NPC 실명 보호 (버그 86bff72b: 미소개 벨론의 alias "대위"가
+  // 공개된 "브렌 대위" 내부를 치환해 "브렌 당당한 수비대 장교" 융합 표시명 생성).
+  // 공개 실명을 토큰으로 마스킹한 뒤 치환을 돌리고 마지막에 복원한다.
+  const keepTokens: Array<[string, string]> = [];
+  revealedNames
+    .filter((n) => n.length >= 2)
+    .sort((a, b) => b.length - a.length)
+    .forEach((name, i) => {
+      if (!result.includes(name)) return;
+      const token = `__NPC_NAME_KEEP_${i}__`;
+      keepTokens.push([token, name]);
+      result = result.replaceAll(name, token);
+    });
+
+  // Phase B — 미공개 NPC 실명·별칭 → 별칭 토큰 치환.
+  // 텍스트에 이미 있는 별칭을 먼저 토큰화해 다른 NPC 패턴이 별칭 내부를
+  // 재치환하지 못하게 보호하고, 패턴은 긴 것 우선으로 적용해 substring
+  // 오치환("토브렌" 안의 "브렌")을 차단한다 (마커 substring 방어와 동일 사상).
+  const aliasToken = (npcId: string) => `__NPC_ALIAS_PROTECT_${npcId}__`;
+  const aliasByToken = new Map<string, string>();
+  for (const { npcId, def } of hidden) {
+    const alias = def.unknownAlias || '낯선 인물';
+    aliasByToken.set(aliasToken(npcId), alias);
     if (result.includes(alias)) {
-      result = result.replaceAll(alias, protectedAliasToken);
+      result = result.replaceAll(alias, aliasToken(npcId));
     }
+  }
+  const entries: Array<{ pattern: string; npcId: string; isName: boolean }> =
+    [];
+  for (const { npcId, def } of hidden) {
+    entries.push({ pattern: def.name, npcId, isName: true });
     // aliases 배열도 치환 (2글자 이상만 — 1글자는 동사/조사에 오탐)
-    if (npcDef.aliases) {
-      for (const a of npcDef.aliases) {
-        if (a.length < 2) continue;
-        if (result.includes(a)) {
-          result = result.replaceAll(a, alias);
-        }
-      }
+    for (const a of def.aliases ?? []) {
+      if (a.length < 2) continue;
+      entries.push({ pattern: a, npcId, isName: false });
     }
-    if (result.includes(protectedAliasToken)) {
-      result = result.replaceAll(protectedAliasToken, alias);
+  }
+  entries.sort((a, b) => b.pattern.length - a.pattern.length);
+  for (const e of entries) {
+    const token = aliasToken(e.npcId);
+    if (e.isName) {
+      // 실명 치환 — 한 글자 이름은 한국어 단어 내부 오탐 방지
+      result = replaceNpcNameWithAlias(result, e.pattern, token);
+    } else if (result.includes(e.pattern)) {
+      result = result.replaceAll(e.pattern, token);
     }
+  }
+
+  // Phase C — 토큰 복원
+  for (const [token, alias] of aliasByToken) {
+    if (result.includes(token)) result = result.replaceAll(token, alias);
+  }
+  for (const [token, name] of keepTokens) {
+    result = result.replaceAll(token, name);
   }
   return result;
 }

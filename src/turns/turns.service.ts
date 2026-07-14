@@ -4438,6 +4438,25 @@ export class TurnsService {
       if (bribeOpportunityNpcId) {
         nanoEventCtx.bribeOpportunity = { npcId: bribeOpportunityNpcId };
       }
+      // 버그 86bff72b — NpcResolver 최종 결정 전달 (nanoCtx 빌드는 resolver보다
+      // 앞이라 lockedNpcId가 직전 잠금 NPC로 남는다). 명시 지목 턴에는 nano의
+      // 잠금 NPC도 지목 NPC로 교정해 컨셉이 지목 대상 중심으로 생성되게 하고
+      // (positive 유도), 그래도 불일치하면 generate()의 게이트 6이 억제한다.
+      const resolvedPrimary =
+        ((event.payload as Record<string, unknown>).primaryNpcId as string) ??
+        null;
+      nanoEventCtx.resolvedPrimaryNpcId = resolvedPrimary;
+      nanoEventCtx.npcResolutionSource = npcResolutionSource;
+      if (
+        resolvedPrimary &&
+        (npcResolutionSource === 'STRONG_EXPLICIT_NAME' ||
+          npcResolutionSource === 'STRONG_PARTICLE' ||
+          npcResolutionSource === 'CHOICE_EXPLICIT') &&
+        nanoEventCtx.lockedNpcId !== resolvedPrimary
+      ) {
+        nanoEventCtx.lockedNpcId = resolvedPrimary;
+        nanoEventCtx.npcLocked = true;
+      }
       (result.ui as any).nanoEventCtx = nanoEventCtx;
     }
     // 하위 호환: nanoEventResult가 있으면 기존 방식으로도 전달

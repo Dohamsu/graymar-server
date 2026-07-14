@@ -71,6 +71,11 @@ export interface NanoEventContext {
   previousChoiceLabels?: string[];
   /** 경제 싱크 — 이 NPC가 미공개 fact를 보류/거부함. 선택지에 BRIBE 1개 포함 유도 */
   bribeOpportunity?: { npcId: string } | null;
+  /** 버그 86bff72b — NpcResolver 최종 결정 NPC. nanoCtx 빌드가 resolver보다
+   *  앞이라 turns.service 부착 직전에 주입된다. 명시 지목 턴 컨셉 오염 게이트용 */
+  resolvedPrimaryNpcId?: string | null;
+  /** 버그 86bff72b — NpcResolver 결정 근거 (STRONG_EXPLICIT_NAME 등) */
+  npcResolutionSource?: string | null;
 }
 
 const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
@@ -377,6 +382,10 @@ export class NanoEventDirectorService {
     result: NanoEventResult,
     ctx: NanoEventContext,
   ): NanoEventResult {
+    // 게이트 6용 — 교정 전 nano가 원래 중심에 둔 NPC (아래 0/0b에서 npcId가
+    // 잠금/지목 NPC로 덮여도 concept/opening 텍스트는 원래 NPC 기준이다)
+    const originalNpcId = result.npcId;
+
     // 0. Player-First: npcLocked면 NPC 변경 금지
     if (ctx.npcLocked && ctx.lockedNpcId) {
       result.npcId = ctx.lockedNpcId;
@@ -492,6 +501,35 @@ export class NanoEventDirectorService {
           `[NanoConceptGuard] actionType=${ctx.actionType}인데 서술 지시가 뇌물 신호 — 컨셉/opening/gesture 억제 (선택지 유지)`,
         );
       }
+    }
+
+    // 6. 지목 불일치 게이트 (버그 86bff72b).
+    //   플레이어가 실명/호명/선택지로 명시 지목한 턴에 nano가 다른 NPC(직전
+    //   잠금 상대 등) 중심의 컨셉을 내면 서술 지시 필드만 비운다. 실측: "저는
+    //   브렌에게 말을 했습니다만" 턴에 [첫 문장] "책임자 머리카락이..."(마이렐)가
+    //   [지목 대상: 브렌] 디렉티브와 충돌 → 메인 LLM이 대사 없는 파손 서술 생성.
+    //   0/0b가 npcId를 교정해도 concept/opening 텍스트는 원래 NPC 기준이므로
+    //   originalNpcId로 판정한다. concept를 비우면 prompt-builder가 컨셉 블록
+    //   전체를 스킵한다 (게이트 5와 동일 경로). 선택지는 유지 — NanoChoiceNpcFix가
+    //   별도 검증.
+    const STRONG_TARGET_SOURCES = new Set([
+      'STRONG_EXPLICIT_NAME',
+      'STRONG_PARTICLE',
+      'CHOICE_EXPLICIT',
+    ]);
+    if (
+      ctx.resolvedPrimaryNpcId &&
+      ctx.npcResolutionSource &&
+      STRONG_TARGET_SOURCES.has(ctx.npcResolutionSource) &&
+      originalNpcId &&
+      originalNpcId !== ctx.resolvedPrimaryNpcId
+    ) {
+      result.concept = '';
+      result.opening = '';
+      result.npcGesture = '';
+      this.logger.warn(
+        `[NanoConceptGuard] 명시 지목(${ctx.npcResolutionSource}) NPC=${ctx.resolvedPrimaryNpcId}와 nano 컨셉 NPC=${originalNpcId} 불일치 — 컨셉/opening/gesture 억제 (선택지 유지)`,
+      );
     }
 
     return result;

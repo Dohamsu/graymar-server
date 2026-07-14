@@ -28,6 +28,7 @@ import {
   replaceNpcNameWithAlias,
 } from '../db/types/npc-state.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
+import type { NpcDefinition } from '../content/content.types.js';
 import type { NpcKnowledgeLedger } from '../db/types/npc-knowledge.js';
 import { getNpcSchedulePhaseEntry } from '../db/types/npc-schedule.js';
 import { MemoryRendererService } from './memory-renderer.service.js';
@@ -534,31 +535,70 @@ export class ContextBuilderService {
       | undefined;
     if (!npcStates) return text;
     let result = text;
+
+    const hidden: Array<{ npcId: string; def: NpcDefinition }> = [];
+    const revealedNames: string[] = [];
     for (const [npcId, state] of Object.entries(npcStates)) {
-      if (state.introduced) continue; // 소개 완료된 NPC는 실명 OK
       const npcDef = this.content.getNpc(npcId);
       if (!npcDef || !npcDef.name) continue;
-      const alias = npcDef.unknownAlias || '누군가';
-      const protectedAliasToken = `__NPC_ALIAS_PROTECT_${npcId}__`;
-      // 실명이 텍스트에 포함되어 있으면 alias로 치환
-      if (result.includes(npcDef.name)) {
-        result = replaceNpcNameWithAlias(result, npcDef.name, alias);
+      if (state.introduced) {
+        revealedNames.push(npcDef.name); // 소개 완료된 NPC는 실명 OK
+        continue;
       }
+      hidden.push({ npcId, def: npcDef });
+    }
+
+    // Phase A — 공개 NPC 실명 보호 (버그 86bff72b: 미소개 벨론의 alias "대위"가
+    // 소개된 "브렌 대위" 내부를 치환해 프롬프트 전역이 "브렌 당당한 수비대 장교"
+    // 융합 표시명으로 오염). 공개 실명을 토큰으로 마스킹 후 마지막에 복원.
+    const keepTokens: Array<[string, string]> = [];
+    revealedNames
+      .filter((n) => n.length >= 2)
+      .sort((a, b) => b.length - a.length)
+      .forEach((name, i) => {
+        if (!result.includes(name)) return;
+        const token = `__NPC_NAME_KEEP_${i}__`;
+        keepTokens.push([token, name]);
+        result = result.replaceAll(name, token);
+      });
+
+    // Phase B — 미공개 NPC 실명·별칭 → 별칭 토큰 치환 (긴 패턴 우선 —
+    // "토브렌" 안의 "브렌" 같은 substring 오치환 차단).
+    const aliasToken = (npcId: string) => `__NPC_ALIAS_PROTECT_${npcId}__`;
+    const aliasByToken = new Map<string, string>();
+    for (const { npcId, def } of hidden) {
+      const alias = def.unknownAlias || '누군가';
+      aliasByToken.set(aliasToken(npcId), alias);
       if (result.includes(alias)) {
-        result = result.replaceAll(alias, protectedAliasToken);
+        result = result.replaceAll(alias, aliasToken(npcId));
       }
+    }
+    const entries: Array<{ pattern: string; npcId: string; isName: boolean }> =
+      [];
+    for (const { npcId, def } of hidden) {
+      entries.push({ pattern: def.name, npcId, isName: true });
       // aliases 배열도 치환 (2글자 이상만 — 1글자는 동사/조사 오탐)
-      if (npcDef.aliases) {
-        for (const a of npcDef.aliases) {
-          if (a.length < 2) continue;
-          if (result.includes(a)) {
-            result = result.replaceAll(a, alias);
-          }
-        }
+      for (const a of def.aliases ?? []) {
+        if (a.length < 2) continue;
+        entries.push({ pattern: a, npcId, isName: false });
       }
-      if (result.includes(protectedAliasToken)) {
-        result = result.replaceAll(protectedAliasToken, alias);
+    }
+    entries.sort((a, b) => b.pattern.length - a.pattern.length);
+    for (const e of entries) {
+      const token = aliasToken(e.npcId);
+      if (e.isName) {
+        result = replaceNpcNameWithAlias(result, e.pattern, token);
+      } else if (result.includes(e.pattern)) {
+        result = result.replaceAll(e.pattern, token);
       }
+    }
+
+    // Phase C — 토큰 복원
+    for (const [token, alias] of aliasByToken) {
+      if (result.includes(token)) result = result.replaceAll(token, alias);
+    }
+    for (const [token, name] of keepTokens) {
+      result = result.replaceAll(token, name);
     }
     return result;
   }

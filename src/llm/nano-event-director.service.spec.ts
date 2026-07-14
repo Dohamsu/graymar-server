@@ -231,6 +231,51 @@ describe('NanoEventDirectorService', () => {
       expect(v.concept).toBe('상인이 낮은 목소리로 소문을 흘린다');
     });
 
+    // 지목 불일치 게이트 (버그 86bff72b — "저는 브렌에게 말을 했습니다만" 턴에
+    // nano 컨셉이 직전 잠금 NPC(마이렐) 중심으로 생성 → 파손 서술)
+    it('명시 지목(STRONG) NPC != nano 원본 NPC -> concept/opening/gesture 억제, 선택지 유지', () => {
+      const result = makeResult({
+        npcId: 'NPC_B',
+        npc: 'Bob',
+        concept: '덩치 큰 남자가 짜증 섞인 표정으로 서성인다',
+        opening: '그의 머리카락이 헝클어져 있다.',
+        npcGesture: '서류를 쥔 손을 멈춘다',
+      });
+      // 잠금 교정(npcLocked)이 npcId를 덮어도 원본 기준으로 판정해야 함
+      const ctx = makeCtx({
+        npcLocked: true,
+        lockedNpcId: 'NPC_A',
+        resolvedPrimaryNpcId: 'NPC_A',
+        npcResolutionSource: 'STRONG_EXPLICIT_NAME',
+      });
+      const v = callValidate(service, result, ctx);
+      expect(v.npcId).toBe('NPC_A'); // npcId는 잠금 교정 유지
+      expect(v.concept).toBe('');
+      expect(v.opening).toBe('');
+      expect(v.npcGesture).toBe('');
+      expect(v.choices.length).toBeGreaterThan(0);
+    });
+
+    it('명시 지목 NPC == nano NPC -> 컨셉 유지', () => {
+      const result = makeResult({ npcId: 'NPC_A' });
+      const ctx = makeCtx({
+        resolvedPrimaryNpcId: 'NPC_A',
+        npcResolutionSource: 'STRONG_EXPLICIT_NAME',
+      });
+      const v = callValidate(service, result, ctx);
+      expect(v.concept).not.toBe('');
+    });
+
+    it('비지목 소스(CONVERSATION_LOCK)면 불일치여도 컨셉 유지', () => {
+      const result = makeResult({ npcId: 'NPC_B', npc: 'Bob' });
+      const ctx = makeCtx({
+        resolvedPrimaryNpcId: 'NPC_A',
+        npcResolutionSource: 'CONVERSATION_LOCK',
+      });
+      const v = callValidate(service, result, ctx);
+      expect(v.concept).not.toBe('');
+    });
+
     it('invalid fact -> set to null', () => {
       const result = makeResult({
         fact: 'FACT_NONEXISTENT',

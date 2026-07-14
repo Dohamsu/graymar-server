@@ -220,4 +220,71 @@ describe('sanitizeNpcNamesForTurn', () => {
       ),
     ).toBe('후드를 깊이 쓴 정보상이 낮게 속삭인다.');
   });
+
+  // 버그 86bff72b — 미소개 벨론의 alias "대위"가 소개 완료된 "브렌 대위" 내부를
+  // 치환해 "브렌 당당한 수비대 장교" 융합 표시명이 프롬프트 전역을 오염시킨 실측
+  it('미소개 NPC 별칭이 소개된 다른 NPC 실명 내부를 훼손하지 않는다 (융합 방지)', () => {
+    const states: Record<string, NPCState> = {
+      NPC_CAPTAIN_BREN: npc({
+        npcId: 'NPC_CAPTAIN_BREN',
+        introduced: true,
+        introducedAtTurn: 5,
+      }),
+      NPC_GUARD_CAPTAIN: npc({
+        npcId: 'NPC_GUARD_CAPTAIN',
+        introduced: false,
+      }),
+    };
+    const def = (npcId: string) =>
+      npcId === 'NPC_CAPTAIN_BREN'
+        ? {
+            name: '브렌 대위',
+            unknownAlias: '단정한 장교',
+            aliases: ['브렌'],
+          }
+        : npcId === 'NPC_GUARD_CAPTAIN'
+          ? {
+              name: '벨론 대위',
+              unknownAlias: '당당한 수비대 장교',
+              aliases: ['벨론', '대위'],
+            }
+          : undefined;
+
+    expect(
+      sanitizeNpcNamesForTurn(
+        '브렌 대위가 벨론 대위를 바라본다.',
+        states,
+        def,
+        10,
+      ),
+    ).toBe('브렌 대위가 당당한 수비대 장교를 바라본다.');
+  });
+
+  it('미소개 NPC끼리도 긴 패턴 우선 — "토브렌" 안의 "브렌" substring 오치환 방지', () => {
+    const states: Record<string, NPCState> = {
+      NPC_CAPTAIN_BREN: npc({
+        npcId: 'NPC_CAPTAIN_BREN',
+        introduced: false,
+      }),
+      NPC_TOBREN: npc({ npcId: 'NPC_TOBREN', introduced: false }),
+    };
+    const def = (npcId: string) =>
+      npcId === 'NPC_CAPTAIN_BREN'
+        ? {
+            name: '브렌 대위',
+            unknownAlias: '단정한 장교',
+            aliases: ['브렌'],
+          }
+        : npcId === 'NPC_TOBREN'
+          ? {
+              name: '토브렌 하위크',
+              unknownAlias: '수더분한 창고지기',
+              aliases: ['토브렌'],
+            }
+          : undefined;
+
+    expect(
+      sanitizeNpcNamesForTurn('토브렌이 브렌 대위를 불렀다.', states, def, 3),
+    ).toBe('수더분한 창고지기이 단정한 장교를 불렀다.');
+  });
 });

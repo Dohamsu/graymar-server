@@ -332,13 +332,17 @@ export class NpcResolverService {
     // ── Step 3: MEDIUM 신호 (명시 roleKeywords) ──
     if (!isChoice) {
       const matched = this.matchRoleKeywords(inputLower, allNpcs);
-      // 언급 질문 가드 (자유 대화 검증 2026-07-12): "부두 노동자가 말한 창고"
-      // 같은 3인칭 언급이 역할 키워드로 그 NPC를 소환하지 않도록
+      // 잠금 우선 가드 (버그 86bff72b): MEDIUM은 계약상 "lock 부재 시 매칭"인데,
+      // localFirst 분기가 잠금을 넘어 "수비대에서는 어떤 게 고충이신가요?" 같은
+      // 조직명 키워드 언급이 브렌 잠금을 마이렐로 가로챘다. 의도적 화자 전환
+      // (실명/별칭/shortAlias/"X에게" 호명 조사)은 Step 1 STRONG이 이미 처리
+      // 하므로, 잠금 활성 중의 키워드 단독 매칭은 화제 언급으로 보고 잠금을
+      // 유지한다 — 오탐 실패 모드가 "대화 유지"인 보수적 방향 (기존 언급 질문
+      // 가드의 상위 집합이라 MENTION_QUESTION_RE 조건을 제거하고 통합).
       if (
         matched.length > 0 &&
         lockNpcId &&
-        matched.every((n) => n.npcId !== lockNpcId) &&
-        MENTION_QUESTION_RE.test(ctx.rawInput)
+        matched.every((n) => n.npcId !== lockNpcId)
       ) {
         const lockNpc = allNpcs.find((n) => n.npcId === lockNpcId);
         if (lockNpc) {
@@ -351,8 +355,7 @@ export class NpcResolverService {
                 {
                   npcId: matched[0].npcId,
                   source: 'MEDIUM_ROLE_KEYWORD',
-                  reason:
-                    '언급 질문 가드 — 역할 키워드 후보를 잠금 유지로 강등',
+                  reason: '잠금 활성 — 역할 키워드 후보를 화제 언급으로 강등',
                 },
               ],
               lockApplied: true,
@@ -363,15 +366,21 @@ export class NpcResolverService {
         }
       }
       if (matched.length > 0) {
-        // 같은 location 우선
-        const localFirst = matched.find((npc) =>
-          this.isAtLocation(
-            npc,
-            ctx.currentLocationId,
-            ctx.timePhase,
-            ctx.runState,
-          ),
-        );
+        // 잠금 NPC 본인이 키워드에 매칭됐다면 그를 우선 (위 가드로 여기 도달
+        // 시 잠금이 있으면 반드시 matched에 포함되어 있다) → 같은 location 우선
+        const lockMatch = lockNpcId
+          ? matched.find((npc) => npc.npcId === lockNpcId)
+          : undefined;
+        const localFirst =
+          lockMatch ??
+          matched.find((npc) =>
+            this.isAtLocation(
+              npc,
+              ctx.currentLocationId,
+              ctx.timePhase,
+              ctx.runState,
+            ),
+          );
         if (localFirst) {
           return {
             npcId: localFirst.npcId,
