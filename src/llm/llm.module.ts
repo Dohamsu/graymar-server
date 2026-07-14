@@ -5,6 +5,7 @@ import { LlmConfigService } from './llm-config.service.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
+import { LlmCallLogService } from './llm-call-log.service.js';
 import { MemoryRendererService } from './memory-renderer.service.js';
 import { TokenBudgetService } from './token-budget.service.js';
 import { MidSummaryService } from './mid-summary.service.js';
@@ -37,6 +38,7 @@ import { ContentModule } from '../content/content.module.js';
     PromptBuilderService,
     LlmCallerService,
     AiTurnLogService,
+    LlmCallLogService,
     MemoryRendererService,
     TokenBudgetService,
     MidSummaryService,

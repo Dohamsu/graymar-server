@@ -242,7 +242,7 @@ export class NpcReactionDirectorService {
           temperature: attempt === 0 ? 0.7 : 0.4,
           model: lightConfig.model,
           timeoutMs: lightConfig.timeoutMs,
-        });
+        }, 'npc-reaction');
         if (!result.success || !result.response?.text) {
           if (attempt === 1) return this.buildFallback(ctx, 'no response');
           continue;

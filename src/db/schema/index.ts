@@ -12,6 +12,7 @@ export {
   entityFacts,
 } from './memories.js';
 export { aiTurnLogs } from './ai-turn-logs.js';
+export { llmCallLogs } from './llm-call-logs.js';
 export { campaigns } from './campaigns.js';
 export { bugReports } from './bug-reports.js';
 export { sceneImages } from './scene-images.js';

@@ -171,6 +171,7 @@ export class MidSummaryService {
         ],
         maxTokens: 150,
         temperature: 0.3,
+        stage: 'mid-summary',
       });
 
       if (result && result.length > 0) {

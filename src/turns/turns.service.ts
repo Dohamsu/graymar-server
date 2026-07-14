@@ -6650,6 +6650,7 @@ export class TurnsService {
       ],
       maxTokens: 400,
       temperature: 0.7,
+      stage: 'news-article',
     });
 
     if (!raw) return signals.map((s) => s.text);

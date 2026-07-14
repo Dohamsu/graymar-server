@@ -365,7 +365,7 @@ export class DialogueGeneratorService {
       temperature: 0.8,
       model: dialogueModel,
       timeoutMs: 10000, // nano 감사 1번 — 26B 대사 생성 상한 (전역 60초 대체)
-    });
+    }, 'dialogue');
 
     if (!result.success || !result.response?.text) {
       return this.buildFallback(input);
@@ -508,7 +508,7 @@ export class DialogueGeneratorService {
         temperature: 0.7,
         model: dialogueModel,
         timeoutMs: 10000, // nano 감사 1번 — 26B 대사 생성 상한 (전역 60초 대체)
-      });
+      }, 'dialogue');
       if (result.success && result.response?.text) {
         const d = result.response.text
           .trim()

@@ -108,7 +108,7 @@ export class NanoDirectorService {
         temperature: 0.9,
         model: lightConfig.model,
         timeoutMs: lightConfig.timeoutMs,
-      });
+      }, 'nano-director');
 
       if (!result.response?.text) {
         return this.buildFallbackHint(previousSenseCategory, resolve);

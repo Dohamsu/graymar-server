@@ -143,7 +143,7 @@ export class NanoEventDirectorService {
         temperature: 0.8,
         model: lightConfig.model,
         timeoutMs: lightConfig.timeoutMs,
-      });
+      }, 'nano-event-director');
 
       if (!result.response?.text) return null;
 

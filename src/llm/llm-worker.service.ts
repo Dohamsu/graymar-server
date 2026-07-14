@@ -26,6 +26,8 @@ import { stripLeakedPromptBlocks } from './prompts/injected-block-headers.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
+import { LlmCallLogService } from './llm-call-log.service.js';
+import { runInTurnContext, currentTurnStore } from './turn-context.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
@@ -468,6 +470,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly llmCaller: LlmCallerService,
     private readonly configService: LlmConfigService,
     private readonly aiTurnLog: AiTurnLogService,
+    private readonly llmCallLog: LlmCallLogService,
     private readonly sceneShell: SceneShellService,
     private readonly content: ContentLoaderService,
     private readonly dialogueMarker: NpcDialogueMarkerService,
@@ -554,6 +557,24 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processTurn(pending: typeof turns.$inferSelect): Promise<void> {
+    // 유닛 이코노미 실측: 턴 전체 LLM 호출을 ALS 로 수집 → 종료 시 1행 배치 저장.
+    // 본문(processTurnInner)은 그대로 두고 얇게 감싼다.
+    await runInTurnContext(pending.runId, pending.turnNo, async () => {
+      try {
+        await this.processTurnInner(pending);
+      } finally {
+        const store = currentTurnStore();
+        if (store && store.calls.length > 0) {
+          // fire-and-forget — 턴 레이턴시 비차단
+          void this.llmCallLog.flush(store.runId, store.turnNo, store.calls);
+        }
+      }
+    });
+  }
+
+  private async processTurnInner(
+    pending: typeof turns.$inferSelect,
+  ): Promise<void> {
     // 락 획득 — nano 감사 2번 (2026-07-11): CAS 조건(PENDING)만 있고 갱신 행 수를
     // 확인하지 않아, wake() 즉시 트리거와 1초 interval 폴링이 같은 PENDING 턴을
     // 동시에 select하면 둘 다 진입해 이중 LLM 호출·서술 2벌 생성 (실측 7/650턴).

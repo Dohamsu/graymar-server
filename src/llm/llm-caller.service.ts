@@ -3,6 +3,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { LlmProviderRegistryService } from './providers/llm-provider-registry.service.js';
 import { LlmConfigService } from './llm-config.service.js';
+import { recordLlmCall } from './turn-context.js';
 import type {
   LlmProviderRequest,
   LlmProviderResponse,
@@ -59,7 +60,33 @@ export class LlmCallerService {
     private readonly configService: LlmConfigService,
   ) {}
 
-  async call(request: LlmProviderRequest): Promise<LlmCallResult> {
+  /**
+   * 턴 스코프(ALS)에 LLM 호출 실측 1건 누적 — 유닛 이코노미 측정용.
+   * 스코프 밖 호출(타이머 등)은 recordLlmCall 내부에서 무시된다.
+   */
+  private record(
+    response: LlmProviderResponse,
+    providerUsed: string,
+    attempts: number,
+    stage: string,
+  ): void {
+    recordLlmCall({
+      stage,
+      model: response.model,
+      promptTokens: response.promptTokens ?? 0,
+      completionTokens: response.completionTokens ?? 0,
+      cachedTokens: response.cachedTokens ?? 0,
+      costUsd: response.costUsd ?? 0,
+      latencyMs: response.latencyMs ?? 0,
+      provider: providerUsed,
+      attempts,
+    });
+  }
+
+  async call(
+    request: LlmProviderRequest,
+    stage = 'unknown',
+  ): Promise<LlmCallResult> {
     const config = this.configService.get();
     const primary = this.registry.getPrimary();
     let attempts = 0;
@@ -69,6 +96,7 @@ export class LlmCallerService {
     try {
       await this.rateLimiter.acquire();
       const response = await primary.generate(request);
+      this.record(response, primary.name, attempts, stage);
       return { success: true, response, providerUsed: primary.name, attempts };
     } catch (err) {
       const category = this.classifyError(err);
@@ -82,6 +110,7 @@ export class LlmCallerService {
         try {
           await this.rateLimiter.acquire();
           const response = await primary.generate(request);
+          this.record(response, primary.name, attempts, stage);
           return {
             success: true,
             response,
@@ -118,6 +147,7 @@ export class LlmCallerService {
       await this.rateLimiter.acquire();
       const response = await fallback.generate(fallbackRequest);
       this.logger.log(`Fallback "${fallback.name}" succeeded`);
+      this.record(response, fallback.name, attempts, stage);
       return { success: true, response, providerUsed: fallback.name, attempts };
     } catch (fallbackErr) {
       this.logger.error(
@@ -140,6 +170,7 @@ export class LlmCallerService {
   async *callStream(
     request: LlmProviderRequest,
     model?: string,
+    stage = 'narrative',
   ): AsyncGenerator<
     | { type: 'token'; text: string }
     | { type: 'done'; response: LlmProviderResponse }
@@ -165,15 +196,20 @@ export class LlmCallerService {
 
     if (hasStream(primary)) {
       try {
-        yield* primary.generateStream(request, actualModel);
+        for await (const chunk of primary.generateStream(request, actualModel)) {
+          if (chunk.type === 'done') {
+            this.record(chunk.response, primary.name, 1, stage);
+          }
+          yield chunk;
+        }
         return;
       } catch (err) {
         this.logger.warn(`Stream failed, falling back to non-stream: ${err}`);
       }
     }
 
-    // Fallback: non-stream으로 전체 생성 후 한 번에 반환
-    const result = await this.call(request);
+    // Fallback: non-stream으로 전체 생성 후 한 번에 반환 (call 내부에서 record)
+    const result = await this.call(request, stage);
     if (result.success && result.response) {
       yield { type: 'token', text: result.response.text };
       yield { type: 'done', response: result.response };
@@ -188,7 +224,9 @@ export class LlmCallerService {
     messages: { role: string; content: string }[];
     maxTokens: number;
     temperature: number;
+    stage?: string;
   }): Promise<string> {
+    const stage = params.stage ?? 'nano-light';
     const lightConfig = this.configService.getLightModelConfig();
     const provider =
       this.registry.getByName(lightConfig.provider) ??
@@ -209,6 +247,7 @@ export class LlmCallerService {
     try {
       await this.rateLimiter.acquire();
       const response = await provider.generate(request);
+      this.record(response, provider.name, 1, stage);
       return response.text;
     } catch (err) {
       this.logger.debug(`Light LLM call failed: ${String(err)}`);
@@ -216,6 +255,7 @@ export class LlmCallerService {
       try {
         await this.rateLimiter.acquire();
         const response = await provider.generate(request);
+        this.record(response, provider.name, 2, stage);
         return response.text;
       } catch {
         return '';

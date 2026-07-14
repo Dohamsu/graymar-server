@@ -317,6 +317,7 @@ export class FactExtractorService {
       messages: [{ role: 'user', content: userMsg }],
       maxTokens: 100,
       temperature: 0.3,
+      stage: 'fact-extract',
     });
 
     return text || this.fallbackSummary(grouped);
@@ -371,6 +372,7 @@ export class FactExtractorService {
       messages: [{ role: 'user', content: userMsg }],
       maxTokens: 120,
       temperature: 0.3,
+      stage: 'fact-extract',
     });
 
     if (text && text.length > 10) {

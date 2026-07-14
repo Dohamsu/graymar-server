@@ -114,7 +114,7 @@ export class ChallengeClassifierService {
         temperature: 0.2,
         model: lightConfig.model,
         timeoutMs: lightConfig.timeoutMs,
-      });
+      }, 'challenge-classifier');
 
       if (!result.success || !result.response?.text) {
         return {
