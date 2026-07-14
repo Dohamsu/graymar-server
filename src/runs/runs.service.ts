@@ -859,7 +859,12 @@ export class RunsService {
         startedAt: result.run.startedAt,
         // architecture/63 ⑥: 클라 시나리오 인지 (HUB 라벨·프리셋 표기)
         scenarioId: result.run.scenarioId ?? null,
+        // architecture/71: 이월 캐릭터 표시용 — 실제 프리셋(class 라벨)·확정 스탯.
+        // 이월 런은 startCampaignRun이 프리셋을 안 넘기므로 응답으로 전달.
+        presetId: result.run.presetId ?? null,
       },
+      // 캐릭터 패널 스탯(6대) — 이월 런은 프리셋 파생 불가라 확정 permanentStats 전달
+      stats: presetStats,
       currentNode: {
         id: result.firstNode.id,
         nodeType: result.firstNode.nodeType,
@@ -1255,6 +1260,12 @@ export class RunsService {
         marks: dossierMarks.filter((m) => m.npcId === npcId).map((m) => m.type),
       }));
 
+    // 캐릭터 패널 스탯 — 이월 캐릭터는 프리셋 파생 불가라 확정 permanentStats 전달 (arch/71)
+    const [profile] = await this.db
+      .select({ permanentStats: playerProfiles.permanentStats })
+      .from(playerProfiles)
+      .where(eq(playerProfiles.userId, userId));
+
     return {
       run: {
         id: run.id,
@@ -1271,6 +1282,7 @@ export class RunsService {
         // architecture/63 ⑥: 클라 시나리오 인지
         scenarioId: run.scenarioId ?? null,
       },
+      stats: profile?.permanentStats ?? null,
       currentNode: currentNode
         ? {
             id: currentNode.id,
