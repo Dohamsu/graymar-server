@@ -75,6 +75,13 @@ export class RunsController {
     return this.runsService.getRun(runId, userId, query);
   }
 
+  /** 진행 중 런 포기 (RUN_ABORTED). 캠페인 머지 없음 → 같은 시나리오 재도전 가능 (arch/70 §3.3) */
+  @Post(':runId/abort')
+  @HttpCode(HttpStatus.OK)
+  async abortRun(@Param('runId') runId: string, @UserId() userId: string) {
+    return this.runsService.abortRun(runId, userId);
+  }
+
   @Post(':runId/equip')
   @HttpCode(HttpStatus.OK)
   async equipItem(

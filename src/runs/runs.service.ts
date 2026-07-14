@@ -1097,6 +1097,31 @@ export class RunsService {
     return summary;
   }
 
+  /**
+   * 진행 중 런 포기 (architecture/70 §3.3). 상태만 RUN_ABORTED 전환하고
+   * 캠페인 머지(saveScenarioResult)는 하지 않는다 → 그 시나리오는 미완료로 남아
+   * 다음 순번 미개방 + 같은 시나리오 재도전 가능(활성 런 가드 해제).
+   */
+  async abortRun(runId: string, userId: string) {
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+      columns: { id: true, userId: true, status: true, campaignId: true },
+    });
+    if (!run) throw new NotFoundError('Run not found');
+    if (run.userId !== userId) throw new ForbiddenError('Not your run');
+    if (run.status !== 'RUN_ACTIVE') {
+      throw new BadRequestError('진행 중인 런만 포기할 수 있습니다.');
+    }
+    await this.db
+      .update(runSessions)
+      .set({ status: 'RUN_ABORTED', updatedAt: new Date() })
+      .where(eq(runSessions.id, runId));
+    this.logger.log(
+      `Run aborted: run=${runId} user=${userId} campaign=${run.campaignId ?? 'solo'}`,
+    );
+    return { runId, status: 'RUN_ABORTED' as const };
+  }
+
   async getRun(runId: string, userId: string, query: GetRunQuery) {
     // run 조회
     const run = await this.db.query.runSessions.findFirst({
