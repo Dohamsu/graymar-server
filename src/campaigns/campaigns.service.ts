@@ -149,8 +149,10 @@ export class CampaignsService {
   }
 
   /**
-   * 캠페인 진행 상태 — order 오름차순 중 첫 미완료가 CURRENT, 그 앞은 COMPLETED,
-   * 뒤는 LOCKED (architecture/70 §3.2). 집합 기반이라 중복 저장에도 안전.
+   * 캠페인 진행 상태 (architecture/70 델타 2 — 원점 먼저, 이후 자유 선택).
+   * - 원점(최소 order, graymar)이 미완료면 원점만 CURRENT, 나머지 LOCKED
+   *   → 캐릭터는 원점에서 한 번 생성(중립 프리셋 풀).
+   * - 원점 완료 후엔 **미완료 전부 CURRENT**(자유 순서), 완료는 잠금(되돌아가기 방지).
    */
   async getScenarioProgress(
     campaignId: string,
@@ -160,16 +162,18 @@ export class CampaignsService {
       (carryOver?.completedScenarios ?? []).map((s) => s.scenarioId),
     );
     const all = await this.contentLoader.listAvailableScenarios(); // order asc
-    let currentAssigned = false;
+    const origin = all[0]; // 최소 order = 원점(캐릭터 생성 시나리오)
+    const originDone = origin ? completed.has(origin.scenarioId) : true;
     return all.map((s) => {
       let status: ScenarioStatus;
       if (completed.has(s.scenarioId)) {
         status = 'COMPLETED';
-      } else if (!currentAssigned) {
-        status = 'CURRENT';
-        currentAssigned = true;
+      } else if (!originDone) {
+        // 원점 미완료 → 원점만 진입 가능
+        status = s.scenarioId === origin?.scenarioId ? 'CURRENT' : 'LOCKED';
       } else {
-        status = 'LOCKED';
+        // 원점 완료 → 미완료는 전부 자유 진입
+        status = 'CURRENT';
       }
       return {
         scenarioId: s.scenarioId,
@@ -182,9 +186,18 @@ export class CampaignsService {
     });
   }
 
+  /** 요청 시나리오가 현재 진입 가능(CURRENT)한지 — createRun 검증용. */
+  async getScenarioStatus(
+    campaignId: string,
+    scenarioId: string,
+  ): Promise<ScenarioStatus | null> {
+    const progress = await this.getScenarioProgress(campaignId);
+    return progress.find((p) => p.scenarioId === scenarioId)?.status ?? null;
+  }
+
   /**
-   * 다음 진입 가능한 시나리오 id (order 오름차순 중 첫 미완료). 없으면 null(전부 완료).
-   * 순차 진입 검증의 단일 정본 (architecture/70 §3.2).
+   * scenarioId 미지정 시 자동 선택할 기본 시나리오 (첫 CURRENT — 보통 원점).
+   * 자유 순서에선 여러 CURRENT가 있으므로 명시 선택을 권장.
    */
   async resolveNextScenarioId(campaignId: string): Promise<string | null> {
     const progress = await this.getScenarioProgress(campaignId);

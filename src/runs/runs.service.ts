@@ -115,14 +115,28 @@ export class RunsService {
       }
 
       carryOver = await this.campaignsService.getCarryOver(campaignId);
-      const nextScenarioId =
-        await this.campaignsService.resolveNextScenarioId(campaignId);
-      if (scenarioId && nextScenarioId && scenarioId !== nextScenarioId) {
-        throw new BadRequestError(
-          `시나리오 순서 위반: 다음 진행 가능 시나리오는 ${nextScenarioId} 입니다`,
+      // 자유 순서 검증 (arch/70 델타 2) — 요청 시나리오가 CURRENT면 허용.
+      // COMPLETED(되돌아가기)·LOCKED(원점 미완)는 거부.
+      if (scenarioId) {
+        const status = await this.campaignsService.getScenarioStatus(
+          campaignId,
+          scenarioId,
         );
+        if (status === 'COMPLETED') {
+          throw new BadRequestError(
+            '이미 완료한 시나리오입니다. 되돌아갈 수 없습니다.',
+          );
+        }
+        if (status === 'LOCKED') {
+          throw new BadRequestError(
+            '아직 잠긴 시나리오입니다. 먼저 원점 시나리오를 완료하세요.',
+          );
+        }
+      } else {
+        scenarioId =
+          (await this.campaignsService.resolveNextScenarioId(campaignId)) ??
+          undefined;
       }
-      if (!scenarioId && nextScenarioId) scenarioId = nextScenarioId;
     }
 
     // architecture/63: 캠페인 없이도 scenarioId 직접 지정 허용 (최소 플레이 경로).
