@@ -467,10 +467,26 @@ describe('NpcReactionDirectorService', () => {
   describe('buildNpcSelfContextCore', () => {
     const ownerSchedule: NpcSchedule = {
       default: {
-        DAWN: { locationId: 'LOC_TAVERN', activity: '개장 준비', interactable: true },
-        DAY: { locationId: 'LOC_TAVERN', activity: '잔을 닦으며 손님 접대', interactable: true },
-        DUSK: { locationId: 'LOC_TAVERN', activity: '피크 시간 주문 처리', interactable: true },
-        NIGHT: { locationId: 'LOC_TAVERN', activity: '마지막 손님 이야기 듣기', interactable: true },
+        DAWN: {
+          locationId: 'LOC_TAVERN',
+          activity: '개장 준비',
+          interactable: true,
+        },
+        DAY: {
+          locationId: 'LOC_TAVERN',
+          activity: '잔을 닦으며 손님 접대',
+          interactable: true,
+        },
+        DUSK: {
+          locationId: 'LOC_TAVERN',
+          activity: '피크 시간 주문 처리',
+          interactable: true,
+        },
+        NIGHT: {
+          locationId: 'LOC_TAVERN',
+          activity: '마지막 손님 이야기 듣기',
+          interactable: true,
+        },
       },
     };
 
@@ -487,22 +503,35 @@ describe('NpcReactionDirectorService', () => {
     });
 
     it('phase 미지정 → DAY로 fallback', () => {
-      const self = buildNpcSelfContextCore({ schedule: ownerSchedule, phase: null });
+      const self = buildNpcSelfContextCore({
+        schedule: ownerSchedule,
+        phase: null,
+      });
       expect(self.currentActivity).toBe('잔을 닦으며 손님 접대');
     });
 
     it('phase가 schedule에 없으면 DAY fallback (방어)', () => {
-      const self = buildNpcSelfContextCore({ schedule: ownerSchedule, phase: 'UNKNOWN' });
+      const self = buildNpcSelfContextCore({
+        schedule: ownerSchedule,
+        phase: 'UNKNOWN',
+      });
       expect(self.currentActivity).toBe('잔을 닦으며 손님 접대');
     });
 
     it('DUSK phase → 해당 활동', () => {
-      const self = buildNpcSelfContextCore({ schedule: ownerSchedule, phase: 'DUSK' });
+      const self = buildNpcSelfContextCore({
+        schedule: ownerSchedule,
+        phase: 'DUSK',
+      });
       expect(self.currentActivity).toBe('피크 시간 주문 처리');
     });
 
     it('schedule 없음 → currentActivity null', () => {
-      const self = buildNpcSelfContextCore({ schedule: null, agenda: '뭔가', phase: 'DAY' });
+      const self = buildNpcSelfContextCore({
+        schedule: null,
+        agenda: '뭔가',
+        phase: 'DAY',
+      });
       expect(self.currentActivity).toBeNull();
       expect(self.selfAgenda).toBe('뭔가');
     });
@@ -513,7 +542,9 @@ describe('NpcReactionDirectorService', () => {
     });
 
     it('dialogueAct 미지정 → null passthrough', () => {
-      expect(buildNpcSelfContextCore({ schedule: ownerSchedule }).dialogueAct).toBeNull();
+      expect(
+        buildNpcSelfContextCore({ schedule: ownerSchedule }).dialogueAct,
+      ).toBeNull();
     });
   });
 });

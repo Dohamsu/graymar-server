@@ -12,11 +12,7 @@ describe('selectRelationMentionCore', () => {
       NPC_HARLUN: '술값 안 밀리는 좋은 손님',
       NPC_INFO_BROKER: '2층 묵인, 피 나면 끝이라 경고',
     },
-    introducedNpcIds: new Set([
-      'NPC_RENNICK',
-      'NPC_HARLUN',
-      'NPC_INFO_BROKER',
-    ]),
+    introducedNpcIds: new Set(['NPC_RENNICK', 'NPC_HARLUN', 'NPC_INFO_BROKER']),
     recentAgendaEvents: [],
     recentTopics: [],
     witnessNpcIds: [],
@@ -65,7 +61,9 @@ describe('selectRelationMentionCore', () => {
   it('signal 있는 대상 우선 (recentAgendaEvents)', () => {
     const r = selectRelationMentionCore({
       ...base,
-      recentAgendaEvents: [{ npcId: 'NPC_INFO_BROKER', signal: '2층에서 밀담 중' }],
+      recentAgendaEvents: [
+        { npcId: 'NPC_INFO_BROKER', signal: '2층에서 밀담 중' },
+      ],
     });
     expect(r!.targetNpcId).toBe('NPC_INFO_BROKER');
     expect(r!.recentSignal).toBe('2층에서 밀담 중');

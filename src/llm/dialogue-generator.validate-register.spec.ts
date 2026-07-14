@@ -22,10 +22,16 @@ describe('validateSpeechRegister — HAPSYO (합쇼체)', () => {
 
   it('ㅂ니다/ㅂ니까 불규칙 활용은 정상 합쇼체 (5차 정밀화 — 오검출 수정)', () => {
     expect(
-      validateSpeechRegister('그 상인에 대해서는 제가 아는 바가 없습니다. 답을 얻을 수 있을지도 모릅니다.', 'HAPSYO'),
+      validateSpeechRegister(
+        '그 상인에 대해서는 제가 아는 바가 없습니다. 답을 얻을 수 있을지도 모릅니다.',
+        'HAPSYO',
+      ),
     ).toBe(true);
     expect(
-      validateSpeechRegister('제가 무언가 잘못이라도 한 것입니까? 그건 예의가 아닙니다!', 'HAPSYO'),
+      validateSpeechRegister(
+        '제가 무언가 잘못이라도 한 것입니까? 그건 예의가 아닙니다!',
+        'HAPSYO',
+      ),
     ).toBe(true);
     expect(
       validateSpeechRegister('이토록 무례하게 구시는 겁니까!', 'HAPSYO'),

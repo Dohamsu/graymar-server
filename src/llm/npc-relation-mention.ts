@@ -69,7 +69,7 @@ export function selectRelationMentionCore(
   const pool = withSignal.length > 0 ? withSignal : candidates;
 
   const rng = input.rng ?? Math.random;
-  const targetNpcId = pool[Math.floor(rng() * pool.length)]!;
+  const targetNpcId = pool[Math.floor(rng() * pool.length)];
   const targetName = input.getName(targetNpcId);
   if (!targetName) return null; // 이름 조회 실패 시 언급 생략
 

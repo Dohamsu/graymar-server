@@ -101,8 +101,10 @@ describe('auditUtteranceRegisterCore (arch/69 C2)', () => {
   };
   // 라벨 → npcId/register (무명은 null)
   const resolve = (label: string) => {
-    if (label.includes('회계사')) return { npcId: 'NPC_EDRIC', register: 'HAOCHE' };
-    if (label.includes('요리사')) return { npcId: 'NPC_COOK', register: 'HAECHE' };
+    if (label.includes('회계사'))
+      return { npcId: 'NPC_EDRIC', register: 'HAOCHE' };
+    if (label.includes('요리사'))
+      return { npcId: 'NPC_COOK', register: 'HAECHE' };
     return null; // 무명·미배정 스킵
   };
 
@@ -136,7 +138,11 @@ describe('auditUtteranceRegisterCore (arch/69 C2)', () => {
       '@[회계사|/x.webp] "장부가 비었소."',
       '@[에드릭 베일|/x.webp] "숫자가 맞지 않소."',
     ].join('\n\n');
-    const audit = auditUtteranceRegisterCore(narrative, resolveMulti, validateFn);
+    const audit = auditUtteranceRegisterCore(
+      narrative,
+      resolveMulti,
+      validateFn,
+    );
     expect(audit.length).toBe(1);
     expect(audit[0].total).toBe(2);
   });

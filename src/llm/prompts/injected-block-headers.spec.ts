@@ -16,8 +16,7 @@ import {
 
 describe('stripLeakedPromptBlocks', () => {
   it('실측 누출 케이스 — [이번 턴 획득 아이템] trailing dump 제거', () => {
-    const prose =
-      '그녀의 시선이 머무는 곳마다 묘한 긴장감이 흐른다.';
+    const prose = '그녀의 시선이 머무는 곳마다 묘한 긴장감이 흐른다.';
     const leaked = `${prose}\n\n[이번 턴 획득 아이템]\n5골드`;
     expect(stripLeakedPromptBlocks(leaked)).toBe(prose);
   });

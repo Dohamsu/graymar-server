@@ -302,8 +302,7 @@ export class NpcReactionDirectorService {
 
     // arch/69 B1 — NPC 자기 목적/활동. immediateGoal 이 정보 탐색으로만
     // 수렴하지 않도록 "지금 뭘 하는 중이고 뭘 원하는가"를 데이터로 준다.
-    if (ctx.currentActivity)
-      parts.push(`지금 하는 일: ${ctx.currentActivity}`);
+    if (ctx.currentActivity) parts.push(`지금 하는 일: ${ctx.currentActivity}`);
     if (ctx.selfAgenda) parts.push(`자기 목적: ${ctx.selfAgenda}`);
 
     parts.push(
