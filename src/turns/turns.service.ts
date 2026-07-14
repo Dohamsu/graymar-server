@@ -2152,8 +2152,11 @@ export class TurnsService {
         }
       }
 
-      // 각 목격 NPC의 trust/posture에 따라 반응 결정
-      const DANGEROUS_TAGS = new Set(['fight', 'steal', 'threaten', 'success']);
+      // 각 목격 NPC의 trust/posture에 따라 반응 결정.
+      // 'success'는 모든 성공 행동에 붙는 범용 태그라 제외 — 포함 시 OBSERVE/TALK 등
+      // 평범한 성공 행동이 "위험 목격"으로 오판돼 친근 NPC가 거리를 두는 톤 붕괴 발생
+      // (버그 599a00a1). 성공한 FIGHT/STEAL은 fight/steal 태그로 이미 커버됨.
+      const DANGEROUS_TAGS = new Set(['fight', 'steal', 'threaten']);
       const existingNpcStatesForReaction = runState.npcStates ?? {};
 
       for (const [npcId, tags] of recentWitnesses) {
