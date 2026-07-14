@@ -43,8 +43,17 @@ export class CampaignsService {
     private readonly contentLoader: ContentLoaderService,
   ) {}
 
-  /** 새 캠페인 생성 */
+  /**
+   * 새 캠페인(여정) 생성. 단일 활성 캠페인 불변식 — 기존 ACTIVE 캠페인은
+   * COMPLETED로 보관 처리(새 캐릭터의 여정 시작 = 이전 캐릭터 일대기 종료).
+   */
   async createCampaign(userId: string, name: string) {
+    await this.db
+      .update(campaigns)
+      .set({ status: 'COMPLETED', updatedAt: new Date() })
+      .where(
+        and(eq(campaigns.userId, userId), eq(campaigns.status, 'ACTIVE')),
+      );
     const [campaign] = await this.db
       .insert(campaigns)
       .values({
