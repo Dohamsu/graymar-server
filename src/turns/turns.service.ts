@@ -228,6 +228,7 @@ export function findDowngradeLockNpcCore(
 
 import { korParticle, korParticleRo } from '../common/korean.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
+import { decideWitnessReaction } from './witness-reaction.core.js';
 
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { and, asc, eq, ne } from 'drizzle-orm';
@@ -2122,6 +2123,9 @@ export class TurnsService {
     }
 
     // === Layer 3: NPC 능동 반응 — WITNESSED NPC가 trust/posture에 따라 반응 ===
+    // architecture/72 (가) 스코프 분리: 대화 상대(primaryNpcId)의 태도는
+    // NpcReactionDirector 단일 권한 — 이 블록은 **방관 NPC에만** 적용한다.
+    // 대화 상대의 목격 사실은 ui.primaryNpcWitnessedTags로 ②에 전달.
     const npcReactions: Array<{
       npcId: string;
       npcName: string;
@@ -2129,6 +2133,7 @@ export class TurnsService {
       text: string;
       heatDelta: number;
     }> = [];
+    let primaryNpcWitnessedTags: string[] | null = null;
     {
       // 최근 WorldFacts에서 WITNESSED 기록 조회
       const worldFacts = (ws.worldFacts ?? []) as Array<{
@@ -2137,11 +2142,14 @@ export class TurnsService {
         tags: string[];
         impact?: { npcKnowledge?: Record<string, string> };
       }>;
-      // 이번 턴 + 직전 턴의 PLAYER_ACTION fact에서 목격자 수집
+      // architecture/72 (1회 발화 보장): 당턴 fact만 수집.
+      // PLAYER_ACTION fact는 직전의 ConsequenceProcessor.process()가 같은 턴에
+      // 생성하므로 당턴 한정으로 정확히 1회 발화한다. 기존 2턴 윈도우는 같은
+      // 목격을 다음 턴에 동일 하드코딩 문장으로 재주입했다 (버그 599a00a1 턴 4→5 실측).
       const recentWitnesses = new Map<string, string[]>(); // npcId → witnessed action tags
       for (const fact of worldFacts) {
         if (fact.category !== 'PLAYER_ACTION') continue;
-        if (fact.turnCreated < turnNo - 1) continue; // 최근 2턴만
+        if (fact.turnCreated !== turnNo) continue; // 당턴만 — 1회 발화
         const witnesses = fact.impact?.npcKnowledge ?? {};
         for (const [npcId, status] of Object.entries(witnesses)) {
           if (status === 'WITNESSED') {
@@ -2152,58 +2160,36 @@ export class TurnsService {
         }
       }
 
-      // 각 목격 NPC의 trust/posture에 따라 반응 결정.
+      // 각 목격 NPC의 posture/trust에 따라 반응 결정 (판정 코어: witness-reaction.core).
       // 'success'는 모든 성공 행동에 붙는 범용 태그라 제외 — 포함 시 OBSERVE/TALK 등
       // 평범한 성공 행동이 "위험 목격"으로 오판돼 친근 NPC가 거리를 두는 톤 붕괴 발생
       // (버그 599a00a1). 성공한 FIGHT/STEAL은 fight/steal 태그로 이미 커버됨.
       const DANGEROUS_TAGS = new Set(['fight', 'steal', 'threaten']);
       const existingNpcStatesForReaction = runState.npcStates ?? {};
+      const primaryNpcIdForWitness = (event.payload as Record<string, unknown>)
+        ?.primaryNpcId as string | undefined;
 
       for (const [npcId, tags] of recentWitnesses) {
         const npcState = existingNpcStatesForReaction[npcId];
         if (!npcState) continue;
+        const dangerTags = tags.filter((t) => DANGEROUS_TAGS.has(t));
+        if (dangerTags.length === 0) continue; // 위험한 행동 목격만 반응
+
+        // (가) 대화 상대 제외 — 완성 문장 주입 대신 목격 사실만 ②에 넘긴다.
+        // NpcReactionDirector의 P0 태도 결정이 하드코딩 문장에 덮이는 것을 차단.
+        if (primaryNpcIdForWitness && npcId === primaryNpcIdForWitness) {
+          primaryNpcWitnessedTags = [...new Set(dangerTags)];
+          continue;
+        }
+
         const npcDef = this.content.getNpc(npcId);
         const npcName = getNpcDisplayName(npcState, npcDef);
         const trust = npcState.emotional?.trust ?? npcState.trustToPlayer ?? 0;
-        const hasDangerousAction = tags.some((t) => DANGEROUS_TAGS.has(t));
-
-        if (!hasDangerousAction) continue; // 위험한 행동 목격만 반응
-
-        let reaction: {
-          type: 'warn' | 'inform' | 'avoid' | 'hostile';
-          text: string;
-          heatDelta: number;
-        };
-
-        if (trust >= 20) {
-          // 우호적 NPC → 경고 (Heat 변동 없음)
-          reaction = {
-            type: 'warn',
-            text: `${npcName}이(가) 조심하라고 경고한다`,
-            heatDelta: 0,
-          };
-        } else if (trust >= -10) {
-          // 중립 NPC → 회피 (관계 소폭 악화)
-          reaction = {
-            type: 'avoid',
-            text: `${npcName}이(가) 눈을 피하며 거리를 둔다`,
-            heatDelta: 0,
-          };
-        } else if (trust >= -30) {
-          // 적대적 NPC → 밀고 (Heat 증가)
-          reaction = {
-            type: 'inform',
-            text: `${npcName}이(가) 경비대에 밀고했다`,
-            heatDelta: 5,
-          };
-        } else {
-          // 매우 적대적 → 적극 대응
-          reaction = {
-            type: 'hostile',
-            text: `${npcName}이(가) 경비대를 불러왔다`,
-            heatDelta: 8,
-          };
-        }
+        const reaction = decideWitnessReaction(
+          npcName,
+          npcState.posture,
+          trust,
+        );
 
         npcReactions.push({ npcId, npcName, ...reaction });
 
@@ -2216,9 +2202,9 @@ export class TurnsService {
         }
       }
 
-      if (npcReactions.length > 0) {
+      if (npcReactions.length > 0 || primaryNpcWitnessedTags) {
         this.logger.log(
-          `[NpcReaction] ${npcReactions.map((r) => `${r.npcName}:${r.type}(heat+${r.heatDelta})`).join(', ')}`,
+          `[NpcReaction] ${npcReactions.map((r) => `${r.npcName}:${r.type}(heat+${r.heatDelta})`).join(', ')}${primaryNpcWitnessedTags ? ` | primary=${primaryNpcIdForWitness}:witnessed(${primaryNpcWitnessedTags.join(',')})→director` : ''}`,
         );
       }
     }
@@ -4467,7 +4453,7 @@ export class TurnsService {
       (result.ui as any).nanoEventHint = nanoEventResult;
     }
 
-    // NPC 반응을 ui에 추가 (LLM 프롬프트 + 클라이언트 알림)
+    // NPC 반응을 ui에 추가 (LLM 프롬프트 + 클라이언트 알림) — 방관 NPC 한정 (arch/72)
     if (npcReactions.length > 0) {
       (result.ui as any).npcReactions = npcReactions;
       // 반응 이벤트 추가
@@ -4479,6 +4465,10 @@ export class TurnsService {
           tags: ['npc_reaction', r.type],
         });
       }
+    }
+    // 대화 상대의 목격 사실 → NpcReactionDirector 입력 (arch/72 — 완성 문장 대신 신호)
+    if (primaryNpcWitnessedTags) {
+      (result.ui as any).primaryNpcWitnessedTags = primaryNpcWitnessedTags;
     }
 
     // Orchestration 결과를 ui에 추가 (LLM context 전달용)

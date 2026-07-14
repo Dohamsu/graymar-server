@@ -768,6 +768,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           phase: llmContext.currentTimePhase,
           dialogueAct: llmContext.dialogueAct,
         });
+        // architecture/72 (가) — 대화 상대가 이번 턴 위험 행동을 직접 목격한 경우,
+        // 서버(turns.service)가 완성 문장 대신 태그만 ui로 넘긴다. 반응 결정에 반영.
+        const witnessedDangerTags =
+          ((serverResult.ui as Record<string, unknown>)
+            ?.primaryNpcWitnessedTags as string[] | undefined) ?? null;
         try {
           const reaction = await this.npcReactionDirector.direct({
             npcId: reactionNpcId,
@@ -794,6 +799,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             recentNpcDialogues,
             recentPlayerActions,
             sceneSummary: llmContext.midSummary as string | undefined,
+            witnessedDangerTags,
           });
           if (reaction) {
             this.logger.log(

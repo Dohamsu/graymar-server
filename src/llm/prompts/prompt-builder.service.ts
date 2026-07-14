@@ -1171,13 +1171,15 @@ export class PromptBuilderService {
       factsParts.push(lines.join('\n'));
     }
 
-    // NPC 반응 블록 (목격자의 능동 반응)
+    // NPC 반응 블록 (목격자의 능동 반응) — 방관 NPC 한정 (architecture/72).
+    // 대화 상대의 태도는 [P0 NPC 즉시 반응 결정]이 단일 권한 — 서버가 이미
+    // 대화 상대를 목록에서 제외하지만, 프롬프트에도 스코프를 명시해 이중 방어.
     const npcReactions = (sr.ui as Record<string, unknown>)?.npcReactions as
       | Array<{ npcName: string; type: string; text: string }>
       | undefined;
     if (npcReactions && npcReactions.length > 0) {
       const reactionParts = [
-        '[NPC 반응 — 이전 행동을 목격한 NPC의 반응을 서술에 자연스럽게 포함하세요]',
+        '[주변 NPC 반응 — 위험 행동을 목격한 방관 NPC의 반응. 배경에 자연스럽게 포함하되, 지금 대화 중인 상대의 태도에는 적용하지 마세요]',
       ];
       for (const r of npcReactions) {
         reactionParts.push(`- ${r.text}`);

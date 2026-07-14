@@ -134,16 +134,19 @@ export class NanoEventDirectorService {
       const userMsg = this.buildUserMessage(ctx);
       const lightConfig = this.configService.getLightModelConfig();
 
-      const result = await this.llmCaller.call({
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMsg },
-        ],
-        maxTokens: 300,
-        temperature: 0.8,
-        model: lightConfig.model,
-        timeoutMs: lightConfig.timeoutMs,
-      }, 'nano-event-director');
+      const result = await this.llmCaller.call(
+        {
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userMsg },
+          ],
+          maxTokens: 300,
+          temperature: 0.8,
+          model: lightConfig.model,
+          timeoutMs: lightConfig.timeoutMs,
+        },
+        'nano-event-director',
+      );
 
       if (!result.response?.text) return null;
 
@@ -285,14 +288,14 @@ export class NanoEventDirectorService {
       );
     }
 
-    // NPC 반응 (목격자 행동)
+    // NPC 반응 (목격자 행동) — 방관 NPC 한정 (architecture/72: 대화 상대 제외됨)
     if (ctx.npcReactions.length > 0) {
       const reactionLines = ctx.npcReactions.map(
         (r) => `- ${r.npcName}: ${r.text}`,
       );
       parts.push(
         ``,
-        `[NPC 반응 — 이전 행동을 목격한 NPC들의 반응을 반영하세요]`,
+        `[주변 NPC 반응 — 위험 행동을 목격한 방관 NPC. 배경으로 반영하되 대화 상대의 태도에는 적용 금지]`,
         ...reactionLines,
       );
     }

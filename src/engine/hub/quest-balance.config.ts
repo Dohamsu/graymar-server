@@ -43,4 +43,9 @@ export const QUEST_BALANCE = {
   /** architecture/71 §4.4: 캠페인 이월 시 소모품 골드 환산율 (sellPrice 기준 배수).
    *  sellPrice 미정의 시 buyPrice의 절반을 기준가로 사용. */
   CARRY_CONSUMABLE_GOLD_RATE: 1.0,
+
+  /** architecture/72: 목격자 반응 — posture 비우호 NPC의 '경고' trust 임계.
+   *  기존 20은 콘텐츠 초기 trust 분포(FRIENDLY 10~15)보다 높아 경고 밴드가
+   *  사실상 미도달이었다 (버그 599a00a1). FRIENDLY/FEARFUL은 posture 우선. */
+  WITNESS_WARN_TRUST: 15,
 } as const;

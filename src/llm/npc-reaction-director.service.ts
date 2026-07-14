@@ -114,6 +114,12 @@ export interface NpcReactionContext {
    */
   recentReactionTypes?: ReactionType[];
   sceneSummary?: string | null;
+  /**
+   * architecture/72 (가) — 이 NPC가 이번 턴 플레이어의 위험 행동을 직접
+   * 목격했을 때의 태그 (fight/steal/threaten). 목격자 반응(Layer 3)은
+   * 대화 상대를 제외하므로, 그 맥락을 완성 문장 대신 신호로 전달한다.
+   */
+  witnessedDangerTags?: string[] | null;
 }
 
 const SYSTEM_PROMPT = `당신은 텍스트 RPG의 NPC 반응 + 톤 디렉터다.
@@ -226,23 +232,26 @@ export class NpcReactionDirectorService {
       // 기본값이 된다. JSON 형식 리마인더와 함께 1회 재시도.
       let parsed: ReturnType<typeof this.parseResponse> = null;
       for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
-        const result = await this.llmCaller.call({
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            {
-              role: 'user',
-              content:
-                attempt === 0
-                  ? userMsg
-                  : userMsg +
-                    '\n\n⚠️ 이전 출력이 JSON 형식이 아니었습니다. 다른 텍스트 없이 유효한 JSON 하나만 출력하세요.',
-            },
-          ],
-          maxTokens: 250,
-          temperature: attempt === 0 ? 0.7 : 0.4,
-          model: lightConfig.model,
-          timeoutMs: lightConfig.timeoutMs,
-        }, 'npc-reaction');
+        const result = await this.llmCaller.call(
+          {
+            messages: [
+              { role: 'system', content: SYSTEM_PROMPT },
+              {
+                role: 'user',
+                content:
+                  attempt === 0
+                    ? userMsg
+                    : userMsg +
+                      '\n\n⚠️ 이전 출력이 JSON 형식이 아니었습니다. 다른 텍스트 없이 유효한 JSON 하나만 출력하세요.',
+              },
+            ],
+            maxTokens: 250,
+            temperature: attempt === 0 ? 0.7 : 0.4,
+            model: lightConfig.model,
+            timeoutMs: lightConfig.timeoutMs,
+          },
+          'npc-reaction',
+        );
         if (!result.success || !result.response?.text) {
           if (attempt === 1) return this.buildFallback(ctx, 'no response');
           continue;
@@ -391,6 +400,18 @@ export class NpcReactionDirectorService {
         parts.push(``, `[⚠️ 행동 변화 신호]`);
         signals.forEach((s) => parts.push(`- ${s}`));
       }
+    }
+
+    // architecture/72 (가) — 대화 상대가 직접 목격한 위험 행동. 목격자 반응(서버
+    // 규칙)은 대화 상대를 제외하므로, 태도 결정에 반드시 이 맥락을 반영시킨다.
+    if (ctx.witnessedDangerTags && ctx.witnessedDangerTags.length > 0) {
+      parts.push(
+        ``,
+        `[⚠️ 직전 목격]`,
+        `이 NPC는 방금 플레이어의 위험 행동(${ctx.witnessedDangerTags.join(', ')})을 눈앞에서 직접 목격했다. ` +
+          `반응 결정에 이 목격이 반드시 반영되어야 한다 — 아무 일 없던 듯한 WELCOME/OPEN_UP 금지, ` +
+          `성향에 따라 경계·위축·경고·적대 중 이 NPC다운 반응을 선택하라.`,
+      );
     }
 
     if (ctx.sceneSummary) {

@@ -439,7 +439,7 @@ describe('NanoEventDirectorService', () => {
       expect(msg).toContain('지역 봉쇄');
     });
 
-    it('npcReactions -> includes "[NPC 반응]"', () => {
+    it('npcReactions -> includes "[주변 NPC 반응]" (arch/72 방관자 스코프)', () => {
       const ctx = makeCtx({
         npcReactions: [
           {
@@ -451,7 +451,7 @@ describe('NanoEventDirectorService', () => {
         ],
       });
       const msg = callBuild(service, ctx);
-      expect(msg).toContain('[NPC 반응');
+      expect(msg).toContain('[주변 NPC 반응');
       expect(msg).toContain('Bob: 경계하는 눈빛을 보낸다');
     });
 
