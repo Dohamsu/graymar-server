@@ -49,20 +49,15 @@ export class RunsController {
       traitId,
       portraitUrl,
     } = body;
-    return this.runsService.createRun(
-      userId,
-      presetId ?? 'DOCKWORKER',
-      gender,
-      {
-        campaignId,
-        scenarioId,
-        mode,
-        characterName,
-        bonusStats,
-        traitId,
-        portraitUrl,
-      },
-    );
+    return this.runsService.createRun(userId, presetId, gender, {
+      campaignId,
+      scenarioId,
+      mode,
+      characterName,
+      bonusStats,
+      traitId,
+      portraitUrl,
+    });
   }
 
   @Get()

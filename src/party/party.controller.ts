@@ -324,7 +324,7 @@ export class PartyController {
     const leader = memberProfiles.find((m) => m.isLeader) ?? memberProfiles[0];
     const run = await this.runsService.createRun(
       userId,
-      leader.presetId,
+      leader.presetId ?? undefined,
       leader.gender,
       { partyId },
     );

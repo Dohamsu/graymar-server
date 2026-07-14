@@ -53,6 +53,17 @@ export interface ScenarioResult {
 
 export interface CarryOverState {
   completedScenarios: ScenarioResult[];
+  /**
+   * 캐릭터 정체성 — 첫 시나리오 완주 시 확정, 이후 시나리오는 이 값을 이월한다.
+   * (architecture/70 — 한 캐릭터가 "같은 사람"이려면 수치뿐 아니라 정체성도 이월)
+   */
+  identity?: {
+    characterName: string | null;
+    gender: 'male' | 'female';
+    traitId: string | null;
+    portraitUrl: string | null;
+    presetId: string | null;
+  } | null;
   gold: number;
   items: Array<{ itemId: string; qty: number }>;
   finalStats: Record<string, number>;

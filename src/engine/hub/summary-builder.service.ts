@@ -240,7 +240,8 @@ export class SummaryBuilderService {
     runState: RunState,
     endingResult: EndingResult,
   ): EndingSummary {
-    const presetId = run.presetId ?? 'DOCKWORKER';
+    // 콘텐츠 ID 리터럴 폴백 금지(불변식 45) — 라벨은 resolvePresetLabel이 null-안전.
+    const presetId = run.presetId ?? null;
     const presetLabel = this.resolvePresetLabel(run.presetId);
     const characterName =
       (runState.characterName && runState.characterName.trim()) ||

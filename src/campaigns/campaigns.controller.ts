@@ -42,7 +42,9 @@ export class CampaignsController {
   }
 
   @Get(':id/scenarios')
-  async listScenarios() {
-    return this.contentLoader.listAvailableScenarios();
+  async listScenarios(@Param('id') id: string, @UserId() userId: string) {
+    // 소유권 확인 후 캠페인 진행 상태(완료/현재/잠금) 반환 (architecture/70)
+    await this.campaignsService.getCampaign(id, userId);
+    return this.campaignsService.getScenarioProgress(id);
   }
 }

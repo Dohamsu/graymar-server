@@ -75,7 +75,7 @@ export class RunsService {
 
   async createRun(
     userId: string,
-    presetId: string,
+    presetId: string | undefined,
     gender: 'male' | 'female' = 'male',
     options?: {
       campaignId?: string;
@@ -92,9 +92,38 @@ export class RunsService {
     // 0. 캠페인 CarryOver 조회 (캠페인 모드일 때)
     let carryOver: CarryOverState | null = null;
     let scenarioMeta: ScenarioMeta | null = null;
-    let scenarioOrder = 1;
     const campaignId = options?.campaignId;
-    const scenarioId = options?.scenarioId;
+    let scenarioId = options?.scenarioId;
+
+    // 0-a. 캠페인 순차 진입 검증 (architecture/70 §3.2) — 다음 순번만 허용.
+    // scenarioId 미지정 시 다음 순번 자동 선택. 건너뜀/되돌아감은 400.
+    if (campaignId) {
+      // 활성 런 가드 (§6.3) — 캠페인에 진행 중 런이 있으면 새 런 생성 차단(이어하기 우선).
+      // 캠페인 스코프 한정: 비-캠페인 "새 게임"의 암묵적 포기 UX는 보존.
+      const activeInCampaign = await this.db.query.runSessions.findFirst({
+        where: and(
+          eq(runSessions.userId, userId),
+          eq(runSessions.campaignId, campaignId),
+          eq(runSessions.status, 'RUN_ACTIVE'),
+        ),
+        columns: { id: true },
+      });
+      if (activeInCampaign) {
+        throw new BadRequestError(
+          '이 캠페인에 진행 중인 런이 있습니다. 이어하기로 계속하세요.',
+        );
+      }
+
+      carryOver = await this.campaignsService.getCarryOver(campaignId);
+      const nextScenarioId =
+        await this.campaignsService.resolveNextScenarioId(campaignId);
+      if (scenarioId && nextScenarioId && scenarioId !== nextScenarioId) {
+        throw new BadRequestError(
+          `시나리오 순서 위반: 다음 진행 가능 시나리오는 ${nextScenarioId} 입니다`,
+        );
+      }
+      if (!scenarioId && nextScenarioId) scenarioId = nextScenarioId;
+    }
 
     // architecture/63: 캠페인 없이도 scenarioId 직접 지정 허용 (최소 플레이 경로).
     // ⚠️ 단일 활성 시나리오 정책 — loadScenario는 전역 콘텐츠를 교체하므로
@@ -105,32 +134,39 @@ export class RunsService {
       scenarioMeta = this.content.getScenarioMeta();
     }
 
-    if (campaignId) {
-      carryOver = await this.campaignsService.getCarryOver(campaignId);
-
-      // scenarioOrder 결정
-      if (carryOver && carryOver.completedScenarios.length > 0) {
-        scenarioOrder = carryOver.completedScenarios.length + 1;
-      }
-    }
-
     const isFirstScenario =
       !carryOver || carryOver.completedScenarios.length === 0;
+    // 순번은 시나리오 정본 order 우선(집합 기반), 없으면 완료 수 + 1 (§3.2)
+    const scenarioOrder =
+      scenarioMeta?.order ?? (carryOver?.completedScenarios.length ?? 0) + 1;
     const carryOverRules = scenarioMeta?.carryOverRules;
 
-    // 0-1. 프리셋 검증 — 첫 시나리오 또는 캠페인 아닌 경우 필수
-    const preset = this.content.getPreset(presetId);
+    // 0-1. 정체성 이월 (architecture/70) — 이후 시나리오는 carryOver.identity 우선.
+    // 첫 시나리오는 요청값(프리셋 생성 흐름) 사용.
+    const carriedIdentity =
+      !isFirstScenario && carryOver?.identity ? carryOver.identity : null;
+    const effGender = carriedIdentity?.gender ?? gender;
+    const characterName =
+      carriedIdentity?.characterName ?? options?.characterName;
+    const effPortraitUrl = carriedIdentity?.portraitUrl ?? options?.portraitUrl;
+
+    // 0-2. 프리셋 검증 — 첫 시나리오만 필수(캐릭터 생성). 이후는 무시(이월 스탯 사용).
+    // 하드코딩 기본값 금지(불변식 45) — 프리셋 누락 시 명확히 거부.
+    const preset = presetId ? this.content.getPreset(presetId) : undefined;
     if (isFirstScenario && !preset) {
-      throw new BadRequestError(`Unknown presetId: ${presetId}`);
+      throw new BadRequestError(
+        presetId
+          ? `Unknown presetId: ${presetId}`
+          : '첫 시나리오는 프리셋 선택이 필요합니다.',
+      );
     }
 
-    // 0-2. 특성 검증
-    const traitId = options?.traitId;
+    // 0-3. 특성 검증 — 첫 시나리오의 신규 입력만 검증. 이월 traitId는 확정값이라 신뢰.
+    const traitId = carriedIdentity?.traitId ?? options?.traitId;
     const traitDef = traitId ? this.content.getTrait(traitId) : undefined;
-    if (traitId && !traitDef) {
-      throw new BadRequestError(`Unknown traitId: ${traitId}`);
+    if (isFirstScenario && options?.traitId && !traitDef) {
+      throw new BadRequestError(`Unknown traitId: ${options.traitId}`);
     }
-    const characterName = options?.characterName;
     const bonusStats = options?.bonusStats;
 
     // 1. User 존재 확인
@@ -466,7 +502,7 @@ export class RunsService {
         questState: 'S0_ARRIVE',
         discoveredQuestFacts: [],
         characterName,
-        portraitUrl: options?.portraitUrl ?? undefined,
+        portraitUrl: effPortraitUrl ?? undefined,
         traitId,
         bonusStats: bonusStats ?? undefined,
         traitEffects,
@@ -523,8 +559,9 @@ export class RunsService {
           runState: initialRunState,
           currentGraphNodeId: dagStartNodeId,
           currentLocationId: null,
-          presetId: preset ? presetId : null,
-          gender,
+          // 첫 시나리오는 선택 프리셋, 이후는 이월 프리셋(표시용) 유지
+          presetId: preset ? presetId : (carriedIdentity?.presetId ?? null),
+          gender: effGender,
           routeTag: null,
           campaignId: campaignId ?? null,
           scenarioId: scenarioId ?? null,

@@ -6,12 +6,27 @@ import { runSessions } from '../db/schema/run-sessions.js';
 import type { CarryOverState, ScenarioResult } from '../db/types/carry-over.js';
 import { NotFoundError, ForbiddenError } from '../common/errors/game-errors.js';
 import type { RunState } from '../db/types/index.js';
+import { ContentLoaderService } from '../content/content-loader.service.js';
+
+/** 캠페인 진행 상태 — 시나리오별 잠금/현재/완료 (architecture/70 §3.2) */
+export type ScenarioStatus = 'COMPLETED' | 'CURRENT' | 'LOCKED';
+export interface ScenarioProgressEntry {
+  scenarioId: string;
+  name: string;
+  description: string;
+  order: number;
+  prerequisites: string[];
+  status: ScenarioStatus;
+}
 
 @Injectable()
 export class CampaignsService {
   private readonly logger = new Logger(CampaignsService.name);
 
-  constructor(@Inject(DB) private readonly db: DrizzleDB) {}
+  constructor(
+    @Inject(DB) private readonly db: DrizzleDB,
+    private readonly contentLoader: ContentLoaderService,
+  ) {}
 
   /** 새 캠페인 생성 */
   async createCampaign(userId: string, name: string) {
@@ -84,9 +99,26 @@ export class CampaignsService {
     // 3. ScenarioResult 생성
     const scenarioResult = this.buildScenarioResult(run, runState);
 
-    // 4. CarryOverState 머지
+    // 4. CarryOverState 머지 (첫 완주 시 정체성 확정 — architecture/70 §3.3)
+    // characterName/traitId/portraitUrl은 runState(JSONB)에, gender/presetId는 런 컬럼에 저장됨.
+    const idState = runState as
+      | { characterName?: string; traitId?: string; portraitUrl?: string }
+      | null
+      | undefined;
     const prev = campaign.carryOverState ?? this.emptyCarryOver();
-    const merged = this.mergeCarryOver(prev, scenarioResult, runState);
+    const identity: CarryOverState['identity'] = {
+      characterName: idState?.characterName ?? null,
+      gender: (run.gender as 'male' | 'female') ?? 'male',
+      traitId: idState?.traitId ?? null,
+      portraitUrl: idState?.portraitUrl ?? null,
+      presetId: run.presetId ?? null,
+    };
+    const merged = this.mergeCarryOver(
+      prev,
+      scenarioResult,
+      runState,
+      identity,
+    );
 
     // 5. DB 업데이트
     await this.db
@@ -114,6 +146,49 @@ export class CampaignsService {
       throw new NotFoundError(`Campaign not found: ${campaignId}`);
     }
     return campaign.carryOverState ?? null;
+  }
+
+  /**
+   * 캠페인 진행 상태 — order 오름차순 중 첫 미완료가 CURRENT, 그 앞은 COMPLETED,
+   * 뒤는 LOCKED (architecture/70 §3.2). 집합 기반이라 중복 저장에도 안전.
+   */
+  async getScenarioProgress(
+    campaignId: string,
+  ): Promise<ScenarioProgressEntry[]> {
+    const carryOver = await this.getCarryOver(campaignId);
+    const completed = new Set(
+      (carryOver?.completedScenarios ?? []).map((s) => s.scenarioId),
+    );
+    const all = await this.contentLoader.listAvailableScenarios(); // order asc
+    let currentAssigned = false;
+    return all.map((s) => {
+      let status: ScenarioStatus;
+      if (completed.has(s.scenarioId)) {
+        status = 'COMPLETED';
+      } else if (!currentAssigned) {
+        status = 'CURRENT';
+        currentAssigned = true;
+      } else {
+        status = 'LOCKED';
+      }
+      return {
+        scenarioId: s.scenarioId,
+        name: s.name,
+        description: s.description,
+        order: s.order,
+        prerequisites: s.prerequisites ?? [],
+        status,
+      };
+    });
+  }
+
+  /**
+   * 다음 진입 가능한 시나리오 id (order 오름차순 중 첫 미완료). 없으면 null(전부 완료).
+   * 순차 진입 검증의 단일 정본 (architecture/70 §3.2).
+   */
+  async resolveNextScenarioId(campaignId: string): Promise<string | null> {
+    const progress = await this.getScenarioProgress(campaignId);
+    return progress.find((p) => p.status === 'CURRENT')?.scenarioId ?? null;
   }
 
   // --- Private helpers ---
@@ -207,13 +282,25 @@ export class CampaignsService {
     prev: CarryOverState,
     result: ScenarioResult,
     runState: RunState | null,
+    identity?: CarryOverState['identity'],
   ): CarryOverState {
     // RunState has gold, hp, maxHp, inventory directly
     const extra = runState as Record<string, unknown> | null;
     const stats = (extra?.stats as Record<string, number>) ?? prev.finalStats;
 
+    // 중복 가드(architecture/70 §3.2): 같은 scenarioId가 이미 있으면 append 대신 교체.
+    // 위치 기반 순번 산출이 중복 저장에 취약하므로 완료 목록을 정본으로 유지한다.
+    const dedupedCompleted = [
+      ...prev.completedScenarios.filter(
+        (s) => s.scenarioId !== result.scenarioId,
+      ),
+      result,
+    ];
+
     return {
-      completedScenarios: [...prev.completedScenarios, result],
+      completedScenarios: dedupedCompleted,
+      // 정체성은 첫 완주 시 확정 후 불변 — 이미 있으면 유지(§3.3, 불변식 6).
+      identity: prev.identity ?? identity ?? null,
       gold: Math.round((runState?.gold ?? prev.gold) * 1.0),
       items: runState?.inventory ?? prev.items,
       finalStats: stats,
@@ -251,6 +338,7 @@ export class CampaignsService {
   private emptyCarryOver(): CarryOverState {
     return {
       completedScenarios: [],
+      identity: null,
       gold: 0,
       items: [],
       finalStats: {},

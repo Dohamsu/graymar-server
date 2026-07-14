@@ -158,7 +158,7 @@ export class LobbyService {
     memberProfiles: {
       userId: string;
       nickname: string;
-      presetId: string;
+      presetId: string | null;
       gender: 'male' | 'female';
       isLeader: boolean;
     }[];
@@ -199,7 +199,7 @@ export class LobbyService {
     type MemberProfile = {
       userId: string;
       nickname: string;
-      presetId: string;
+      presetId: string | null;
       gender: 'male' | 'female';
       isLeader: boolean;
     };
@@ -209,7 +209,7 @@ export class LobbyService {
       return {
         userId: m.userId,
         nickname: m.nickname,
-        presetId: m.presetId ?? 'DOCKWORKER',
+        presetId: m.presetId ?? null,
         gender,
         isLeader: m.userId === leaderId,
       };

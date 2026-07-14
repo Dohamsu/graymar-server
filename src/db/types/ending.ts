@@ -134,7 +134,7 @@ export type EndingSummary = {
   runId: string;
   completedAt: string;
   characterName: string;
-  presetId: string;
+  presetId: string | null; // 이월 캐릭터는 프리셋 없음 가능 (arch/70). 표시는 presetLabel 사용
   presetLabel: string; // "탈영병", "밀수업자" 등 한글 라벨
   gender: 'male' | 'female';
   synopsis: string; // 3~4문장 줄거리

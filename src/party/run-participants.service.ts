@@ -96,7 +96,7 @@ export class RunParticipantsService {
     const memberProfiles: {
       userId: string;
       nickname: string;
-      presetId: string;
+      presetId: string | null;
       gender: 'male' | 'female';
       isLeader: boolean;
     }[] = [];
@@ -123,7 +123,7 @@ export class RunParticipantsService {
         orderBy: (rs, { desc }) => [desc(rs.startedAt)],
       });
 
-      const presetId = memberRun?.presetId ?? soloRun.presetId ?? 'DOCKWORKER';
+      const presetId = memberRun?.presetId ?? soloRun.presetId ?? null;
       const gender = memberRun?.gender ?? 'male';
 
       // 참가자 개별 상태 (HP는 소유자 런에서 가져옴)
@@ -233,7 +233,7 @@ export class RunParticipantsService {
       orderBy: (rs, { desc }) => [desc(rs.startedAt)],
     });
 
-    const presetId = memberRun?.presetId ?? 'DOCKWORKER';
+    const presetId = memberRun?.presetId ?? null;
     const gender = memberRun?.gender ?? 'male';
 
     // 런의 현재 HP 조회
