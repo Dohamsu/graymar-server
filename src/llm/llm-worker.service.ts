@@ -22,6 +22,7 @@ import { ContentLoaderService } from '../content/content-loader.service.js';
 import { korParticle } from '../common/korean.js';
 import { sanitizeNpcNamesForTurn } from '../db/types/npc-state.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
+import { stripLeakedPromptBlocks } from './prompts/injected-block-headers.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
@@ -1546,23 +1547,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             }
           }
 
-          // 4-a-2. 방어적 출력 클리닝: LLM이 입력 태그를 복사하거나 자체 생성한 대괄호 태그 제거
-          // [이야기 이정표], [서사 이정표], [NPC 관계] 등 어떤 대괄호 태그든 산문에 포함되면 안 됨
-          narrative = narrative
-            .replace(/\n*\[이야기 이정표\][\s\S]*$/g, '')
-            .replace(/\n*\[서사 이정표\][\s\S]*$/g, '')
-            .replace(/\n*\[NPC 관계\][\s\S]*$/g, '')
-            .replace(/\n*\[사건 일지\][\s\S]*$/g, '')
-            .replace(/\n*\[기억된 사실\][\s\S]*$/g, '')
-            .replace(/\n*\[이야기 요약\][\s\S]*$/g, '')
-            .replace(/\n*\[세계 상태\][\s\S]*$/g, '')
-            .replace(/\n*\[상황 요약\][\s\S]*$/g, '')
-            .replace(/\n*\[선택지\][\s\S]*$/g, '')
-            .replace(/\n*\[CHOICES\][\s\S]*?\[\/CHOICES\]/g, '')
-            .replace(/\n*\[CHOICES\][\s\S]*$/g, '')
-            // 방어적 최종 패스: 닫는 태그 없이 남은 고아 태그 강제 제거
-            .replace(/\[\/?(?:MEMORY|THREAD|CHOICES)[^\]]*\]/g, '')
-            .trim();
+          // 4-a-2. 방어적 출력 클리닝: LLM이 입력 프롬프트 블록을 서술에 복사한 누출 제거
+          // 주입 대괄호 블록 헤더는 injected-block-headers.ts 의 단일 소스에서 관리한다
+          // (V7 누출 정밀 검사 2026-07-14 — 하드코딩 화이트리스트 53종 누락 해소).
+          narrative = stripLeakedPromptBlocks(narrative);
         } // end if (!jsonModeParsed) — 산문 태그 파싱
 
         // 4-a-2b. 플레이어 대사 큰따옴표 방어 — LLM이 플레이어 대사를 큰따옴표로 쓰면 홑따옴표로 치환
