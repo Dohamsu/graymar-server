@@ -182,7 +182,10 @@ export class PromptBuilderService {
     const isPartyMode = ctx.partyActions && ctx.partyActions.length > 0;
     const basePrompt = isPartyMode
       ? buildPartyNarrativeSystemPrompt(this.content.getWorldMeta())
-      : buildNarrativeSystemPrompt(this.content.getWorldMeta());
+      : buildNarrativeSystemPrompt(
+          this.content.getWorldMeta(),
+          this.content.getScenarioMeta()?.sensoryPalette,
+        );
 
     // 파티 모드: 파티원 소개 블록 추가 (프리셋 배경 포함)
     let partyIntro = '';

@@ -78,7 +78,48 @@ export class ContentValidatorService implements OnModuleInit {
       results.push(...this.validateAliasFragments(npc));
     }
 
+    results.push(...this.validateLocationAffordanceCoverage());
+
     this.logResults(results);
+    return results;
+  }
+
+  /**
+   * architecture/73 §11 — 장소별 이벤트 affordance 커버리지 검증.
+   * 플레이어가 자주 쓰는 행동군(TALK/HELP/INVESTIGATE/OBSERVE/PERSUADE/SEARCH)을
+   * 장소가 MIN개 미만 이벤트로만 커버하면, 그 행동 입력 시 매칭 후보가 빈약해져
+   * 소수 이벤트로 수렴(2표본 실측: 12턴 매칭 저작 이벤트 2종). 저밀도 팩·편중 방지.
+   */
+  private validateLocationAffordanceCoverage(): ContentValidationResult[] {
+    const KEY_AFF = [
+      'TALK',
+      'HELP',
+      'INVESTIGATE',
+      'OBSERVE',
+      'PERSUADE',
+      'SEARCH',
+    ];
+    const MIN = 2;
+    const results: ContentValidationResult[] = [];
+    for (const loc of this.content.getAllLocations()) {
+      const events = this.content.getEventsByLocation(loc.locationId);
+      if (events.length === 0) continue; // 이벤트 없는 장소(lazy)는 스킵
+      const counts = new Map<string, number>();
+      for (const e of events) {
+        const affs = e.affordances.includes('ANY')
+          ? KEY_AFF
+          : (e.affordances as string[]);
+        for (const a of affs) counts.set(a, (counts.get(a) ?? 0) + 1);
+      }
+      const weak = KEY_AFF.filter((a) => (counts.get(a) ?? 0) < MIN);
+      if (weak.length > 0) {
+        results.push({
+          severity: 'WARNING',
+          rule: 'LOCATION_AFFORDANCE_COVERAGE',
+          message: `${loc.locationId}: 행동군 [${weak.join(',')}] 커버 이벤트 ${MIN}개 미만 (해당 행동 입력 시 매칭 빈약 — 이벤트 affordance 보강 필요)`,
+        });
+      }
+    }
     return results;
   }
 

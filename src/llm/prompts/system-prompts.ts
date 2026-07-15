@@ -2,11 +2,42 @@
 
 import { korParticle } from '../../common/korean.js';
 
+// architecture/73 §11 A4: 감각 팔레트 positive 풀 → 프롬프트 블록.
+// 미선언 팩(graymar)은 빈 문자열 → 기존 문면과 문자 동일 유지.
+export interface SensoryPalette {
+  visual?: string[];
+  sound?: string[];
+  smell?: string[];
+  touch?: string[];
+  motif?: string[];
+}
+function buildSensoryPaletteBlock(palette?: SensoryPalette): string {
+  if (!palette) return '';
+  const lines: string[] = [];
+  const push = (label: string, arr?: string[]) => {
+    if (arr && arr.length > 0) lines.push(`- ${label}: ${arr.join(' / ')}`);
+  };
+  push('시각', palette.visual);
+  push('소리', palette.sound);
+  push('냄새', palette.smell);
+  push('촉각', palette.touch);
+  push('세계 모티프', palette.motif);
+  if (lines.length === 0) return '';
+  return `
+
+## 세계 감각 팔레트 (이 세계 고유의 결)
+매 턴 배경 묘사에 아래 감각·모티프 중 **1~2개를 자연스럽게 녹여** 이 세계만의 분위기를 유지하시오. 목록을 나열하지 말고 장면에 스며들게. (금지가 아닌 권장 풀 — 강제로 다 쓰지 말 것)
+${lines.join('\n')}`;
+}
+
 // architecture/63: 세계관 주입 빌더 — scenario.json world 필드 (graymar 값 대입 시 기존 문면과 문자 동일)
-export function buildNarrativeSystemPrompt(world: {
-  settingLine: string;
-  regionSummary: string;
-}): string {
+export function buildNarrativeSystemPrompt(
+  world: {
+    settingLine: string;
+    regionSummary: string;
+  },
+  sensoryPalette?: SensoryPalette,
+): string {
   return `당신은 ${world.settingLine}${korParticle(world.settingLine, '을', '를')} 배경으로 한 텍스트 RPG의 서술자입니다.
 
 ## 규칙 우선순위 (반드시 이 순서로 따르시오) — architecture/51 §C
@@ -169,7 +200,7 @@ G. 장소 묘사: 처음 방문만 2~3문장. 재방문 0~1문장.
 
 ## HUB 시스템
 - ${world.regionSummary}
-- 행동 결과: SUCCESS, PARTIAL, FAIL.
+- 행동 결과: SUCCESS, PARTIAL, FAIL.${buildSensoryPaletteBlock(sensoryPalette)}
 
 ## 결과별 톤
 - 행동 결과(SUCCESS/PARTIAL/FAIL)에 따라 서술 톤이 달라야 한다.

@@ -181,4 +181,16 @@ export interface ScenarioMeta {
   initialNpcRelations?: Record<string, number>;
   /** [P2 — 73 B1] 팩 전용 세계 축 게이지 (예: 꿈 오염). 미선언 시 기존 동작 무변경 */
   meters?: import('./pack-meter.js').PackMeterDef[];
+  /**
+   * [73 §11 A4] 팩 감각 팔레트 — 중반 서사에 세계관 고유 어휘를 표면화하기 위한
+   * positive 풀. 프롬프트에 "다음 중 골라 배경에 녹여라" 형태로 주입(LLM 원칙 #2).
+   * 미선언 팩은 주입 없음(기존 동작).
+   */
+  sensoryPalette?: {
+    visual?: string[];
+    sound?: string[];
+    smell?: string[];
+    touch?: string[];
+    motif?: string[];
+  };
 }
