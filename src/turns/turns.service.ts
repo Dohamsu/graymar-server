@@ -1681,11 +1681,13 @@ export class TurnsService {
               // 워커는 제안만). 등록 즉시 재적재해 이번 턴부터 getNpc 해석.
               let involved = beat.involvedNpcIds;
               if (beat.proposedNpc && involved.includes('NPC_DYN_NEW')) {
-                runState.dynamicNpcs ??= [];
+                // 커밋은 updatedRunState를 쓴다(얕은 복사) — 신규 필드 대입은
+                // 반드시 updatedRunState에 (runState 대입은 커밋에서 유실).
+                updatedRunState.dynamicNpcs ??= [];
                 // posture/register는 느슨한 string(LLM 산출) — sanitize가
                 // 런타임 enum 검증 후 안전 기본값으로 강제한다.
                 const reg = registerDynamicNpc(
-                  runState.dynamicNpcs,
+                  updatedRunState.dynamicNpcs,
                   beat.proposedNpc as Parameters<typeof registerDynamicNpc>[1],
                 );
                 if (reg.npcId) {
@@ -1693,7 +1695,7 @@ export class TurnsService {
                   involved = involved.map((id) =>
                     id === 'NPC_DYN_NEW' ? newId : id,
                   );
-                  this.content.applyDynamicNpcs(runState.dynamicNpcs);
+                  this.content.applyDynamicNpcs(updatedRunState.dynamicNpcs);
                   this.logger.log(
                     `[PlotBeat] 동적 NPC 등록 ${newId} (${beat.proposedNpc.name})`,
                   );
@@ -1725,16 +1727,16 @@ export class TurnsService {
                 },
               } as any;
               // 소비(턴 동기 경로는 채택 시 소비만 — §15.2) + 적중률 계측
-              runState.nextBeatCandidates = null;
+              updatedRunState.nextBeatCandidates = null;
               pp.adoptedBeatCount = (pp.adoptedBeatCount ?? 0) + 1;
-              runState.plotProgress = pp;
+              updatedRunState.plotProgress = pp;
               this.logger.log(
                 `[PlotBeat] 채택 ${beat.beatId} score=${adoption.score} npc=${beatPrimaryNpcId ?? '-'} fact=${beat.hintedFactId ?? '-'}`,
               );
             } else {
               // 미정합 — 후보는 stale 될 때까지 보존(다음 턴 재기회), 계측만
               pp.discardedBeatCount = (pp.discardedBeatCount ?? 0) + 1;
-              runState.plotProgress = pp;
+              updatedRunState.plotProgress = pp;
               this.logger.debug(
                 `[PlotBeat] 정합 후보 없음 (age=${beatAge}) → 폴백 체인`,
               );
