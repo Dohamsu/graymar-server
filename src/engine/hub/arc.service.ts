@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import type { ArcState, ArcRoute, WorldState } from '../../db/types/index.js';
+import type {
+  ArcState,
+  ArcRoute,
+  WorldState,
+  ArcRouteUnlockDef,
+} from '../../db/types/index.js';
 
 const COMMITMENT_LOCK = 3;
 const MAX_BETRAYALS = 2;
@@ -41,33 +46,51 @@ export class ArcService {
     return arc.commitment >= COMMITMENT_LOCK;
   }
 
-  checkUnlockConditions(ws: WorldState): string[] {
+  /**
+   * [73 §11 B2] 팩 선언(scenario.json arcRoutes)의 언락 조건으로 아크 루트 언락.
+   * 엔진 하드코딩(Heat 40/tension 5/guard_trust) 제거 — 밸런스는 콘텐츠로(불변식 45).
+   * 미선언 팩(arcRoutes 빈 배열)은 언락 0 — 아크 자산 없는 팩의 기존 동작.
+   */
+  checkUnlockConditions(
+    ws: WorldState,
+    arcRoutes: ArcRouteUnlockDef[] = [],
+  ): string[] {
     const newUnlocks: string[] = [];
-
-    // Heat 40+ → EXPOSE_CORRUPTION unlock
-    if (
-      ws.hubHeat >= 40 &&
-      !ws.mainArc.unlockedArcIds.includes('EXPOSE_CORRUPTION')
-    ) {
-      newUnlocks.push('EXPOSE_CORRUPTION');
+    for (const route of arcRoutes) {
+      if (ws.mainArc.unlockedArcIds.includes(route.id)) continue;
+      if (this.evalUnlock(ws, route.unlock)) newUnlocks.push(route.id);
     }
-
-    // tension 5+ → PROFIT_FROM_CHAOS unlock
-    if (
-      ws.tension >= 5 &&
-      !ws.mainArc.unlockedArcIds.includes('PROFIT_FROM_CHAOS')
-    ) {
-      newUnlocks.push('PROFIT_FROM_CHAOS');
-    }
-
-    // flags.guard_trust → ALLY_GUARD unlock
-    if (
-      ws.flags['guard_trust'] &&
-      !ws.mainArc.unlockedArcIds.includes('ALLY_GUARD')
-    ) {
-      newUnlocks.push('ALLY_GUARD');
-    }
-
     return newUnlocks;
+  }
+
+  /** 언락 조건 1건 평가 — field(점표기)를 ws에서 해석 후 op 비교. */
+  private evalUnlock(
+    ws: WorldState,
+    unlock: ArcRouteUnlockDef['unlock'],
+  ): boolean {
+    const val = this.resolveField(ws, unlock.field);
+    switch (unlock.op) {
+      case 'truthy':
+        return !!val;
+      case 'gte':
+        return typeof val === 'number' && val >= Number(unlock.value ?? 0);
+      case 'lte':
+        return typeof val === 'number' && val <= Number(unlock.value ?? 0);
+      case 'eq':
+        return val === unlock.value;
+      default:
+        return false;
+    }
+  }
+
+  /** WorldState 점표기 경로 해석 ('hubHeat' | 'flags.guard_trust' 등). */
+  private resolveField(ws: WorldState, field: string): unknown {
+    const parts = field.split('.');
+    let obj: unknown = ws;
+    for (const p of parts) {
+      if (obj == null || typeof obj !== 'object') return undefined;
+      obj = (obj as Record<string, unknown>)[p];
+    }
+    return obj;
   }
 }

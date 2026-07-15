@@ -193,4 +193,23 @@ export interface ScenarioMeta {
     touch?: string[];
     motif?: string[];
   };
+  /**
+   * [73 §11 B2] 아크 루트 언락 조건 팩 선언. arc.service가 이 조건으로 루트를
+   * 언락(엔진 하드코딩 Heat/tension/flags 제거 — 불변식 45 청산). id는 ArcRoute
+   * enum 값(EXPOSE_CORRUPTION 등, 3 고정). 미선언 팩은 언락 0(아크 미보유 팩).
+   */
+  arcRoutes?: ArcRouteUnlockDef[];
 }
+
+/** [73 §11 B2] 아크 루트 언락 조건 정의 (scenario.json arcRoutes). */
+export type ArcRouteUnlockDef = {
+  /** ArcRoute enum 값 (EXPOSE_CORRUPTION | PROFIT_FROM_CHAOS | ALLY_GUARD) */
+  id: string;
+  unlock: {
+    /** WorldState 경로 — 'hubHeat' | 'tension' | 'flags.guard_trust' 등 (점표기) */
+    field: string;
+    op: 'gte' | 'lte' | 'eq' | 'truthy';
+    /** truthy op는 value 불필요 */
+    value?: number | string | boolean;
+  };
+};

@@ -708,8 +708,11 @@ export class TurnsService {
       updatedRunState.worldState = newWs;
       updatedRunState.actionHistory = []; // LOCATION 이동 시 고집 이력 초기화
 
-      // Arc unlock 체크
-      const newUnlocks = this.arcService.checkUnlockConditions(newWs);
+      // Arc unlock 체크 — [73 §11 B2] 팩 선언 언락 조건(scenario.json arcRoutes)
+      const newUnlocks = this.arcService.checkUnlockConditions(
+        newWs,
+        this.content.getScenarioMeta()?.arcRoutes ?? [],
+      );
       if (newUnlocks.length > 0) {
         updatedRunState.worldState = {
           ...newWs,

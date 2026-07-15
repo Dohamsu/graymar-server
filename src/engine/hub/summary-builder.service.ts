@@ -73,34 +73,22 @@ const VECTOR_PAIR_JOURNEY: Record<string, string> = {
   'SOCIAL+STEALTH': '친근한 얼굴 뒤에 비밀을 숨겼다',
 };
 
-/** arcRoute × stability 12분기 한 줄 요약 (endings.json arcRouteEndings 압축). */
-const ARC_ROUTE_CLOSING: Record<
-  string,
-  Record<EndingSummaryStability, string>
-> = {
-  EXPOSE_CORRUPTION: {
-    STABLE: '부패한 자들이 연행되고, 도시는 정의의 이름으로 숨을 돌렸다.',
-    UNSTABLE: '진실은 절반만 드러났고, 해결되지 않은 불안이 거리에 남았다.',
-    COLLAPSED:
-      '진실은 밝혀졌지만 도시는 그 무게를 감당하지 못하고 불길에 삼켜졌다.',
-  },
-  PROFIT_FROM_CHAOS: {
-    STABLE: '아무도 모르게 양쪽에서 금화를 챙기고 도시를 떠났다.',
-    UNSTABLE: '벌어들인 돈만큼의 적을 남기고 그레이마르를 뒤로했다.',
-    COLLAPSED:
-      '도시가 무너지는 와중에도 금화를 셌지만, 거래할 도시가 사라졌다.',
-  },
-  ALLY_GUARD: {
-    STABLE: '경비대와 함께 항만의 질서를 되찾고 명예 휘장을 받았다.',
-    UNSTABLE: '말단은 잡았으나 뿌리는 뽑지 못한 채 불안한 평화를 남겼다.',
-    COLLAPSED: '경비대의 강경책은 진압이 아니라 폭동이 되어 도시를 부숴놓았다.',
-  },
-  NONE: {
-    STABLE: '어느 편에도 서지 않은 채 이름 없는 용병으로 도시를 떠났다.',
-    UNSTABLE:
-      '아무것도 하지 않은 것이 곧 선택이었다. 의자에 남은 온기만이 흔적이었다.',
-    COLLAPSED: '도시가 무너지는 것을 지켜볼 수밖에 없었다.',
-  },
+/**
+ * [73 §11 B2] arcRoute × stability 결말 한 줄 — **팩 중립 fallback**.
+ * 실제 문구는 endings.json arcRouteEndings[route][stability].closingLine 우선
+ * (팩별 저작). 팩이 closingLine을 안 주면 지명·세력에 무관한 이 중립 문구로 폴백.
+ */
+const NEUTRAL_ARC_CLOSING: Record<EndingSummaryStability, string> = {
+  STABLE: '갈등은 매듭지어졌고, 당신은 이 땅을 뒤로했다.',
+  UNSTABLE: '절반의 진실만 남긴 채, 풀리지 않은 불안이 뒤에 남았다.',
+  COLLAPSED: '모든 것이 무너지는 것을 지켜볼 수밖에 없었다.',
+};
+
+/** [73 §11 B2] arcTitle 팩 중립 fallback (endings.json title 없을 때). */
+const NEUTRAL_ARC_TITLE: Record<EndingSummaryStability, string> = {
+  STABLE: '여정의 끝',
+  UNSTABLE: '미완의 여정',
+  COLLAPSED: '잿더미의 증인',
 };
 
 /** NarrativeMarkType 별 한 줄 문구. */
@@ -319,34 +307,18 @@ export class SummaryBuilderService {
     return summary;
   }
 
-  /** 기본 arcTitle (arcRouteEndings에 title이 없는 경우 fallback). */
+  /**
+   * 기본 arcTitle — [73 §11 B2] endings.json arcRouteEndings[route][stability].title
+   * 우선(팩별 저작), 없으면 팩 중립 fallback. graymar 하드코딩 제거.
+   */
   private defaultArcTitle(
     arcRouteKey: string,
     stability: EndingSummaryStability,
   ): string {
-    const map: Record<string, Record<EndingSummaryStability, string>> = {
-      EXPOSE_CORRUPTION: {
-        STABLE: '정의의 대가',
-        UNSTABLE: '불완전한 진실',
-        COLLAPSED: '진실이 삼킨 도시',
-      },
-      PROFIT_FROM_CHAOS: {
-        STABLE: '황금빛 그림자',
-        UNSTABLE: '배신자의 길',
-        COLLAPSED: '재의 상인',
-      },
-      ALLY_GUARD: {
-        STABLE: '질서의 수호자',
-        UNSTABLE: '불안한 평화',
-        COLLAPSED: '철권의 잔해',
-      },
-      NONE: {
-        STABLE: '스쳐간 이방인',
-        UNSTABLE: '방관자의 무게',
-        COLLAPSED: '잿더미의 증인',
-      },
-    };
-    return map[arcRouteKey]?.[stability] ?? '이름 없는 여정';
+    const are = this.content.getEndingsData()?.arcRouteEndings as
+      | Record<string, Record<string, { title?: string }>>
+      | undefined;
+    return are?.[arcRouteKey]?.[stability]?.title ?? NEUTRAL_ARC_TITLE[stability];
   }
 
   // ── 3-a. synopsis 조립 ──
@@ -373,10 +345,10 @@ export class SummaryBuilderService {
 
     const sentences: string[] = [];
 
-    // 1) 도입
+    // 1) 도입 — [73 §11 B2] 지명 팩화 (endings.json regionLabel, 미제공 시 중립)
     const introParticle = topicParticle(characterName);
     sentences.push(
-      `${presetLabel} ${characterName}${introParticle} ${daysSpent}일간 그레이마르의 그림자를 누볐다.`,
+      `${presetLabel} ${characterName}${introParticle} ${daysSpent}일간 ${this.regionLabel()}의 그림자를 누볐다.`,
     );
 
     // 2) 여정 방식 — 벡터 쌍 우선, 없으면 Top1 단일 벡터 fallback
@@ -390,13 +362,27 @@ export class SummaryBuilderService {
     );
     if (pivotSentence) sentences.push(pivotSentence);
 
-    // 4) 결말
-    const closingSentence =
-      ARC_ROUTE_CLOSING[arcRouteKey]?.[stability] ??
-      ARC_ROUTE_CLOSING.NONE[stability];
-    sentences.push(closingSentence);
+    // 4) 결말 — [73 §11 B2] endings.json closingLine 우선, 없으면 팩 중립
+    sentences.push(this.resolveArcClosing(arcRouteKey, stability));
 
     return sentences.join(' ');
+  }
+
+  /** [73 §11 B2] 여정 요약 지명 — endings.json regionLabel (미제공 시 중립). */
+  private regionLabel(): string {
+    const endingsData = this.content.getEndingsData();
+    return (endingsData?.regionLabel as string | undefined) ?? '이 땅';
+  }
+
+  /** [73 §11 B2] arcRoute × stability 결말 — endings.json closingLine 우선. */
+  private resolveArcClosing(
+    arcRouteKey: string,
+    stability: EndingSummaryStability,
+  ): string {
+    const are = this.content.getEndingsData()?.arcRouteEndings as
+      | Record<string, Record<string, { closingLine?: string }>>
+      | undefined;
+    return are?.[arcRouteKey]?.[stability]?.closingLine ?? NEUTRAL_ARC_CLOSING[stability];
   }
 
   private buildJourneySentence(dominantVectors: string[]): string | null {

@@ -24,6 +24,7 @@ class FakeContent {
   getHubMeta = fakeScenarioAccessors.getHubMeta;
   getLocationDisplayName = fakeScenarioAccessors.getLocationDisplayName;
   getLocationShortName = fakeScenarioAccessors.getLocationShortName;
+  getScenarioMeta = fakeScenarioAccessors.getScenarioMeta;
 
   getAllNpcs(): NpcDef[] {
     return Object.values(this.npcs);

@@ -145,6 +145,34 @@ function makeContentMock(): Partial<ContentLoaderService> {
     getIncident: jest.fn((id: string) => incidents[id]) as never,
     getNpc: jest.fn((id: string) => npcs[id]) as never,
     getPreset: jest.fn((id: string) => presets[id]) as never,
+    // [73 §11 B2] arcRoute 요약/제목/지명은 endings.json으로 팩화됨 — graymar 값 미러
+    getEndingsData: jest.fn(() => ({
+      regionLabel: '그레이마르',
+      arcRouteEndings: {
+        EXPOSE_CORRUPTION: {
+          STABLE: {
+            title: '정의의 대가',
+            closingLine:
+              '부패한 자들이 연행되고, 도시는 정의의 이름으로 숨을 돌렸다.',
+          },
+          UNSTABLE: {
+            title: '불완전한 진실',
+            closingLine:
+              '진실은 절반만 드러났고, 해결되지 않은 불안이 거리에 남았다.',
+          },
+          COLLAPSED: {
+            title: '진실이 삼킨 도시',
+            closingLine:
+              '진실은 밝혀졌지만 도시는 그 무게를 감당하지 못하고 불길에 삼켜졌다.',
+          },
+        },
+        ALLY_GUARD: {
+          STABLE: { title: '질서의 수호자' },
+          UNSTABLE: { title: '불안한 평화' },
+          COLLAPSED: { title: '철권의 잔해' },
+        },
+      },
+    })) as never,
   };
 }
 

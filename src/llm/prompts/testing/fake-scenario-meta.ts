@@ -22,4 +22,6 @@ export const fakeScenarioAccessors = {
   getHubMeta: (): typeof FAKE_HUB_META => FAKE_HUB_META,
   getLocationDisplayName: (id: string): string => id,
   getLocationShortName: (id: string): string => id,
+  // [73 §11 A4/B2] sensoryPalette·arcRoutes 미선언(null) — 팩 블록 없는 기본 프롬프트 유지
+  getScenarioMeta: (): null => null,
 };
