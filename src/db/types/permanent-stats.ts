@@ -97,6 +97,17 @@ export interface RunState {
    * 동결, 런 중 불변(진상 불변 규약). 미선언 런(AUTHORED)은 undefined.
    */
   plotSeed?: import('./plot-seed.js').PlotSeed;
+  /**
+   * [P4 — architecture/75 §5.1] 워커가 선계산한 다음 비트 후보.
+   * **워커 소유 필드** — llm-worker의 applyRunStatePatch(fresh CAS)로만 쓴다.
+   * 턴 동기 경로는 채택 시 소비(null 클리어)만 수행.
+   */
+  nextBeatCandidates?: import('./plot-seed.js').NextBeats | null;
+  /**
+   * [P4~P5 — architecture/75 §6] 자율 런 진행 상태(발견 keyFacts·엔딩 가중).
+   * 턴 동기 경로 소유 — 워커는 읽기 전용.
+   */
+  plotProgress?: import('./plot-seed.js').PlotProgress;
   // Phase 2: NPC/관계/행동 상태
   npcStates?: Record<string, import('./npc-state.js').NPCState>;
   relationships?: Record<string, import('./npc-state.js').Relationship>;

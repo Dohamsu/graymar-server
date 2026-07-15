@@ -63,6 +63,62 @@ export type PlotAct = {
 };
 
 /**
+ * [P4 — §5.1] Emergent Director가 워커에서 선계산한 다음 비트 후보.
+ * 워커는 제안만 만들고(runState.nextBeatCandidates 저장), 채택·등록은
+ * 다음 턴의 동기 경로가 수행한다 (§15.2 고정점).
+ */
+export type BeatCandidate = {
+  beatId: string;
+  /** 비트 전제 1~2문장 — 채택 시 이벤트 sceneFrame 재료 */
+  premise: string;
+  /** 관련 인물 npcId (코어/동적). 첫 번째가 primary 후보 */
+  involvedNpcIds: string[];
+  /** 이 비트가 표면화를 노리는 미발견 keyFact (없으면 순수 서브 비트) */
+  hintedFactId?: string;
+  /** 채택 시 선택지 라벨 시드 (실 선택지는 기존 nano 파이프가 생성) */
+  choiceSeeds?: string[];
+  /** 서브 스레드 씨앗 — §5.2 (엔딩 가중 변경의 재료) */
+  subThreadSeed?: string;
+  /**
+   * 신규 인물 제안 (워커는 제안만 — 채택 턴 동기 경로에서
+   * registerDynamicNpc로 검증·등록. 미채택 시 등록되지 않음)
+   */
+  proposedNpc?: {
+    name: string;
+    role?: string;
+    gender?: 'male' | 'female';
+    unknownAlias?: string;
+    shortAlias?: string;
+    basePosture?: string;
+    speechRegister?: string;
+    oneLinePersonality?: string;
+  };
+  /** 이 비트가 성립하는 장소 (없으면 장소 무관) */
+  locationId?: string;
+  /** 정합 매칭용 행동 계열 힌트 (IntentActionType 값 부분집합) */
+  affordances?: string[];
+};
+
+/** [P4] 워커가 저장하는 선계산 묶음 — 턴 스탬프로 stale 채택 차단. */
+export type NextBeats = {
+  /** 후보 생성 시점의 턴 번호 (이후 BEAT_STALE_MAX_TURNS 이내만 채택 유효) */
+  generatedAtTurn: number;
+  candidates: BeatCandidate[];
+};
+
+/** [P4~P5] 자율 런 진행 상태 — 규명율 분자 + 엔딩 가중 + 적중률 계측. */
+export type PlotProgress = {
+  /** 발견된 keyFact id (규명율 분자) */
+  discoveredKeyFactIds: string[];
+  /** 엔딩 후보 가중 — §5.2 서브 결과가 조정 (id → 가중치) */
+  endingWeights?: Record<string, number>;
+  /** 채택된 비트 수 (선계산 적중률 계측 — §9.3) */
+  adoptedBeatCount?: number;
+  /** 폐기된 비트 수 (〃) */
+  discardedBeatCount?: number;
+};
+
+/**
  * Plot Seed — 런 생성 시 동결되는 진상 정본. runState.plotSeed.
  * generatedByFallback: 검증 재롤 N회 실패 후 폴백 시드로 생성됐는지(계측용).
  */

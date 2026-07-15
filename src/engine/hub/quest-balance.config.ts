@@ -49,3 +49,39 @@ export const QUEST_BALANCE = {
    *  사실상 미도달이었다 (버그 599a00a1). FRIENDLY/FEARFUL은 posture 우선. */
   WITNESS_WARN_TRUST: 15,
 } as const;
+
+/**
+ * [P4 — architecture/75 §5] Emergent Director 밸런스 (AUTONOMOUS 팩 전용).
+ * 인력(gravity) 가중과 채택 임계 — 표류 방지 튜닝 손잡이 (§9.2).
+ */
+export const AUTONOMOUS_BALANCE = {
+  /** 워커가 선계산하는 비트 후보 수 (§9.3 적중률 계측 후 조정) */
+  BEAT_CANDIDATE_COUNT: 3,
+
+  /** 후보 유효 턴 수 — generatedAtTurn + N 턴까지 채택 허용 (초과 시 stale 폐기) */
+  BEAT_STALE_MAX_TURNS: 2,
+
+  /** 인력: 후보 장소 = 현재 장소 가중 */
+  GRAVITY_LOCATION_BONUS: 30,
+
+  /** 인력: 관련 NPC가 플레이어 타겟/직전 상호작용 NPC와 일치 가중 */
+  GRAVITY_NPC_BONUS: 25,
+
+  /** 인력: 미발견 keyFact 힌트 비트 가중 (규명 유도 — §5.1) */
+  GRAVITY_FACT_BONUS: 20,
+
+  /** 인력: 막 잔여 예산 소진 비례 최대 가중 (표류 방지 — §5.1) */
+  GRAVITY_ACT_PRESSURE_MAX: 40,
+
+  /** 채택 최소 정합 점수 — 미달 시 후보 폐기 후 기존 폴백 체인 (§15.2) */
+  BEAT_ADOPT_MIN_SCORE: 30,
+} as const;
+
+/**
+ * [P4] Emergent Director 킬스위치 (불변식 C · §14.3 "L2 폴백 킬스위치 필수").
+ * PLOT_DIRECTOR_DISABLED=1 이면 AUTONOMOUS 팩도 비트 선계산·채택 없이
+ * 기존 폴백 체인(SituationGenerator→EventDirector→Procedural)만으로 진행.
+ */
+export function isPlotDirectorEnabled(): boolean {
+  return process.env.PLOT_DIRECTOR_DISABLED !== '1';
+}
