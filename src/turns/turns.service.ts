@@ -505,6 +505,8 @@ export class TurnsService {
     // 서로 다른 시나리오 동시 플레이는 여전히 금지 — 단일 활성 시나리오 정책).
     await this.content.ensureScenario(run.scenarioId);
     this.content.enterScenario(run.scenarioId);
+    // [P0 스파이크 — 75] 동적 NPC 레지스트리를 컨텍스트에 적재 (getNpc 폴백 소스)
+    this.content.applyDynamicNpcs();
 
     // 3. expectedNextTurnNo 검증
     const expectedTurnNo = run.currentTurnNo + 1;

@@ -28,3 +28,71 @@ export function enterScenarioContext(scenarioId: string): void {
 export function runInScenarioContext<T>(scenarioId: string, fn: () => T): T {
   return storage.run(scenarioId, fn);
 }
+
+// ─────────────────────────────────────────────────────────────
+// [P0 스파이크 — architecture/75] 동적 NPC 레지스트리 컨텍스트
+//
+// AUTONOMOUS 모드에서 런타임 생성된 NPC(npcs.json에 없는)를 현재 비동기
+// 경로에 전파해, ContentLoader.getNpc()가 콘텐츠 팩 miss 시 폴백 조회하게 한다.
+// scenarioId ALS와 독립된 두 번째 ALS로 두어 기존 scenarioId 경로 무변경.
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 동적 NPC stub — P0 필드 표면 조사(75 §4.1)로 확정한 T1(MUST supply) 필드.
+ * ContentLoader.expandDynamicStub()가 이를 NpcDefinition 형태로 확장(T2 안전
+ * 기본값, T3 undefined)해 127개 getNpc 소비 지점에 well-formed 객체를 공급.
+ */
+export interface DynamicNpcStub {
+  npcId: string; // NPC_DYN_<seq>
+  name: string;
+  tier?: 'CORE' | 'SUB' | 'BACKGROUND';
+  unknownAlias?: string;
+  shortAlias?: string;
+  aliases?: string[];
+  gender?: 'male' | 'female';
+  basePosture?: string;
+  speechRegister?: 'HAOCHE' | 'HAEYO' | 'BANMAL' | 'HAPSYO' | 'HAECHE';
+  role?: string;
+  oneLinePersonality?: string;
+}
+
+const dynamicNpcStorage = new AsyncLocalStorage<DynamicNpcStub[]>();
+
+/** 현재 비동기 경로의 동적 NPC 목록 (없으면 빈 배열) */
+export function currentDynamicNpcs(): DynamicNpcStub[] {
+  return dynamicNpcStorage.getStore() ?? [];
+}
+
+/** 현재 비동기 컨텍스트에 동적 NPC 목록 설정 — 이후 await 연쇄에 전파 */
+export function enterDynamicNpcs(list: DynamicNpcStub[]): void {
+  dynamicNpcStorage.enterWith(list);
+}
+
+/** 콜백을 동적 NPC 컨텍스트에서 실행 (스파이크 검증/격리용) */
+export function runWithDynamicNpcs<T>(list: DynamicNpcStub[], fn: () => T): T {
+  return dynamicNpcStorage.run(list, fn);
+}
+
+/**
+ * [P0 E2E 스파이크] env SPIKE_DYN_NPC=1 이면 테스트 동적 NPC 1명을 주입.
+ * runState 배선(P1) 없이 라이브 파이프라인(해석→마커→어체)을 검증하기 위한
+ * 임시 훅. 프로덕션 기본값 off. P1에서 runState.dynamicNpcs 정식 배선 시 제거.
+ */
+export function spikeDynamicNpcs(): DynamicNpcStub[] {
+  if (process.env.SPIKE_DYN_NPC !== '1') return [];
+  return [
+    {
+      npcId: 'NPC_DYN_SPIKE_1',
+      name: '카렌 보그',
+      tier: 'SUB',
+      unknownAlias: '낯선 부두 여인',
+      shortAlias: '부두 여인',
+      aliases: ['카렌 보그', '부두 여인'],
+      gender: 'female',
+      basePosture: 'CAUTIOUS',
+      speechRegister: 'HAEYO',
+      role: '떠도는 정보상',
+      oneLinePersonality: '경계심 많고 소문에 밝은 부두의 떠돌이 정보상',
+    },
+  ];
+}
