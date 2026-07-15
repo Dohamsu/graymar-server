@@ -30,6 +30,12 @@ export interface TurnModeContext {
    * 승격해 저작 이벤트 매칭 기회를 준다(미지정 시 false → 기존 동작).
    */
   exploreEventAvailable?: boolean;
+  /**
+   * [P4 — arch/75 §5.1] AUTONOMOUS 팩에서 워커 선계산 비트가 신선하게 대기
+   * 중인지. true면 자유 행동을 WORLD_EVENT로 승격해 채택 기회를 준다.
+   * NPC 지목·대화 연속(우선순위 1·2)이 항상 먼저다 — Player-First 보존.
+   */
+  beatAvailable?: boolean;
 }
 
 // [A2' 후속] 세계를 탐색하는 비대화 행동 — 이 행동은 장소 저작 이벤트를 우선 탄다.
@@ -85,6 +91,13 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
   // 저작 이벤트 존재 → WORLD_EVENT 승격. (2)에서 대화 연속이 먼저 걸러지므로
   // 여기 도달 = 대화 상대 없는 자유 탐색. 저작 이벤트 매칭 빈도를 높인다.
   if (EXPLORE_ACTIONS.has(ctx.actionType) && ctx.exploreEventAvailable) {
+    return TurnMode.WORLD_EVENT;
+  }
+
+  // 3.6) [P4 — arch/75 §5.1] AUTONOMOUS: 선계산 비트 대기 중 → WORLD_EVENT 승격.
+  // 채택 자체는 정합 점수 임계(selectBeatForAdoption)를 다시 통과해야 하며,
+  // 미채택 시 기존 폴백 체인으로 그 턴이 진행된다.
+  if (ctx.beatAvailable) {
     return TurnMode.WORLD_EVENT;
   }
 
@@ -295,7 +308,17 @@ import {
 } from '../engine/rewards/rewards.service.js';
 import { EquipmentService } from '../engine/rewards/equipment.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
-import { QUEST_BALANCE } from '../engine/hub/quest-balance.config.js';
+import {
+  QUEST_BALANCE,
+  AUTONOMOUS_BALANCE,
+  isPlotDirectorEnabled,
+} from '../engine/hub/quest-balance.config.js';
+import {
+  getActProgress,
+  getUndiscoveredKeyFacts,
+  selectBeatForAdoption,
+} from '../engine/hub/beat-gravity.js';
+import { registerDynamicNpc } from '../content/dynamic-npc.js';
 import { extractKoreanKeywords } from '../common/text-utils.js';
 import {
   detectDialogueAct,
@@ -314,10 +337,7 @@ import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js
 import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
 import { LlmCallerService } from '../llm/llm-caller.service.js';
 import { LlmCallLogService } from '../llm/llm-call-log.service.js';
-import {
-  runInTurnContext,
-  currentTurnStore,
-} from '../llm/turn-context.js';
+import { runInTurnContext, currentTurnStore } from '../llm/turn-context.js';
 import { ChallengeClassifierService } from '../llm/challenge-classifier.service.js';
 import { LlmWorkerService } from '../llm/llm-worker.service.js';
 import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
@@ -1543,6 +1563,18 @@ export class TurnsService {
               e.affordances.includes(intent.actionType as never),
           );
 
+      // [P4 — arch/75 §5.1] AUTONOMOUS: 워커 선계산 비트 신선도 확인.
+      // age 1..BEAT_STALE_MAX_TURNS만 유효 (같은 턴 생성분·낡은 후보 제외).
+      const nextBeats = runState.nextBeatCandidates ?? null;
+      const beatAge = nextBeats ? turnNo - nextBeats.generatedAtTurn : -1;
+      const beatAvailable =
+        !!nextBeats &&
+        nextBeats.candidates.length > 0 &&
+        beatAge >= 1 &&
+        beatAge <= AUTONOMOUS_BALANCE.BEAT_STALE_MAX_TURNS &&
+        isPlotDirectorEnabled() &&
+        this.content.getNarrativeMode() === 'AUTONOMOUS';
+
       // ── Player-First 턴 모드 결정 ──
       const turnMode = this.determineTurnMode({
         earlyTargetNpcId,
@@ -1554,6 +1586,7 @@ export class TurnsService {
         incidentPressureHigh,
         questFactTrigger,
         exploreEventAvailable,
+        beatAvailable,
       });
       this.logger.log(
         `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'})`,
@@ -1621,6 +1654,91 @@ export class TurnsService {
             `[WorldEvent] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} questFact=${questFactTrigger}`,
           );
 
+          // [P4 — arch/75 §5.1] Emergent Director 비트 채택 — SitGen보다 우선.
+          // 미채택(null) 시 그대로 기존 폴백 체인으로 진행 (디렉터 재호출 금지).
+          if (beatAvailable && runState.plotSeed) {
+            const undiscoveredFactIds = new Set(
+              getUndiscoveredKeyFacts(
+                runState.plotSeed,
+                runState.plotProgress,
+              ).map((f) => f.factId),
+            );
+            const adoption = selectBeatForAdoption(nextBeats, {
+              turnNo,
+              locationId,
+              actionType: intent.actionType,
+              targetNpcId: earlyTargetNpcId ?? intentV3.targetNpcId ?? null,
+              lastPrimaryNpcId: lastPrimaryNpcId ?? null,
+              undiscoveredFactIds,
+              actProgress: getActProgress(runState.plotSeed.acts, turnNo),
+            });
+            const pp = runState.plotProgress ?? { discoveredKeyFactIds: [] };
+            if (adoption) {
+              const { beat } = adoption;
+              // 신규 인물 제안은 채택 시에만 동기 경로에서 등록 (§15.2 —
+              // 워커는 제안만). 등록 즉시 재적재해 이번 턴부터 getNpc 해석.
+              let involved = beat.involvedNpcIds;
+              if (beat.proposedNpc && involved.includes('NPC_DYN_NEW')) {
+                runState.dynamicNpcs ??= [];
+                // posture/register는 느슨한 string(LLM 산출) — sanitize가
+                // 런타임 enum 검증 후 안전 기본값으로 강제한다.
+                const reg = registerDynamicNpc(
+                  runState.dynamicNpcs,
+                  beat.proposedNpc as Parameters<typeof registerDynamicNpc>[1],
+                );
+                if (reg.npcId) {
+                  const newId = reg.npcId;
+                  involved = involved.map((id) =>
+                    id === 'NPC_DYN_NEW' ? newId : id,
+                  );
+                  this.content.applyDynamicNpcs(runState.dynamicNpcs);
+                  this.logger.log(
+                    `[PlotBeat] 동적 NPC 등록 ${newId} (${beat.proposedNpc.name})`,
+                  );
+                } else {
+                  involved = involved.filter((id) => id !== 'NPC_DYN_NEW');
+                }
+              }
+              const beatPrimaryNpcId =
+                involved.find((id) => id !== 'NPC_DYN_NEW') ?? null;
+              matchedEvent = {
+                eventId: beat.beatId,
+                eventType: 'OPPORTUNITY' as any,
+                locationId,
+                affordances: (beat.affordances?.length
+                  ? beat.affordances
+                  : ['ANY']) as any[],
+                matchPolicy: 'NEUTRAL' as any,
+                priority: 1,
+                weight: 1,
+                friction: 0,
+                conditions: [],
+                // P4-5: 판정 성공 시 기존 fact 공개 경로가 이 id를 발견 처리
+                discoverableFact: beat.hintedFactId,
+                payload: {
+                  sceneFrame: beat.premise,
+                  choices: [],
+                  tags: ['BEAT'],
+                  primaryNpcId: beatPrimaryNpcId,
+                },
+              } as any;
+              // 소비(턴 동기 경로는 채택 시 소비만 — §15.2) + 적중률 계측
+              runState.nextBeatCandidates = null;
+              pp.adoptedBeatCount = (pp.adoptedBeatCount ?? 0) + 1;
+              runState.plotProgress = pp;
+              this.logger.log(
+                `[PlotBeat] 채택 ${beat.beatId} score=${adoption.score} npc=${beatPrimaryNpcId ?? '-'} fact=${beat.hintedFactId ?? '-'}`,
+              );
+            } else {
+              // 미정합 — 후보는 stale 될 때까지 보존(다음 턴 재기회), 계측만
+              pp.discardedBeatCount = (pp.discardedBeatCount ?? 0) + 1;
+              runState.plotProgress = pp;
+              this.logger.debug(
+                `[PlotBeat] 정합 후보 없음 (age=${beatAge}) → 폴백 체인`,
+              );
+            }
+          }
+
           const allEvents = this.content.getAllEventsV2();
           const recentEventIds = actionHistory
             .filter((h) => h.eventId)
@@ -1634,6 +1752,7 @@ export class TurnsService {
 
           const { SITGEN_CHANCE } = QUEST_BALANCE;
           if (
+            !matchedEvent && // [P4] 비트 채택 턴은 SitGen 스킵 (채택 이벤트 보존)
             this.situationGenerator &&
             !lastWasDynamic &&
             dynamicRoll < SITGEN_CHANCE &&

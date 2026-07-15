@@ -252,6 +252,39 @@ describe('determineTurnMode', () => {
     ).toBe(TurnMode.PLAYER_DIRECTED);
   });
 
+  // ── 3.6) [P4 — arch/75 §5.1] 선계산 비트 대기 → WORLD_EVENT 승격 ──
+  it('beatAvailable + 자유 행동 → WORLD_EVENT (비트 채택 기회)', () => {
+    expect(
+      determineTurnMode(baseCtx({ actionType: 'FIGHT', beatAvailable: true })),
+    ).toBe(TurnMode.WORLD_EVENT);
+  });
+
+  it('beatAvailable이어도 NPC 지목이 우선 → PLAYER_DIRECTED (Player-First)', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({ earlyTargetNpcId: 'NPC_A', beatAvailable: true }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
+  it('beatAvailable이어도 대화 연속이 우선 → CONVERSATION_CONT', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TALK',
+          lastPrimaryNpcId: 'NPC_A',
+          beatAvailable: true,
+        }),
+      ),
+    ).toBe(TurnMode.CONVERSATION_CONT);
+  });
+
+  it('beatAvailable=false → 기본 PLAYER_DIRECTED (기존 동작 무변경)', () => {
+    expect(
+      determineTurnMode(baseCtx({ actionType: 'FIGHT', beatAvailable: false })),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
   // ── 2b) 맥락 NPC: contextNpcId + SOCIAL_ACTION ──
   it('TALK + contextNpcId (lastNpc 없음) → CONVERSATION_CONT', () => {
     expect(
