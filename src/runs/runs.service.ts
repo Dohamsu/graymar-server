@@ -45,6 +45,7 @@ import { AffixService } from '../engine/rewards/affix.service.js';
 import { RunPlannerService } from '../engine/planner/run-planner.service.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import { ShopService } from '../engine/hub/shop.service.js';
+import { PlotSeedGeneratorService } from '../llm/plot-seed-generator.service.js';
 import { EquipmentService } from '../engine/rewards/equipment.service.js';
 import type { EquipmentSlot } from '../db/types/equipment.js';
 import type { RegionEconomy } from '../db/types/region-state.js';
@@ -73,6 +74,7 @@ export class RunsService {
     private readonly shopService: ShopService,
     private readonly equipmentService: EquipmentService,
     private readonly summaryBuilder: SummaryBuilderService,
+    private readonly plotSeedGenerator: PlotSeedGeneratorService,
   ) {}
 
   async createRun(
@@ -572,6 +574,17 @@ export class RunsService {
       worldState,
       arcState,
     );
+
+    // [P3 — 75 §3] AUTONOMOUS 팩: 진상(Plot Seed) 생성·동결 (런 중 불변).
+    // nano 생성 실패/검증 소진 시 폴백 시드 — 런은 반드시 진행. AUTHORED 팩 무동작.
+    // enterScenario(초반) ALS 스코프 유지 하에 현재 팩 자원으로 생성.
+    if (this.content.getNarrativeMode() === 'AUTONOMOUS') {
+      const plotSeed = await this.plotSeedGenerator.generate();
+      initialRunState.plotSeed = plotSeed;
+      this.logger.log(
+        `[createRun] AUTONOMOUS Plot Seed 동결 (culprit=${plotSeed.truth.culpritNpcId}, facts=${plotSeed.keyFacts.length}, fallback=${!!plotSeed.generatedByFallback})`,
+      );
+    }
 
     // 5. 트랜잭션: run + 첫 노드 + memory + 첫 턴
     // DAG 모드: 첫 노드는 DAG 그래프의 시작 노드 (common_s0)

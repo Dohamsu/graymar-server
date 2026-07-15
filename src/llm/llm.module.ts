@@ -25,6 +25,7 @@ import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
 import { ChallengeClassifierService } from './challenge-classifier.service.js';
 import { NpcReactionDirectorService } from './npc-reaction-director.service.js';
+import { PlotSeedGeneratorService } from './plot-seed-generator.service.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
 import { ContentModule } from '../content/content.module.js';
 
@@ -53,6 +54,7 @@ import { ContentModule } from '../content/content.module.js';
     ThemeClassifierService,
     ChallengeClassifierService,
     NpcReactionDirectorService,
+    PlotSeedGeneratorService,
   ],
   exports: [
     ContextBuilderService,
@@ -66,6 +68,7 @@ import { ContentModule } from '../content/content.module.js';
     ThemeClassifierService,
     ChallengeClassifierService,
     NpcReactionDirectorService,
+    PlotSeedGeneratorService,
     LlmWorkerService, // 레이턴시 #3 — turns가 커밋 직후 wake() 호출
   ],
 })
