@@ -43,6 +43,7 @@ export * from './procedural-event.js';
 export * from './npc-knowledge.js';
 // Campaign
 export * from './carry-over.js';
+export * from './plot-seed.js';
 // Living World v2
 export * from './world-fact.js';
 export * from './location-state.js';

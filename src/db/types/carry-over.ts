@@ -199,6 +199,17 @@ export interface ScenarioMeta {
    * enum 값(EXPOSE_CORRUPTION 등, 3 고정). 미선언 팩은 언락 0(아크 미보유 팩).
    */
   arcRoutes?: ArcRouteUnlockDef[];
+  /**
+   * [75 §2] 서사 모드. 미선언·AUTHORED = 기존 저작 팩(무변경). AUTONOMOUS =
+   * 진상·서브 NPC·사건을 런타임 생성(P3 Plot Seed + P4 디렉터). motifs 필수.
+   */
+  narrativeMode?: import('./enums.js').NarrativeMode;
+  /**
+   * [75 §2/§3] 사건 모티프 풀(8~12개) — Plot Seed 진상 생성의 조합 재료.
+   * P3 1차는 scenario.json 인라인(P6 팩 저작 시 motifs.json 별도 파일로 승격 —
+   * ContentLoader.getMotifs 소스만 교체). AUTONOMOUS 팩 필수.
+   */
+  motifs?: import('./plot-seed.js').Motif[];
 }
 
 /** [73 §11 B2] 아크 루트 언락 조건 정의 (scenario.json arcRoutes). */

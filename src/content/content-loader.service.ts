@@ -976,6 +976,16 @@ export class ContentLoaderService implements OnModuleInit {
     return this.scenarioMeta;
   }
 
+  /** [75 §2] 팩 서사 모드 — 미선언 시 AUTHORED(기존 저작 팩 기본값). */
+  getNarrativeMode(): import('../db/types/enums.js').NarrativeMode {
+    return this.scenarioMeta?.narrativeMode ?? 'AUTHORED';
+  }
+
+  /** [75 §3] 팩 모티프 풀 — Plot Seed 진상 생성 재료. 미선언 시 빈 배열. */
+  getMotifs(): import('../db/types/plot-seed.js').Motif[] {
+    return this.scenarioMeta?.motifs ?? [];
+  }
+
   // ── architecture/63: 시나리오 스코프 파생 API ──
 
   /**

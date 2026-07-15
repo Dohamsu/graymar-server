@@ -120,6 +120,12 @@ export const EDGE_CONDITION_TYPE = [
 ] as const;
 export type EdgeConditionType = (typeof EDGE_CONDITION_TYPE)[number];
 
+// --- 서사 모드 (architecture/75 자율 서사 팩) ---
+// AUTHORED: 기존 저작 팩(quest/events/facts 전부 손저작 — 기본값).
+// AUTONOMOUS: 세계관+코어 NPC+모티프만 저작, 진상·서브 NPC·사건은 런타임 생성.
+export const NARRATIVE_MODE = ['AUTHORED', 'AUTONOMOUS'] as const;
+export type NarrativeMode = (typeof NARRATIVE_MODE)[number];
+
 // --- Narrative Engine v1 Enums ---
 // 상세 타입 정의는 각 전문 타입 파일에 위치 (incident.ts, signal-feed.ts, etc.)
 // enums.ts는 re-export만 제공

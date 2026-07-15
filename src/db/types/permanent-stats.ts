@@ -92,6 +92,11 @@ export interface RunState {
    * 부분 패치 — 워커는 읽기 전용). 미선언 런은 undefined → 기존 동작 무변경.
    */
   dynamicNpcs?: import('../../content/scenario-context.js').DynamicNpcStub[];
+  /**
+   * [P3 — architecture/75 §3] Plot Seed(진상 정본). AUTONOMOUS 런 생성 시 1회
+   * 동결, 런 중 불변(진상 불변 규약). 미선언 런(AUTHORED)은 undefined.
+   */
+  plotSeed?: import('./plot-seed.js').PlotSeed;
   // Phase 2: NPC/관계/행동 상태
   npcStates?: Record<string, import('./npc-state.js').NPCState>;
   relationships?: Record<string, import('./npc-state.js').Relationship>;
