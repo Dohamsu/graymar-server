@@ -317,6 +317,7 @@ import { NotificationAssemblerService } from '../engine/hub/notification-assembl
 import { SignalFeedService } from '../engine/hub/signal-feed.service.js';
 // Narrative Engine v1
 import { WorldTickService } from '../engine/hub/world-tick.service.js';
+import { tickPackMeters } from '../engine/hub/pack-meter.js';
 import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
 import { NpcEmotionalService } from '../engine/hub/npc-emotional.service.js';
 import { NarrativeMarkService } from '../engine/hub/narrative-mark.service.js';
@@ -2491,6 +2492,28 @@ export class TurnsService {
       1,
     );
     ws = wsAfterTick;
+
+    // === [P2 — 73 B1] 팩 세계축 게이지 틱 (Heat와 병존, 미선언 팩은 no-op) ===
+    const packMeterDefs = this.content.getScenarioMeta()?.meters;
+    if (packMeterDefs && packMeterDefs.length > 0) {
+      const { next: meterNext, crossed } = tickPackMeters(
+        ws.packMeters,
+        packMeterDefs,
+        1,
+      );
+      ws.packMeters = meterNext;
+      for (const c of crossed) {
+        if (c.threshold.signal) {
+          ws.signalFeed.push({
+            id: `meter-${c.id}-${c.threshold.at}-${ws.globalClock}`,
+            channel: 'VISUAL',
+            severity: c.threshold.at >= 90 ? 5 : 3,
+            text: c.threshold.signal,
+            createdAtClock: ws.globalClock,
+          });
+        }
+      }
+    }
 
     // === Narrative Engine v1: Incident impact 적용 ===
     const relevantIncident = this.incidentMgmt.findRelevantIncident(

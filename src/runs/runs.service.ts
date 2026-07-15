@@ -23,6 +23,7 @@ import type { GetRunQuery } from './dto/get-run.dto.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { AgendaService } from '../engine/hub/agenda.service.js';
+import { initPackMeters } from '../engine/hub/pack-meter.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { SummaryBuilderService } from '../engine/hub/summary-builder.service.js';
@@ -323,6 +324,10 @@ export class RunsService {
     worldState.worldFacts = [];
     worldState.npcLocations = {};
     worldState.playerGoals = [];
+    // [P2 — 73 B1] 팩 세계축 게이지 초기화 (미선언 팩은 빈 객체)
+    worldState.packMeters = initPackMeters(
+      this.content.getScenarioMeta()?.meters,
+    );
 
     // Narrative Engine v1: NPC State 초기화
     const npcStates: Record<string, NPCState> = {};

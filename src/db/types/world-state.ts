@@ -57,6 +57,8 @@ export type WorldState = {
   hubHeat: number; // 0~100
   hubSafety: HubSafety;
   hubHeatReasons: string[];
+  /** [P2 — 73 B1] 팩 전용 세계 축 게이지 값 (meterId → 0~100). 미선언 팩은 부재 */
+  packMeters?: Record<string, number>;
   tension: number; // 0~10
   mainArc: MainArcProgress;
   reputation: Record<string, number>; // factionId → 평판 (±)

@@ -179,4 +179,6 @@ export interface ScenarioMeta {
   }>;
   /** 런 시작 시 NPC 초기 관계 수치 */
   initialNpcRelations?: Record<string, number>;
+  /** [P2 — 73 B1] 팩 전용 세계 축 게이지 (예: 꿈 오염). 미선언 시 기존 동작 무변경 */
+  meters?: import('./pack-meter.js').PackMeterDef[];
 }
