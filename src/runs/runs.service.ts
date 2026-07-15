@@ -23,7 +23,7 @@ import type { GetRunQuery } from './dto/get-run.dto.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { AgendaService } from '../engine/hub/agenda.service.js';
-import { initPackMeters } from '../engine/hub/pack-meter.js';
+import { initPackMeters, buildPackMetersUI } from '../engine/hub/pack-meter.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { SummaryBuilderService } from '../engine/hub/summary-builder.service.js';
@@ -806,6 +806,11 @@ export class RunsService {
               timePhase: worldState.timePhase,
               currentLocationId: null,
               reputation: worldState.reputation ?? {},
+              // P2 — 프롤로그 첫 화면부터 팩 미터 게이지 노출 (첫 턴 전에도)
+              packMeters: buildPackMetersUI(
+                worldState.packMeters,
+                this.content.getScenarioMeta()?.meters,
+              ),
             },
           },
           choices: [
