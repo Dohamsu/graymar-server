@@ -116,6 +116,8 @@ export type PlotProgress = {
   adoptedBeatCount?: number;
   /** 폐기된 비트 수 (〃) */
   discardedBeatCount?: number;
+  /** [P4 채택 개선 §15.4] 마지막 비트 채택 턴 — C 강제창(BEAT_FORCE_AFTER_TURNS) 기준 */
+  lastAdoptedBeatTurn?: number;
 };
 
 /**

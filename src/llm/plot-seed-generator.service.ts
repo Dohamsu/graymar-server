@@ -70,7 +70,10 @@ export class PlotSeedGeneratorService {
       return buildFallbackPlotSeed(inputs);
     }
 
-    const lightConfig = this.configService.getLightModelConfig();
+    // Plot Seed는 런당 1회 생성 + 레이턴시 허용(§3) → 메인 모델·큰 토큰·긴
+    // 타임아웃. nano(light)는 진상 JSON(truth+casting+keyFacts 8+...)을 완결 못해
+    // 잘림→폴백으로 떨어진다(G2 계측 실측). §13 프로토타입도 메인 모델 기준.
+    const mainConfig = this.configService.get();
     const userMsg = this.buildUserMessage(inputs);
 
     for (let attempt = 0; attempt < MAX_REROLL; attempt++) {
@@ -81,16 +84,27 @@ export class PlotSeedGeneratorService {
               { role: 'system', content: SYSTEM_PROMPT },
               { role: 'user', content: userMsg },
             ],
-            maxTokens: 1000,
+            maxTokens: 2500,
             temperature: 0.8,
-            model: lightConfig.model,
-            timeoutMs: lightConfig.timeoutMs,
+            model: mainConfig.openaiModel,
+            timeoutMs: Math.max(mainConfig.timeoutMs, 30000),
           },
           'plot-seed',
         );
-        if (!result.success || !result.response?.text) continue;
+        if (!result.success || !result.response?.text) {
+          this.logger.warn(
+            `[PlotSeed] LLM 응답 없음 재롤 (attempt=${attempt}): success=${result.success}`,
+          );
+          continue;
+        }
         const seed = this.parseSeed(result.response.text);
-        if (!seed) continue;
+        if (!seed) {
+          const t = result.response.text;
+          this.logger.warn(
+            `[PlotSeed] 파싱 실패 재롤 (attempt=${attempt}) len=${t.length} 끝80="${t.slice(-80)}"`,
+          );
+          continue;
+        }
         const check = validatePlotSeedCore(seed, valCtx);
         if (check.valid) {
           this.logger.log(
@@ -98,8 +112,8 @@ export class PlotSeedGeneratorService {
           );
           return seed;
         }
-        this.logger.debug(
-          `[PlotSeed] 검증 실패 재롤 (attempt=${attempt}): ${check.violations.slice(0, 3).join('; ')}`,
+        this.logger.warn(
+          `[PlotSeed] 검증 실패 재롤 (attempt=${attempt}): ${check.violations.slice(0, 5).join('; ')}`,
         );
       } catch (err) {
         this.logger.warn(

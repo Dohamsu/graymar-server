@@ -285,6 +285,58 @@ describe('determineTurnMode', () => {
     ).toBe(TurnMode.PLAYER_DIRECTED);
   });
 
+  // ── 1.5) P4 채택 개선(§15.4): 대화 스티키니스 해소 ──
+  it('A: 탐색 행동(INVESTIGATE)은 대화 연속 중이어도 beat 우선 → WORLD_EVENT', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'INVESTIGATE',
+          lastPrimaryNpcId: 'NPC_A',
+          beatAvailable: true,
+        }),
+      ),
+    ).toBe(TurnMode.WORLD_EVENT);
+  });
+
+  it('C: 강제창(beatForceWindow)이면 순수 대화(TALK) 중이어도 beat 우선 → WORLD_EVENT', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TALK',
+          lastPrimaryNpcId: 'NPC_A',
+          beatAvailable: true,
+          beatForceWindow: true,
+        }),
+      ),
+    ).toBe(TurnMode.WORLD_EVENT);
+  });
+
+  it('강제창 아니고 순수 대화(TALK)면 대화 연속 유지 → CONVERSATION_CONT (스티키니스 보존)', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TALK',
+          lastPrimaryNpcId: 'NPC_A',
+          beatAvailable: true,
+          beatForceWindow: false,
+        }),
+      ),
+    ).toBe(TurnMode.CONVERSATION_CONT);
+  });
+
+  it('NPC 명시 지목은 강제창보다도 우선 → PLAYER_DIRECTED (명시 의도 보존)', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          earlyTargetNpcId: 'NPC_A',
+          actionType: 'TALK',
+          beatAvailable: true,
+          beatForceWindow: true,
+        }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
   // ── 2b) 맥락 NPC: contextNpcId + SOCIAL_ACTION ──
   it('TALK + contextNpcId (lastNpc 없음) → CONVERSATION_CONT', () => {
     expect(

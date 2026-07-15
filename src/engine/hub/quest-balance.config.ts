@@ -78,6 +78,13 @@ export const AUTONOMOUS_BALANCE = {
 
   /** 채택 최소 정합 점수 — 미달 시 후보 폐기 후 기존 폴백 체인 (§15.2) */
   BEAT_ADOPT_MIN_SCORE: 30,
+
+  /**
+   * [P4 채택 개선 — §15.4] 마지막 비트 채택 후 이 턴 수 이상 지나면 대화 연속
+   * 중이어도 beat를 우선(WORLD_EVENT 승격). 대화 스티키니스로 채택 0 실측(G2)의
+   * 정체 방지 — "너무 오래 사건이 없으면 하나 넣는다".
+   */
+  BEAT_FORCE_AFTER_TURNS: 4,
 } as const;
 
 /**

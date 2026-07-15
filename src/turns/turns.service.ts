@@ -36,6 +36,12 @@ export interface TurnModeContext {
    * NPC 지목·대화 연속(우선순위 1·2)이 항상 먼저다 — Player-First 보존.
    */
   beatAvailable?: boolean;
+  /**
+   * [P4 채택 개선 — §15.4] beat 강제 창(C): 마지막 채택 후 BEAT_FORCE_AFTER_TURNS
+   * 이상 경과. true면 대화 연속 중이어도 beat 우선(WORLD_EVENT). 대화 스티키니스로
+   * 채택 0이 되는 정체를 막는다. 탐색 행동(A)은 별도로 항상 우선.
+   */
+  beatForceWindow?: boolean;
 }
 
 // [A2' 후속] 세계를 탐색하는 비대화 행동 — 이 행동은 장소 저작 이벤트를 우선 탄다.
@@ -59,6 +65,18 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
       return TurnMode.WORLD_EVENT;
     }
     return TurnMode.PLAYER_DIRECTED;
+  }
+
+  // 1.5) [P4 채택 개선 — arch/75 §15.4] beat 우선 창 — 대화 연속(2)보다 먼저.
+  // G2 실측: 대화 스티키니스로 채택 0(조사·관찰도 SOCIAL이라 대화 연속으로 빠짐).
+  //   A(탐색 행동): 세계와 상호작용하는 행동엔 사건이 낄 자리를 준다.
+  //   C(강제 창): 마지막 채택 후 N턴 이상 정체 시 대화 중이어도 하나 넣는다.
+  // NPC 명시 지목(1)만 이보다 우선 — Player-First의 명시 의도는 보존.
+  if (
+    ctx.beatAvailable &&
+    (EXPLORE_ACTIONS.has(ctx.actionType) || ctx.beatForceWindow)
+  ) {
+    return TurnMode.WORLD_EVENT;
   }
 
   // 2) 대화 연속 (SOCIAL_ACTION + 이전 대화 NPC 존재)
@@ -1576,6 +1594,12 @@ export class TurnsService {
         beatAge <= AUTONOMOUS_BALANCE.BEAT_STALE_MAX_TURNS &&
         isPlotDirectorEnabled() &&
         this.content.getNarrativeMode() === 'AUTONOMOUS';
+      // [P4 채택 개선 §15.4] C 강제창 — 마지막 채택 후 N턴 이상 정체
+      const lastAdoptedBeatTurn =
+        runState.plotProgress?.lastAdoptedBeatTurn ?? 0;
+      const beatForceWindow =
+        beatAvailable &&
+        turnNo - lastAdoptedBeatTurn >= AUTONOMOUS_BALANCE.BEAT_FORCE_AFTER_TURNS;
 
       // ── Player-First 턴 모드 결정 ──
       const turnMode = this.determineTurnMode({
@@ -1589,9 +1613,10 @@ export class TurnsService {
         questFactTrigger,
         exploreEventAvailable,
         beatAvailable,
+        beatForceWindow,
       });
       this.logger.log(
-        `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'})`,
+        `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'}, beatAvail=${beatAvailable}, beatForce=${beatForceWindow}, beatAge=${beatAge}, cands=${nextBeats?.candidates.length ?? 0})`,
       );
 
       // ── 모드별 이벤트 매칭 ──
@@ -1729,6 +1754,7 @@ export class TurnsService {
               // 소비(턴 동기 경로는 채택 시 소비만 — §15.2) + 적중률 계측
               updatedRunState.nextBeatCandidates = null;
               pp.adoptedBeatCount = (pp.adoptedBeatCount ?? 0) + 1;
+              pp.lastAdoptedBeatTurn = turnNo; // C 강제창 리셋
               updatedRunState.plotProgress = pp;
               this.logger.log(
                 `[PlotBeat] 채택 ${beat.beatId} score=${adoption.score} npc=${beatPrimaryNpcId ?? '-'} fact=${beat.hintedFactId ?? '-'}`,
