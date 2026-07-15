@@ -56,7 +56,7 @@ export function getActProgress(
     }
   }
   // 예산 총합 초과 — 마지막 막에 머무름 (종결은 P5 파이프 몫)
-  const last = list[list.length - 1]!;
+  const last = list[list.length - 1];
   return {
     currentAct: last.no,
     goal: last.goal,

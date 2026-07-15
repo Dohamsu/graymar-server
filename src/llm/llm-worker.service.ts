@@ -39,6 +39,8 @@ import {
 } from './nano-director.service.js';
 import { FactExtractorService } from './fact-extractor.service.js';
 import { NanoEventDirectorService } from './nano-event-director.service.js';
+import { PlotDirectorService } from './plot-director.service.js';
+import { isPlotDirectorEnabled } from '../engine/hub/quest-balance.config.js';
 import {
   NpcReactionDirectorService,
   type NpcReactionResult,
@@ -479,6 +481,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly dialogueGenerator: DialogueGeneratorService,
     private readonly themeClassifier: ThemeClassifierService,
     @Optional() private readonly nanoEventDirector: NanoEventDirectorService,
+    @Optional() private readonly plotDirector: PlotDirectorService,
     @Optional() private readonly streamBroker: LlmStreamBrokerService,
     @Optional()
     private readonly npcReactionDirector?: NpcReactionDirectorService,
@@ -670,10 +673,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       await this.content.ensureScenario(workerScenarioId);
       this.content.enterScenario(workerScenarioId);
       // [P1 — 75] 동적 NPC 컨텍스트 적재 (워커 서술 경로도 getNpc 폴백, 읽기 전용)
-      const workerRunState = runSession?.runState as
-        | import('../db/types/permanent-stats.js').RunState
-        | null
-        | undefined;
+      const workerRunState = runSession?.runState;
       this.content.applyDynamicNpcs(workerRunState?.dynamicNpcs);
 
       // 1.1. LLM 컨텍스트 구축
@@ -1167,13 +1167,16 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(
           `[ShortResponse] turn=${pending.turnNo} model=${callResult.response.model} tokens=${callResult.response.completionTokens} → 메인 모델로 재시도`,
         );
-        const retryResult = await this.llmCaller.call({
-          messages,
-          maxTokens: config.maxTokens,
-          temperature: config.temperature,
-          reasoningEffort,
-          ...(useJsonMode ? { responseFormat: 'json_object' as const } : {}),
-        }, 'narrative-retry');
+        const retryResult = await this.llmCaller.call(
+          {
+            messages,
+            maxTokens: config.maxTokens,
+            temperature: config.temperature,
+            reasoningEffort,
+            ...(useJsonMode ? { responseFormat: 'json_object' as const } : {}),
+          },
+          'narrative-retry',
+        );
         if (
           retryResult.success &&
           retryResult.response &&
@@ -2085,11 +2088,12 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                   )
                   .join('\n\n');
 
-                const nanoResult = await this.llmCaller.call({
-                  messages: [
-                    {
-                      role: 'system',
-                      content: `아래 서술의 각 대사에 대해 발화자를 판단하라.
+                const nanoResult = await this.llmCaller.call(
+                  {
+                    messages: [
+                      {
+                        role: 'system',
+                        content: `아래 서술의 각 대사에 대해 발화자를 판단하라.
 
 판단 규칙 (우선순위):
 1. 대사 직전 문맥에 NPC 호칭/이름이 있으면 → 해당 NPC_ID
@@ -2106,16 +2110,18 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
 
 NPC 목록:
 ${npcList}`,
-                    },
-                    {
-                      role: 'user',
-                      content: dialoguePrompt,
-                    },
-                  ],
-                  maxTokens: Math.max(dialogueEntries.length * 30, 80),
-                  temperature: 0,
-                  model: lightConfig.model,
-                }, 'marker-speaker');
+                      },
+                      {
+                        role: 'user',
+                        content: dialoguePrompt,
+                      },
+                    ],
+                    maxTokens: Math.max(dialogueEntries.length * 30, 80),
+                    temperature: 0,
+                    model: lightConfig.model,
+                  },
+                  'marker-speaker',
+                );
 
                 if (nanoResult.success && nanoResult.response?.text) {
                   const lines = nanoResult.response.text.trim().split('\n');
@@ -2206,11 +2212,12 @@ ${npcList}`,
                         })
                         .join('\n\n');
 
-                      const verifyResult = await this.llmCaller.call({
-                        messages: [
-                          {
-                            role: 'system',
-                            content: `아래 서술에서 발화자가 불명확한 대사들의 발화자를 판단하라.
+                      const verifyResult = await this.llmCaller.call(
+                        {
+                          messages: [
+                            {
+                              role: 'system',
+                              content: `아래 서술에서 발화자가 불명확한 대사들의 발화자를 판단하라.
 전체 서술 문맥과 NPC 목록을 참고하여 가장 적합한 NPC를 선택하라.
 
 판단 규칙:
@@ -2222,16 +2229,21 @@ ${npcList}`,
 
 NPC 목록:
 ${npcList}`,
-                          },
-                          {
-                            role: 'user',
-                            content: `전체 서술:\n${narrative.slice(0, 1500)}\n\n미할당 대사:\n${unassignedPrompt}`,
-                          },
-                        ],
-                        maxTokens: Math.max(unassignedIndices.length * 30, 60),
-                        temperature: 0,
-                        model: subModel,
-                      }, 'marker-verify');
+                            },
+                            {
+                              role: 'user',
+                              content: `전체 서술:\n${narrative.slice(0, 1500)}\n\n미할당 대사:\n${unassignedPrompt}`,
+                            },
+                          ],
+                          maxTokens: Math.max(
+                            unassignedIndices.length * 30,
+                            60,
+                          ),
+                          temperature: 0,
+                          model: subModel,
+                        },
+                        'marker-verify',
+                      );
 
                       if (verifyResult.success && verifyResult.response?.text) {
                         let subResolved = 0;
@@ -3961,6 +3973,17 @@ ${npcList}`,
         });
       }
 
+      // 4-e. [P4 — arch/75 §5.1] Emergent Director 비트 선계산 (AUTONOMOUS 전용).
+      // fire-and-forget: DONE 이후라 클라 체감 레이턴시 0. 실패해도 다음 턴은
+      // 후보 없이 폴백 체인으로 진행(불변식 C). 저장은 applyRunStatePatch(fresh CAS).
+      if (pending.nodeType === 'LOCATION' && workerRunState?.plotSeed) {
+        void this.precomputeNextBeats(
+          pending.runId,
+          pending.turnNo,
+          workerRunState,
+        );
+      }
+
       const prompt = callResult.response?.promptTokens ?? 0;
       const cached = callResult.response?.cachedTokens ?? 0;
       const completion = callResult.response?.completionTokens ?? 0;
@@ -4484,6 +4507,82 @@ ${npcList}`,
     }
 
     return result;
+  }
+
+  /**
+   * [P4 — arch/75 §5.1] 다음 비트 후보 선계산 → runState.nextBeatCandidates 저장.
+   * AUTONOMOUS 팩 + 킬스위치 on + plotSeed 존재 시에만 동작. nextBeatCandidates는
+   * 워커 소유 필드 — applyRunStatePatch(fresh CAS)로만 쓴다(턴 동기 경로는 채택
+   * 시 소비만). 실패는 non-fatal: 다음 턴은 후보 없이 폴백 체인 진행(불변식 C).
+   */
+  private async precomputeNextBeats(
+    runId: string,
+    turnNo: number,
+    rs: import('../db/types/permanent-stats.js').RunState,
+  ): Promise<void> {
+    try {
+      if (!this.plotDirector || !isPlotDirectorEnabled()) return;
+      if (this.content.getNarrativeMode() !== 'AUTONOMOUS') return;
+      const seed = rs.plotSeed;
+      if (!seed) return;
+      const ws = rs.worldState as unknown as
+        | Record<string, unknown>
+        | undefined;
+      const locationId = (ws?.currentLocationId as string) ?? '';
+      if (!locationId) return; // HUB 등 장소 밖 — 비트는 LOCATION 기준 생성
+
+      const history = rs.actionHistory ?? [];
+      const recentNpcIds = [
+        ...new Set(
+          history
+            .slice(-6)
+            .map((h) => h.primaryNpcId)
+            .filter((v): v is string => !!v),
+        ),
+      ].slice(-5);
+      const recentNpcs = recentNpcIds.map((id) => {
+        const def = this.content.getNpc(id);
+        return { npcId: id, name: def?.name ?? def?.unknownAlias ?? id };
+      });
+      const knownNpcIds = new Set(
+        this.content.getAllNpcs().map((n) => n.npcId),
+      );
+      const recentPlayerActions = history
+        .slice(-3)
+        .map((h) => `${h.actionType}: ${h.inputText}`.slice(0, 80));
+      const meters = ws?.packMeters as Record<string, number> | undefined;
+      const meterSummary =
+        meters && Object.keys(meters).length > 0
+          ? Object.entries(meters)
+              .map(([k, v]) => `${k} ${v}/100`)
+              .join(', ')
+          : undefined;
+
+      const beats = await this.plotDirector.generateBeats({
+        plotSeed: seed,
+        plotProgress: rs.plotProgress,
+        turnNo,
+        locationId,
+        locationName: this.content.getLocation(locationId)?.name,
+        knownNpcIds,
+        recentNpcs,
+        recentPlayerActions,
+        meterSummary,
+      });
+      if (!beats || beats.length === 0) return;
+
+      await this.applyRunStatePatch(runId, 'nextBeats', (fresh) => {
+        fresh.nextBeatCandidates = {
+          generatedAtTurn: turnNo,
+          candidates: beats,
+        };
+        return true;
+      });
+    } catch (err) {
+      this.logger.warn(
+        `[PlotDirector] 선계산 실패 (non-fatal): ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   /**

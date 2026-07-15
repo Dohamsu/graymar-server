@@ -119,8 +119,7 @@ export function parseBeatCandidates(
       : [];
     const proposedNpc = sanitizeProposedNpc(raw.proposedNpc);
     const involvedNpcIds = rawNpcIds.filter(
-      (id) =>
-        ctx.knownNpcIds.has(id) || (id === 'NPC_DYN_NEW' && proposedNpc),
+      (id) => ctx.knownNpcIds.has(id) || (id === 'NPC_DYN_NEW' && proposedNpc),
     );
     if (involvedNpcIds.length === 0) continue;
 

@@ -14,8 +14,7 @@ const ctx = (over?: Partial<BeatParseContext>): BeatParseContext => ({
   ...over,
 });
 
-const wrap = (candidates: unknown[]): string =>
-  JSON.stringify({ candidates });
+const wrap = (candidates: unknown[]): string => JSON.stringify({ candidates });
 
 describe('parseBeatCandidates', () => {
   it('유효 후보를 beatId·locationId 부여해 통과시킨다', () => {
@@ -49,7 +48,7 @@ describe('parseBeatCandidates', () => {
       ctx(),
     );
     expect(beats).toHaveLength(1);
-    expect(beats![0]!.involvedNpcIds).toEqual(['NPC_A']);
+    expect(beats![0].involvedNpcIds).toEqual(['NPC_A']);
   });
 
   it('NPC_DYN_NEW는 proposedNpc가 있어야 통과한다', () => {
@@ -70,7 +69,7 @@ describe('parseBeatCandidates', () => {
       ctx(),
     );
     expect(withNpc).toHaveLength(1);
-    expect(withNpc![0]!.proposedNpc?.name).toBe('일사');
+    expect(withNpc![0].proposedNpc?.name).toBe('일사');
   });
 
   it('발견됐거나 미지의 hintedFactId는 힌트만 제거된다 (후보는 유지)', () => {
@@ -81,7 +80,7 @@ describe('parseBeatCandidates', () => {
       ctx(),
     );
     expect(beats).toHaveLength(1);
-    expect(beats![0]!.hintedFactId).toBeUndefined();
+    expect(beats![0].hintedFactId).toBeUndefined();
   });
 
   it('후보 수는 BEAT_CANDIDATE_COUNT로 클램프, premise 없는 후보 제외', () => {
