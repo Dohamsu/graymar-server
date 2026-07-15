@@ -36,6 +36,10 @@ import type {
 import type { PlannedNodeV2 } from '../db/types/graph-types.js';
 import {
   currentScenarioIdFromContext,
+  currentDynamicNpcs,
+  enterDynamicNpcs,
+  spikeDynamicNpcs,
+  type DynamicNpcStub,
   enterScenarioContext,
 } from './scenario-context.js';
 
@@ -613,11 +617,65 @@ export class ContentLoaderService implements OnModuleInit {
   // --- NPC 메서드 ---
 
   getNpc(id: string): NpcDefinition | undefined {
-    return this.npcs.get(id);
+    const found = this.npcs.get(id);
+    if (found) return found;
+    // [P0 스파이크 — 75] 콘텐츠 팩 miss 시 동적 NPC 레지스트리 폴백
+    const stub = currentDynamicNpcs().find((s) => s.npcId === id);
+    return stub ? this.expandDynamicStub(stub) : undefined;
+  }
+
+  /**
+   * [P0 스파이크 — 75 §4.1] 동적 NPC stub(T1)을 완전한 NpcDefinition으로 확장.
+   * T2 필드는 안전 기본값, T3(combatProfile/linkedIncidents)은 undefined.
+   * signature는 불변식 41(정적 시그니처 노출 금지)에 따라 빈 배열.
+   */
+  private expandDynamicStub(stub: DynamicNpcStub): NpcDefinition {
+    return {
+      npcId: stub.npcId,
+      name: stub.name,
+      unknownAlias: stub.unknownAlias,
+      shortAlias: stub.shortAlias,
+      role: stub.role ?? '',
+      faction: null,
+      hostile: false,
+      combatProfile: undefined,
+      title: null,
+      aliases:
+        stub.aliases ??
+        [stub.name, stub.shortAlias].filter((v): v is string => !!v),
+      nameStyle: 'soft',
+      gender: stub.gender,
+      basePosture: stub.basePosture ?? 'CAUTIOUS',
+      initialTrust: 0,
+      tier: stub.tier ?? 'SUB',
+      personality: {
+        core: stub.oneLinePersonality ?? '',
+        traits: [],
+        speechStyle: stub.oneLinePersonality ?? '',
+        speechRegister: stub.speechRegister ?? 'HAOCHE',
+        innerConflict: '',
+        softSpot: '',
+        signature: [],
+      },
+    };
+  }
+
+  /**
+   * [P0 스파이크 — 75 §4.2] 진입점(turns/worker)에서 런의 동적 NPC를 현재
+   * 비동기 컨텍스트에 적재. runState.dynamicNpcs(P1 정식) + spike env 훅 병합.
+   * enterScenario 직후 호출 규약.
+   */
+  applyDynamicNpcs(list: DynamicNpcStub[] = []): void {
+    enterDynamicNpcs([...list, ...spikeDynamicNpcs()]);
   }
 
   getAllNpcs(): NpcDefinition[] {
-    return [...this.npcs.values()];
+    const base = [...this.npcs.values()];
+    // [P0 스파이크 — 75] 동적 NPC를 합집합으로 노출
+    const dyn = currentDynamicNpcs();
+    return dyn.length
+      ? [...base, ...dyn.map((s) => this.expandDynamicStub(s))]
+      : base;
   }
 
   // --- HUB 콘텐츠 메서드 ---
