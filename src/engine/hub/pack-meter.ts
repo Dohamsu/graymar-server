@@ -10,6 +10,29 @@ import type {
 
 const clamp = (v: number): number => Math.max(0, Math.min(100, v));
 
+export interface PackMeterUIItem {
+  id: string;
+  name: string;
+  value: number;
+  max: number;
+  warnAt?: number;
+}
+
+/** [P2] 클라 HUD용 미터 배열 조립 (값 + 표시명 + 경고 임계). 미선언 시 빈 배열. */
+export function buildPackMetersUI(
+  current: Record<string, number> | undefined,
+  defs: PackMeterDef[] | undefined,
+): PackMeterUIItem[] {
+  if (!defs || defs.length === 0) return [];
+  return defs.map((d) => ({
+    id: d.id,
+    name: d.name,
+    value: current?.[d.id] ?? clamp(d.initial ?? 0),
+    max: 100,
+    warnAt: d.thresholds && d.thresholds.length > 0 ? d.thresholds[0].at : undefined,
+  }));
+}
+
 /** 팩 미터 초기값 맵 생성 (createRun). 미선언 시 빈 객체. */
 export function initPackMeters(
   defs?: PackMeterDef[],

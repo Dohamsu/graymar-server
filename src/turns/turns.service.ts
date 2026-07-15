@@ -317,7 +317,7 @@ import { NotificationAssemblerService } from '../engine/hub/notification-assembl
 import { SignalFeedService } from '../engine/hub/signal-feed.service.js';
 // Narrative Engine v1
 import { WorldTickService } from '../engine/hub/world-tick.service.js';
-import { tickPackMeters } from '../engine/hub/pack-meter.js';
+import { tickPackMeters, buildPackMetersUI } from '../engine/hub/pack-meter.js';
 import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
 import { NpcEmotionalService } from '../engine/hub/npc-emotional.service.js';
 import { NarrativeMarkService } from '../engine/hub/narrative-mark.service.js';
@@ -906,6 +906,10 @@ export class TurnsService {
             locationDynamicStates: ws.locationDynamicStates ?? {},
             playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
             reputation: ws.reputation ?? {},
+            packMeters: buildPackMetersUI(
+              ws.packMeters,
+              this.content.getScenarioMeta()?.meters,
+            ),
           },
         },
         choices: hubChoices,
@@ -5994,6 +5998,10 @@ export class TurnsService {
           locationDynamicStates: ws.locationDynamicStates ?? {},
           playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
           reputation: ws.reputation ?? {},
+          packMeters: buildPackMetersUI(
+            ws.packMeters,
+            this.content.getScenarioMeta()?.meters,
+          ),
         },
       },
       choices,
@@ -6805,6 +6813,10 @@ export class TurnsService {
           locationDynamicStates: ws.locationDynamicStates ?? {},
           playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
           reputation: ws.reputation ?? {},
+          packMeters: buildPackMetersUI(
+            ws.packMeters,
+            this.content.getScenarioMeta()?.meters,
+          ),
         },
         // 비도전 행위는 주사위 UI를 표시하지 않음
         ...(hideResolve ? {} : { resolveOutcome: outcome as any }),

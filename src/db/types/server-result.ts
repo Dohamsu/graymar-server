@@ -99,11 +99,22 @@ export type ActionSlots = {
   max: 3;
 };
 
+export type PackMeterUI = {
+  id: string;
+  name: string;
+  value: number;
+  max: number;
+  /** 경고색 임계 (첫 threshold.at) */
+  warnAt?: number;
+};
+
 export type WorldStateUI = {
   hubHeat: number;
   hubSafety: string;
   timePhase: string;
   currentLocationId: string | null;
+  /** [P2 — 73 B1] 팩 세계축 게이지 (미선언 팩은 빈 배열) */
+  packMeters?: PackMeterUI[];
   locationDynamicStates?: Record<string, unknown>;
   playerGoals?: Array<{
     id: string;
