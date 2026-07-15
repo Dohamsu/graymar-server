@@ -67,6 +67,9 @@ export const AUTONOMOUS_BALANCE = {
   /** 인력: 관련 NPC가 플레이어 타겟/직전 상호작용 NPC와 일치 가중 */
   GRAVITY_NPC_BONUS: 25,
 
+  /** 인력: 비트 affordances에 플레이어 행동 계열 포함 가중 */
+  GRAVITY_AFFORDANCE_BONUS: 20,
+
   /** 인력: 미발견 keyFact 힌트 비트 가중 (규명 유도 — §5.1) */
   GRAVITY_FACT_BONUS: 20,
 
