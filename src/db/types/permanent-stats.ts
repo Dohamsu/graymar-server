@@ -86,6 +86,12 @@ export interface RunState {
   actionHistory?: ActionHistoryEntry[]; // 고집(insistence) 시스템용 행동 이력
   /** 순회 검증 ② (2026-07-12): 플레이어가 밝힌 자기 정보 (최근 5건) — NPC 모순 질문 방지용 프롬프트 주입 */
   playerDisclosures?: Array<{ text: string; turnNo: number }>;
+  /**
+   * [P1 — architecture/75] 런타임 생성 동적 NPC 레지스트리(AUTONOMOUS 모드).
+   * ContentLoader.getNpc() 폴백 소스. 등록은 턴 동기 경로에서만(arch/60 fresh
+   * 부분 패치 — 워커는 읽기 전용). 미선언 런은 undefined → 기존 동작 무변경.
+   */
+  dynamicNpcs?: import('../../content/scenario-context.js').DynamicNpcStub[];
   // Phase 2: NPC/관계/행동 상태
   npcStates?: Record<string, import('./npc-state.js').NPCState>;
   relationships?: Record<string, import('./npc-state.js').Relationship>;

@@ -669,8 +669,12 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       )?.scenarioId;
       await this.content.ensureScenario(workerScenarioId);
       this.content.enterScenario(workerScenarioId);
-      // [P0 스파이크 — 75] 동적 NPC 컨텍스트 적재 (워커 서술 경로도 getNpc 폴백)
-      this.content.applyDynamicNpcs();
+      // [P1 — 75] 동적 NPC 컨텍스트 적재 (워커 서술 경로도 getNpc 폴백, 읽기 전용)
+      const workerRunState = runSession?.runState as
+        | import('../db/types/permanent-stats.js').RunState
+        | null
+        | undefined;
+      this.content.applyDynamicNpcs(workerRunState?.dynamicNpcs);
 
       // 1.1. LLM 컨텍스트 구축
       // Player-First: serverResult.ui.actionContext.targetNpcId 를 컨텍스트에 전달 (bug 4624)

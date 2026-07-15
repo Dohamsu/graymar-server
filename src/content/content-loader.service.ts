@@ -38,7 +38,6 @@ import {
   currentScenarioIdFromContext,
   currentDynamicNpcs,
   enterDynamicNpcs,
-  spikeDynamicNpcs,
   type DynamicNpcStub,
   enterScenarioContext,
 } from './scenario-context.js';
@@ -666,7 +665,7 @@ export class ContentLoaderService implements OnModuleInit {
    * enterScenario 직후 호출 규약.
    */
   applyDynamicNpcs(list: DynamicNpcStub[] = []): void {
-    enterDynamicNpcs([...list, ...spikeDynamicNpcs()]);
+    enterDynamicNpcs(list);
   }
 
   getAllNpcs(): NpcDefinition[] {

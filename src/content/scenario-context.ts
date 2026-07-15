@@ -72,27 +72,3 @@ export function enterDynamicNpcs(list: DynamicNpcStub[]): void {
 export function runWithDynamicNpcs<T>(list: DynamicNpcStub[], fn: () => T): T {
   return dynamicNpcStorage.run(list, fn);
 }
-
-/**
- * [P0 E2E 스파이크] env SPIKE_DYN_NPC=1 이면 테스트 동적 NPC 1명을 주입.
- * runState 배선(P1) 없이 라이브 파이프라인(해석→마커→어체)을 검증하기 위한
- * 임시 훅. 프로덕션 기본값 off. P1에서 runState.dynamicNpcs 정식 배선 시 제거.
- */
-export function spikeDynamicNpcs(): DynamicNpcStub[] {
-  if (process.env.SPIKE_DYN_NPC !== '1') return [];
-  return [
-    {
-      npcId: 'NPC_DYN_SPIKE_1',
-      name: '카렌 보그',
-      tier: 'SUB',
-      unknownAlias: '낯선 부두 여인',
-      shortAlias: '부두 여인',
-      aliases: ['카렌 보그', '부두 여인'],
-      gender: 'female',
-      basePosture: 'CAUTIOUS',
-      speechRegister: 'HAEYO',
-      role: '떠도는 정보상',
-      oneLinePersonality: '경계심 많고 소문에 밝은 부두의 떠돌이 정보상',
-    },
-  ];
-}
