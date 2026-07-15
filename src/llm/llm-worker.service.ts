@@ -1144,11 +1144,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           };
         } else {
           // 스트리밍 실패 → non-stream fallback
-          callResult = await this.llmCaller.call(llmRequest);
+          callResult = await this.llmCaller.call(llmRequest, 'narrative');
         }
       } else {
         // 기존 non-stream 호출 (COMBAT, StreamBroker 없음)
-        callResult = await this.llmCaller.call(llmRequest);
+        callResult = await this.llmCaller.call(llmRequest, 'narrative');
       }
 
       // 4.5. 응답 너무 짧으면 메인 모델로 재시도 (Flash Lite 긴 프롬프트 실패 방어)
@@ -1167,7 +1167,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           temperature: config.temperature,
           reasoningEffort,
           ...(useJsonMode ? { responseFormat: 'json_object' as const } : {}),
-        });
+        }, 'narrative-retry');
         if (
           retryResult.success &&
           retryResult.response &&
@@ -2109,7 +2109,7 @@ ${npcList}`,
                   maxTokens: Math.max(dialogueEntries.length * 30, 80),
                   temperature: 0,
                   model: lightConfig.model,
-                });
+                }, 'marker-speaker');
 
                 if (nanoResult.success && nanoResult.response?.text) {
                   const lines = nanoResult.response.text.trim().split('\n');
@@ -2225,7 +2225,7 @@ ${npcList}`,
                         maxTokens: Math.max(unassignedIndices.length * 30, 60),
                         temperature: 0,
                         model: subModel,
-                      });
+                      }, 'marker-verify');
 
                       if (verifyResult.success && verifyResult.response?.text) {
                         let subResolved = 0;

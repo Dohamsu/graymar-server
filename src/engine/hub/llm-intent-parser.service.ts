@@ -7,6 +7,7 @@ import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { IntentParserV2Service } from './intent-parser-v2.service.js';
 import { LlmProviderRegistryService } from '../../llm/providers/llm-provider-registry.service.js';
+import { recordLlmCall } from '../../llm/turn-context.js';
 import {
   INTENT_SYSTEM_PROMPT,
   buildIntentUserMessage,
@@ -209,6 +210,21 @@ export class LlmIntentParserService implements OnModuleInit {
       this.logger.warn('Intent LLM timed out');
       return null;
     }
+
+    // 유닛 이코노미 실측: intent 는 llmCaller 를 우회해 provider 직접 호출 →
+    // 여기서 수동 기록. 턴 제출(turns.service handleLocationTurn) 흐름에 ALS
+    // 스코프가 열려 있으면 누적되고, 없으면 recordLlmCall 내부에서 무시된다.
+    recordLlmCall({
+      stage: 'intent',
+      model: result.model,
+      promptTokens: result.promptTokens ?? 0,
+      completionTokens: result.completionTokens ?? 0,
+      cachedTokens: result.cachedTokens ?? 0,
+      costUsd: result.costUsd ?? 0,
+      latencyMs: result.latencyMs ?? 0,
+      provider: this.intentProvider,
+      attempts: 1,
+    });
 
     return this.parseJsonResponse(result.text);
   }

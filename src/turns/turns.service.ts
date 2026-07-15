@@ -297,6 +297,11 @@ import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { IntentParserV2Service } from '../engine/hub/intent-parser-v2.service.js';
 import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.js';
 import { LlmCallerService } from '../llm/llm-caller.service.js';
+import { LlmCallLogService } from '../llm/llm-call-log.service.js';
+import {
+  runInTurnContext,
+  currentTurnStore,
+} from '../llm/turn-context.js';
 import { ChallengeClassifierService } from '../llm/challenge-classifier.service.js';
 import { LlmWorkerService } from '../llm/llm-worker.service.js';
 import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
@@ -433,6 +438,8 @@ export class TurnsService {
     @Optional() private readonly questProgression?: QuestProgressionService,
     @Optional() private readonly nanoEventDirector?: NanoEventDirectorService,
     @Optional() private readonly llmCaller?: LlmCallerService,
+    // 유닛 이코노미 실측 — 제출 흐름(intent·news) LLM 호출 배치 flush
+    @Optional() private readonly llmCallLog?: LlmCallLogService,
     // architecture/48 Layer 2 — NPC 위치 lookup (Optional: 점진 적용)
     @Optional() private readonly npcWhereabouts?: NpcWhereaboutsService,
     // architecture/49 — NPC Resolution Authority (단일 권한자)
@@ -935,6 +942,36 @@ export class TurnsService {
 
   // --- LOCATION 턴 ---
   private async handleLocationTurn(
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    body: SubmitTurnBody,
+    runState: RunState,
+    playerStats: PermanentStats,
+  ) {
+    // 유닛 이코노미 실측: 제출 흐름의 LLM 호출(intent 파싱·news 확장)은 워커 ALS
+    // 밖이라 미포집됐다. 이 메서드를 턴 컨텍스트로 감싸 해당 호출을 누적 → 종료 시
+    // 배치 1행 flush (워커 행과 별개 행, (run,turn)로 합산 조회). 본문은 Inner.
+    return runInTurnContext(String(run?.id ?? ''), turnNo, async () => {
+      try {
+        return await this.handleLocationTurnInner(
+          run,
+          currentNode,
+          turnNo,
+          body,
+          runState,
+          playerStats,
+        );
+      } finally {
+        const store = currentTurnStore();
+        if (store && store.calls.length > 0 && run?.id && this.llmCallLog) {
+          void this.llmCallLog.flush(store.runId, store.turnNo, store.calls);
+        }
+      }
+    });
+  }
+
+  private async handleLocationTurnInner(
     run: any,
     currentNode: any,
     turnNo: number,

@@ -58,6 +58,7 @@ import { ContentModule } from '../content/content.module.js';
     ContextBuilderService,
     LlmConfigService,
     LlmCallerService,
+    LlmCallLogService,
     LlmProviderRegistryService,
     NanoEventDirectorService,
     FactExtractorService,
