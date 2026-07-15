@@ -24,7 +24,16 @@ export interface TurnModeContext {
   isFirstTurnAtLocation: boolean;
   incidentPressureHigh: boolean;
   questFactTrigger: boolean;
+  /**
+   * [A2' 후속 — 73 §11] 대화 상대 없는 탐색 행동 시, 현재 장소에 이 행동으로
+   * 매칭 가능한 저작 이벤트가 있는지. true면 PLAYER_DIRECTED 대신 WORLD_EVENT로
+   * 승격해 저작 이벤트 매칭 기회를 준다(미지정 시 false → 기존 동작).
+   */
+  exploreEventAvailable?: boolean;
 }
+
+// [A2' 후속] 세계를 탐색하는 비대화 행동 — 이 행동은 장소 저작 이벤트를 우선 탄다.
+const EXPLORE_ACTIONS = new Set(['INVESTIGATE', 'OBSERVE', 'SEARCH']);
 
 const SOCIAL_ACTIONS = new Set([
   'TALK',
@@ -69,6 +78,13 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
     ctx.incidentPressureHigh ||
     ctx.questFactTrigger
   ) {
+    return TurnMode.WORLD_EVENT;
+  }
+
+  // 3.5) [A2' 후속 — 73 §11] 대화 상대 없는 탐색 행동 + 장소에 매칭 가능한
+  // 저작 이벤트 존재 → WORLD_EVENT 승격. (2)에서 대화 연속이 먼저 걸러지므로
+  // 여기 도달 = 대화 상대 없는 자유 탐색. 저작 이벤트 매칭 빈도를 높인다.
+  if (EXPLORE_ACTIONS.has(ctx.actionType) && ctx.exploreEventAvailable) {
     return TurnMode.WORLD_EVENT;
   }
 
@@ -1509,6 +1525,19 @@ export class TurnsService {
       // lastPrimaryNpcId는 대화 잠금용(SOCIAL_ACTION 연속), contextNpcId는 모든 행동에서 유지
       const contextNpcId = (lastEntry?.primaryNpcId as string) ?? null;
 
+      // [A2' 후속 — 73 §11] 탐색 행동 시, 현재 장소에 이 행동으로 매칭 가능한
+      // 저작 이벤트가 있는지 사전 확인 (affordance 매칭 기준 — cooldown/condition은
+      // WORLD_EVENT 분기의 EventMatcher가 정밀 필터). true면 turnMode를 WORLD_EVENT로 승격.
+      const exploreEventAvailable =
+        EXPLORE_ACTIONS.has(intent.actionType) &&
+        this.content
+          .getEventsByLocation(locationId)
+          .some(
+            (e) =>
+              e.affordances.includes('ANY') ||
+              e.affordances.includes(intent.actionType as never),
+          );
+
       // ── Player-First 턴 모드 결정 ──
       const turnMode = this.determineTurnMode({
         earlyTargetNpcId,
@@ -1519,6 +1548,7 @@ export class TurnsService {
         isFirstTurnAtLocation,
         incidentPressureHigh,
         questFactTrigger,
+        exploreEventAvailable,
       });
       this.logger.log(
         `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'})`,

@@ -206,6 +206,52 @@ describe('determineTurnMode', () => {
     ).toBe(TurnMode.PLAYER_DIRECTED);
   });
 
+  // ── 3.5) A2' 후속: 탐색 행동 + 저작 이벤트 존재 → WORLD_EVENT 승격 ──
+  it('SEARCH + exploreEventAvailable → WORLD_EVENT (저작 이벤트 매칭)', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({ actionType: 'SEARCH', exploreEventAvailable: true }),
+      ),
+    ).toBe(TurnMode.WORLD_EVENT);
+  });
+
+  it('INVESTIGATE + exploreEventAvailable (대화 상대 없음) → WORLD_EVENT', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({ actionType: 'INVESTIGATE', exploreEventAvailable: true }),
+      ),
+    ).toBe(TurnMode.WORLD_EVENT);
+  });
+
+  it('OBSERVE + exploreEventAvailable=false → PLAYER_DIRECTED (매칭 이벤트 없음)', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({ actionType: 'OBSERVE', exploreEventAvailable: false }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
+  it('INVESTIGATE + lastPrimaryNpcId + exploreEventAvailable → CONVERSATION_CONT (대화 우선)', () => {
+    // 대화 상대가 있으면 (2)에서 먼저 걸러져 탐색 승격보다 대화 연속이 우선
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'INVESTIGATE',
+          lastPrimaryNpcId: 'NPC_A',
+          exploreEventAvailable: true,
+        }),
+      ),
+    ).toBe(TurnMode.CONVERSATION_CONT);
+  });
+
+  it('FIGHT + exploreEventAvailable → PLAYER_DIRECTED (탐색 행동 아님)', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({ actionType: 'FIGHT', exploreEventAvailable: true }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
   // ── 2b) 맥락 NPC: contextNpcId + SOCIAL_ACTION ──
   it('TALK + contextNpcId (lastNpc 없음) → CONVERSATION_CONT', () => {
     expect(
