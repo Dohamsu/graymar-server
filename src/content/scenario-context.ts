@@ -72,3 +72,31 @@ export function enterDynamicNpcs(list: DynamicNpcStub[]): void {
 export function runWithDynamicNpcs<T>(list: DynamicNpcStub[], fn: () => T): T {
   return dynamicNpcStorage.run(list, fn);
 }
+
+// ─────────────────────────────────────────────────────────────
+// [P4-5 — architecture/75 §5·§6] 동적 Fact 컨텍스트
+//
+// AUTONOMOUS 런의 plotSeed.keyFacts를 FactDefinition 형태로 현재 비동기 경로에
+// 전파해, ContentLoader.getFact()/getFactsByKeywords()가 facts.json miss 시
+// 폴백 조회하게 한다. 이로써 questReveal 서술 주입·주제 매칭(경로 2)이
+// 코드 무변경으로 keyFact에 동작한다 (getNpc 폴백과 대칭 — 단일 심 원칙).
+// ─────────────────────────────────────────────────────────────
+
+import type { FactDefinition } from './content.types.js';
+
+const dynamicFactStorage = new AsyncLocalStorage<FactDefinition[]>();
+
+/** 현재 비동기 경로의 동적 fact 목록 (없으면 빈 배열) */
+export function currentDynamicFacts(): FactDefinition[] {
+  return dynamicFactStorage.getStore() ?? [];
+}
+
+/** 현재 비동기 컨텍스트에 동적 fact 목록 설정 — 이후 await 연쇄에 전파 */
+export function enterDynamicFacts(list: FactDefinition[]): void {
+  dynamicFactStorage.enterWith(list);
+}
+
+/** 콜백을 동적 fact 컨텍스트에서 실행 (테스트/격리용) */
+export function runWithDynamicFacts<T>(list: FactDefinition[], fn: () => T): T {
+  return dynamicFactStorage.run(list, fn);
+}

@@ -675,6 +675,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       // [P1 — 75] 동적 NPC 컨텍스트 적재 (워커 서술 경로도 getNpc 폴백, 읽기 전용)
       const workerRunState = runSession?.runState;
       this.content.applyDynamicNpcs(workerRunState?.dynamicNpcs);
+      // [P4-5 — 75] AUTONOMOUS 런의 keyFacts를 fact 폴백 소스로 적재
+      // (questReveal 서술 주입이 getFact로 동적 fact를 해석)
+      this.content.applyDynamicFacts(workerRunState?.plotSeed?.keyFacts);
 
       // 1.1. LLM 컨텍스트 구축
       // Player-First: serverResult.ui.actionContext.targetNpcId 를 컨텍스트에 전달 (bug 4624)

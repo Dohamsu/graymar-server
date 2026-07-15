@@ -40,7 +40,10 @@ import {
   enterDynamicNpcs,
   type DynamicNpcStub,
   enterScenarioContext,
+  currentDynamicFacts,
+  enterDynamicFacts,
 } from './scenario-context.js';
+import { extractKoreanKeywords } from '../common/text-utils.js';
 
 // ── architecture/63 — scenario.json 필드 누락 시 안전 기본값 (graymar_v1 현행 값) ──
 // 엔진 서비스 파일에는 콘텐츠 리터럴을 두지 않는다. fallback은 이 파일 단일 지점.
@@ -668,6 +671,35 @@ export class ContentLoaderService implements OnModuleInit {
     enterDynamicNpcs(list);
   }
 
+  /**
+   * [P4-5 — 75 §5·§6] AUTONOMOUS 런의 plotSeed.keyFacts를 FactDefinition
+   * 형태로 비동기 컨텍스트에 적재. getFact/getFactsByKeywords가 facts.json
+   * miss 시 폴백 조회 — questReveal 서술 주입·주제 매칭이 코드 무변경으로
+   * keyFact에 동작한다 (getNpc 폴백과 대칭). enterScenario 직후 호출 규약.
+   */
+  applyDynamicFacts(
+    keyFacts: Array<{
+      factId: string;
+      summary: string;
+      holders: string[];
+      revealHint?: string;
+    }> = [],
+  ): void {
+    enterDynamicFacts(
+      keyFacts.map((kf) => ({
+        factId: kf.factId,
+        topic: kf.summary.slice(0, 24),
+        description: kf.summary,
+        keywords: [
+          ...extractKoreanKeywords(`${kf.summary} ${kf.revealHint ?? ''}`),
+        ],
+        knownBy: kf.holders,
+        versions: {},
+        nextHint: kf.revealHint,
+      })),
+    );
+  }
+
   getAllNpcs(): NpcDefinition[] {
     const base = [...this.npcs.values()];
     // [P0 스파이크 — 75] 동적 NPC를 합집합으로 노출
@@ -887,7 +919,11 @@ export class ContentLoaderService implements OnModuleInit {
 
   /** factId로 fact 조회 */
   getFact(factId: string): FactDefinition | undefined {
-    return this.factsData?.facts[factId];
+    return (
+      this.factsData?.facts[factId] ??
+      // [P4-5 — 75] 동적 fact 폴백 (plotSeed.keyFacts — applyDynamicFacts 적재)
+      currentDynamicFacts().find((f) => f.factId === factId)
+    );
   }
 
   /** 모든 fact 반환 */
@@ -912,12 +948,40 @@ export class ContentLoaderService implements OnModuleInit {
     inputKeywords: Iterable<string>,
     excludeFactIds: Set<string> = new Set(),
   ): FactDefinition[] {
-    if (!this.factsData) return [];
+    // Iterable은 1회 소비 — 저작 인덱스와 동적 스캔 양쪽에서 쓰도록 배열화
+    const kwArr = [...inputKeywords].filter(
+      (ik): ik is string => typeof ik === 'string' && ik.length >= 2,
+    );
+    const authored = this.factsData
+      ? this.matchAuthoredFactsByKeywords(kwArr, excludeFactIds)
+      : [];
+
+    // [P4-5 — 75] 동적 fact(plotSeed.keyFacts)는 풀이 작아(8~12) 직접 스캔.
+    // 저작 fact 우선 정렬 뒤에 붙인다 (동일 주제면 저작 상세가 더 풍부).
+    const dyn = currentDynamicFacts().filter(
+      (f) =>
+        !excludeFactIds.has(f.factId) &&
+        f.keywords.some((fk) => {
+          if (fk.length < 2) return false;
+          const fkLower = fk.toLowerCase();
+          return kwArr.some((ik) => {
+            const ikLower = ik.toLowerCase();
+            return ikLower === fkLower || ikLower.includes(fkLower);
+          });
+        }),
+    );
+    return dyn.length ? [...authored, ...dyn] : authored;
+  }
+
+  /** 저작 facts.json 키워드 인덱스 매칭 (기존 getFactsByKeywords 본체). */
+  private matchAuthoredFactsByKeywords(
+    kwArr: string[],
+    excludeFactIds: Set<string>,
+  ): FactDefinition[] {
     const GENERIC_KEYWORD_FACT_COUNT = 3; // 이 수 이상 fact가 공유하면 범용 키워드
     const scores = new Map<string, { hits: number; specificHits: number }>();
     const seenKwByFact = new Map<string, Set<string>>(); // distinct 키워드 집계
-    for (const ik of inputKeywords) {
-      if (typeof ik !== 'string' || ik.length < 2) continue;
+    for (const ik of kwArr) {
       const ikLower = ik.toLowerCase();
       // 정확 일치 + 부분 일치 (입력이 fact 키워드를 포함, 조사/어미 변형 대응)
       for (const [factKw, factIds] of this.factsByKeyword) {
@@ -954,10 +1018,14 @@ export class ContentLoaderService implements OnModuleInit {
 
   /** 특정 NPC가 아는 fact 목록 (KNOWN) */
   getFactsKnownBy(npcId: string): FactDefinition[] {
-    if (!this.factsData) return [];
-    return Object.values(this.factsData.facts).filter((f) =>
-      f.knownBy.includes(npcId),
-    );
+    const authored = this.factsData
+      ? Object.values(this.factsData.facts).filter((f) =>
+          f.knownBy.includes(npcId),
+        )
+      : [];
+    // [P4-5 — 75] 동적 fact 합류 (잠금 NPC fact-awareness 등 소비처 일관성)
+    const dyn = currentDynamicFacts().filter((f) => f.knownBy.includes(npcId));
+    return dyn.length ? [...authored, ...dyn] : authored;
   }
 
   /** 특정 NPC의 fact 시각 (versions[npcId]) */
@@ -967,7 +1035,7 @@ export class ContentLoaderService implements OnModuleInit {
 
   /** NPC가 fact를 아는지 검사 */
   npcKnowsFact(npcId: string, factId: string): boolean {
-    const fact = this.factsData?.facts[factId];
+    const fact = this.getFact(factId); // [P4-5] 동적 fact 폴백 포함
     return fact ? fact.knownBy.includes(npcId) : false;
   }
 

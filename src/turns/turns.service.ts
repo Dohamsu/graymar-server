@@ -544,6 +544,8 @@ export class TurnsService {
     this.content.enterScenario(run.scenarioId);
     // [P1 — 75] 런의 동적 NPC 레지스트리를 컨텍스트에 적재 (getNpc 폴백 소스)
     this.content.applyDynamicNpcs(run.runState?.dynamicNpcs);
+    // [P4-5 — 75] AUTONOMOUS 런의 keyFacts를 fact 폴백 소스로 적재
+    this.content.applyDynamicFacts(run.runState?.plotSeed?.keyFacts);
 
     // 3. expectedNextTurnNo 검증
     const expectedTurnNo = run.currentTurnNo + 1;
@@ -3729,6 +3731,21 @@ export class TurnsService {
             existing.push(factId); // 같은 턴 중복 방지
             discoveredFactIdsThisTurn.push(factId);
             questGoldReward += this.questProgression!.getFactGoldReward();
+            // [P4-5 — arch/75 §6] AUTONOMOUS: plotSeed keyFact면 규명율
+            // 분자(plotProgress.discoveredKeyFactIds)에도 기록.
+            const seedFacts = updatedRunState.plotSeed?.keyFacts;
+            if (seedFacts?.some((kf) => kf.factId === factId)) {
+              const pp = updatedRunState.plotProgress ?? {
+                discoveredKeyFactIds: [],
+              };
+              if (!pp.discoveredKeyFactIds.includes(factId)) {
+                pp.discoveredKeyFactIds.push(factId);
+              }
+              updatedRunState.plotProgress = pp;
+              this.logger.log(
+                `[PlotSeed] keyFact 규명 ${factId} (${pp.discoveredKeyFactIds.length}/${seedFacts.length})`,
+              );
+            }
             this.logger.log(
               `[Quest] Fact discovered: ${factId} (source: ${source})`,
             );
