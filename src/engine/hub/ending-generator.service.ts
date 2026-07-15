@@ -259,9 +259,13 @@ export class EndingGeneratorService {
     const threadSummary = this.buildThreadSummary(input.playerThreads);
 
     // closingLine 변형 (dominant vector 기반)
+    // DEFEAT 라인은 팩별 endings.json(defeatLine)로 외부화. 미제공 시 팩-중립 폴백.
+    const defeatLine =
+      (endingsData?.defeatLine as string | undefined) ??
+      '시야가 어두워진다. 이야기는 여기서 끝났다.';
     const finalClosingLine =
       endingReason === 'DEFEAT'
-        ? '시야가 어두워진다. 이름 없는 용병의 이야기는 여기서 끝났다.'
+        ? defeatLine
         : this.adjustClosingLine(cityStatus.summary, input.dominantVectors);
 
     // Arc Route 분기 엔딩 (arcRouteEndings: EXPOSE_CORRUPTION/PROFIT_FROM_CHAOS/ALLY_GUARD/NONE)
