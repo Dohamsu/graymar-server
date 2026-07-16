@@ -501,104 +501,10 @@ export class PromptBuilderService {
     memoryParts.push(...rosterResult.blocks);
     const targetNpcIds = rosterResult.targetNpcIds;
 
-    // Narrative Engine v1: Incident/감정/마크/시그널 컨텍스트
-    const hasStructured = !!(
-      ctx.structuredSummary ||
-      ctx.npcJournalText ||
-      ctx.incidentChronicleText ||
-      ctx.relevantIncidentMemoryText
+    // Narrative Engine v1 컨텍스트 — buildNarrativeEngineBlocks로 추출 (P1.12)
+    memoryParts.push(
+      ...this.buildNarrativeEngineBlocks(ctx, sr, targetNpcIds, useJsonMode),
     );
-    if (!hasStructured) {
-      if (ctx.incidentContext) {
-        memoryParts.push(
-          `[도시 사건]\n${ctx.incidentContext}\n플레이어의 행동이 사건의 통제/압력에 영향을 줍니다. 사건의 긴장감을 서술에 자연스럽게 반영하세요.`,
-        );
-      }
-    } else {
-      // 구조화 메모리 사용 시에도 활성 Incident의 런타임 수치는 보충 (chronicle은 과거 기록, 런타임은 현재 수치)
-      if (ctx.incidentContext) {
-        memoryParts.push(`[활성 사건 현황]\n${ctx.incidentContext}`);
-      }
-    }
-    // NPC 감정 상태: 대화 자세 블록과 동일한 NPC만 포함
-    // targetNpcIds와 npcPostures의 교집합 + npcInjection = 실제 장면에 등장하는 NPC
-    {
-      const sceneNpcIds = new Set<string>();
-      const postureKeys = new Set(Object.keys(ctx.npcPostures ?? {}));
-      for (const npcId of targetNpcIds) {
-        if (postureKeys.has(npcId)) sceneNpcIds.add(npcId);
-      }
-      // npcInjection은 항상 포함 (targetNpcIds에 있고 postureKeys에 없을 수 있음)
-      if (ctx.npcInjection?.npcId) sceneNpcIds.add(ctx.npcInjection.npcId);
-      // architecture/57: focused 모드에서는 메인 NPC 만 sceneNpcIds 에 남김.
-      //   [NPC 감정 상태] / [NPC 대사 호칭] 블록도 보조 NPC 노출 차단 — 라이라 등의 별칭/감정 상태가
-      //   LLM 에 들어가서 보조 NPC 가 매 턴 끼어드는 회귀 (multi_npc_play 2026-05-14 검증) 해소.
-      if (ctx.focusedNpcId) {
-        const focused = ctx.focusedNpcId;
-        for (const id of [...sceneNpcIds]) {
-          if (id !== focused) sceneNpcIds.delete(id);
-        }
-        // npcPostures 가 비어있어 sceneNpcIds 에서 빠질 수 있으니, focused NPC 는 강제 포함
-        sceneNpcIds.add(focused);
-      }
-      const npcEmotionalBlock = this.buildNpcEmotionalBlock(ctx, sceneNpcIds);
-      if (npcEmotionalBlock) {
-        memoryParts.push(
-          `[NPC 감정 상태]\n${npcEmotionalBlock}\n⚠️ NPC의 현재 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요. 위 행동 힌트를 반드시 반영하세요.`,
-        );
-      }
-
-      // architecture/44 §이슈② — 크로스 NPC 테마 반복 차단
-      const themeGuardBlock = this.buildThemeGuard(ctx, sr.turnNo);
-      if (themeGuardBlock) memoryParts.push(themeGuardBlock);
-
-      // NPC 대사 호칭 매핑 — 마커 정확도 향상을 위해 구체적 호칭 + 짧은 호칭 제공
-      if (sceneNpcIds.size > 0) {
-        const aliasLines: string[] = [];
-        for (const npcId of sceneNpcIds) {
-          const def = this.content.getNpc(npcId);
-          if (def) {
-            const alias = def.unknownAlias || def.name;
-            // 역할명에서 짧은 호칭 추출 (예: "날카로운 눈매의 회계사" → "회계사")
-            const words = alias.split(/\s/);
-            const shortAlias =
-              words.length > 1 ? words[words.length - 1] : alias;
-            aliasLines.push(
-              shortAlias !== alias
-                ? `- ${alias} (짧은 호칭: "${shortAlias}")`
-                : `- ${alias}`,
-            );
-          }
-        }
-        if (aliasLines.length > 0) {
-          if (useJsonMode) {
-            // JSON 모드: dialogue segment의 speaker_alias에 호칭 사용
-            memoryParts.push(
-              `[등장 가능 NPC 목록] dialogue의 speaker_alias에 아래 호칭을 사용하세요:\n` +
-                `${aliasLines.join('\n')}`,
-            );
-          } else {
-            memoryParts.push(
-              `[NPC 대사 호칭] ⚠️ 필수 — 대사 직전에 반드시 아래 호칭을 사용하세요:\n` +
-                `${aliasLines.join('\n')}\n` +
-                `⚠️ "그가", "그녀가", "그는" 대신 반드시 위 호칭 또는 짧은 호칭을 사용.\n` +
-                `⚠️ 같은 NPC가 연속 발화하더라도 두 번째 대사부터 짧은 호칭 사용.`,
-            );
-          }
-        }
-      }
-    }
-    // 서사 표식: 구조화 메모리 유무와 무관하게 항상 포함
-    if (ctx.narrativeMarkContext) {
-      memoryParts.push(
-        `[서사 표식]\n${ctx.narrativeMarkContext}\n이 표식들은 이야기에 영구적 영향을 줍니다. 관련 장면에서 자연스럽게 참조하세요.`,
-      );
-    }
-    if (ctx.signalContext) {
-      memoryParts.push(
-        `[도시 시그널]\n${ctx.signalContext}\n배경 분위기와 NPC 대화에 시그널 정보를 자연스럽게 녹여내세요.`,
-      );
-    }
     // Deadline 톤 가이드 (조건부) — 평소엔 null이라 추가 안 됨
     if (ctx.deadlineContext) {
       memoryParts.push(`[결말 임박]\n${ctx.deadlineContext}`);
@@ -2069,6 +1975,119 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * Narrative Engine v1 컨텍스트 블록 — 사건 기록/NPC 감정·어체/서사 표식/
+   * 도시 시그널. targetNpcIds(로스터 탈출 상태)로 감정 블록을 장면 NPC로 한정.
+   * arch/77 P1.12 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildNarrativeEngineBlocks(
+    ctx: LlmContext,
+    sr: ServerResultV1,
+    targetNpcIds: ReadonlySet<string>,
+    useJsonMode: boolean | undefined,
+  ): string[] {
+    const memoryParts: string[] = [];
+    // Narrative Engine v1: Incident/감정/마크/시그널 컨텍스트
+    const hasStructured = !!(
+      ctx.structuredSummary ||
+      ctx.npcJournalText ||
+      ctx.incidentChronicleText ||
+      ctx.relevantIncidentMemoryText
+    );
+    if (!hasStructured) {
+      if (ctx.incidentContext) {
+        memoryParts.push(
+          `[도시 사건]\n${ctx.incidentContext}\n플레이어의 행동이 사건의 통제/압력에 영향을 줍니다. 사건의 긴장감을 서술에 자연스럽게 반영하세요.`,
+        );
+      }
+    } else {
+      // 구조화 메모리 사용 시에도 활성 Incident의 런타임 수치는 보충 (chronicle은 과거 기록, 런타임은 현재 수치)
+      if (ctx.incidentContext) {
+        memoryParts.push(`[활성 사건 현황]\n${ctx.incidentContext}`);
+      }
+    }
+    // NPC 감정 상태: 대화 자세 블록과 동일한 NPC만 포함
+    // targetNpcIds와 npcPostures의 교집합 + npcInjection = 실제 장면에 등장하는 NPC
+    {
+      const sceneNpcIds = new Set<string>();
+      const postureKeys = new Set(Object.keys(ctx.npcPostures ?? {}));
+      for (const npcId of targetNpcIds) {
+        if (postureKeys.has(npcId)) sceneNpcIds.add(npcId);
+      }
+      // npcInjection은 항상 포함 (targetNpcIds에 있고 postureKeys에 없을 수 있음)
+      if (ctx.npcInjection?.npcId) sceneNpcIds.add(ctx.npcInjection.npcId);
+      // architecture/57: focused 모드에서는 메인 NPC 만 sceneNpcIds 에 남김.
+      //   [NPC 감정 상태] / [NPC 대사 호칭] 블록도 보조 NPC 노출 차단 — 라이라 등의 별칭/감정 상태가
+      //   LLM 에 들어가서 보조 NPC 가 매 턴 끼어드는 회귀 (multi_npc_play 2026-05-14 검증) 해소.
+      if (ctx.focusedNpcId) {
+        const focused = ctx.focusedNpcId;
+        for (const id of [...sceneNpcIds]) {
+          if (id !== focused) sceneNpcIds.delete(id);
+        }
+        // npcPostures 가 비어있어 sceneNpcIds 에서 빠질 수 있으니, focused NPC 는 강제 포함
+        sceneNpcIds.add(focused);
+      }
+      const npcEmotionalBlock = this.buildNpcEmotionalBlock(ctx, sceneNpcIds);
+      if (npcEmotionalBlock) {
+        memoryParts.push(
+          `[NPC 감정 상태]\n${npcEmotionalBlock}\n⚠️ NPC의 현재 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요. 위 행동 힌트를 반드시 반영하세요.`,
+        );
+      }
+
+      // architecture/44 §이슈② — 크로스 NPC 테마 반복 차단
+      const themeGuardBlock = this.buildThemeGuard(ctx, sr.turnNo);
+      if (themeGuardBlock) memoryParts.push(themeGuardBlock);
+
+      // NPC 대사 호칭 매핑 — 마커 정확도 향상을 위해 구체적 호칭 + 짧은 호칭 제공
+      if (sceneNpcIds.size > 0) {
+        const aliasLines: string[] = [];
+        for (const npcId of sceneNpcIds) {
+          const def = this.content.getNpc(npcId);
+          if (def) {
+            const alias = def.unknownAlias || def.name;
+            // 역할명에서 짧은 호칭 추출 (예: "날카로운 눈매의 회계사" → "회계사")
+            const words = alias.split(/\s/);
+            const shortAlias =
+              words.length > 1 ? words[words.length - 1] : alias;
+            aliasLines.push(
+              shortAlias !== alias
+                ? `- ${alias} (짧은 호칭: "${shortAlias}")`
+                : `- ${alias}`,
+            );
+          }
+        }
+        if (aliasLines.length > 0) {
+          if (useJsonMode) {
+            // JSON 모드: dialogue segment의 speaker_alias에 호칭 사용
+            memoryParts.push(
+              `[등장 가능 NPC 목록] dialogue의 speaker_alias에 아래 호칭을 사용하세요:\n` +
+                `${aliasLines.join('\n')}`,
+            );
+          } else {
+            memoryParts.push(
+              `[NPC 대사 호칭] ⚠️ 필수 — 대사 직전에 반드시 아래 호칭을 사용하세요:\n` +
+                `${aliasLines.join('\n')}\n` +
+                `⚠️ "그가", "그녀가", "그는" 대신 반드시 위 호칭 또는 짧은 호칭을 사용.\n` +
+                `⚠️ 같은 NPC가 연속 발화하더라도 두 번째 대사부터 짧은 호칭 사용.`,
+            );
+          }
+        }
+      }
+    }
+    // 서사 표식: 구조화 메모리 유무와 무관하게 항상 포함
+    if (ctx.narrativeMarkContext) {
+      memoryParts.push(
+        `[서사 표식]\n${ctx.narrativeMarkContext}\n이 표식들은 이야기에 영구적 영향을 줍니다. 관련 장면에서 자연스럽게 참조하세요.`,
+      );
+    }
+    if (ctx.signalContext) {
+      memoryParts.push(
+        `[도시 시그널]\n${ctx.signalContext}\n배경 분위기와 NPC 대화에 시그널 정보를 자연스럽게 녹여내세요.`,
+      );
+    }
+    return memoryParts;
   }
 
   /**
