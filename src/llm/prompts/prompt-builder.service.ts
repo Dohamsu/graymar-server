@@ -877,54 +877,8 @@ export class PromptBuilderService {
       );
     }
 
-    // architecture/41 창의 전투 (Tier 1~5) — 조건부 블록 주입
-    // sr.flags.tier 가 있으면 해당 Tier 블록만 추가 (일반 턴엔 아무것도 추가 안 됨)
-    const crFlags = sr.flags as typeof sr.flags & {
-      tier?: 1 | 2 | 3 | 4 | 5;
-      propUsed?: { name: string; id?: string; categoryId?: string };
-      fantasy?: boolean;
-      abstract?: boolean;
-    };
-    if (crFlags?.propUsed) {
-      memoryParts.push(
-        `[사용한 소품]\n` +
-          `플레이어가 "${crFlags.propUsed.name}"을(를) 활용했습니다. ` +
-          `서술에 반드시 해당 소품의 물리적 상호작용(잡기·던지기·부서짐)을 1회 이상 구체적으로 묘사하세요. ` +
-          `소품 때문에 생긴 결과(기절/출혈/시야 가림 등)가 있다면 적의 반응으로 드러냅니다.`,
-      );
-    }
-    if (crFlags?.fantasy) {
-      memoryParts.push(
-        `[환상 재해석 지시]\n` +
-          `플레이어가 현재 세계관에서 직접 구현 불가능한 능력("${rawInput}")을 시도했습니다. ` +
-          `거부하지 말고 의도를 살려 합리적 동작으로 치환하세요.\n` +
-          `① 합리적 치환: 의도의 불꽃을 살리되 실제 가능한 동작으로 연결 (예: 드래곤 브레스 → 횃불/등불 휘두름, 순간이동 → 반 발짝 옆 측면 파고듦). ` +
-          `② 외침은 홑따옴표 '인용'만 사용(큰따옴표 금지). 4~6자 짧게, 의지·허세 표출로. ` +
-          `③ 비웃음·설교·메타 거부("그런 힘은 없다" 등) 금지. 허세·결의·위트 감정 포착. ` +
-          `④ 짧고 경쾌 — 한 호흡(2~3문장) 안에 자각/치환/결과까지.`,
-      );
-    }
-    if (crFlags?.abstract) {
-      memoryParts.push(
-        `[허공 응시 지시]\n` +
-          `플레이어가 서술 세계 바깥을 건드리는 행동("${rawInput}")을 시도했습니다. ` +
-          `거부하지 말고, 캐릭터의 정지·집중력 이탈·잠깐의 혼란을 서사로 풀어 해당 턴을 "아무 일도 일어나지 않은 한 호흡"으로 만드세요. ` +
-          `전투 긴장감은 유지 — 적의 발소리·기척·다음 동작 예고로 마무리.`,
-      );
-    }
-
-    // [arch/76 D3-③] LOCATION 세계 규칙상 불가한 행동 → 거부 아닌 서술 치환.
-    //   전투 crFlags.fantasy와 같은 철학을 LOCATION에 이식 (nano plausibility 판정 기반).
-    if (sr.ui?.actionContext?.plausibility === 'IMPLAUSIBLE') {
-      memoryParts.push(
-        `[행동 재해석 지시]\n` +
-          `플레이어가 이 세계 규칙상 직접 실현 불가능한 행동("${rawInput}")을 시도했습니다. ` +
-          `거부하거나 비웃지 말고, 의도의 불꽃을 살려 실제 가능한 동작으로 자연스럽게 치환해 서술하세요. ` +
-          `예) 순간이동 → 재빠른 반 발짝 회피, 마법 소환 → 허세 섞인 위협 몸짓. ` +
-          `메타 거부("그런 힘은 없다")·설교 금지. 시도의 결기·위트는 감정으로 포착하되, ` +
-          `세계에 실제로 남는 결과는 치환된 현실 동작 범위로 한정하세요.`,
-      );
-    }
+    // architecture/41 창의 전투 (Tier 1~5) + arch/76 D3-③ LOCATION 재해석
+    memoryParts.push(...this.buildCreativeActionBlocks(sr, rawInput));
 
     if (memoryParts.length > 0) {
       // PR1: Token Budget — 총합 2500 토큰 예산 내로 트리밍
@@ -2838,6 +2792,65 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * 창의 행동 재해석 블록들 — 전투(architecture/41 Tier 1~5: 소품/환상/허공)
+   * + LOCATION(arch/76 D3-③: IMPLAUSIBLE 서술 치환). 조건 미충족 시 빈 배열
+   * (일반 턴엔 아무것도 추가 안 됨).
+   * arch/77 P1.3 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildCreativeActionBlocks(
+    sr: ServerResultV1,
+    rawInput: string,
+  ): string[] {
+    const blocks: string[] = [];
+    const crFlags = sr.flags as typeof sr.flags & {
+      tier?: 1 | 2 | 3 | 4 | 5;
+      propUsed?: { name: string; id?: string; categoryId?: string };
+      fantasy?: boolean;
+      abstract?: boolean;
+    };
+    if (crFlags?.propUsed) {
+      blocks.push(
+        `[사용한 소품]\n` +
+          `플레이어가 "${crFlags.propUsed.name}"을(를) 활용했습니다. ` +
+          `서술에 반드시 해당 소품의 물리적 상호작용(잡기·던지기·부서짐)을 1회 이상 구체적으로 묘사하세요. ` +
+          `소품 때문에 생긴 결과(기절/출혈/시야 가림 등)가 있다면 적의 반응으로 드러냅니다.`,
+      );
+    }
+    if (crFlags?.fantasy) {
+      blocks.push(
+        `[환상 재해석 지시]\n` +
+          `플레이어가 현재 세계관에서 직접 구현 불가능한 능력("${rawInput}")을 시도했습니다. ` +
+          `거부하지 말고 의도를 살려 합리적 동작으로 치환하세요.\n` +
+          `① 합리적 치환: 의도의 불꽃을 살리되 실제 가능한 동작으로 연결 (예: 드래곤 브레스 → 횃불/등불 휘두름, 순간이동 → 반 발짝 옆 측면 파고듦). ` +
+          `② 외침은 홑따옴표 '인용'만 사용(큰따옴표 금지). 4~6자 짧게, 의지·허세 표출로. ` +
+          `③ 비웃음·설교·메타 거부("그런 힘은 없다" 등) 금지. 허세·결의·위트 감정 포착. ` +
+          `④ 짧고 경쾌 — 한 호흡(2~3문장) 안에 자각/치환/결과까지.`,
+      );
+    }
+    if (crFlags?.abstract) {
+      blocks.push(
+        `[허공 응시 지시]\n` +
+          `플레이어가 서술 세계 바깥을 건드리는 행동("${rawInput}")을 시도했습니다. ` +
+          `거부하지 말고, 캐릭터의 정지·집중력 이탈·잠깐의 혼란을 서사로 풀어 해당 턴을 "아무 일도 일어나지 않은 한 호흡"으로 만드세요. ` +
+          `전투 긴장감은 유지 — 적의 발소리·기척·다음 동작 예고로 마무리.`,
+      );
+    }
+    // LOCATION 세계 규칙상 불가한 행동 — 전투 crFlags.fantasy와 같은 철학을
+    // LOCATION에 이식 (nano plausibility 판정 기반).
+    if (sr.ui?.actionContext?.plausibility === 'IMPLAUSIBLE') {
+      blocks.push(
+        `[행동 재해석 지시]\n` +
+          `플레이어가 이 세계 규칙상 직접 실현 불가능한 행동("${rawInput}")을 시도했습니다. ` +
+          `거부하거나 비웃지 말고, 의도의 불꽃을 살려 실제 가능한 동작으로 자연스럽게 치환해 서술하세요. ` +
+          `예) 순간이동 → 재빠른 반 발짝 회피, 마법 소환 → 허세 섞인 위협 몸짓. ` +
+          `메타 거부("그런 힘은 없다")·설교 금지. 시도의 결기·위트는 감정으로 포착하되, ` +
+          `세계에 실제로 남는 결과는 치환된 현실 동작 범위로 한정하세요.`,
+      );
+    }
+    return blocks;
   }
 
   /**
