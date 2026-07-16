@@ -849,184 +849,17 @@ export class PromptBuilderService {
       }
     }
 
-    // 플레이어 행동 (가장 중요 — 서술에 반드시 반영)
-    if (rawInput && inputType !== 'SYSTEM') {
-      if (inputType === 'ACTION') {
-        const actionCtx = sr.ui?.actionContext as
-          | {
-              parsedType?: string;
-              originalInput?: string;
-              tone?: string;
-              escalated?: boolean;
-              insistenceCount?: number;
-              eventSceneFrame?: string;
-              eventMatchPolicy?: string;
-            }
-          | undefined;
-        const parts = [
-          `⚠️ [이번 턴 행동]`,
-          `${sanitizeUserInput(rawInput)}`,
-          `위 행동의 결과를 서술하세요. 행동 내용을 반복하거나 요약하지 말고, NPC 반응이나 환경 변화부터 바로 시작하세요. 첫 문장은 '당신은/당신이'로 시작하지 마세요.`,
-        ];
-        // [arch/76 후속] R2 어휘 인용 가이드 → 의미 단서 교체.
-        // 낱말 리스트는 의미 역할(한 일/거짓 주장/질문 주제)을 구분하지 못해
-        // 플레이어의 거짓 외침 속 단어("운석이 떨어진다")까지 장면에 짜넣도록
-        // 유도했다 (실측 — 가짜 운석이 폭발음·진동으로 실체화). 주제 반영
-        // 지시는 유지하되, 진위·인과의 정본은 사건·판정임을 명시한다.
-        const appraisalNote = (actionCtx as Record<string, unknown> | undefined)
-          ?.appraisalNote as string | undefined;
-        parts.push(
-          [
-            `답변 가이드: 플레이어 입력의 주제를 답변에 그대로 반영하세요.`,
-            appraisalNote ? `이 행동의 성격: ${appraisalNote}.` : '',
-            `입력 속 주장·외침·소문의 내용은 플레이어가 "말한 것"일 뿐, 사실이라는 뜻이 아닙니다. 실제로 일어난 일의 정본은 [이번 턴 사건]과 판정 결과입니다 — 말로만 언급된 현상이 실제로 벌어지는 묘사를 하지 마세요.`,
-          ]
-            .filter(Boolean)
-            .join(' '),
-        );
-        // BRIBE/TRADE 잔액 부족 (점검 2026-07-09 ③) — 클램프된 지불액을 서술에 반영.
-        // "전액을 건넸다" 서술이 실지급과 어긋나는 것 방지 + NPC가 부족분에 반응.
-        const goldShortfallCtx = (
-          actionCtx as Record<string, unknown> | undefined
-        )?.goldShortfall as { requested: number; paid: number } | undefined;
-        if (goldShortfallCtx) {
-          parts.push(
-            `⚠️ [잔액 부족] 플레이어가 ${goldShortfallCtx.requested}골드를 제안했지만 실제 가진 돈은 ${goldShortfallCtx.paid}골드뿐이며, 그 금액만 지불됐습니다. ${goldShortfallCtx.requested}골드 전액을 건네는 장면을 서술하지 마세요. NPC는 약속보다 적은 금액을 알아차리고 성격에 맞게 반응하세요 (불쾌/비웃음/경계 등).`,
-          );
-        }
-        // 질문 우선 응답 (개선 3) — NPC가 물은 것에 답하지 않고 딴 화제로 흐르는
-        // 회귀(사용자 응답률 56%) 방지. 답/거절/회피 중 하나로 반드시 먼저 반응.
-        if (isQuestionTurn) {
-          parts.push(
-            `⚠️ [질문 우선] 플레이어의 이번 입력은 질문입니다. NPC의 첫 대사는 반드시 이 질문에 대한 직접적인 답변, 명시적인 거절("말할 수 없소"), 또는 즉답을 피하는 반응(되묻기, 침묵 후 짧은 유보) 중 하나로 시작하세요. 질문과 무관한 화제·경고·자기 사정으로 시작하지 마세요.`,
-          );
-        }
-        if (actionCtx?.parsedType) {
-          parts.push(
-            `엔진 해석: ${actionCtx.parsedType}${actionCtx.tone && actionCtx.tone !== 'NEUTRAL' ? ` (${actionCtx.tone})` : ''}`,
-          );
-        }
-        // 이벤트 전환 브리징: 진행 중 장면이 있으면 sceneFrame 완전 억제
-        if (actionCtx?.eventSceneFrame) {
-          const ongoingTurnsWithNarrative = (
-            ctx.locationSessionTurns ?? []
-          ).filter((t) => t.narrative && t.narrative.length > 0);
-          if (ongoingTurnsWithNarrative.length >= 2) {
-            // 2턴 이상 진행된 장면: sceneFrame 완전 억제 — 직전 서술의 흐름만 따름
-            parts.push(
-              '⚠️ 장면 연속성 절대 우선: [이번 방문 대화]의 직전 서술에서 등장한 인물, 장소, 대화 흐름을 그대로 이어가세요. 새로운 인물이나 장소로 전환하지 마세요.',
-            );
-          } else if (ongoingTurnsWithNarrative.length === 1) {
-            // 1턴만 진행: sceneFrame을 약하게 참고
-            parts.push(
-              `[참고 배경 — 분위기 참고만, 인물/장소 전환 금지] ${actionCtx.eventSceneFrame}`,
-            );
-            parts.push(
-              '⚠️ 직전 서술의 장면(등장 인물, 장소)을 유지하세요. 위 배경은 분위기 참고용이며, 직전 서술과 다른 인물이 언급되어 있으면 무시하세요.',
-            );
-          } else {
-            // 첫 턴: sceneFrame으로 새 장면 설정
-            parts.push(`현재 장면 상황: ${actionCtx.eventSceneFrame}`);
-            parts.push(
-              '서술 규칙: 플레이어의 행동을 먼저 묘사한 뒤, 위 장면 상황이 자연스럽게 펼쳐지도록 연결하세요. 예: "~하려던 도중, ~" 또는 "~하며 걸어가는데, ~" 형태로 행동과 상황을 매끄럽게 이어붙이세요.',
-            );
-          }
-        }
-        if (actionCtx?.escalated) {
-          parts.push(
-            '⚠️ 플레이어가 이 행동을 여러 차례 고집했습니다. 이번에는 플레이어의 행동을 그대로 실행하세요. 부드럽게 전환하거나 약화시키지 마세요. 원문 행동의 결과를 직접적으로 묘사하세요.',
-          );
-        } else {
-          parts.push(
-            '서술 규칙: 행동이 이미 일어난 것으로 시작하세요. "~했다", "~를 시도했다" 같은 요약문은 쓰지 마세요. NPC의 즉각적 반응(표정, 대사, 행동)이나 환경 변화로 서술을 여세요.',
-          );
-        }
-        // Player-First: 턴 모드별 프롬프트 보강
-        const turnMode = (actionCtx as Record<string, unknown> | undefined)
-          ?.turnMode as string | undefined;
-        if (turnMode === 'PLAYER_DIRECTED') {
-          parts.push(
-            '\n⚠️ [플레이어 주도 장면]',
-            '플레이어가 직접 대상을 선택하여 접근했습니다.',
-            '- 플레이어가 지목한 NPC/대상이 중심이 되어야 합니다. 다른 NPC가 끼어들거나 장면을 가로채지 마세요.',
-            '- 이벤트나 돌발 상황이 아닌, 플레이어의 행동에 대한 자연스러운 반응을 서술하세요.',
-            '- 판정 결과에 맞는 대상의 반응을 보여주세요.',
-          );
-        } else if (turnMode === 'CONVERSATION_CONT') {
-          parts.push(
-            '\n⚠️ [대화 연속 장면]',
-            '이전 턴에서 이어지는 대화입니다.',
-            '- 같은 NPC와의 대화가 자연스럽게 이어져야 합니다.',
-            '- NPC가 첫 만남처럼 행동하면 안 됩니다. 이전 대화 맥락을 이어가세요.',
-            '- 대화의 깊이가 점점 깊어져야 합니다. 이전에 다룬 주제를 반복하지 마세요.',
-            '⚠️ 단일 NPC 응답 강제 (architecture/51 §B R6): 이 턴은 잠금된 한 NPC만 말합니다. 다른 NPC(경비, 행인, 점원, 군중, 동료)의 따옴표 대사 절대 금지. 주변 인물은 서술로만 묘사하세요.',
-          );
-        }
-        factsParts.push(parts.join('\n'));
-      } else if (inputType === 'CHOICE') {
-        const actionCtx = sr.ui?.actionContext as
-          | { parsedType?: string; originalInput?: string; tone?: string }
-          | undefined;
-        const parts = [
-          `[플레이어 선택] "${sanitizeUserInput(rawInput)}"`,
-          "서술 규칙: 먼저 플레이어가 이 선택을 실행하는 장면을 구체적으로 묘사하세요. 첫 문장은 '당신은/당신이'로 시작하지 마세요.",
-          '직전 턴의 장면·장소·NPC에서 자연스럽게 이어져야 합니다. 장면을 갑자기 다른 장소로 옮기지 마세요.',
-          '선택의 결과를 충분히 보여준 뒤, 자연스럽게 다음 상황으로 전환하세요.',
-          '⚠️ NPC가 플레이어와 이전에 대화한 적이 없다면, "그대의 말대로라면" 같은 이전 대화를 전제한 표현을 사용하지 마세요. NPC는 플레이어의 행동/선택에 대한 반응만 보여야 합니다.',
-        ];
-        if (actionCtx?.parsedType) {
-          parts.push(`엔진 해석: ${actionCtx.parsedType}`);
-        }
-        // HUB 선택 시 프리셋 배경에 맞는 행동 톤 힌트
-        if (isHub && ctx.protagonistBackground) {
-          parts.push(
-            '⚠️ [주인공 배경]에 적힌 행동 특징을 이 장면에 반드시 반영하세요. ' +
-              '수락하는 태도, 몸짓, 주변을 살피는 방식이 직업과 과거에서 비롯된 것이어야 합니다. ' +
-              '예: 전직 군인은 짧고 단호하게, 밀수업자는 조건을 따지듯, 귀족은 품격을 유지하며.',
-          );
-        }
-        factsParts.push(parts.join('\n'));
-      }
-    }
-
-    // LOCATION 후속 턴에 장소 컨텍스트 보충 (MOVE 이벤트가 없는 턴)
-    // summary.short에 [장소] 블록이 없으면 현재 위치명을 삽입
-    if (
-      !isHub &&
-      !sr.summary.short.includes('[장소]') &&
-      ctx.currentLocationId
-    ) {
-      const locName = this.content.getLocationDisplayName(
-        ctx.currentLocationId,
-      );
-      factsParts.push(`[현재 장소] ${locName}`);
-    }
-
-    // [현재 시간대] 블록 — 서술 시간대 일관성 유지용 (bug 4620 시간대 급전환)
-    //   WorldTick의 4상시간(DAWN/DAY/DUSK/NIGHT)을 한국어로 매핑해 프롬프트 주입.
-    //   LLM이 "햇살/밤공기/새벽" 자의적 선택하지 않도록 강제.
-    if (ctx.currentTimePhase) {
-      const timePhaseKr: Record<string, string> = {
-        DAWN: '새벽',
-        DAY: '낮',
-        DUSK: '황혼',
-        NIGHT: '밤',
-      };
-      const phase = ctx.currentTimePhase;
-      const phaseKr = timePhaseKr[phase] ?? '낮';
-      const phaseHint: Record<string, string> = {
-        DAWN: '아침 빛이 번지기 시작함. 공기가 서늘하고 거리가 조용함.',
-        DAY: '해가 밝게 비치고 시장/거리가 활기참.',
-        DUSK: '해가 기울어 그림자가 길어짐. 가로등이 하나둘 켜짐.',
-        NIGHT: '어둠이 내려앉음. 달빛/가로등/등불이 주조명.',
-      };
-      factsParts.push(
-        `[현재 시간대] ${phaseKr} (${phase})\n` +
-          `- ${phaseHint[phase] ?? ''}\n` +
-          `- 서술에 이 시간대와 모순되는 단서(예: 밤에 "햇살", 낮에 "달빛") 사용 금지.\n` +
-          `- 시간 전환이 필요하면 "시간이 흘러", "해가 기울어" 같은 전환 문구를 먼저 명시.`,
-      );
-    }
+    // 플레이어 행동 블록 — buildPlayerActionBlocks로 추출 (arch/77 P1.13)
+    factsParts.push(
+      ...this.buildPlayerActionBlocks(
+        ctx,
+        sr,
+        rawInput,
+        inputType,
+        isHub,
+        isQuestionTurn,
+      ),
+    );
 
     // [최근 사용 표현 — 자제] 블록 — 반복 구문 고착 방지 (bug 4624)
     //   직전 3턴에서 2회+ 사용된 빈출 bigram 을 프롬프트에 주입, LLM이 재사용을 자제하도록 유도.
@@ -1975,6 +1808,201 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * 플레이어 행동 블록 — [이번 턴 행동]+답변 가이드(의미 단서)/잔액 부족/
+   * 질문 우선/엔진 해석/CHOICE 처리/현재 장소·시간대 지시 조립.
+   * arch/77 P1.13 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildPlayerActionBlocks(
+    ctx: LlmContext,
+    sr: ServerResultV1,
+    rawInput: string,
+    inputType: string,
+    isHub: boolean,
+    isQuestionTurn: boolean,
+  ): string[] {
+    const factsParts: string[] = [];
+    // 플레이어 행동 (가장 중요 — 서술에 반드시 반영)
+    if (rawInput && inputType !== 'SYSTEM') {
+      if (inputType === 'ACTION') {
+        const actionCtx = sr.ui?.actionContext as
+          | {
+              parsedType?: string;
+              originalInput?: string;
+              tone?: string;
+              escalated?: boolean;
+              insistenceCount?: number;
+              eventSceneFrame?: string;
+              eventMatchPolicy?: string;
+            }
+          | undefined;
+        const parts = [
+          `⚠️ [이번 턴 행동]`,
+          `${sanitizeUserInput(rawInput)}`,
+          `위 행동의 결과를 서술하세요. 행동 내용을 반복하거나 요약하지 말고, NPC 반응이나 환경 변화부터 바로 시작하세요. 첫 문장은 '당신은/당신이'로 시작하지 마세요.`,
+        ];
+        // [arch/76 후속] R2 어휘 인용 가이드 → 의미 단서 교체.
+        // 낱말 리스트는 의미 역할(한 일/거짓 주장/질문 주제)을 구분하지 못해
+        // 플레이어의 거짓 외침 속 단어("운석이 떨어진다")까지 장면에 짜넣도록
+        // 유도했다 (실측 — 가짜 운석이 폭발음·진동으로 실체화). 주제 반영
+        // 지시는 유지하되, 진위·인과의 정본은 사건·판정임을 명시한다.
+        const appraisalNote = (actionCtx as Record<string, unknown> | undefined)
+          ?.appraisalNote as string | undefined;
+        parts.push(
+          [
+            `답변 가이드: 플레이어 입력의 주제를 답변에 그대로 반영하세요.`,
+            appraisalNote ? `이 행동의 성격: ${appraisalNote}.` : '',
+            `입력 속 주장·외침·소문의 내용은 플레이어가 "말한 것"일 뿐, 사실이라는 뜻이 아닙니다. 실제로 일어난 일의 정본은 [이번 턴 사건]과 판정 결과입니다 — 말로만 언급된 현상이 실제로 벌어지는 묘사를 하지 마세요.`,
+          ]
+            .filter(Boolean)
+            .join(' '),
+        );
+        // BRIBE/TRADE 잔액 부족 (점검 2026-07-09 ③) — 클램프된 지불액을 서술에 반영.
+        // "전액을 건넸다" 서술이 실지급과 어긋나는 것 방지 + NPC가 부족분에 반응.
+        const goldShortfallCtx = (
+          actionCtx as Record<string, unknown> | undefined
+        )?.goldShortfall as { requested: number; paid: number } | undefined;
+        if (goldShortfallCtx) {
+          parts.push(
+            `⚠️ [잔액 부족] 플레이어가 ${goldShortfallCtx.requested}골드를 제안했지만 실제 가진 돈은 ${goldShortfallCtx.paid}골드뿐이며, 그 금액만 지불됐습니다. ${goldShortfallCtx.requested}골드 전액을 건네는 장면을 서술하지 마세요. NPC는 약속보다 적은 금액을 알아차리고 성격에 맞게 반응하세요 (불쾌/비웃음/경계 등).`,
+          );
+        }
+        // 질문 우선 응답 (개선 3) — NPC가 물은 것에 답하지 않고 딴 화제로 흐르는
+        // 회귀(사용자 응답률 56%) 방지. 답/거절/회피 중 하나로 반드시 먼저 반응.
+        if (isQuestionTurn) {
+          parts.push(
+            `⚠️ [질문 우선] 플레이어의 이번 입력은 질문입니다. NPC의 첫 대사는 반드시 이 질문에 대한 직접적인 답변, 명시적인 거절("말할 수 없소"), 또는 즉답을 피하는 반응(되묻기, 침묵 후 짧은 유보) 중 하나로 시작하세요. 질문과 무관한 화제·경고·자기 사정으로 시작하지 마세요.`,
+          );
+        }
+        if (actionCtx?.parsedType) {
+          parts.push(
+            `엔진 해석: ${actionCtx.parsedType}${actionCtx.tone && actionCtx.tone !== 'NEUTRAL' ? ` (${actionCtx.tone})` : ''}`,
+          );
+        }
+        // 이벤트 전환 브리징: 진행 중 장면이 있으면 sceneFrame 완전 억제
+        if (actionCtx?.eventSceneFrame) {
+          const ongoingTurnsWithNarrative = (
+            ctx.locationSessionTurns ?? []
+          ).filter((t) => t.narrative && t.narrative.length > 0);
+          if (ongoingTurnsWithNarrative.length >= 2) {
+            // 2턴 이상 진행된 장면: sceneFrame 완전 억제 — 직전 서술의 흐름만 따름
+            parts.push(
+              '⚠️ 장면 연속성 절대 우선: [이번 방문 대화]의 직전 서술에서 등장한 인물, 장소, 대화 흐름을 그대로 이어가세요. 새로운 인물이나 장소로 전환하지 마세요.',
+            );
+          } else if (ongoingTurnsWithNarrative.length === 1) {
+            // 1턴만 진행: sceneFrame을 약하게 참고
+            parts.push(
+              `[참고 배경 — 분위기 참고만, 인물/장소 전환 금지] ${actionCtx.eventSceneFrame}`,
+            );
+            parts.push(
+              '⚠️ 직전 서술의 장면(등장 인물, 장소)을 유지하세요. 위 배경은 분위기 참고용이며, 직전 서술과 다른 인물이 언급되어 있으면 무시하세요.',
+            );
+          } else {
+            // 첫 턴: sceneFrame으로 새 장면 설정
+            parts.push(`현재 장면 상황: ${actionCtx.eventSceneFrame}`);
+            parts.push(
+              '서술 규칙: 플레이어의 행동을 먼저 묘사한 뒤, 위 장면 상황이 자연스럽게 펼쳐지도록 연결하세요. 예: "~하려던 도중, ~" 또는 "~하며 걸어가는데, ~" 형태로 행동과 상황을 매끄럽게 이어붙이세요.',
+            );
+          }
+        }
+        if (actionCtx?.escalated) {
+          parts.push(
+            '⚠️ 플레이어가 이 행동을 여러 차례 고집했습니다. 이번에는 플레이어의 행동을 그대로 실행하세요. 부드럽게 전환하거나 약화시키지 마세요. 원문 행동의 결과를 직접적으로 묘사하세요.',
+          );
+        } else {
+          parts.push(
+            '서술 규칙: 행동이 이미 일어난 것으로 시작하세요. "~했다", "~를 시도했다" 같은 요약문은 쓰지 마세요. NPC의 즉각적 반응(표정, 대사, 행동)이나 환경 변화로 서술을 여세요.',
+          );
+        }
+        // Player-First: 턴 모드별 프롬프트 보강
+        const turnMode = (actionCtx as Record<string, unknown> | undefined)
+          ?.turnMode as string | undefined;
+        if (turnMode === 'PLAYER_DIRECTED') {
+          parts.push(
+            '\n⚠️ [플레이어 주도 장면]',
+            '플레이어가 직접 대상을 선택하여 접근했습니다.',
+            '- 플레이어가 지목한 NPC/대상이 중심이 되어야 합니다. 다른 NPC가 끼어들거나 장면을 가로채지 마세요.',
+            '- 이벤트나 돌발 상황이 아닌, 플레이어의 행동에 대한 자연스러운 반응을 서술하세요.',
+            '- 판정 결과에 맞는 대상의 반응을 보여주세요.',
+          );
+        } else if (turnMode === 'CONVERSATION_CONT') {
+          parts.push(
+            '\n⚠️ [대화 연속 장면]',
+            '이전 턴에서 이어지는 대화입니다.',
+            '- 같은 NPC와의 대화가 자연스럽게 이어져야 합니다.',
+            '- NPC가 첫 만남처럼 행동하면 안 됩니다. 이전 대화 맥락을 이어가세요.',
+            '- 대화의 깊이가 점점 깊어져야 합니다. 이전에 다룬 주제를 반복하지 마세요.',
+            '⚠️ 단일 NPC 응답 강제 (architecture/51 §B R6): 이 턴은 잠금된 한 NPC만 말합니다. 다른 NPC(경비, 행인, 점원, 군중, 동료)의 따옴표 대사 절대 금지. 주변 인물은 서술로만 묘사하세요.',
+          );
+        }
+        factsParts.push(parts.join('\n'));
+      } else if (inputType === 'CHOICE') {
+        const actionCtx = sr.ui?.actionContext as
+          | { parsedType?: string; originalInput?: string; tone?: string }
+          | undefined;
+        const parts = [
+          `[플레이어 선택] "${sanitizeUserInput(rawInput)}"`,
+          "서술 규칙: 먼저 플레이어가 이 선택을 실행하는 장면을 구체적으로 묘사하세요. 첫 문장은 '당신은/당신이'로 시작하지 마세요.",
+          '직전 턴의 장면·장소·NPC에서 자연스럽게 이어져야 합니다. 장면을 갑자기 다른 장소로 옮기지 마세요.',
+          '선택의 결과를 충분히 보여준 뒤, 자연스럽게 다음 상황으로 전환하세요.',
+          '⚠️ NPC가 플레이어와 이전에 대화한 적이 없다면, "그대의 말대로라면" 같은 이전 대화를 전제한 표현을 사용하지 마세요. NPC는 플레이어의 행동/선택에 대한 반응만 보여야 합니다.',
+        ];
+        if (actionCtx?.parsedType) {
+          parts.push(`엔진 해석: ${actionCtx.parsedType}`);
+        }
+        // HUB 선택 시 프리셋 배경에 맞는 행동 톤 힌트
+        if (isHub && ctx.protagonistBackground) {
+          parts.push(
+            '⚠️ [주인공 배경]에 적힌 행동 특징을 이 장면에 반드시 반영하세요. ' +
+              '수락하는 태도, 몸짓, 주변을 살피는 방식이 직업과 과거에서 비롯된 것이어야 합니다. ' +
+              '예: 전직 군인은 짧고 단호하게, 밀수업자는 조건을 따지듯, 귀족은 품격을 유지하며.',
+          );
+        }
+        factsParts.push(parts.join('\n'));
+      }
+    }
+
+    // LOCATION 후속 턴에 장소 컨텍스트 보충 (MOVE 이벤트가 없는 턴)
+    // summary.short에 [장소] 블록이 없으면 현재 위치명을 삽입
+    if (
+      !isHub &&
+      !sr.summary.short.includes('[장소]') &&
+      ctx.currentLocationId
+    ) {
+      const locName = this.content.getLocationDisplayName(
+        ctx.currentLocationId,
+      );
+      factsParts.push(`[현재 장소] ${locName}`);
+    }
+
+    // [현재 시간대] 블록 — 서술 시간대 일관성 유지용 (bug 4620 시간대 급전환)
+    //   WorldTick의 4상시간(DAWN/DAY/DUSK/NIGHT)을 한국어로 매핑해 프롬프트 주입.
+    //   LLM이 "햇살/밤공기/새벽" 자의적 선택하지 않도록 강제.
+    if (ctx.currentTimePhase) {
+      const timePhaseKr: Record<string, string> = {
+        DAWN: '새벽',
+        DAY: '낮',
+        DUSK: '황혼',
+        NIGHT: '밤',
+      };
+      const phase = ctx.currentTimePhase;
+      const phaseKr = timePhaseKr[phase] ?? '낮';
+      const phaseHint: Record<string, string> = {
+        DAWN: '아침 빛이 번지기 시작함. 공기가 서늘하고 거리가 조용함.',
+        DAY: '해가 밝게 비치고 시장/거리가 활기참.',
+        DUSK: '해가 기울어 그림자가 길어짐. 가로등이 하나둘 켜짐.',
+        NIGHT: '어둠이 내려앉음. 달빛/가로등/등불이 주조명.',
+      };
+      factsParts.push(
+        `[현재 시간대] ${phaseKr} (${phase})\n` +
+          `- ${phaseHint[phase] ?? ''}\n` +
+          `- 서술에 이 시간대와 모순되는 단서(예: 밤에 "햇살", 낮에 "달빛") 사용 금지.\n` +
+          `- 시간 전환이 필요하면 "시간이 흘러", "해가 기울어" 같은 전환 문구를 먼저 명시.`,
+      );
+    }
+    return factsParts;
   }
 
   /**
