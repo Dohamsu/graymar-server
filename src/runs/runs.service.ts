@@ -1,7 +1,7 @@
 // 정본: specs/HUB_system.md — HUB 기반 런 생성
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { and, count, desc, eq, lt } from 'drizzle-orm';
+import { and, count, desc, eq, lt, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import {
@@ -940,16 +940,16 @@ export class RunsService {
       const seed = await runInScenarioContext(scenarioId ?? 'graymar_v1', () =>
         this.plotSeedGenerator.generate(),
       );
-      const session = await this.db.query.runSessions.findFirst({
-        where: eq(runSessions.id, runId),
-        columns: { runState: true },
-      });
-      if (!session?.runState) return;
-      const rs = session.runState as unknown as Record<string, unknown>;
-      rs.plotSeed = seed as unknown;
+      // [P8 캠페인 실측 수정 — 2026-07-17] SELECT→전체 되쓰기는 seed 생성
+      // ~10초 사이 커밋된 턴과 경합: seed가 유실되거나(kh_1 실측 — 자율 런이
+      // 디렉터 없이 진행) stale 스냅샷이 턴 상태를 되돌릴 수 있다. arch/60
+      // 원칙(부분 패치)대로 jsonb_set으로 plotSeed 필드만 원자 갱신한다.
       await this.db
         .update(runSessions)
-        .set({ runState: rs as never, updatedAt: new Date() })
+        .set({
+          runState: sql`jsonb_set(${runSessions.runState}, '{plotSeed}', ${JSON.stringify(seed)}::jsonb)`,
+          updatedAt: new Date(),
+        })
         .where(eq(runSessions.id, runId));
       this.logger.log(
         `[createRun] AUTONOMOUS Plot Seed 백그라운드 동결 ${runId} (culprit=${seed.truth.culpritNpcId}, fallback=${!!seed.generatedByFallback})`,
