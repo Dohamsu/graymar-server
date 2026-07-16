@@ -178,322 +178,11 @@ export class PromptBuilderService {
     // 2. Memory block (assistant role로 이전 컨텍스트 제공)
     const memoryParts: string[] = [];
 
-    // L0 확장: WorldState 스냅샷
-    if (ctx.worldSnapshot) {
-      memoryParts.push(`[세계 상태]\n${ctx.worldSnapshot}`);
-    }
+    // L0~L1 메모리 컨텍스트 — buildMemoryContextBlocks로 추출 (arch/77 P1.15)
+    memoryParts.push(
+      ...this.buildMemoryContextBlocks(ctx, sr, rawInput, inputType, isHub),
+    );
 
-    // L0 확장: 주인공 배경 — 내면 설정으로만 참조 (매 턴 직접 언급 금지)
-    if (ctx.protagonistBackground) {
-      memoryParts.push(
-        `[주인공 배경]\n${ctx.protagonistBackground}\n` +
-          '주인공의 배경은 행동 묘사에 자연스럽게 녹여내세요:\n' +
-          '- 행동할 때: 배경에서 비롯된 몸짓, 습관, 본능적 반응을 묘사 (예: 전직 군인의 절도 있는 움직임, 밀수업자의 은밀한 눈빛)\n' +
-          '- 관찰할 때: 전문 분야의 관점으로 상황을 읽는 묘사 (예: 검투사가 상대의 자세를 평가, 약초상이 풀 냄새를 구분)\n' +
-          '- 대화할 때: 과거가 은연중 묻어나는 말투나 반응 (예: 귀족의 무의식적 격식, 부두 노동자의 거친 어투)\n' +
-          '배경을 직접 설명하거나 독백으로 회상하지 마세요. 행동과 묘사에 자연스럽게 스며들게 하세요.',
-      );
-    }
-
-    // Structured Memory v2: 서사 이정표 (milestones)
-    if (ctx.milestonesText) {
-      memoryParts.push(
-        `[서사 이정표]\n${ctx.milestonesText}\n이 이정표들은 플레이어의 여정에서 중요한 순간입니다. NPC 대사나 배경 묘사에서 자연스럽게 콜백하세요.`,
-      );
-    }
-
-    // L1: Story summary — 구조화 메모리 우선, fallback으로 기존 storySummary
-    if (ctx.structuredSummary) {
-      memoryParts.push(
-        `[이야기 요약]\n${ctx.structuredSummary}\n재방문 장소에서는 이전 방문의 행동과 결과가 세계에 남긴 흔적을 묘사하세요.`,
-      );
-    } else if (ctx.storySummary) {
-      memoryParts.push(`[이야기 요약]\n${ctx.storySummary}`);
-    }
-
-    // Fixplan v1: 직전 장소 이탈 요약
-    if (ctx.previousVisitContext) {
-      const trimmed = this.tokenBudget.trimToFit(ctx.previousVisitContext, 150);
-      if (trimmed) {
-        memoryParts.push(
-          `[직전 장소 정보]\n${trimmed}\n직전 장소에서의 행동과 미해결 단서를 현재 장면의 NPC 반응이나 배경 묘사에 자연스럽게 반영하세요.`,
-        );
-      }
-    }
-
-    // NPC 개인 기록: 현재 턴 관련 NPC의 상세 기록 (relevantNpcMemoryText 우선) — HUB에서는 생략
-    if (!isHub) {
-      if (ctx.relevantNpcMemoryText) {
-        memoryParts.push(
-          `[관련 NPC 기록]\n${ctx.relevantNpcMemoryText}\n⚠️ 이 NPC와의 과거 상호작용을 대사와 행동에 반드시 반영하라. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다. 과거 만남의 결과(성공/실패)가 현재 태도에 영향을 주어야 합니다.`,
-        );
-      } else if (ctx.npcJournalText) {
-        // fallback: personalMemory가 없는 경우 기존 NPC 관계 일지 사용
-        memoryParts.push(
-          `[NPC 관계]\n${ctx.npcJournalText}\n⚠️ NPC가 등장하면, 위 태도와 과거 상호작용을 반드시 대사 톤과 행동에 반영하세요. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다.`,
-        );
-      }
-    }
-
-    // Phase 2: IncidentMemory — 관련 사건 기록이 있으면 우선 사용, 없으면 기존 일지 fallback — HUB에서는 생략
-    if (!isHub) {
-      if (ctx.relevantIncidentMemoryText) {
-        memoryParts.push(
-          `[관련 사건 기록]\n${ctx.relevantIncidentMemoryText}\n` +
-            '플레이어의 이전 행동과 발견한 단서를 대사와 서술에 반영하라. ' +
-            '사건에 적극 개입한 플레이어는 관련 NPC가 알아보고, 방관한 플레이어에게는 상황 변화를 암시하라.',
-        );
-      } else if (ctx.incidentChronicleText) {
-        memoryParts.push(
-          `[사건 일지]\n${ctx.incidentChronicleText}\n진행 중인 사건의 여파를 배경 묘사에 반영하세요 — 주민 반응, 경비 변화, 분위기 등.`,
-        );
-      }
-    }
-
-    // Structured Memory v2: LLM 추출 사실 (PR4: activeClues가 있으면 PLOT_HINT 중복 제거)
-    if (ctx.llmFactsText) {
-      let factsText = ctx.llmFactsText;
-      if (ctx.activeClues) {
-        // activeClues에 이미 포함된 [사건] 라인 제거
-        const factsLines = factsText
-          .split('\n')
-          .filter(
-            (line) =>
-              !line.includes('[사건]') ||
-              !ctx.activeClues!.includes(
-                line.replace('- [사건] ', '').trim().slice(0, 30),
-              ),
-          );
-        factsText = factsLines.join('\n');
-      }
-      if (factsText.trim()) {
-        memoryParts.push(`[기억된 사실]\n${factsText}`);
-      }
-    }
-
-    // 로어북: 키워드 트리거 기반 관련 세계 지식
-    if (ctx.lorebookContext) {
-      memoryParts.push(ctx.lorebookContext);
-    }
-
-    // L1 확장: LOCATION 컨텍스트
-    if (ctx.locationContext) {
-      memoryParts.push(`[현재 장소]\n${ctx.locationContext}`);
-    }
-
-    // LocationMemory: 장소별 개인 기록 (방문 횟수, 사건, 비밀, 평판)
-    if (ctx.locationMemoryText) {
-      memoryParts.push(
-        `${ctx.locationMemoryText}\n이전 방문에서의 경험이 현재 NPC 반응과 분위기에 영향을 준다. 재방문 장소에서는 과거 사건의 흔적과 변화를 묘사하라.`,
-      );
-    }
-
-    // Phase 4: 장소별 재방문 기억 (locationMemory가 없을 때 fallback)
-    if (!ctx.locationMemoryText && ctx.locationRevisitContext) {
-      memoryParts.push(
-        `[이 장소의 이전 방문]\n${ctx.locationRevisitContext}\n이전 방문의 결과와 변화가 현재 장면에 반영되어야 합니다.`,
-      );
-    }
-
-    // 장면 연속성: 현재 장면 상태 (대화 상대, 세부 위치, 진행 중인 상황)
-    if (ctx.currentSceneContext) {
-      memoryParts.push(
-        [
-          '[현재 장면 상태]',
-          '아래는 지금 진행 중인 장면의 핵심 맥락입니다. 서술은 반드시 이 장면에서 이어져야 합니다.',
-          '',
-          ctx.currentSceneContext,
-        ].join('\n'),
-      );
-    }
-
-    // L2: Node facts
-    if (ctx.nodeFacts.length > 0) {
-      memoryParts.push(`[현재 노드 사실]\n${JSON.stringify(ctx.nodeFacts)}`);
-    }
-
-    // [장면 흐름] 블록 — narrative thread 캐시 (이번 방문 대화 위에 배치)
-    if (ctx.narrativeThread) {
-      try {
-        const thread = JSON.parse(ctx.narrativeThread) as {
-          entries: { turnNo: number; summary: string }[];
-        };
-        if (thread.entries.length > 0) {
-          const threadLines = thread.entries.map(
-            (e) => `[턴 ${e.turnNo}] ${e.summary}`,
-          );
-          memoryParts.push(
-            [
-              '[장면 흐름]',
-              '이 장소 방문 중 누적된 장면 맥락입니다. 이 흐름에서 자연스럽게 이어가세요.',
-              '⚠️ 각 턴에서 NPC가 알려준 단서, 획득한 물건, 발견한 사실은 모두 유효합니다. 이미 알게 된 정보를 NPC가 다시 처음 알려주는 것처럼 반복하지 마세요.',
-              '',
-              threadLines.join('\n'),
-            ].join('\n'),
-          );
-        }
-      } catch {
-        /* ignore parse failure */
-      }
-    }
-
-    // PR3: Intent Memory — 플레이어 행동 패턴 (200 토큰 예산)
-    if (ctx.intentMemory) {
-      const trimmed = this.tokenBudget.fitBlock(
-        ctx.intentMemory,
-        'INTENT_MEMORY',
-      );
-      if (trimmed) {
-        memoryParts.push(
-          `[플레이어 행동 패턴]\n${trimmed}\n플레이어의 최근 행동 패턴에 맞는 톤과 분위기로 서술하세요.`,
-        );
-      }
-    }
-
-    // PR4: Active Clues — 활성 단서 (150 토큰 예산)
-    if (ctx.activeClues) {
-      const trimmed = this.tokenBudget.fitBlock(
-        ctx.activeClues,
-        'ACTIVE_CLUES',
-      );
-      if (trimmed) {
-        memoryParts.push(
-          `당신이 알고 있는 것:\n${trimmed}\n이 정보를 서술에 자연스럽게 녹이세요. 위 문장을 그대로 인용하지 마세요.`,
-        );
-      }
-    }
-
-    // PR2: Mid Summary — 이번 방문 초기 턴 요약 (RECENT_STORY 예산 공유)
-    if (ctx.midSummary) {
-      memoryParts.push(`[중간 요약]\n${ctx.midSummary}`);
-    }
-
-    // THREAD 요약 파싱 — 이전 턴 원문 대신 사용 (어휘 피드백 루프 차단)
-    const threadEntries = new Map<number, string>();
-    if (ctx.narrativeThread) {
-      try {
-        const parsed = JSON.parse(ctx.narrativeThread) as {
-          entries?: { turnNo: number; summary: string }[];
-        };
-        for (const e of parsed.entries ?? []) {
-          threadEntries.set(e.turnNo, e.summary);
-        }
-      } catch {
-        /* 파싱 실패 시 fallback */
-      }
-    }
-
-    // L3: 현재 LOCATION 방문 전체 대화 (단기 기억 — 우선 사용) — HUB에서는 생략
-    if (
-      !isHub &&
-      ctx.locationSessionTurns &&
-      ctx.locationSessionTurns.length > 0
-    ) {
-      const totalTurns = ctx.locationSessionTurns.length;
-
-      const sessionLines = ctx.locationSessionTurns.map((t, idx) => {
-        const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
-        const outcomeLabel =
-          t.resolveOutcome === 'SUCCESS'
-            ? '성공'
-            : t.resolveOutcome === 'PARTIAL'
-              ? '부분 성공'
-              : t.resolveOutcome === 'FAIL'
-                ? '실패'
-                : '';
-        const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
-        const distFromEnd = totalTurns - 1 - idx; // 0 = 직전, 1 = 그 이전, ...
-        let narrativePart = '';
-
-        // 모든 턴: THREAD 요약 사용 (원문 주입 폐기 — 어휘 오염 방지)
-        {
-          const threadSummary = threadEntries.get(t.turnNo);
-          if (threadSummary) {
-            narrativePart =
-              distFromEnd === 0
-                ? `\n상황(직전 — 여기서 이어쓰세요): ${threadSummary}`
-                : `\n상황: ${threadSummary}`;
-          } else if (t.narrative) {
-            // THREAD 없으면 원문 60자 fallback
-            const trimmed =
-              t.narrative.length > 60
-                ? '...' + t.narrative.slice(-60)
-                : t.narrative;
-            narrativePart = `\n상황(요약): ${trimmed}`;
-          }
-        }
-        return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
-      });
-      memoryParts.push(
-        ['[이번 방문 대화]', sessionLines.join('\n---\n')].join('\n'),
-      );
-
-      // 장기 체류 소재 리프레시: 5턴 이상 같은 장소 → 새로운 관점 강제
-      if (ctx.locationSessionTurns.length >= 5) {
-        memoryParts.push(
-          `⚠️ 이 장소에서 ${ctx.locationSessionTurns.length}턴째입니다. 이전 턴에서 사용한 소재(장소명, 물건, 냄새, 인물 묘사)를 재활용하지 마세요. 완전히 새로운 시각/청각/촉각 디테일과 새로운 소품으로 장면을 구성하세요.`,
-        );
-      }
-
-      // Mod4: 직전 턴 핵심 정보 — 맥락 유지 강화
-      if (ctx.locationSessionTurns.length >= 1) {
-        const lastTurn =
-          ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1];
-        const actionLabel = lastTurn.inputType === 'ACTION' ? '행동' : '선택';
-        const outcomeLabel =
-          lastTurn.resolveOutcome === 'SUCCESS'
-            ? '성공'
-            : lastTurn.resolveOutcome === 'PARTIAL'
-              ? '부분 성공'
-              : lastTurn.resolveOutcome === 'FAIL'
-                ? '실패'
-                : '';
-        const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
-        const keyInfoLines: string[] = [];
-        keyInfoLines.push(
-          `- ${actionLabel}: "${sanitizeUserInput(lastTurn.rawInput)}"${outcomePart}`,
-        );
-        // THREAD 요약으로 직전 장면 보강 (원문 대신)
-        const lastThread = threadEntries.get(lastTurn.turnNo);
-        if (lastThread) {
-          keyInfoLines.push(`- 직전 장면 요약: ${lastThread}`);
-        }
-        // NPC delta 정보 (context에 포함된 경우)
-        if (ctx.npcDeltaHint) {
-          const deltaMatch = ctx.npcDeltaHint.match(/⚡ 이번 턴 변화: (.+)/);
-          if (deltaMatch) {
-            keyInfoLines.push(`- NPC 반응: ${deltaMatch[1]}`);
-          }
-        }
-        keyInfoLines.push(
-          '→ 위 정보를 이번 턴 서술의 출발점으로 삼으세요. 직전 장면과 단절되지 않게 이어쓰세요.',
-        );
-        memoryParts.push(`[직전 턴 핵심 정보]\n${keyInfoLines.join('\n')}`);
-      }
-    } else if (ctx.recentTurns && ctx.recentTurns.length > 0) {
-      // LOCATION 세션 없으면 글로벌 최근 이력 사용
-      // 원문 제거 — THREAD 요약 또는 행동+판정만 전달 (어휘 피드백 루프 차단)
-      const turnLines = ctx.recentTurns.map((t) => {
-        const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
-        const outcomeLabel =
-          t.resolveOutcome === 'SUCCESS'
-            ? '성공'
-            : t.resolveOutcome === 'PARTIAL'
-              ? '부분 성공'
-              : t.resolveOutcome === 'FAIL'
-                ? '실패'
-                : '';
-        const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
-        // THREAD 요약 사용 (원문 제거)
-        const threadSummary = threadEntries.get(t.turnNo);
-        const narrativePart = threadSummary ? `\n상황: ${threadSummary}` : '';
-        return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
-      });
-      memoryParts.push(`[최근 대화 이력]\n${turnLines.join('\n---\n')}`);
-    } else if (ctx.recentSummaries.length > 0) {
-      // fallback: recentTurns가 없으면 기존 방식
-      memoryParts.push(`[최근 서술]\n${ctx.recentSummaries.join('\n---\n')}`);
-    }
 
     // L2 확장: NPC 로스터 — buildNpcRosterBlocks로 추출 (arch/77 P1.11).
     // targetNpcIds는 후속 블록(NPC 감정 상태·어체·fact)이 공유하는 상태.
@@ -2130,6 +1819,339 @@ export class PromptBuilderService {
       memoryParts.push(
         `[도시 시그널]\n${ctx.signalContext}\n배경 분위기와 NPC 대화에 시그널 정보를 자연스럽게 녹여내세요.`,
       );
+    }
+    return memoryParts;
+  }
+
+  /**
+   * L0~L1 메모리 컨텍스트 블록 — 세계 상태/주인공 배경/이정표/이야기 요약/
+   * 직전 장소/NPC 개인·사건 기록/기억된 사실/로어북/장소·장면/방문 대화 등
+   * 축적 기억의 순차 조립 (트리밍 우선순위는 호출부 Token Budget이 담당).
+   * arch/77 P1.15 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildMemoryContextBlocks(
+    ctx: LlmContext,
+    sr: ServerResultV1,
+    rawInput: string,
+    inputType: string,
+    isHub: boolean,
+  ): string[] {
+    const memoryParts: string[] = [];
+    // L0 확장: WorldState 스냅샷
+    if (ctx.worldSnapshot) {
+      memoryParts.push(`[세계 상태]\n${ctx.worldSnapshot}`);
+    }
+
+    // L0 확장: 주인공 배경 — 내면 설정으로만 참조 (매 턴 직접 언급 금지)
+    if (ctx.protagonistBackground) {
+      memoryParts.push(
+        `[주인공 배경]\n${ctx.protagonistBackground}\n` +
+          '주인공의 배경은 행동 묘사에 자연스럽게 녹여내세요:\n' +
+          '- 행동할 때: 배경에서 비롯된 몸짓, 습관, 본능적 반응을 묘사 (예: 전직 군인의 절도 있는 움직임, 밀수업자의 은밀한 눈빛)\n' +
+          '- 관찰할 때: 전문 분야의 관점으로 상황을 읽는 묘사 (예: 검투사가 상대의 자세를 평가, 약초상이 풀 냄새를 구분)\n' +
+          '- 대화할 때: 과거가 은연중 묻어나는 말투나 반응 (예: 귀족의 무의식적 격식, 부두 노동자의 거친 어투)\n' +
+          '배경을 직접 설명하거나 독백으로 회상하지 마세요. 행동과 묘사에 자연스럽게 스며들게 하세요.',
+      );
+    }
+
+    // Structured Memory v2: 서사 이정표 (milestones)
+    if (ctx.milestonesText) {
+      memoryParts.push(
+        `[서사 이정표]\n${ctx.milestonesText}\n이 이정표들은 플레이어의 여정에서 중요한 순간입니다. NPC 대사나 배경 묘사에서 자연스럽게 콜백하세요.`,
+      );
+    }
+
+    // L1: Story summary — 구조화 메모리 우선, fallback으로 기존 storySummary
+    if (ctx.structuredSummary) {
+      memoryParts.push(
+        `[이야기 요약]\n${ctx.structuredSummary}\n재방문 장소에서는 이전 방문의 행동과 결과가 세계에 남긴 흔적을 묘사하세요.`,
+      );
+    } else if (ctx.storySummary) {
+      memoryParts.push(`[이야기 요약]\n${ctx.storySummary}`);
+    }
+
+    // Fixplan v1: 직전 장소 이탈 요약
+    if (ctx.previousVisitContext) {
+      const trimmed = this.tokenBudget.trimToFit(ctx.previousVisitContext, 150);
+      if (trimmed) {
+        memoryParts.push(
+          `[직전 장소 정보]\n${trimmed}\n직전 장소에서의 행동과 미해결 단서를 현재 장면의 NPC 반응이나 배경 묘사에 자연스럽게 반영하세요.`,
+        );
+      }
+    }
+
+    // NPC 개인 기록: 현재 턴 관련 NPC의 상세 기록 (relevantNpcMemoryText 우선) — HUB에서는 생략
+    if (!isHub) {
+      if (ctx.relevantNpcMemoryText) {
+        memoryParts.push(
+          `[관련 NPC 기록]\n${ctx.relevantNpcMemoryText}\n⚠️ 이 NPC와의 과거 상호작용을 대사와 행동에 반드시 반영하라. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다. 과거 만남의 결과(성공/실패)가 현재 태도에 영향을 주어야 합니다.`,
+        );
+      } else if (ctx.npcJournalText) {
+        // fallback: personalMemory가 없는 경우 기존 NPC 관계 일지 사용
+        memoryParts.push(
+          `[NPC 관계]\n${ctx.npcJournalText}\n⚠️ NPC가 등장하면, 위 태도와 과거 상호작용을 반드시 대사 톤과 행동에 반영하세요. 이전에 만난 NPC는 플레이어를 알아보는 반응을 보여야 합니다.`,
+        );
+      }
+    }
+
+    // Phase 2: IncidentMemory — 관련 사건 기록이 있으면 우선 사용, 없으면 기존 일지 fallback — HUB에서는 생략
+    if (!isHub) {
+      if (ctx.relevantIncidentMemoryText) {
+        memoryParts.push(
+          `[관련 사건 기록]\n${ctx.relevantIncidentMemoryText}\n` +
+            '플레이어의 이전 행동과 발견한 단서를 대사와 서술에 반영하라. ' +
+            '사건에 적극 개입한 플레이어는 관련 NPC가 알아보고, 방관한 플레이어에게는 상황 변화를 암시하라.',
+        );
+      } else if (ctx.incidentChronicleText) {
+        memoryParts.push(
+          `[사건 일지]\n${ctx.incidentChronicleText}\n진행 중인 사건의 여파를 배경 묘사에 반영하세요 — 주민 반응, 경비 변화, 분위기 등.`,
+        );
+      }
+    }
+
+    // Structured Memory v2: LLM 추출 사실 (PR4: activeClues가 있으면 PLOT_HINT 중복 제거)
+    if (ctx.llmFactsText) {
+      let factsText = ctx.llmFactsText;
+      if (ctx.activeClues) {
+        // activeClues에 이미 포함된 [사건] 라인 제거
+        const factsLines = factsText
+          .split('\n')
+          .filter(
+            (line) =>
+              !line.includes('[사건]') ||
+              !ctx.activeClues!.includes(
+                line.replace('- [사건] ', '').trim().slice(0, 30),
+              ),
+          );
+        factsText = factsLines.join('\n');
+      }
+      if (factsText.trim()) {
+        memoryParts.push(`[기억된 사실]\n${factsText}`);
+      }
+    }
+
+    // 로어북: 키워드 트리거 기반 관련 세계 지식
+    if (ctx.lorebookContext) {
+      memoryParts.push(ctx.lorebookContext);
+    }
+
+    // L1 확장: LOCATION 컨텍스트
+    if (ctx.locationContext) {
+      memoryParts.push(`[현재 장소]\n${ctx.locationContext}`);
+    }
+
+    // LocationMemory: 장소별 개인 기록 (방문 횟수, 사건, 비밀, 평판)
+    if (ctx.locationMemoryText) {
+      memoryParts.push(
+        `${ctx.locationMemoryText}\n이전 방문에서의 경험이 현재 NPC 반응과 분위기에 영향을 준다. 재방문 장소에서는 과거 사건의 흔적과 변화를 묘사하라.`,
+      );
+    }
+
+    // Phase 4: 장소별 재방문 기억 (locationMemory가 없을 때 fallback)
+    if (!ctx.locationMemoryText && ctx.locationRevisitContext) {
+      memoryParts.push(
+        `[이 장소의 이전 방문]\n${ctx.locationRevisitContext}\n이전 방문의 결과와 변화가 현재 장면에 반영되어야 합니다.`,
+      );
+    }
+
+    // 장면 연속성: 현재 장면 상태 (대화 상대, 세부 위치, 진행 중인 상황)
+    if (ctx.currentSceneContext) {
+      memoryParts.push(
+        [
+          '[현재 장면 상태]',
+          '아래는 지금 진행 중인 장면의 핵심 맥락입니다. 서술은 반드시 이 장면에서 이어져야 합니다.',
+          '',
+          ctx.currentSceneContext,
+        ].join('\n'),
+      );
+    }
+
+    // L2: Node facts
+    if (ctx.nodeFacts.length > 0) {
+      memoryParts.push(`[현재 노드 사실]\n${JSON.stringify(ctx.nodeFacts)}`);
+    }
+
+    // [장면 흐름] 블록 — narrative thread 캐시 (이번 방문 대화 위에 배치)
+    if (ctx.narrativeThread) {
+      try {
+        const thread = JSON.parse(ctx.narrativeThread) as {
+          entries: { turnNo: number; summary: string }[];
+        };
+        if (thread.entries.length > 0) {
+          const threadLines = thread.entries.map(
+            (e) => `[턴 ${e.turnNo}] ${e.summary}`,
+          );
+          memoryParts.push(
+            [
+              '[장면 흐름]',
+              '이 장소 방문 중 누적된 장면 맥락입니다. 이 흐름에서 자연스럽게 이어가세요.',
+              '⚠️ 각 턴에서 NPC가 알려준 단서, 획득한 물건, 발견한 사실은 모두 유효합니다. 이미 알게 된 정보를 NPC가 다시 처음 알려주는 것처럼 반복하지 마세요.',
+              '',
+              threadLines.join('\n'),
+            ].join('\n'),
+          );
+        }
+      } catch {
+        /* ignore parse failure */
+      }
+    }
+
+    // PR3: Intent Memory — 플레이어 행동 패턴 (200 토큰 예산)
+    if (ctx.intentMemory) {
+      const trimmed = this.tokenBudget.fitBlock(
+        ctx.intentMemory,
+        'INTENT_MEMORY',
+      );
+      if (trimmed) {
+        memoryParts.push(
+          `[플레이어 행동 패턴]\n${trimmed}\n플레이어의 최근 행동 패턴에 맞는 톤과 분위기로 서술하세요.`,
+        );
+      }
+    }
+
+    // PR4: Active Clues — 활성 단서 (150 토큰 예산)
+    if (ctx.activeClues) {
+      const trimmed = this.tokenBudget.fitBlock(
+        ctx.activeClues,
+        'ACTIVE_CLUES',
+      );
+      if (trimmed) {
+        memoryParts.push(
+          `당신이 알고 있는 것:\n${trimmed}\n이 정보를 서술에 자연스럽게 녹이세요. 위 문장을 그대로 인용하지 마세요.`,
+        );
+      }
+    }
+
+    // PR2: Mid Summary — 이번 방문 초기 턴 요약 (RECENT_STORY 예산 공유)
+    if (ctx.midSummary) {
+      memoryParts.push(`[중간 요약]\n${ctx.midSummary}`);
+    }
+
+    // THREAD 요약 파싱 — 이전 턴 원문 대신 사용 (어휘 피드백 루프 차단)
+    const threadEntries = new Map<number, string>();
+    if (ctx.narrativeThread) {
+      try {
+        const parsed = JSON.parse(ctx.narrativeThread) as {
+          entries?: { turnNo: number; summary: string }[];
+        };
+        for (const e of parsed.entries ?? []) {
+          threadEntries.set(e.turnNo, e.summary);
+        }
+      } catch {
+        /* 파싱 실패 시 fallback */
+      }
+    }
+
+    // L3: 현재 LOCATION 방문 전체 대화 (단기 기억 — 우선 사용) — HUB에서는 생략
+    if (
+      !isHub &&
+      ctx.locationSessionTurns &&
+      ctx.locationSessionTurns.length > 0
+    ) {
+      const totalTurns = ctx.locationSessionTurns.length;
+
+      const sessionLines = ctx.locationSessionTurns.map((t, idx) => {
+        const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
+        const outcomeLabel =
+          t.resolveOutcome === 'SUCCESS'
+            ? '성공'
+            : t.resolveOutcome === 'PARTIAL'
+              ? '부분 성공'
+              : t.resolveOutcome === 'FAIL'
+                ? '실패'
+                : '';
+        const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
+        const distFromEnd = totalTurns - 1 - idx; // 0 = 직전, 1 = 그 이전, ...
+        let narrativePart = '';
+
+        // 모든 턴: THREAD 요약 사용 (원문 주입 폐기 — 어휘 오염 방지)
+        {
+          const threadSummary = threadEntries.get(t.turnNo);
+          if (threadSummary) {
+            narrativePart =
+              distFromEnd === 0
+                ? `\n상황(직전 — 여기서 이어쓰세요): ${threadSummary}`
+                : `\n상황: ${threadSummary}`;
+          } else if (t.narrative) {
+            // THREAD 없으면 원문 60자 fallback
+            const trimmed =
+              t.narrative.length > 60
+                ? '...' + t.narrative.slice(-60)
+                : t.narrative;
+            narrativePart = `\n상황(요약): ${trimmed}`;
+          }
+        }
+        return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
+      });
+      memoryParts.push(
+        ['[이번 방문 대화]', sessionLines.join('\n---\n')].join('\n'),
+      );
+
+      // 장기 체류 소재 리프레시: 5턴 이상 같은 장소 → 새로운 관점 강제
+      if (ctx.locationSessionTurns.length >= 5) {
+        memoryParts.push(
+          `⚠️ 이 장소에서 ${ctx.locationSessionTurns.length}턴째입니다. 이전 턴에서 사용한 소재(장소명, 물건, 냄새, 인물 묘사)를 재활용하지 마세요. 완전히 새로운 시각/청각/촉각 디테일과 새로운 소품으로 장면을 구성하세요.`,
+        );
+      }
+
+      // Mod4: 직전 턴 핵심 정보 — 맥락 유지 강화
+      if (ctx.locationSessionTurns.length >= 1) {
+        const lastTurn =
+          ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1];
+        const actionLabel = lastTurn.inputType === 'ACTION' ? '행동' : '선택';
+        const outcomeLabel =
+          lastTurn.resolveOutcome === 'SUCCESS'
+            ? '성공'
+            : lastTurn.resolveOutcome === 'PARTIAL'
+              ? '부분 성공'
+              : lastTurn.resolveOutcome === 'FAIL'
+                ? '실패'
+                : '';
+        const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
+        const keyInfoLines: string[] = [];
+        keyInfoLines.push(
+          `- ${actionLabel}: "${sanitizeUserInput(lastTurn.rawInput)}"${outcomePart}`,
+        );
+        // THREAD 요약으로 직전 장면 보강 (원문 대신)
+        const lastThread = threadEntries.get(lastTurn.turnNo);
+        if (lastThread) {
+          keyInfoLines.push(`- 직전 장면 요약: ${lastThread}`);
+        }
+        // NPC delta 정보 (context에 포함된 경우)
+        if (ctx.npcDeltaHint) {
+          const deltaMatch = ctx.npcDeltaHint.match(/⚡ 이번 턴 변화: (.+)/);
+          if (deltaMatch) {
+            keyInfoLines.push(`- NPC 반응: ${deltaMatch[1]}`);
+          }
+        }
+        keyInfoLines.push(
+          '→ 위 정보를 이번 턴 서술의 출발점으로 삼으세요. 직전 장면과 단절되지 않게 이어쓰세요.',
+        );
+        memoryParts.push(`[직전 턴 핵심 정보]\n${keyInfoLines.join('\n')}`);
+      }
+    } else if (ctx.recentTurns && ctx.recentTurns.length > 0) {
+      // LOCATION 세션 없으면 글로벌 최근 이력 사용
+      // 원문 제거 — THREAD 요약 또는 행동+판정만 전달 (어휘 피드백 루프 차단)
+      const turnLines = ctx.recentTurns.map((t) => {
+        const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
+        const outcomeLabel =
+          t.resolveOutcome === 'SUCCESS'
+            ? '성공'
+            : t.resolveOutcome === 'PARTIAL'
+              ? '부분 성공'
+              : t.resolveOutcome === 'FAIL'
+                ? '실패'
+                : '';
+        const outcomePart = outcomeLabel ? ` → ${outcomeLabel}` : '';
+        // THREAD 요약 사용 (원문 제거)
+        const threadSummary = threadEntries.get(t.turnNo);
+        const narrativePart = threadSummary ? `\n상황: ${threadSummary}` : '';
+        return `[턴 ${t.turnNo}] 플레이어 ${actionLabel}: "${sanitizeUserInput(t.rawInput)}"${outcomePart}${narrativePart}`;
+      });
+      memoryParts.push(`[최근 대화 이력]\n${turnLines.join('\n---\n')}`);
+    } else if (ctx.recentSummaries.length > 0) {
+      // fallback: recentTurns가 없으면 기존 방식
+      memoryParts.push(`[최근 서술]\n${ctx.recentSummaries.join('\n---\n')}`);
     }
     return memoryParts;
   }
