@@ -1611,162 +1611,7 @@ export class PromptBuilderService {
 
     // Phase 3: NPC 주입 (Step 5) — 소개 상태 반영
     if (ctx.npcInjection) {
-      const npc = ctx.npcInjection;
-      const isNewlyIntroduced = (ctx.newlyIntroducedNpcIds ?? []).includes(
-        npc.npcId ?? '',
-      );
-      const isNewlyEncountered = (ctx.newlyEncounteredNpcIds ?? []).includes(
-        npc.npcId ?? '',
-      );
-
-      let introInstruction = '';
-      if (isNewlyIntroduced && isNewlyEncountered) {
-        introInstruction =
-          '\n이 NPC는 처음 만나며 자기소개를 합니다. 이름을 포함한 자연스러운 소개를 서술하세요.';
-      } else if (isNewlyIntroduced) {
-        introInstruction =
-          '\n이 NPC의 이름이 이번 장면에서 드러납니다. 다른 인물의 언급이나 상황 단서를 통해 자연스럽게 이름이 밝혀지도록 서술하세요.';
-      } else if (npc.introduced === false) {
-        const npcDef = npc.npcId ? this.content.getNpc(npc.npcId) : undefined;
-        const alias = npcDef?.unknownAlias || '낯선 인물';
-        introInstruction = `\n이 NPC는 아직 이름이 밝혀지지 않았습니다. "${alias}"으로만 지칭하세요.\n⚠️ 미소개 NPC는 신뢰가 형성되지 않았으므로 대사를 1~3문장으로 제한하세요. 핵심 정보를 주지 않고 떠보거나 경계하는 수준만 표현합니다.`;
-      }
-
-      // NPC 표시 이름 결정: introduced=true인 경우만 실명, 나머지는 별칭
-      const npcDef = npc.npcId ? this.content.getNpc(npc.npcId) : undefined;
-      const alias = npcDef?.unknownAlias || '낯선 인물';
-      const npcDisplayName = npc.introduced === true ? npc.npcName : alias;
-
-      // 이름 공개 정밀 분석(2026-07-10) C: 실명은 콘텐츠(npcDef.name)에서 직접.
-      // 기존엔 npc.npcName(경로에 따라 소개 턴 별칭)이 들어가 LLM이 실명을 모른 채
-      // 소개를 연출 — "제 이름은 전령 소년이에요" 류 별칭 자기소개 발생.
-      // architecture/64 튜닝: 경계 성향/실패 이력 NPC는 자기소개 경로 제외.
-      const realName = npcDef?.name ?? npc.npcName;
-      const stForIntro = npc.npcId ? ctx.npcStates?.[npc.npcId] : undefined;
-      const avoidSelfIntro = shouldAvoidSelfIntro(
-        stForIntro?.posture,
-        stForIntro?.introAttempts,
-      );
-      const nameRevealHint = isNewlyIntroduced
-        ? avoidSelfIntro
-          ? `\n이 NPC의 이름이 이번 장면에서 드러납니다 (실명: "${realName}"). ⚠️ 본인은 성격상 이름을 밝히지 않습니다 — 자기소개 대사 금지. 제3자가 "${realName}"을 부르거나, 지닌 물건의 이름 표기를 플레이어가 발견하는 장면으로 연출하세요. 별칭으로 시작하세요.`
-          : `\n이 NPC의 이름이 이번 장면에서 자연스럽게 드러납니다. 자기소개, 다른 인물의 언급, 또는 상황 단서를 통해 밝혀지도록 하세요. 별칭으로 시작하세요. (실명: "${realName}")`
-        : '';
-
-      // NPC tier 확인 (미소개 상태면 CORE tier의 대사량 확장을 억제)
-      const npcTier = npcDef?.tier ?? 'SUB';
-      let tierInstruction = '';
-      if (npcTier === 'BACKGROUND') {
-        tierInstruction =
-          '\n⚠️ 이 인물은 배경 인물입니다. 대사는 1~2마디로 제한하고, 서술의 초점은 이 인물이 아닌 플레이어의 행동에 맞추세요.';
-      } else if (npcTier === 'CORE' && npc.introduced === true) {
-        tierInstruction =
-          '\n이 인물은 핵심 인물입니다. 충분한 대사와 깊이 있는 상호작용을 서술하세요.';
-      } else if (npcTier === 'CORE' && npc.introduced === false) {
-        tierInstruction =
-          '\n이 인물은 핵심 인물이지만 아직 미소개 상태입니다. 짧고 의미심장한 대사로 존재감만 드러내세요. 소개 후부터 깊이 있는 상호작용이 가능합니다.';
-      }
-
-      // NPC 연속 등장 턴 수 계산
-      const sessionTurns = ctx.locationSessionTurns ?? [];
-      let consecutiveAppearance = 0;
-      for (let i = sessionTurns.length - 1; i >= 0; i--) {
-        // 이전 턴 서술에 이 NPC 이름/별칭이 포함되어 있으면 연속
-        if (sessionTurns[i].narrative?.includes(npcDisplayName))
-          consecutiveAppearance++;
-        else break;
-      }
-      const continuityHint =
-        consecutiveAppearance >= 2
-          ? `\n⚠️ 이 인물은 이미 ${consecutiveAppearance}턴 연속 등장했습니다. 이전 대화를 이어가세요. 같은 말이나 같은 묘사를 반복하지 마세요. 대화를 한 단계 진전시키세요.`
-          : consecutiveAppearance === 1
-            ? '\n이 인물은 직전 턴에도 등장했습니다. 대화를 이어가세요.'
-            : '';
-
-      // 행동 유형에 따라 NPC 등장 모드 결정
-      const actionCtxForNpc = sr.ui?.actionContext as
-        | { parsedType?: string }
-        | undefined;
-      const actionType = actionCtxForNpc?.parsedType ?? '';
-      const NON_DIALOGUE_ACTIONS = new Set([
-        'OBSERVE',
-        'INVESTIGATE',
-        'SEARCH',
-        'SNEAK',
-        'STEAL',
-      ]);
-      const COMBAT_ACTIONS = new Set(['FIGHT']);
-      // ⚠️ NPC와 대화 중(conversationLock 또는 targetNpcId)일 때
-      //    INVESTIGATE/SEARCH/OBSERVE는 "NPC에게 묻기"로 해석되어야 함 → 대화 모드.
-      //    SNEAK/STEAL은 NPC 모르게 하는 행동이라 그대로 비대화 모드.
-      const isInConversation = !!ctx.conversationLock || !!npc.npcId;
-      const isInfoActionInConv =
-        isInConversation &&
-        ['INVESTIGATE', 'SEARCH', 'OBSERVE'].includes(actionType);
-      const isNonDialogueAction =
-        !isInfoActionInConv &&
-        (NON_DIALOGUE_ACTIONS.has(actionType) ||
-          (rawInput &&
-            /관찰|살핀|살펴|지켜|훑|둘러|조사|잠입|숨어|몰래/.test(rawInput)));
-      const isCombatAction =
-        COMBAT_ACTIONS.has(actionType) ||
-        (rawInput && /싸움|공격|던져|때려|기습/.test(rawInput));
-
-      // NPC trust 확인 (높은 trust NPC는 비대화 행동에서도 끼어들 수 있음)
-      const npcTrust = npc.npcId
-        ? ((
-            ctx.npcStates as Record<string, { trustToPlayer?: number }> | null
-          )?.[npc.npcId]?.trustToPlayer ?? 0)
-        : 0;
-      const npcCanInterrupt =
-        npcTrust >= 25 ||
-        ((ctx.npcStates as Record<string, { suspicion?: number }> | null)?.[
-          npc.npcId ?? ''
-        ]?.suspicion as number) >= 50;
-
-      let npcBehaviorInstruction: string;
-      if (isNonDialogueAction && !npcCanInterrupt) {
-        npcBehaviorInstruction = [
-          '⚠️ 이번 턴은 비대화 행동(관찰/조사/잠입/탐색)입니다.',
-          'NPC 대사를 쓰지 마세요. NPC는 배경에 존재하지만 플레이어에게 말을 걸지 않습니다.',
-          '서술은 플레이어의 행동 과정과 환경 묘사에 집중하세요.',
-          'NPC는 행동/동작/표정으로만 묘사 (예: "그가 곁에서 주변을 경계한다", "그의 시선이 어둠을 훑는다").',
-        ].join('\n');
-      } else if (isNonDialogueAction && npcCanInterrupt) {
-        npcBehaviorInstruction = [
-          '⚠️ 이번 턴은 비대화 행동이지만, 이 NPC는 신뢰/의심이 높아 먼저 끼어듭니다.',
-          'NPC가 플레이어의 행동을 중간에 가로채며 짧게 말을 건다 (1~2문장).',
-          '플레이어 행동 묘사가 주(70%)이고, NPC 개입은 짧은 삽입(30%)으로 자연스럽게.',
-        ].join('\n');
-      } else if (isCombatAction) {
-        npcBehaviorInstruction = [
-          '⚠️ 이번 턴은 전투/공격 행동입니다.',
-          'NPC 대사는 짧은 감탄이나 경고 1문장 이내. 대화 금지.',
-          '서술은 전투 동작, 타격감, 긴장감에 집중하세요.',
-        ].join('\n');
-      } else {
-        npcBehaviorInstruction =
-          '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.';
-      }
-
-      factsParts.push(
-        [
-          `[NPC 등장] ${npcDisplayName}이(가) 이 장면에 나타납니다.`,
-          `이유: ${npc.reason}`,
-          `자세: ${npc.posture}`,
-          ...((isNonDialogueAction && !npcCanInterrupt) || isCombatAction
-            ? []
-            : [`대화 시드: ${npc.dialogueSeed}`]),
-          npcBehaviorInstruction,
-          '⚠️ NPC의 personality 설명을 직접 인용하지 마세요. 행동과 대사로 성격을 보여주세요.',
-          introInstruction,
-          nameRevealHint,
-          tierInstruction,
-          continuityHint,
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      );
+      factsParts.push(...this.buildNpcInjectionBlocks(ctx, sr, rawInput));
     }
 
     // Phase 3: 감정 피크 모드 (Step 6)
@@ -2463,6 +2308,180 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * [NPC 등장] 블록 — orchestration npcInjection의 소개/실명 공개/티어/연속
+   * 등장/행동 모드(대화·비대화·전투) 지시 조립. 호출 게이트(ctx.npcInjection)는
+   * 호출부 유지.
+   * arch/77 P1.10 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildNpcInjectionBlocks(
+    ctx: LlmContext,
+    sr: ServerResultV1,
+    rawInput: string,
+  ): string[] {
+    const factsParts: string[] = [];
+    if (!ctx.npcInjection) return factsParts; // 호출 게이트와 이중 방어
+    {
+      const npc = ctx.npcInjection;
+      const isNewlyIntroduced = (ctx.newlyIntroducedNpcIds ?? []).includes(
+        npc.npcId ?? '',
+      );
+      const isNewlyEncountered = (ctx.newlyEncounteredNpcIds ?? []).includes(
+        npc.npcId ?? '',
+      );
+
+      let introInstruction = '';
+      if (isNewlyIntroduced && isNewlyEncountered) {
+        introInstruction =
+          '\n이 NPC는 처음 만나며 자기소개를 합니다. 이름을 포함한 자연스러운 소개를 서술하세요.';
+      } else if (isNewlyIntroduced) {
+        introInstruction =
+          '\n이 NPC의 이름이 이번 장면에서 드러납니다. 다른 인물의 언급이나 상황 단서를 통해 자연스럽게 이름이 밝혀지도록 서술하세요.';
+      } else if (npc.introduced === false) {
+        const npcDef = npc.npcId ? this.content.getNpc(npc.npcId) : undefined;
+        const alias = npcDef?.unknownAlias || '낯선 인물';
+        introInstruction = `\n이 NPC는 아직 이름이 밝혀지지 않았습니다. "${alias}"으로만 지칭하세요.\n⚠️ 미소개 NPC는 신뢰가 형성되지 않았으므로 대사를 1~3문장으로 제한하세요. 핵심 정보를 주지 않고 떠보거나 경계하는 수준만 표현합니다.`;
+      }
+
+      // NPC 표시 이름 결정: introduced=true인 경우만 실명, 나머지는 별칭
+      const npcDef = npc.npcId ? this.content.getNpc(npc.npcId) : undefined;
+      const alias = npcDef?.unknownAlias || '낯선 인물';
+      const npcDisplayName = npc.introduced === true ? npc.npcName : alias;
+
+      // 이름 공개 정밀 분석(2026-07-10) C: 실명은 콘텐츠(npcDef.name)에서 직접.
+      // 기존엔 npc.npcName(경로에 따라 소개 턴 별칭)이 들어가 LLM이 실명을 모른 채
+      // 소개를 연출 — "제 이름은 전령 소년이에요" 류 별칭 자기소개 발생.
+      // architecture/64 튜닝: 경계 성향/실패 이력 NPC는 자기소개 경로 제외.
+      const realName = npcDef?.name ?? npc.npcName;
+      const stForIntro = npc.npcId ? ctx.npcStates?.[npc.npcId] : undefined;
+      const avoidSelfIntro = shouldAvoidSelfIntro(
+        stForIntro?.posture,
+        stForIntro?.introAttempts,
+      );
+      const nameRevealHint = isNewlyIntroduced
+        ? avoidSelfIntro
+          ? `\n이 NPC의 이름이 이번 장면에서 드러납니다 (실명: "${realName}"). ⚠️ 본인은 성격상 이름을 밝히지 않습니다 — 자기소개 대사 금지. 제3자가 "${realName}"을 부르거나, 지닌 물건의 이름 표기를 플레이어가 발견하는 장면으로 연출하세요. 별칭으로 시작하세요.`
+          : `\n이 NPC의 이름이 이번 장면에서 자연스럽게 드러납니다. 자기소개, 다른 인물의 언급, 또는 상황 단서를 통해 밝혀지도록 하세요. 별칭으로 시작하세요. (실명: "${realName}")`
+        : '';
+
+      // NPC tier 확인 (미소개 상태면 CORE tier의 대사량 확장을 억제)
+      const npcTier = npcDef?.tier ?? 'SUB';
+      let tierInstruction = '';
+      if (npcTier === 'BACKGROUND') {
+        tierInstruction =
+          '\n⚠️ 이 인물은 배경 인물입니다. 대사는 1~2마디로 제한하고, 서술의 초점은 이 인물이 아닌 플레이어의 행동에 맞추세요.';
+      } else if (npcTier === 'CORE' && npc.introduced === true) {
+        tierInstruction =
+          '\n이 인물은 핵심 인물입니다. 충분한 대사와 깊이 있는 상호작용을 서술하세요.';
+      } else if (npcTier === 'CORE' && npc.introduced === false) {
+        tierInstruction =
+          '\n이 인물은 핵심 인물이지만 아직 미소개 상태입니다. 짧고 의미심장한 대사로 존재감만 드러내세요. 소개 후부터 깊이 있는 상호작용이 가능합니다.';
+      }
+
+      // NPC 연속 등장 턴 수 계산
+      const sessionTurns = ctx.locationSessionTurns ?? [];
+      let consecutiveAppearance = 0;
+      for (let i = sessionTurns.length - 1; i >= 0; i--) {
+        // 이전 턴 서술에 이 NPC 이름/별칭이 포함되어 있으면 연속
+        if (sessionTurns[i].narrative?.includes(npcDisplayName))
+          consecutiveAppearance++;
+        else break;
+      }
+      const continuityHint =
+        consecutiveAppearance >= 2
+          ? `\n⚠️ 이 인물은 이미 ${consecutiveAppearance}턴 연속 등장했습니다. 이전 대화를 이어가세요. 같은 말이나 같은 묘사를 반복하지 마세요. 대화를 한 단계 진전시키세요.`
+          : consecutiveAppearance === 1
+            ? '\n이 인물은 직전 턴에도 등장했습니다. 대화를 이어가세요.'
+            : '';
+
+      // 행동 유형에 따라 NPC 등장 모드 결정
+      const actionCtxForNpc = sr.ui?.actionContext as
+        | { parsedType?: string }
+        | undefined;
+      const actionType = actionCtxForNpc?.parsedType ?? '';
+      const NON_DIALOGUE_ACTIONS = new Set([
+        'OBSERVE',
+        'INVESTIGATE',
+        'SEARCH',
+        'SNEAK',
+        'STEAL',
+      ]);
+      const COMBAT_ACTIONS = new Set(['FIGHT']);
+      // ⚠️ NPC와 대화 중(conversationLock 또는 targetNpcId)일 때
+      //    INVESTIGATE/SEARCH/OBSERVE는 "NPC에게 묻기"로 해석되어야 함 → 대화 모드.
+      //    SNEAK/STEAL은 NPC 모르게 하는 행동이라 그대로 비대화 모드.
+      const isInConversation = !!ctx.conversationLock || !!npc.npcId;
+      const isInfoActionInConv =
+        isInConversation &&
+        ['INVESTIGATE', 'SEARCH', 'OBSERVE'].includes(actionType);
+      const isNonDialogueAction =
+        !isInfoActionInConv &&
+        (NON_DIALOGUE_ACTIONS.has(actionType) ||
+          (rawInput &&
+            /관찰|살핀|살펴|지켜|훑|둘러|조사|잠입|숨어|몰래/.test(rawInput)));
+      const isCombatAction =
+        COMBAT_ACTIONS.has(actionType) ||
+        (rawInput && /싸움|공격|던져|때려|기습/.test(rawInput));
+
+      // NPC trust 확인 (높은 trust NPC는 비대화 행동에서도 끼어들 수 있음)
+      const npcTrust = npc.npcId
+        ? ((
+            ctx.npcStates as Record<string, { trustToPlayer?: number }> | null
+          )?.[npc.npcId]?.trustToPlayer ?? 0)
+        : 0;
+      const npcCanInterrupt =
+        npcTrust >= 25 ||
+        ((ctx.npcStates as Record<string, { suspicion?: number }> | null)?.[
+          npc.npcId ?? ''
+        ]?.suspicion as number) >= 50;
+
+      let npcBehaviorInstruction: string;
+      if (isNonDialogueAction && !npcCanInterrupt) {
+        npcBehaviorInstruction = [
+          '⚠️ 이번 턴은 비대화 행동(관찰/조사/잠입/탐색)입니다.',
+          'NPC 대사를 쓰지 마세요. NPC는 배경에 존재하지만 플레이어에게 말을 걸지 않습니다.',
+          '서술은 플레이어의 행동 과정과 환경 묘사에 집중하세요.',
+          'NPC는 행동/동작/표정으로만 묘사 (예: "그가 곁에서 주변을 경계한다", "그의 시선이 어둠을 훑는다").',
+        ].join('\n');
+      } else if (isNonDialogueAction && npcCanInterrupt) {
+        npcBehaviorInstruction = [
+          '⚠️ 이번 턴은 비대화 행동이지만, 이 NPC는 신뢰/의심이 높아 먼저 끼어듭니다.',
+          'NPC가 플레이어의 행동을 중간에 가로채며 짧게 말을 건다 (1~2문장).',
+          '플레이어 행동 묘사가 주(70%)이고, NPC 개입은 짧은 삽입(30%)으로 자연스럽게.',
+        ].join('\n');
+      } else if (isCombatAction) {
+        npcBehaviorInstruction = [
+          '⚠️ 이번 턴은 전투/공격 행동입니다.',
+          'NPC 대사는 짧은 감탄이나 경고 1문장 이내. 대화 금지.',
+          '서술은 전투 동작, 타격감, 긴장감에 집중하세요.',
+        ].join('\n');
+      } else {
+        npcBehaviorInstruction =
+          '이 NPC를 서술에 자연스럽게 등장시키세요. NPC의 자세에 맞는 톤으로 대사를 작성하세요.';
+      }
+
+      factsParts.push(
+        [
+          `[NPC 등장] ${npcDisplayName}이(가) 이 장면에 나타납니다.`,
+          `이유: ${npc.reason}`,
+          `자세: ${npc.posture}`,
+          ...((isNonDialogueAction && !npcCanInterrupt) || isCombatAction
+            ? []
+            : [`대화 시드: ${npc.dialogueSeed}`]),
+          npcBehaviorInstruction,
+          '⚠️ NPC의 personality 설명을 직접 인용하지 마세요. 행동과 대사로 성격을 보여주세요.',
+          introInstruction,
+          nameRevealHint,
+          tierInstruction,
+          continuityHint,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      );
+    }
+    return factsParts;
   }
 
   /**
