@@ -1943,111 +1943,7 @@ export class PromptBuilderService {
       ctx.locationSessionTurns &&
       ctx.locationSessionTurns.length >= 2
     ) {
-      const previousTurns = ctx.locationSessionTurns.slice(0, -1);
-      const lastSessionTurn = previousTurns[previousTurns.length - 1];
-      const currentRawInput =
-        ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]
-          ?.rawInput ?? '';
-
-      // 1) primary NPC 발화 마커 기반 정밀 추출 → 이어받기 컨텍스트
-      const acForCont = sr.ui?.actionContext as
-        | { primaryNpcId?: string | null; targetNpcId?: string }
-        | undefined;
-      const continuityNpcId =
-        ctx.focusedNpcId ??
-        acForCont?.targetNpcId ??
-        acForCont?.primaryNpcId ??
-        null;
-      let continuityInjected = false;
-      if (continuityNpcId) {
-        const contDef = this.content.getNpc(continuityNpcId);
-        const contState = ctx.npcStates?.[continuityNpcId];
-        if (contDef) {
-          const contDisplayNames = [
-            contDef.name,
-            contDef.unknownAlias,
-            contDef.shortAlias,
-            ...(contDef.aliases ?? []),
-            contState ? getNpcDisplayName(contState, contDef) : undefined,
-          ].filter((n): n is string => !!n);
-          const recentUtterances = collectRecentNpcUtterances(
-            previousTurns.map((t) => t.narrative),
-            { npcId: continuityNpcId, displayNames: contDisplayNames },
-            2,
-          ).filter(
-            (u) =>
-              !currentRawInput ||
-              currentRawInput.length < 5 ||
-              !u.includes(currentRawInput),
-          );
-          if (recentUtterances.length > 0) {
-            const latest = recentUtterances[0];
-            const contDisplay = contState
-              ? getNpcDisplayName(contState, contDef)
-              : (contDef.unknownAlias ?? contDef.name);
-            const opening = latest
-              .slice(
-                0,
-                Math.min(
-                  15,
-                  latest.indexOf(',') > 3 ? latest.indexOf(',') : 15,
-                ),
-              )
-              .trim();
-            factsParts.push(
-              [
-                `[${contDisplay}의 직전 발언 — 이어받을 맥락]`,
-                ...recentUtterances
-                  .slice()
-                  .reverse()
-                  .map((u) => `"${u}"`),
-                `플레이어의 이번 입력은 위 발언에 대한 반응입니다. ${contDisplay}은(는) 자기가 방금 한 말을 기억하고 있습니다 — 위 발언에서 자연스럽게 이어지는 다음 응답을 하세요.`,
-                `자기 발언을 잊은 듯 처음부터 다시 설명하거나, 방금 한 질문/제안을 무효화하지 마세요.`,
-                `⚠️ 위 발언을 그대로 반복하거나 같은 어구로 시작하지 마세요${opening ? ` (직전 시작 어구: "${opening}")` : ''}. 대화를 한 걸음 전진시키세요.`,
-              ].join('\n'),
-            );
-            continuityInjected = true;
-          }
-        }
-      }
-
-      // 2) fallback: 마커 추출 실패 시 기존 화자 무관 따옴표 추출 (반복 방지 전용)
-      if (!continuityInjected && lastSessionTurn?.narrative) {
-        const dialogueMatches = lastSessionTurn.narrative.match(
-          /\u201c([^\u201d]+)\u201d|"([^"]+)"/g,
-        );
-        if (dialogueMatches && dialogueMatches.length > 0) {
-          // 마지막 1~2개 대사 + rawInput 포함 매치 필터 (안전망: summary.short 회귀 방어)
-          const filteredDialogues = dialogueMatches.filter(
-            (d) =>
-              !currentRawInput ||
-              currentRawInput.length < 5 ||
-              !d.includes(currentRawInput),
-          );
-          const recentDialogues = filteredDialogues.slice(-2);
-          // 시작 어구 추출: 각 대사의 첫 5~15자
-          const openingPhrases = recentDialogues
-            .map((d) => d.replace(/^["\u201c]|["\u201d]$/g, '').trim())
-            .filter((d) => d.length > 3)
-            .map((d) =>
-              d.slice(
-                0,
-                Math.min(15, d.indexOf(',') > 3 ? d.indexOf(',') : 15),
-              ),
-            )
-            .filter(Boolean);
-          const openingWarning =
-            openingPhrases.length > 0
-              ? `\n⚠️ 시작 어구 반복 금지: 이전 대사가 "${openingPhrases[0]}"로 시작했으므로, 이번 대사는 완전히 다른 어구로 시작하세요. 같은 호칭이나 인사말("듣고 계시오", "그대" 등)을 연속 사용하면 안 됩니다.`
-              : '';
-          factsParts.push(
-            `[직전 NPC 대사]\n${recentDialogues.join('\n')}\n` +
-              '⚠️ 이 대사를 반복하지 마세요. 이전 대사에 이어지는 새로운 반응이나 화제로 시작하세요. ' +
-              '같은 질문("무슨 용무요?", "조심하시오" 등)을 다시 하면 안 됩니다.' +
-              openingWarning,
-          );
-        }
-      }
+      factsParts.push(...this.buildPrevNpcUtteranceBlocks(ctx, sr));
     }
 
     // === 작업 2: NPC 대화 턴 카운터 — 연속 대화 단계별 가이드 (LOCATION only) ===
@@ -2695,6 +2591,128 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * 직전 NPC 발화 블록 — ① primary NPC 발화 마커 정밀 추출(이어받을 맥락,
+   * positive) ② 실패 시 화자 무관 따옴표 추출(반복 금지, negative) fallback.
+   * 최대 1개 블록 반환 (빈 배열 = 주입 없음). 호출 게이트(!isHub/!isCombat/
+   * 세션 2턴+)는 호출부 유지.
+   * arch/77 P1.6 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildPrevNpcUtteranceBlocks(
+    ctx: LlmContext,
+    sr: ServerResultV1,
+  ): string[] {
+    const factsParts: string[] = [];
+    {
+      const previousTurns = ctx.locationSessionTurns.slice(0, -1);
+      const lastSessionTurn = previousTurns[previousTurns.length - 1];
+      const currentRawInput =
+        ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]
+          ?.rawInput ?? '';
+
+      // 1) primary NPC 발화 마커 기반 정밀 추출 → 이어받기 컨텍스트
+      const acForCont = sr.ui?.actionContext as
+        | { primaryNpcId?: string | null; targetNpcId?: string }
+        | undefined;
+      const continuityNpcId =
+        ctx.focusedNpcId ??
+        acForCont?.targetNpcId ??
+        acForCont?.primaryNpcId ??
+        null;
+      let continuityInjected = false;
+      if (continuityNpcId) {
+        const contDef = this.content.getNpc(continuityNpcId);
+        const contState = ctx.npcStates?.[continuityNpcId];
+        if (contDef) {
+          const contDisplayNames = [
+            contDef.name,
+            contDef.unknownAlias,
+            contDef.shortAlias,
+            ...(contDef.aliases ?? []),
+            contState ? getNpcDisplayName(contState, contDef) : undefined,
+          ].filter((n): n is string => !!n);
+          const recentUtterances = collectRecentNpcUtterances(
+            previousTurns.map((t) => t.narrative),
+            { npcId: continuityNpcId, displayNames: contDisplayNames },
+            2,
+          ).filter(
+            (u) =>
+              !currentRawInput ||
+              currentRawInput.length < 5 ||
+              !u.includes(currentRawInput),
+          );
+          if (recentUtterances.length > 0) {
+            const latest = recentUtterances[0];
+            const contDisplay = contState
+              ? getNpcDisplayName(contState, contDef)
+              : (contDef.unknownAlias ?? contDef.name);
+            const opening = latest
+              .slice(
+                0,
+                Math.min(
+                  15,
+                  latest.indexOf(',') > 3 ? latest.indexOf(',') : 15,
+                ),
+              )
+              .trim();
+            factsParts.push(
+              [
+                `[${contDisplay}의 직전 발언 — 이어받을 맥락]`,
+                ...recentUtterances
+                  .slice()
+                  .reverse()
+                  .map((u) => `"${u}"`),
+                `플레이어의 이번 입력은 위 발언에 대한 반응입니다. ${contDisplay}은(는) 자기가 방금 한 말을 기억하고 있습니다 — 위 발언에서 자연스럽게 이어지는 다음 응답을 하세요.`,
+                `자기 발언을 잊은 듯 처음부터 다시 설명하거나, 방금 한 질문/제안을 무효화하지 마세요.`,
+                `⚠️ 위 발언을 그대로 반복하거나 같은 어구로 시작하지 마세요${opening ? ` (직전 시작 어구: "${opening}")` : ''}. 대화를 한 걸음 전진시키세요.`,
+              ].join('\n'),
+            );
+            continuityInjected = true;
+          }
+        }
+      }
+
+      // 2) fallback: 마커 추출 실패 시 기존 화자 무관 따옴표 추출 (반복 방지 전용)
+      if (!continuityInjected && lastSessionTurn?.narrative) {
+        const dialogueMatches = lastSessionTurn.narrative.match(
+          /\u201c([^\u201d]+)\u201d|"([^"]+)"/g,
+        );
+        if (dialogueMatches && dialogueMatches.length > 0) {
+          // 마지막 1~2개 대사 + rawInput 포함 매치 필터 (안전망: summary.short 회귀 방어)
+          const filteredDialogues = dialogueMatches.filter(
+            (d) =>
+              !currentRawInput ||
+              currentRawInput.length < 5 ||
+              !d.includes(currentRawInput),
+          );
+          const recentDialogues = filteredDialogues.slice(-2);
+          // 시작 어구 추출: 각 대사의 첫 5~15자
+          const openingPhrases = recentDialogues
+            .map((d) => d.replace(/^["\u201c]|["\u201d]$/g, '').trim())
+            .filter((d) => d.length > 3)
+            .map((d) =>
+              d.slice(
+                0,
+                Math.min(15, d.indexOf(',') > 3 ? d.indexOf(',') : 15),
+              ),
+            )
+            .filter(Boolean);
+          const openingWarning =
+            openingPhrases.length > 0
+              ? `\n⚠️ 시작 어구 반복 금지: 이전 대사가 "${openingPhrases[0]}"로 시작했으므로, 이번 대사는 완전히 다른 어구로 시작하세요. 같은 호칭이나 인사말("듣고 계시오", "그대" 등)을 연속 사용하면 안 됩니다.`
+              : '';
+          factsParts.push(
+            `[직전 NPC 대사]\n${recentDialogues.join('\n')}\n` +
+              '⚠️ 이 대사를 반복하지 마세요. 이전 대사에 이어지는 새로운 반응이나 화제로 시작하세요. ' +
+              '같은 질문("무슨 용무요?", "조심하시오" 등)을 다시 하면 안 됩니다.' +
+              openingWarning,
+          );
+        }
+      }
+    }
+    return factsParts;
   }
 
   /**
