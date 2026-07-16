@@ -21,6 +21,7 @@ import {
 import { createEmptyStructuredMemory } from '../db/types/structured-memory.js';
 import type { GetRunQuery } from './dto/get-run.dto.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
+import { runInScenarioContext } from '../content/scenario-context.js';
 import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { AgendaService } from '../engine/hub/agenda.service.js';
 import { initPackMeters, buildPackMetersUI } from '../engine/hub/pack-meter.js';
@@ -575,16 +576,13 @@ export class RunsService {
       arcState,
     );
 
-    // [P3 — 75 §3] AUTONOMOUS 팩: 진상(Plot Seed) 생성·동결 (런 중 불변).
-    // nano 생성 실패/검증 소진 시 폴백 시드 — 런은 반드시 진행. AUTHORED 팩 무동작.
-    // enterScenario(초반) ALS 스코프 유지 하에 현재 팩 자원으로 생성.
-    if (this.content.getNarrativeMode() === 'AUTONOMOUS') {
-      const plotSeed = await this.plotSeedGenerator.generate();
-      initialRunState.plotSeed = plotSeed;
-      this.logger.log(
-        `[createRun] AUTONOMOUS Plot Seed 동결 (culprit=${plotSeed.truth.culpritNpcId}, facts=${plotSeed.keyFacts.length}, fallback=${!!plotSeed.generatedByFallback})`,
-      );
-    }
+    // [P3 — 75 §3 · 핫픽스] AUTONOMOUS 진상(Plot Seed)은 생성 레이턴시(~20초,
+    // 메인 모델)를 런 응답에서 숨기려 **트랜잭션 후 백그라운드 생성**한다(E2E 실측:
+    // 동기 생성 시 런 생성이 20~55초라 클라가 타임아웃→타이틀 복귀). 프롤로그는
+    // plotSeed 불필요 — 첫 실제 LOCATION 턴 전까지 준비된다(미준비 턴은 디렉터
+    // graceful 스킵). 트랜잭션엔 plotSeed 없이 insert, 커밋 후 async 동결.
+    const isAutonomousRun =
+      this.content.getNarrativeMode() === 'AUTONOMOUS';
 
     // 5. 트랜잭션: run + 첫 노드 + memory + 첫 턴
     // DAG 모드: 첫 노드는 DAG 그래프의 시작 노드 (common_s0)
@@ -875,6 +873,11 @@ export class RunsService {
       return { run, enterResult, firstNode: firstNode! };
     });
 
+    // [핫픽스] AUTONOMOUS: 트랜잭션 커밋 후 plotSeed 백그라운드 동결 (레이턴시 숨김).
+    if (isAutonomousRun) {
+      void this.generatePlotSeedAsync(result.run.id, scenarioId ?? null);
+    }
+
     return {
       run: {
         id: result.run.id,
@@ -921,6 +924,42 @@ export class RunsService {
       turns: [],
       page: { hasMore: false, nextCursor: undefined },
     };
+  }
+
+  /**
+   * [핫픽스] AUTONOMOUS plotSeed 백그라운드 생성·동결 (createRun 레이턴시 숨김).
+   * ALS 스코프 재설정 후 생성 → fresh runState에 plotSeed 패치. 실패·지연은
+   * non-fatal: 그 사이 첫 턴은 plotSeed 없이 디렉터 graceful 스킵(폴백 체인),
+   * plotSeed 준비 후 턴부터 자율 루프 작동.
+   */
+  private async generatePlotSeedAsync(
+    runId: string,
+    scenarioId: string | null,
+  ): Promise<void> {
+    try {
+      await this.content.ensureScenario(scenarioId);
+      const seed = await runInScenarioContext(scenarioId ?? 'graymar_v1', () =>
+        this.plotSeedGenerator.generate(),
+      );
+      const session = await this.db.query.runSessions.findFirst({
+        where: eq(runSessions.id, runId),
+        columns: { runState: true },
+      });
+      if (!session?.runState) return;
+      const rs = session.runState as unknown as Record<string, unknown>;
+      rs.plotSeed = seed as unknown;
+      await this.db
+        .update(runSessions)
+        .set({ runState: rs as never, updatedAt: new Date() })
+        .where(eq(runSessions.id, runId));
+      this.logger.log(
+        `[createRun] AUTONOMOUS Plot Seed 백그라운드 동결 ${runId} (culprit=${seed.truth.culpritNpcId}, fallback=${!!seed.generatedByFallback})`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[createRun] plotSeed 백그라운드 생성 실패 ${runId}: ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   async getActiveRun(userId: string) {

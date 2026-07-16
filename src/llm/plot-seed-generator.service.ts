@@ -240,7 +240,22 @@ export function sanitizeGeneratedSeed(
     casting[npcId] = role;
   }
 
-  return { ...seed, motifs, casting };
+  // truth.culprit이 CULPRIT 금지 코어면 교체 — 재롤 낭비 방지(G2/E2E 실측:
+  // nano가 같은 금지 인물을 반복 진범으로 뽑아 3회 재롤 소진→폴백→55초).
+  // casting의 CULPRIT 배역자 우선, 없으면 CULPRIT 허용 코어, 그래도 없으면 동적.
+  let culpritNpcId = seed.truth?.culpritNpcId ?? '';
+  if ((ctx.forbiddenRolesByNpc[culpritNpcId] ?? []).includes('CULPRIT')) {
+    const castedCulprit = Object.entries(casting).find(
+      ([, r]) => r === 'CULPRIT',
+    )?.[0];
+    const allowedCore = [...ctx.coreNpcIds].find(
+      (id) => !(ctx.forbiddenRolesByNpc[id] ?? []).includes('CULPRIT'),
+    );
+    culpritNpcId = castedCulprit ?? allowedCore ?? 'NPC_DYN_1';
+  }
+  const truth = { ...seed.truth, culpritNpcId };
+
+  return { ...seed, motifs, casting, truth };
 }
 
 /**
