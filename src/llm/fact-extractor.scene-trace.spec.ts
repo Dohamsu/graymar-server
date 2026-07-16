@@ -60,6 +60,20 @@ describe('FactExtractorService.extractSceneTrace', () => {
     ).toBeNull();
   });
 
+  it('"흔적 없음" (부정 표현 접두) → null (실플레이 버그 회귀 가드)', async () => {
+    mockTrace('흔적 없음');
+    expect(
+      await service.extractSceneTrace({ narrative: NARR, locationId: 'L' }),
+    ).toBeNull();
+  });
+
+  it('"변화 없다" → null', async () => {
+    mockTrace('변화 없다');
+    expect(
+      await service.extractSceneTrace({ narrative: NARR, locationId: 'L' }),
+    ).toBeNull();
+  });
+
   it('서술체 종결(다/요/문장부호) → null', async () => {
     mockTrace('좌판이 부서졌다.');
     expect(
