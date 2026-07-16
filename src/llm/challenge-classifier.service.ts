@@ -28,6 +28,8 @@ export interface ChallengeDecision {
   difficultyMod?: number;
   /** 세계 안 그럴듯함 — IMPLAUSIBLE은 서술 치환(거부 아님) */
   plausibility?: Plausibility;
+  /** 이 행동이 장소에 물리적 흔적을 남기나 — 흔적 추출 게이트(actionType 무관) */
+  physicalImpact?: boolean;
 }
 
 // [arch/76 D3] statHint 허용 스탯 — 서버 검증용. 파생값(atk 등)·자원(maxHP)은 제외.
@@ -79,11 +81,17 @@ const SYSTEM_PROMPT = `당신은 텍스트 RPG 행동 감정기다. 플레이어
    +2 사소·쉬움 / 0 보통 / -2 매우 과감·무모
    예) "말을 건다"→0, "왕을 설득해 반역시킨다"→-2
 
-4) plausibility — 세계 안에서의 그럴듯함
-   NORMAL 평범 / UNUSUAL 특이하나 가능 / IMPLAUSIBLE 세계 규칙상 불가(마법·순간이동·세계 밖 지식)
+4) plausibility — 세계 안에서의 그럴듯함 (중세 판타지, 초자연 능력 없음)
+   NORMAL 평범 / UNUSUAL 특이하나 가능 / IMPLAUSIBLE 세계 규칙상 불가
+   ※ "마법 주문", "불길 소환", "순간이동", "죽은 자·먼 사람 소환", 세계 밖 지식은
+     전투처럼 표현돼도 IMPLAUSIBLE. 실제로 가능한 물리 행동(칼·작살·주먹·불붙이기)은 NORMAL/UNUSUAL.
+
+5) physicalImpact — 이 행동이 장소에 지속될 물리적 흔적(파손·전복·탈취·흩뜨림)을 남기는가
+   true: 탁자를 엎음, 간판을 뜯어냄, 물건을 부숨/훔침 (실제 물리 변형)
+   false: 대화·관찰·이동·거래, 그리고 IMPLAUSIBLE(실재하지 않는 마법 효과)
 
 JSON만 출력 (다른 텍스트 금지):
-{"result":"CHECK","statHint":"dex","difficultyMod":-1,"plausibility":"UNUSUAL","reason":"15자 이내 근거"}`;
+{"result":"CHECK","statHint":"dex","difficultyMod":-1,"plausibility":"UNUSUAL","physicalImpact":true,"reason":"15자 이내"}`;
 
 @Injectable()
 export class ChallengeClassifierService {
@@ -104,7 +112,7 @@ export class ChallengeClassifierService {
       return { result: 'CHECK', reason: 'classifier disabled', source: 'rule' };
     }
 
-    // 룰 1차 게이트
+    // 구조적 비도전(이동/휴식/상점/장비)만 룰로 즉결 — 판단할 게 없다.
     if (RULE_FREE_ACTIONS.has(ctx.actionType)) {
       return {
         result: 'FREE',
@@ -112,16 +120,21 @@ export class ChallengeClassifierService {
         source: 'rule',
       };
     }
-    if (RULE_CHECK_ACTIONS.has(ctx.actionType)) {
+
+    // [arch/76 D3] 통합 nano 감정 — 회색지대뿐 아니라 명백한 도전 행동(FIGHT 등)도
+    // 현실성(plausibility)·배치(statHint·physicalImpact)를 nano로 판단한다.
+    // "마법 주문으로 불길"을 FIGHT로 표현해도 IMPLAUSIBLE을 놓치지 않기 위함.
+    const decision = await this.classifyWithLlm(ctx);
+
+    // 명백한 도전 행동은 result만 CHECK로 고정(주사위 스킵 방지) — appraisal은 nano 유지.
+    if (RULE_CHECK_ACTIONS.has(ctx.actionType) && decision.result === 'FREE') {
       return {
+        ...decision,
         result: 'CHECK',
-        reason: `always-challenge action ${ctx.actionType}`,
-        source: 'rule',
+        reason: `always-challenge ${ctx.actionType}`,
       };
     }
-
-    // 회색지대 → nano LLM
-    return this.classifyWithLlm(ctx);
+    return decision;
   }
 
   private async classifyWithLlm(
@@ -137,7 +150,7 @@ export class ChallengeClassifierService {
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: userMsg },
           ],
-          maxTokens: 120,
+          maxTokens: 140,
           temperature: 0.2,
           model: lightConfig.model,
           timeoutMs: lightConfig.timeoutMs,
@@ -163,7 +176,7 @@ export class ChallengeClassifierService {
       }
 
       this.logger.debug(
-        `[Challenge] ${parsed.result} actionType=${ctx.actionType} stat=${parsed.statHint ?? '-'} diff=${parsed.difficultyMod ?? 0} plaus=${parsed.plausibility ?? 'NORMAL'} reason="${parsed.reason}"`,
+        `[Challenge] ${parsed.result} actionType=${ctx.actionType} stat=${parsed.statHint ?? '-'} diff=${parsed.difficultyMod ?? 0} plaus=${parsed.plausibility ?? 'NORMAL'} phys=${parsed.physicalImpact ?? false} reason="${parsed.reason}"`,
       );
       return { ...parsed, source: 'llm' };
     } catch (err) {
@@ -191,6 +204,7 @@ export class ChallengeClassifierService {
     statHint: string | null;
     difficultyMod: number;
     plausibility: Plausibility;
+    physicalImpact: boolean;
   } | null {
     const jsonMatch = text.trim().match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
@@ -202,6 +216,7 @@ export class ChallengeClassifierService {
         statHint?: unknown;
         difficultyMod?: unknown;
         plausibility?: unknown;
+        physicalImpact?: unknown;
       };
       const result =
         parsed.result === 'FREE' || parsed.result === 'CHECK'
@@ -231,8 +246,18 @@ export class ChallengeClassifierService {
         parsed.plausibility === 'IMPLAUSIBLE'
           ? parsed.plausibility
           : 'NORMAL';
+      // IMPLAUSIBLE(실재하지 않는 효과)은 물리 흔적을 남기지 않는다 — 서버 강제.
+      const physicalImpact =
+        parsed.physicalImpact === true && plausibility !== 'IMPLAUSIBLE';
 
-      return { result, reason, statHint, difficultyMod, plausibility };
+      return {
+        result,
+        reason,
+        statHint,
+        difficultyMod,
+        plausibility,
+        physicalImpact,
+      };
     } catch {
       return null;
     }

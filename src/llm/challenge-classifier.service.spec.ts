@@ -69,38 +69,50 @@ describe('ChallengeClassifierService', () => {
     });
   });
 
-  describe('룰 게이트 — 즉시 CHECK', () => {
-    it('FIGHT → CHECK (rule)', async () => {
-      const decision = await service.classify(
+  // [arch/76 D3] 명백한 도전 행동도 이제 nano 감정을 타되 result는 CHECK로 고정
+  describe('도전 행동 — result CHECK 고정 + nano 감정', () => {
+    it('FIGHT → nano 호출됨, result CHECK 고정', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"CHECK","statHint":"str","difficultyMod":0,"plausibility":"NORMAL","physicalImpact":true,"reason":"전투"}',
+        },
+      });
+      const d = await service.classify(
         makeCtx({ actionType: 'FIGHT', rawInput: '공격한다' }),
       );
-      expect(decision.result).toBe('CHECK');
-      expect(decision.source).toBe('rule');
-      expect(mockLlmCaller.call).not.toHaveBeenCalled();
+      expect(d.result).toBe('CHECK');
+      expect(d.physicalImpact).toBe(true);
+      expect(mockLlmCaller.call).toHaveBeenCalledTimes(1);
     });
 
-    it('STEAL → CHECK (rule)', async () => {
-      const decision = await service.classify(
-        makeCtx({ actionType: 'STEAL', rawInput: '주머니를 턴다' }),
-      );
-      expect(decision.result).toBe('CHECK');
-      expect(decision.source).toBe('rule');
+    it('FIGHT + nano가 FREE 판단해도 result는 CHECK로 고정(appraisal 유지)', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"FREE","statHint":"str","difficultyMod":-1,"plausibility":"NORMAL","physicalImpact":true,"reason":"x"}',
+        },
+      });
+      const d = await service.classify(makeCtx({ actionType: 'FIGHT' }));
+      expect(d.result).toBe('CHECK');
+      expect(d.statHint).toBe('str');
+      expect(d.difficultyMod).toBe(-1);
     });
 
-    it('PERSUADE → CHECK (rule)', async () => {
-      const decision = await service.classify(
-        makeCtx({ actionType: 'PERSUADE', rawInput: '설득한다' }),
+    it('마법-as-FIGHT → IMPLAUSIBLE 감지 + physicalImpact false 강제(불길 흔적 방지)', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"CHECK","statHint":"str","difficultyMod":-2,"plausibility":"IMPLAUSIBLE","physicalImpact":true,"reason":"마법"}',
+        },
+      });
+      const d = await service.classify(
+        makeCtx({ actionType: 'FIGHT', rawInput: '마법으로 불길을 일으킨다' }),
       );
-      expect(decision.result).toBe('CHECK');
-      expect(decision.source).toBe('rule');
-    });
-
-    it('THREATEN → CHECK (rule)', async () => {
-      const decision = await service.classify(
-        makeCtx({ actionType: 'THREATEN', rawInput: '협박한다' }),
-      );
-      expect(decision.result).toBe('CHECK');
-      expect(decision.source).toBe('rule');
+      expect(d.result).toBe('CHECK');
+      expect(d.plausibility).toBe('IMPLAUSIBLE');
+      // nano가 physicalImpact:true라 해도 IMPLAUSIBLE이면 서버가 false로 강제
+      expect(d.physicalImpact).toBe(false);
     });
   });
 

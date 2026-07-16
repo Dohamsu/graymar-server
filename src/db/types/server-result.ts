@@ -144,6 +144,7 @@ export type ActionContext = {
   turnMode?: string; // PLAYER_DIRECTED | CONVERSATION_CONT | WORLD_EVENT
   dialogueAct?: string; // 순수 사교 발화 (GREETING/WELLBEING/THANKS/FAREWELL)
   plausibility?: string; // [arch/76 D3-③] UNUSUAL | IMPLAUSIBLE (서술 치환 지시)
+  physicalImpact?: boolean; // [arch/76 D3-a] nano 판단 물리 흔적 여부 (흔적 게이트)
   eventId?: string; // 매칭된 이벤트 ID
   primaryNpcId?: string | null; // 이 턴 주 NPC
 };

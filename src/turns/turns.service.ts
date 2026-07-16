@@ -4599,6 +4599,8 @@ export class TurnsService {
         challengeDecision.plausibility !== 'NORMAL'
           ? { plausibility: challengeDecision.plausibility }
           : {}),
+        // [arch/76 D3-a] nano가 판단한 물리 흔적 여부 → 워커 흔적 추출 게이트.
+        ...(challengeDecision.physicalImpact ? { physicalImpact: true } : {}),
         // BRIBE/TRADE 잔액 부족 클램프 정보 — LLM이 부족분을 서술에 반영 (점검 ③)
         ...(goldShortfall ? { goldShortfall } : {}),
         // architecture/49 — NpcResolver audit trail (NPA 디버깅용)
@@ -7103,6 +7105,8 @@ export class TurnsService {
       dialogueAct?: string;
       /** [arch/76 D3-③] 세계 규칙상 그럴듯함 — IMPLAUSIBLE이면 서술 치환 지시 */
       plausibility?: string;
+      /** [arch/76 D3-a] nano 판단 물리 흔적 여부 — 흔적 추출 게이트 */
+      physicalImpact?: boolean;
       /** BRIBE/TRADE 잔액 부족 클램프 — 제안 금액 vs 실제 지불 (점검 2026-07-09 ③) */
       goldShortfall?: { requested: number; paid: number };
       /** architecture/49 — NPC Resolver 결정 근거 (NPA 디버깅용) */

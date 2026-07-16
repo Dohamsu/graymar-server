@@ -95,10 +95,6 @@ const LOCK_TIMEOUT_S = 60;
 const MAX_CONCURRENT_TURNS = 5; // 동시 처리 턴 수 (10명 동시접속 목표)
 const WORKER_ID = `worker_${process.pid}_${Date.now()}`;
 
-// [arch/76 D3-a] 물리 흔적을 남길 수 있는 행동 — 이 행동(또는 창의 턴)만 흔적 추출.
-// 대화·조사·관찰·거래·이동 등은 배경 오추출·nano 낭비를 막기 위해 제외.
-const PHYSICAL_TRACE_ACTIONS = new Set(['FIGHT', 'STEAL', 'THREATEN', 'SNEAK']);
-
 const VALID_CHOICE_AFFORDANCES = new Set([
   'INVESTIGATE',
   'PERSUADE',
@@ -3981,20 +3977,13 @@ ${npcList}`,
 
         // 4-d2. [arch/76 D3-a] 장면 물리 흔적 추출 → propsTraces 링버퍼 (fresh CAS).
         //   nano가 서술에서 흔적을 추출(생성 아님), narrative-only. DONE 이후라 레이턴시 0.
-        //   물리적 변형이 가능한 행동(파괴·절도·위협·잠입) 또는 창의(비정상 그럴듯함)
-        //   턴만 추출 — 대화·조사·거래 등 비물리 턴의 배경 오추출·nano 낭비 차단.
-        //   killswitch: PROPS_TRACE_DISABLED=1
+        //   게이트 = nano가 판단한 physicalImpact(actionType 무관) — 오분류("간판 뜯어냄"
+        //   →INVESTIGATE)여도 흔적 추출, 마법(IMPLAUSIBLE)은 흔적 없음. killswitch: PROPS_TRACE_DISABLED=1
         const traceAc = (serverResult.ui as Record<string, unknown>)
-          ?.actionContext as
-          | { parsedType?: string; plausibility?: string }
-          | undefined;
-        const traceEligible =
-          PHYSICAL_TRACE_ACTIONS.has(traceAc?.parsedType ?? '') ||
-          traceAc?.plausibility === 'UNUSUAL' ||
-          traceAc?.plausibility === 'IMPLAUSIBLE';
+          ?.actionContext as { physicalImpact?: boolean } | undefined;
         if (
           locationId &&
-          traceEligible &&
+          traceAc?.physicalImpact === true &&
           (process.env.PROPS_TRACE_DISABLED ?? '').toLowerCase() !== '1'
         ) {
           void this.extractAndStoreSceneTrace(
