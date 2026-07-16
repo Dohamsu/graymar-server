@@ -939,36 +939,7 @@ export class PromptBuilderService {
     // 오히려 LLM이 혼란하므로, concept 없으면 방향 지시 블록 전체를 스킵한다
     // (fact 전달 지시는 별도 유지 — 아래 fact 블록).
     if (nanoEventHint && nanoEventHint.concept) {
-      const conceptParts: string[] = ['[이벤트 컨셉 — 이 방향으로 서술하세요]'];
-      conceptParts.push(nanoEventHint.concept);
-      if (nanoEventHint.npc) {
-        conceptParts.push(`[NPC] ${nanoEventHint.npc}`);
-      }
-      if (nanoEventHint.tone) {
-        conceptParts.push(`[톤] ${nanoEventHint.tone}`);
-      }
-      if (nanoEventHint.opening) {
-        conceptParts.push(`[첫 문장] "${nanoEventHint.opening}"`);
-      }
-      if (nanoEventHint.npcGesture) {
-        conceptParts.push(`[NPC 행동] ${nanoEventHint.npcGesture}`);
-      }
-      if (nanoEventHint.avoid.length > 0) {
-        conceptParts.push(`[반복 금지] ${nanoEventHint.avoid.join(', ')}`);
-      }
-      // fact 전달 지시 (서버에서 발견 확정된 경우만)
-      if (nanoEventHint.fact && nanoEventHint.factRevealed) {
-        const delivery =
-          nanoEventHint.factDelivery === 'direct'
-            ? 'NPC가 직접 말해줍니다'
-            : nanoEventHint.factDelivery === 'observe'
-              ? '관찰을 통해 암시합니다'
-              : 'NPC가 간접적으로 암시합니다';
-        conceptParts.push(
-          `[정보 전달] ${delivery}:\n이번 턴에서 중요한 단서가 드러납니다.`,
-        );
-      }
-      factsParts.push(conceptParts.join('\n'));
+      factsParts.push(this.buildNanoEventConceptBlock(nanoEventHint));
     }
 
     // NpcReactionDirector — 이번 턴 NPC 반응 사전 결정 (서술 LLM이 추측 대신 표현)
@@ -2792,6 +2763,46 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * [이벤트 컨셉] 블록 — NanoEventDirector 사전 결정(컨셉/NPC/톤/첫 문장/
+   * 반복 금지/fact 전달)을 서술 방향 지시로 조립. concept 존재가 호출 전제.
+   * arch/77 P1.4 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildNanoEventConceptBlock(
+    nanoEventHint: import('../nano-event-director.service.js').NanoEventResult,
+  ): string {
+    const conceptParts: string[] = ['[이벤트 컨셉 — 이 방향으로 서술하세요]'];
+    conceptParts.push(nanoEventHint.concept);
+    if (nanoEventHint.npc) {
+      conceptParts.push(`[NPC] ${nanoEventHint.npc}`);
+    }
+    if (nanoEventHint.tone) {
+      conceptParts.push(`[톤] ${nanoEventHint.tone}`);
+    }
+    if (nanoEventHint.opening) {
+      conceptParts.push(`[첫 문장] "${nanoEventHint.opening}"`);
+    }
+    if (nanoEventHint.npcGesture) {
+      conceptParts.push(`[NPC 행동] ${nanoEventHint.npcGesture}`);
+    }
+    if (nanoEventHint.avoid.length > 0) {
+      conceptParts.push(`[반복 금지] ${nanoEventHint.avoid.join(', ')}`);
+    }
+    // fact 전달 지시 (서버에서 발견 확정된 경우만)
+    if (nanoEventHint.fact && nanoEventHint.factRevealed) {
+      const delivery =
+        nanoEventHint.factDelivery === 'direct'
+          ? 'NPC가 직접 말해줍니다'
+          : nanoEventHint.factDelivery === 'observe'
+            ? '관찰을 통해 암시합니다'
+            : 'NPC가 간접적으로 암시합니다';
+      conceptParts.push(
+        `[정보 전달] ${delivery}:\n이번 턴에서 중요한 단서가 드러납니다.`,
+      );
+    }
+    return conceptParts.join('\n');
   }
 
   /**
