@@ -88,6 +88,9 @@ export type WorldState = {
   // --- Living World v2 확장 ---
   worldFacts?: WorldFact[]; // 세계 사실 (최대 50개)
   npcLocations?: Record<string, string>; // npcId → locationId (현재 위치)
+  /** [arch/76 D3-c′] 감정 행동화 도주 오버라이드 — 스케줄 재계산이 npcLocations를
+   *  매번 재구축하므로, 도주는 여기 기록하고 스케줄이 우선 적용. untilDay 경과 시 소멸. */
+  npcFleeOverrides?: Record<string, { locationId: string; untilDay: number }>;
   locationDynamicStates?: Record<string, LocationDynamicState>; // locationId → 동적 상태
   playerGoals?: PlayerGoal[]; // 플레이어 목표 (최대 5개)
 };

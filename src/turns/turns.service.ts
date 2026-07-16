@@ -301,6 +301,11 @@ export function findDowngradeLockNpcCore(
 import { korParticle, korParticleRo } from '../common/korean.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 import { decideWitnessReaction } from './witness-reaction.core.js';
+import {
+  agitationCooldownActive,
+  decideAgitatedBehavior,
+} from './npc-agitation.core.js';
+import { computeTacticEffects } from '../engine/combat/combat-tactic.core.js';
 
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { and, asc, eq, ne } from 'drizzle-orm';
@@ -359,6 +364,7 @@ import {
 import {
   getActProgress,
   getUndiscoveredKeyFacts,
+  isBeatIntentAligned,
   selectBeatForAdoption,
 } from '../engine/hub/beat-gravity.js';
 import {
@@ -1813,6 +1819,17 @@ export class TurnsService {
               updatedRunState.nextBeatCandidates = null;
               pp.adoptedBeatCount = (pp.adoptedBeatCount ?? 0) + 1;
               pp.lastAdoptedBeatTurn = turnNo; // C 강제창 리셋
+              // [D1-c — arch/76] 의도 정합 채택률·premise 다양성 계측 로그
+              pp.beatAdoptions = [
+                ...(pp.beatAdoptions ?? []),
+                {
+                  turnNo,
+                  beatId: beat.beatId,
+                  actionType: intent.actionType,
+                  aligned: isBeatIntentAligned(beat, intent.actionType),
+                  premise: beat.premise?.slice(0, 60),
+                },
+              ];
               updatedRunState.plotProgress = pp;
               this.logger.log(
                 `[PlotBeat] 채택 ${beat.beatId} score=${adoption.score} npc=${beatPrimaryNpcId ?? '-'} fact=${beat.hintedFactId ?? '-'}`,
@@ -3083,6 +3100,13 @@ export class TurnsService {
       tags: string[];
       data: Record<string, unknown>;
     }> = [];
+    // [arch/76 D3-c′] 감정 행동화 결과 — result 조립 시 ui.npcAgitation으로 전달
+    let npcAgitationUi: {
+      npcId: string;
+      npcName: string;
+      type: string;
+      text: string;
+    } | null = null;
 
     // 현재 location의 관련 NPC에게 감정 영향 적용
     if (eventPrimaryNpc) {
@@ -3139,11 +3163,18 @@ export class TurnsService {
       // 감정 변화 delta 계산을 위해 before 저장
       const emoBefore = npc.emotional ? { ...npc.emotional } : undefined;
       const postureBefore = npc.posture;
+      // [arch/76 D3-b′] nano socialImpact — 행동 내용 기반 감정 보정 (ACTION
+      // 자유 입력만; CHOICE는 라벨 텍스트라 nano 인상 판단이 무의미).
+      const nanoSocialImpact =
+        body.input.type === 'ACTION'
+          ? (challengeDecision.socialImpact ?? null)
+          : null;
       npc.emotional = this.npcEmotional.applyActionImpact(
         npc.emotional,
         intent.actionType,
         resolveResult.outcome,
         true,
+        nanoSocialImpact,
       );
       npcStates[npcId] = this.npcEmotional.syncLegacyFields(npc);
 
@@ -3194,6 +3225,78 @@ export class TurnsService {
             actionType: intent.actionType,
             outcome: resolveResult.outcome,
           };
+        }
+      }
+
+      // [arch/76 D3-c′] 감정→세계 행동화 — 누적 감정이 임계를 넘으면 NPC가
+      // 먼저 세계를 움직인다 (신고→Heat / 도주→장소 이탈 / 회피·접근→디렉티브).
+      // 당턴 witness 반응 NPC 제외(급성=witness, 만성=agitation — arch/72 경계),
+      // NPC당 쿨다운. 발화·태도 문장은 여전히 NpcReactionDirector 권한.
+      {
+        const witnessedThisTurn = npcReactions.some((r) => r.npcId === npcId);
+        if (
+          !witnessedThisTurn &&
+          !agitationCooldownActive(npcStates[npcId].lastAgitationTurn, turnNo)
+        ) {
+          const agitationName = getNpcDisplayName(
+            npcStates[npcId],
+            this.content.getNpc(npcId),
+          );
+          const agitation = decideAgitatedBehavior(
+            agitationName,
+            npc.emotional,
+            npcStates[npcId].posture,
+          );
+          if (agitation) {
+            npcStates[npcId].lastAgitationTurn = turnNo;
+            pendingPostureEvents.push({
+              id: `agitation_${npcId}_${turnNo}`,
+              kind: 'NPC' as const,
+              text: agitation.text,
+              tags: ['NPC_AGITATION', agitation.type],
+              data: { npcId, type: agitation.type },
+            });
+            if (agitation.heatDelta > 0) {
+              ws = {
+                ...ws,
+                hubHeat: Math.min(100, ws.hubHeat + agitation.heatDelta),
+              };
+            }
+            if (agitation.type === 'FLEE_LOCATION') {
+              // 도주 — npcLocations 즉시 반영 + npcFleeOverrides 기록.
+              // 스케줄(updateAllNpcLocations)이 npcLocations를 매 갱신마다
+              // 재구축하므로, 오버라이드가 없으면 다음 턴에 복귀해버린다 (실측).
+              // 다음 날(untilDay)까지 부재 후 일상 복귀.
+              const fleeTarget = this.content
+                .getAllLocations()
+                .find((l) => l.locationId !== locationId);
+              if (fleeTarget) {
+                ws = {
+                  ...ws,
+                  npcLocations: {
+                    ...(ws.npcLocations ?? {}),
+                    [npcId]: fleeTarget.locationId,
+                  },
+                  npcFleeOverrides: {
+                    ...(ws.npcFleeOverrides ?? {}),
+                    [npcId]: {
+                      locationId: fleeTarget.locationId,
+                      untilDay: ws.day + 1,
+                    },
+                  },
+                };
+              }
+            }
+            npcAgitationUi = {
+              npcId,
+              npcName: agitationName,
+              type: agitation.type,
+              text: agitation.text,
+            };
+            this.logger.log(
+              `[NpcAgitation] ${agitationName}(${npcId}) ${agitation.type} — fear=${npc.emotional.fear} susp=${npc.emotional.suspicion} trust=${npc.emotional.trust}${agitation.heatDelta > 0 ? ` heat+${agitation.heatDelta}` : ''}`,
+            );
+          }
         }
       }
 
@@ -4816,6 +4919,10 @@ export class TurnsService {
     if (primaryNpcWitnessedTags) {
       (result.ui as any).primaryNpcWitnessedTags = primaryNpcWitnessedTags;
     }
+    // [arch/76 D3-c′] 감정 행동화 → LLM 디렉티브 + 클라이언트 알림
+    if (npcAgitationUi) {
+      (result.ui as any).npcAgitation = npcAgitationUi;
+    }
 
     // Orchestration 결과를 ui에 추가 (LLM context 전달용)
     if (orchestrationResult.npcInjection) {
@@ -5737,6 +5844,41 @@ export class TurnsService {
       if (propMatch.tier >= 4) {
         actionPlan.excludeFromArcRoute = true;
         actionPlan.excludeFromCommitment = true;
+      }
+
+      // [arch/76 D3-b′-combat] 기만·전술 감정 — 창의 입력(Tier 3/4)만 nano 1콜.
+      // Tier 1/2(프롭·카테고리 매칭)는 이미 기계 효과 보유, CHOICE 버튼 전투는
+      // 이 분기에 오지 않음 — 평타 템포 보호. 효과 수치는 서버 매핑(불변식 1).
+      if (
+        (propMatch.tier === 3 || propMatch.tier === 4) &&
+        rawInput.trim().length >= 10 &&
+        this.challengeClassifier
+      ) {
+        const aliveEnemies = battleState.enemies.filter((e) => e.hp > 0);
+        const appraisal = await this.challengeClassifier.appraiseCombatTactic({
+          rawInput,
+          enemySummary:
+            aliveEnemies
+              .map((e) => `${e.name ?? e.id}(${e.personality})`)
+              .join(', ') || '없음',
+        });
+        if (appraisal) {
+          const effects = computeTacticEffects(
+            appraisal.tactic,
+            battleState.enemies,
+            battleState.usedTactics ?? [],
+          );
+          actionPlan.tactical = effects;
+          if (!effects.reused) {
+            battleState.usedTactics = [
+              ...(battleState.usedTactics ?? []),
+              appraisal.tactic,
+            ];
+          }
+          this.logger.log(
+            `[CombatTactic] ${appraisal.tactic} flee+${effects.fleeBonus} debuff=${Object.keys(effects.accDebuff).length}적 hit+${effects.playerHitBonus}${effects.reused ? ' (재사용 — 효과 0)' : ''}`,
+          );
+        }
       }
     }
 

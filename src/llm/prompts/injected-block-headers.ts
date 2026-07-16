@@ -27,6 +27,7 @@ export const INJECTED_BLOCK_HEADERS: readonly string[] = [
   '직전 NPC 대사',
   '환상 재해석 지시',
   '행동 재해석 지시',
+  'NPC 능동 행동',
   '관련 사건 기록',
   '대화 연속 상태',
   '인물 소재 안내',

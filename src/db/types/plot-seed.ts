@@ -118,6 +118,19 @@ export type PlotProgress = {
   discardedBeatCount?: number;
   /** [P4 채택 개선 §15.4] 마지막 비트 채택 턴 — C 강제창(BEAT_FORCE_AFTER_TURNS) 기준 */
   lastAdoptedBeatTurn?: number;
+  /**
+   * [D1-c — arch/76] 채택 로그 — 의도 정합 채택률·premise 다양성 계측 전용
+   * (판정 무영향). aligned: true=affordance 일치 · false=불일치 ·
+   * null=행동 무관 비트(affordances 미지정).
+   */
+  beatAdoptions?: Array<{
+    turnNo: number;
+    beatId: string;
+    actionType: string;
+    aligned: boolean | null;
+    /** premise 앞 60자 — 다양성 계측용 */
+    premise?: string;
+  }>;
 };
 
 /**

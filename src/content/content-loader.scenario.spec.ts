@@ -72,7 +72,11 @@ describe('ContentLoader — 시나리오 팩 계약 (architecture/63)', () => {
       'enc_harbor_pirates',
     );
     expect(loader.getAmbushEncounterId('LOC_SLUMS')).toBe('enc_slum_gang');
-    expect(loader.getAmbushEncounterId('LOC_NOBLE')).toBe('enc_generic');
+    // 미지정 장소: 기본값 enc_generic이 팩에 없으면 첫 encounter로 fallback —
+    // 구 동작(존재하지 않는 id 반환)은 무기 위협 전이에서 500 크래시였다
+    // (2026-07-16 실측, arch/76 D3-c′ 검증 중 발견).
+    const fallback = loader.getAmbushEncounterId('LOC_NOBLE');
+    expect(loader.getEncounter(fallback)).toBeDefined();
   });
 
   it('entityAliases — 구 TAG_TO_NPC 대표 항목 + identity 일반화', () => {

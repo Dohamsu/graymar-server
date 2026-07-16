@@ -37,6 +37,11 @@ const OUTCOME_MULTIPLIER: Record<string, number> = {
 const FAIL_MULTIPLIER_NEGATIVE = 0.3;
 const FAIL_MULTIPLIER_POSITIVE = -0.3;
 
+// [arch/76 D3-b′] nano socialImpact 블렌드 — 테이블은 진폭 뼈대(감쇠),
+// nano(±5)는 행동 내용의 의미 보정. nano 부재 시 테이블 100% (fallback).
+const NANO_BASE_DAMP = 0.4;
+const NANO_IMPACT_SCALE = 2;
+
 // 클램프 범위
 const CLAMP_BIPOLAR = { min: -100, max: 100 }; // trust, respect
 const CLAMP_UNIPOLAR = { min: 0, max: 100 }; // fear, suspicion, attachment
@@ -58,20 +63,42 @@ export class NpcEmotionalService {
 
   /**
    * 플레이어 행동 결과에 따른 감정 변화 적용.
+   *
+   * [arch/76 D3-b′] nanoImpact(통합 nano 감정의 socialImpact, 각 축 ±5 검증됨)가
+   * 있으면 축별 `round(base×0.4 + nano×2)` 블렌드 — 테이블(actionType 버킷)은
+   * 진폭 뼈대로 감쇠하고, 행동 **내용**의 의미는 nano가 보정한다 (기행이 TALK로
+   * 분류돼도 suspicion이 오른다). nano 부재 시 기존 테이블 100% (안전 fallback).
+   * outcome 배율·FAIL 부호 분기·directMod는 블렌드 결과에 동일 적용.
    */
   applyActionImpact(
     state: NpcEmotionalState,
     actionType: string,
     outcome: ResolveOutcome,
     isDirectTarget: boolean = false,
+    nanoImpact?: Partial<NpcEmotionalState> | null,
   ): NpcEmotionalState {
     const baseImpact = ACTION_IMPACT[actionType];
-    if (!baseImpact) return state;
+    if (!baseImpact && !nanoImpact) return state;
+
+    // 블렌드 델타 조립 — nano 있으면 (감쇠 base + 스케일 nano), 없으면 base 그대로.
+    const axes = new Set<keyof NpcEmotionalState>([
+      ...(Object.keys(baseImpact ?? {}) as Array<keyof NpcEmotionalState>),
+      ...(Object.keys(nanoImpact ?? {}) as Array<keyof NpcEmotionalState>),
+    ]);
+    const blended: Partial<Record<keyof NpcEmotionalState, number>> = {};
+    for (const axis of axes) {
+      const base = baseImpact?.[axis] ?? 0;
+      const nano = nanoImpact?.[axis] ?? 0;
+      const delta = nanoImpact
+        ? Math.round(base * NANO_BASE_DAMP + nano * NANO_IMPACT_SCALE)
+        : base;
+      if (delta !== 0) blended[axis] = delta;
+    }
 
     const directMod = isDirectTarget ? 1.5 : 1.0;
     const updated = { ...state };
 
-    for (const [axis, delta] of Object.entries(baseImpact) as Array<
+    for (const [axis, delta] of Object.entries(blended) as Array<
       [keyof NpcEmotionalState, number]
     >) {
       let multiplier: number;

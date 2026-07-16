@@ -85,7 +85,19 @@ export class NpcScheduleService {
     // 장소별 NPC 집계
     const locationNpcs: Record<string, string[]> = {};
 
+    // [arch/76 D3-c′] 도주 오버라이드 — 스케줄보다 우선. 만료(untilDay 경과) 정리.
+    const fleeOverrides = ws.npcFleeOverrides ?? {};
+    for (const [npcId, o] of Object.entries(fleeOverrides)) {
+      if (ws.day > o.untilDay) delete fleeOverrides[npcId];
+    }
+
     for (const npcId of allNpcs) {
+      const flee = fleeOverrides[npcId];
+      if (flee) {
+        npcLocations[npcId] = flee.locationId;
+        (locationNpcs[flee.locationId] ??= []).push(npcId);
+        continue;
+      }
       const entry = this.getNpcLocation(npcId, timePhase, ws);
       if (entry) {
         npcLocations[npcId] = entry.locationId;

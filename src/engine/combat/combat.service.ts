@@ -25,6 +25,7 @@ import { StatusService } from '../status/status.service.js';
 import { HitService } from './hit.service.js';
 import { DamageService } from './damage.service.js';
 import { EnemyAiService } from './enemy-ai.service.js';
+import { tacticEventText } from './combat-tactic.core.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import { EquipmentService } from '../rewards/equipment.service.js';
 import type { EquippedGear } from '../../db/types/equipment.js';
@@ -145,6 +146,24 @@ export class CombatService {
       input.playerStats,
       playerMods,
     );
+
+    // [arch/76 D3-b′-combat] 기만 전술 효과 — nano 분류 + 서버 매핑
+    // (combat-tactic.core, turns.service에서 계산). FEINT는 당턴 명중 보너스,
+    // DISTRACTION/INTIMIDATION은 적 acc 디버프(적 AI 단계에서 적용).
+    const tactical = input.actionPlan.tactical;
+    if (tactical) {
+      if (tactical.playerHitBonus > 0) {
+        playerSnap.acc += tactical.playerHitBonus;
+      }
+      events.push({
+        id: `tactic_${input.turnNo}`,
+        kind: 'BATTLE',
+        text: tacticEventText(tactical),
+        tags: tactical.reused
+          ? ['TACTIC', tactical.type, 'REUSED']
+          : ['TACTIC', tactical.type],
+      });
+    }
 
     // §3.2: 플레이어 ActionUnit 순차 실행 (최대 3 슬롯)
     const maxUnits = Math.min(input.actionPlan.units.length, 3);
@@ -267,13 +286,17 @@ export class CombatService {
         fleeSuccess =
           roll + playerSnap.speed + playerSnap.eva >= 10 + enemyCount;
       } else {
+        // [arch/76 D3-b′-combat] 기만 전술(DISTRACTION)의 도주 보너스 합산
+        const itemFleeBonus =
+          ((next as Record<string, unknown>).fleeBonusValue as
+            | number
+            | undefined) ?? 0;
+        const tacticFleeBonus = tactical?.fleeBonus ?? 0;
         fleeSuccess = this.checkFlee(
           next,
           playerSnap,
           rng,
-          (next as Record<string, unknown>).fleeBonusValue as
-            | number
-            | undefined,
+          itemFleeBonus + tacticFleeBonus,
         );
       }
 
@@ -313,6 +336,11 @@ export class CombatService {
           input.enemyStats[enemyId],
           enemy.status,
         );
+        // [arch/76 D3-b′-combat] 기만 전술의 당턴 적 명중 디버프 (음수)
+        const tacticAccDebuff = tactical?.accDebuff?.[enemyId] ?? 0;
+        if (tacticAccDebuff !== 0) {
+          enemySnap.acc += tacticAccDebuff;
+        }
         const aiUnits = this.enemyAiService.selectActions(
           {
             enemyId,

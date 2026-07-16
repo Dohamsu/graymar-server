@@ -953,6 +953,54 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           }
         }
         // E안: NpcSignatureGenerator 비활성화 — 톤 3축은 NpcReaction에 통합됨
+
+        // [arch/76 D3-b′] emotionalShiftHint 배선 — 기존엔 톤 결정에만 쓰고
+        // 버려지던 nano의 NPC 개별 해석(±3 검증됨)을 서버 감정 상태에 반영.
+        // 워커는 턴 커밋 이후이므로 다음 턴부터 적용(fresh CAS — arch/60).
+        // fire-and-forget: 충돌 3회 시 포기해도 soft 보정이라 무해.
+        if (npcReaction && reactionNpcIdUsed) {
+          const shift = npcReaction.emotionalShiftHint;
+          const hasShift =
+            shift.trust !== 0 ||
+            shift.fear !== 0 ||
+            shift.respect !== 0 ||
+            shift.suspicion !== 0;
+          if (hasShift) {
+            const shiftNpcId = reactionNpcIdUsed;
+            void this.applyRunStatePatch(
+              pending.runId,
+              'npcEmotionalShift',
+              (rs) => {
+                const states = rs.npcStates as
+                  | Record<
+                      string,
+                      {
+                        emotional?: Record<string, number>;
+                        trustToPlayer?: number;
+                        suspicion?: number;
+                      }
+                    >
+                  | undefined;
+                const st = states?.[shiftNpcId];
+                if (!st?.emotional) return false;
+                const emo = st.emotional;
+                const bi = (v: number) => Math.max(-100, Math.min(100, v));
+                const uni = (v: number) => Math.max(0, Math.min(100, v));
+                emo.trust = bi((emo.trust ?? 0) + shift.trust);
+                emo.respect = bi((emo.respect ?? 0) + shift.respect);
+                emo.fear = uni((emo.fear ?? 0) + shift.fear);
+                emo.suspicion = uni((emo.suspicion ?? 0) + shift.suspicion);
+                // 레거시 필드 동기화 (posture는 다음 턴 syncLegacyFields가 재파생)
+                st.trustToPlayer = emo.trust;
+                st.suspicion = emo.suspicion;
+                return true;
+              },
+            );
+            this.logger.debug(
+              `[NpcReaction] shiftHint 적용 npc=${shiftNpcId} t${shift.trust >= 0 ? '+' : ''}${shift.trust} f${shift.fear >= 0 ? '+' : ''}${shift.fear} s${shift.suspicion >= 0 ? '+' : ''}${shift.suspicion}`,
+            );
+          }
+        }
       }
 
       // 3.45. 자기소개 대사 사전 생성 (이름 공개 기획 2026-07-11 — arch/65)

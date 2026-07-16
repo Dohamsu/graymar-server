@@ -142,6 +142,20 @@ export interface BeatAdoptionResult {
 }
 
 /**
+ * [D1-c — arch/76] 채택 비트의 의도 정합 여부 (계측 전용 — 채택 결정에 무영향).
+ * true = 비트 affordance가 플레이어 행동 계열과 일치,
+ * false = affordance가 지정됐으나 불일치,
+ * null = 행동 무관 비트(affordances 미지정 — 정합률 분모에서 제외).
+ */
+export function isBeatIntentAligned(
+  beat: BeatCandidate,
+  actionType: string,
+): boolean | null {
+  if (!beat.affordances || beat.affordances.length === 0) return null;
+  return beat.affordances.includes(actionType);
+}
+
+/**
  * 저장된 선계산 묶음에서 채택할 비트 선택.
  * - stale(생성 후 BEAT_STALE_MAX_TURNS 초과) → 전체 폐기(null)
  * - 최고 점수가 BEAT_ADOPT_MIN_SCORE 미만 → 폐기(null)

@@ -42,4 +42,14 @@ export type ActionPlan = {
   /** 성향 추적 제외 (Tier 4/5 turns) */
   excludeFromArcRoute?: boolean;
   excludeFromCommitment?: boolean;
+  /** [arch/76 D3-b′-combat] 기만 전술 효과 — nano 분류 → 서버 매핑(combat-tactic.core) */
+  tactical?: {
+    type: 'DISTRACTION' | 'INTIMIDATION' | 'FEINT';
+    fleeBonus: number;
+    /** enemyId → acc 보정(음수) — 당턴 적 공격에 적용 */
+    accDebuff: Record<string, number>;
+    playerHitBonus: number;
+    /** 같은 전술 재사용 — 효과 0, "더는 속지 않는다" */
+    reused: boolean;
+  };
 };

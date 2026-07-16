@@ -212,6 +212,69 @@ describe('ChallengeClassifierService', () => {
     });
   });
 
+  // [arch/76 D3-b′] socialImpact — 행동 내용 기반 감정 보정 파싱·검증
+  describe('socialImpact — 감정 탈버킷 (D3-b′)', () => {
+    it('유효 socialImpact 파싱 + 축별 ±5 클램프', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"CHECK","statHint":"cha","difficultyMod":0,"plausibility":"UNUSUAL","socialImpact":{"trust":-1,"fear":9,"respect":-2,"suspicion":4,"attachment":0},"reason":"기행"}',
+        },
+      });
+      const d = await service.classify(
+        makeCtx({ actionType: 'TALK', rawInput: '죽은 쥐를 카운터에 올린다' }),
+      );
+      expect(d.socialImpact).toEqual({
+        trust: -1,
+        fear: 5, // 9 → 클램프
+        respect: -2,
+        suspicion: 4,
+        attachment: 0,
+      });
+    });
+
+    it('전 축 0이면 null — 기존 테이블 100% 적용 신호', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"FREE","statHint":null,"difficultyMod":0,"plausibility":"NORMAL","socialImpact":{"trust":0,"fear":0,"respect":0,"suspicion":0,"attachment":0},"reason":"평범"}',
+        },
+      });
+      const d = await service.classify(makeCtx({ actionType: 'TALK' }));
+      expect(d.socialImpact).toBeNull();
+    });
+
+    it('socialImpact 누락 → null (하위 호환)', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"CHECK","statHint":"per","difficultyMod":0,"plausibility":"NORMAL","reason":"x"}',
+        },
+      });
+      const d = await service.classify(makeCtx({ actionType: 'OBSERVE' }));
+      expect(d.socialImpact).toBeNull();
+    });
+
+    it('IMPLAUSIBLE 허풍은 양수 trust 차단 — 서버 강제', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"CHECK","statHint":"cha","difficultyMod":-2,"plausibility":"IMPLAUSIBLE","socialImpact":{"trust":4,"fear":0,"respect":0,"suspicion":3,"attachment":0},"reason":"허풍"}',
+        },
+      });
+      const d = await service.classify(
+        makeCtx({ actionType: 'PERSUADE', rawInput: '마법으로 매혹한다' }),
+      );
+      expect(d.socialImpact).toEqual({
+        trust: 0, // 양수 trust 차단
+        fear: 0,
+        respect: 0,
+        suspicion: 3,
+        attachment: 0,
+      });
+    });
+  });
+
   describe('Fallback — 안전한 쪽 (CHECK)', () => {
     it('LLM 실패 → CHECK (fallback)', async () => {
       mockLlmCaller.call.mockResolvedValue({

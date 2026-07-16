@@ -103,6 +103,8 @@ export interface NPCState {
   llmSummary?: NpcLlmSummary;
   // signature 마지막 주입 턴 (3턴 간격 관리)
   lastSignatureTurn?: number;
+  /** [arch/76 D3-c′] 감정 행동화 마지막 발동 턴 — 쿨다운 게이트 */
+  lastAgitationTurn?: number;
 }
 
 export interface Relationship {

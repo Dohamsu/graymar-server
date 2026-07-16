@@ -1203,6 +1203,32 @@ export class PromptBuilderService {
       factsParts.push(reactionParts.join('\n'));
     }
 
+    // [arch/76 D3-c′] 감정 행동화 블록 — 누적 감정 임계 초과 NPC의 능동 행동.
+    // witness(당턴 목격)와 달리 대화 상대 본인일 수 있다 — 이번 턴 장면에서
+    // 이 행동이 실제로 일어난 것으로 서술한다 (서버가 세계 상태 이미 반영).
+    const npcAgitation = (sr.ui as Record<string, unknown>)?.npcAgitation as
+      | { npcName: string; type: string; text: string }
+      | undefined;
+    if (npcAgitation) {
+      const AGITATION_DIRECTIVE: Record<string, string> = {
+        FLEE_LOCATION:
+          '이 인물은 이번 장면에서 실제로 자리를 떠난다. 떠나는 모습을 서술하고, 이후 이 장소에 없다.',
+        AVOID:
+          '이 인물은 당신을 피하고 거리를 둔다. 대화를 짧게 끊거나 자리를 옮기는 모습으로 표현하라.',
+        REPORT:
+          '이 인물은 당신의 행적을 경비대에 알렸다. 직접 말하지 않아도 낌새(시선·수군거림)로 드러나게 하라.',
+        APPROACH:
+          '이 인물은 당신을 믿고 먼저 다가와 말을 건다. 자연스러운 계기로 접근을 서술하라.',
+      };
+      factsParts.push(
+        [
+          '[NPC 능동 행동 — 누적된 감정이 행동이 되었다. 이번 턴 장면에 반드시 반영]',
+          `- ${npcAgitation.text}`,
+          `- ${AGITATION_DIRECTIVE[npcAgitation.type] ?? ''}`,
+        ].join('\n'),
+      );
+    }
+
     // NanoDirector 연출 지시 삽입 (NanoEventDirector가 없을 때만 — 레거시 호환)
     if (directorHint && !nanoEventHint) {
       const dirParts: string[] = ['[연출 지시 — 이번 턴의 서술 방향]'];

@@ -1107,10 +1107,15 @@ export class ContentLoaderService implements OnModuleInit {
 
   /** AMBUSH 이벤트 기본 encounter (locations.json ambushEncounterId) */
   getAmbushEncounterId(locationId: string): string {
-    return (
+    const configured =
       this.locations.get(locationId)?.ambushEncounterId ??
-      DEFAULT_AMBUSH_ENCOUNTER_ID
-    );
+      DEFAULT_AMBUSH_ENCOUNTER_ID;
+    if (this.encounters.has(configured)) return configured;
+    // 팩에 없는 encounter id — 첫 encounter로 fallback. graymar_v1은
+    // enc_generic 미보유라 무기 위협(sudden action) 전이가 500으로 죽던
+    // 기존 크래시 (2026-07-16 실측). encounter 0개 팩은 기존 동작 유지.
+    const first = this.encounters.keys().next();
+    return first.done ? configured : first.value;
   }
 
   /** 세력 표시명 (factions.json shortName → name → id) */

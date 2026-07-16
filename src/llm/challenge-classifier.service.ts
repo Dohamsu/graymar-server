@@ -16,6 +16,15 @@ export type ChallengeSource = 'rule' | 'llm' | 'fallback';
 //  NORMAL: 평범 / UNUSUAL: 특이하나 세계 안 가능 / IMPLAUSIBLE: 세계 규칙상 불가
 export type Plausibility = 'NORMAL' | 'UNUSUAL' | 'IMPLAUSIBLE';
 
+// [arch/76 D3-b′] 행동의 사회적 인상 — 5축 감정 델타 (각 clamp ±5, 서버 검증).
+export interface SocialImpact {
+  trust: number;
+  fear: number;
+  respect: number;
+  suspicion: number;
+  attachment: number;
+}
+
 export interface ChallengeDecision {
   result: ChallengeResult;
   reason: string;
@@ -30,11 +39,22 @@ export interface ChallengeDecision {
   plausibility?: Plausibility;
   /** 이 행동이 장소에 물리적 흔적을 남기나 — 흔적 추출 게이트(actionType 무관) */
   physicalImpact?: boolean;
+  /** [D3-b′] 상대·목격 NPC에게 주는 인상 — ACTION_IMPACT 버킷의 의미 보정 */
+  socialImpact?: SocialImpact | null;
 }
 
 // [arch/76 D3] statHint 허용 스탯 — 서버 검증용. 파생값(atk 등)·자원(maxHP)은 제외.
 const APPRAISAL_STATS = new Set(['str', 'dex', 'wit', 'con', 'per', 'cha']);
 const DIFFICULTY_CLAMP = 2;
+// [D3-b′] socialImpact 축별 클램프 — nano는 미세 보정(±5), 진폭 뼈대는 서버 테이블.
+const SOCIAL_IMPACT_CLAMP = 5;
+const SOCIAL_AXES = [
+  'trust',
+  'fear',
+  'respect',
+  'suspicion',
+  'attachment',
+] as const;
 
 export interface ChallengeClassifierContext {
   rawInput: string;
@@ -65,7 +85,7 @@ const RULE_CHECK_ACTIONS = new Set([
   'PERSUADE',
 ]);
 
-const SYSTEM_PROMPT = `당신은 텍스트 RPG 행동 감정기다. 플레이어 행동을 4가지로 평가한다.
+const SYSTEM_PROMPT = `당신은 텍스트 RPG 행동 감정기다. 플레이어 행동을 6가지로 평가한다.
 
 1) result — 저항/결과분기 유무
    FREE: 의지로 가능, 저항·분기 없음 (둘러본다, 한숨 쉰다, 인사한다)
@@ -90,8 +110,29 @@ const SYSTEM_PROMPT = `당신은 텍스트 RPG 행동 감정기다. 플레이어
    true: 탁자를 엎음, 간판을 뜯어냄, 물건을 부숨/훔침 (실제 물리 변형)
    false: 대화·관찰·이동·거래, 그리고 IMPLAUSIBLE(실재하지 않는 마법 효과)
 
+6) socialImpact — 이 행동이 상대·주변 사람에게 주는 인상 (각 축 -5~5 정수, 해당 없으면 0)
+   trust(신뢰) fear(공포) respect(존중, 경멸이면 음수) suspicion(의심) attachment(유대)
+   ※ 행동의 **실제 내용**으로 판단 — 기행("탁자 위에서 춤")은 suspicion+, 선의는 trust+,
+     위협적 기행("죽은 쥐를 올려놓음")은 fear+suspicion+, 평범한 대화·관찰은 전부 0.
+     허황된 주장(IMPLAUSIBLE)은 trust를 올리지 못한다(suspicion+).
+
 JSON만 출력 (다른 텍스트 금지):
-{"result":"CHECK","statHint":"dex","difficultyMod":-1,"plausibility":"UNUSUAL","physicalImpact":true,"reason":"15자 이내"}`;
+{"result":"CHECK","statHint":"dex","difficultyMod":-1,"plausibility":"UNUSUAL","physicalImpact":true,"socialImpact":{"trust":0,"fear":2,"respect":0,"suspicion":3,"attachment":0},"reason":"15자 이내"}`;
+
+// [arch/76 D3-b′-combat] 전투 전술 감정 — 상대의 판단을 속이는 행동만 전술이다.
+export type CombatTacticKind = 'DISTRACTION' | 'INTIMIDATION' | 'FEINT';
+
+const COMBAT_TACTIC_PROMPT = `당신은 전투 행동 감정기다. 플레이어의 전투 행동이 아래 전술에 해당하는지 판정한다.
+
+DISTRACTION: 주의 돌리기 — 거짓 외침, 교란 ("저쪽에 운석이!", "경비대다!"라고 소리침)
+INTIMIDATION: 위협 — 기세·말로 겁주기 (실제 공격 아님)
+FEINT: 속임 동작 — 공격하는 척, 페인트
+NONE: 해당 없음 — 일반 공격/방어/이동/도주, 실제 물리 행동, 마법 시전 주장
+
+※ 핵심 구분: "~라고 소리친다/외친다/~하는 척한다"처럼 **상대의 판단을 속이는** 행동만 전술.
+   실제로 무언가를 던지거나 때리는 행동, "운석을 떨어뜨린다" 같은 시전 주장은 NONE.
+
+JSON만 출력: {"tactic":"DISTRACTION","reason":"10자 이내"}`;
 
 @Injectable()
 export class ChallengeClassifierService {
@@ -150,7 +191,7 @@ export class ChallengeClassifierService {
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: userMsg },
           ],
-          maxTokens: 140,
+          maxTokens: 200,
           temperature: 0.2,
           model: lightConfig.model,
           timeoutMs: lightConfig.timeoutMs,
@@ -187,6 +228,66 @@ export class ChallengeClassifierService {
     }
   }
 
+  /**
+   * [arch/76 D3-b′-combat] 전투 기만·전술 감정 — 창의 입력(Tier 3/4)에서만
+   * 호출된다 (게이트는 turns.service). "운석이 떨어진다고 소리친다"(가능한
+   * 거짓말)와 "운석을 떨어뜨린다"(환상 시전)를 구분하는 것이 존재 이유.
+   * 효과 수치는 combat-tactic.core가 서버 결정론으로 매핑 (불변식 1).
+   */
+  async appraiseCombatTactic(ctx: {
+    rawInput: string;
+    enemySummary: string;
+  }): Promise<{ tactic: CombatTacticKind; reason: string } | null> {
+    if (!this.enabled) return null;
+    if (
+      (process.env.COMBAT_TACTIC_DISABLED ?? 'false').toLowerCase() === 'true'
+    ) {
+      return null;
+    }
+    try {
+      const lightConfig = this.configService.getLightModelConfig();
+      const result = await this.llmCaller.call(
+        {
+          messages: [
+            { role: 'system', content: COMBAT_TACTIC_PROMPT },
+            {
+              role: 'user',
+              content: `행동: "${ctx.rawInput}"\n적: ${ctx.enemySummary}`,
+            },
+          ],
+          maxTokens: 60,
+          temperature: 0.2,
+          model: lightConfig.model,
+          timeoutMs: lightConfig.timeoutMs,
+        },
+        'combat-tactic',
+      );
+      if (!result.success || !result.response?.text) return null;
+      const jsonMatch = result.response.text.trim().match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      const parsed = JSON.parse(jsonMatch[0]) as {
+        tactic?: unknown;
+        reason?: unknown;
+      };
+      const tactic =
+        parsed.tactic === 'DISTRACTION' ||
+        parsed.tactic === 'INTIMIDATION' ||
+        parsed.tactic === 'FEINT'
+          ? parsed.tactic
+          : null;
+      if (!tactic) return null; // NONE 포함 — 전술 아님
+      const reason =
+        typeof parsed.reason === 'string' ? parsed.reason.slice(0, 30) : '';
+      this.logger.debug(`[CombatTactic] ${tactic} reason="${reason}"`);
+      return { tactic, reason };
+    } catch (err) {
+      this.logger.warn(
+        `[CombatTactic] error: ${err instanceof Error ? err.message : err}`,
+      );
+      return null;
+    }
+  }
+
   private buildUserMessage(ctx: ChallengeClassifierContext): string {
     const parts = [`행동: "${ctx.rawInput}"`, `타입: ${ctx.actionType}`];
     if (ctx.targetNpcName) {
@@ -205,6 +306,7 @@ export class ChallengeClassifierService {
     difficultyMod: number;
     plausibility: Plausibility;
     physicalImpact: boolean;
+    socialImpact: SocialImpact | null;
   } | null {
     const jsonMatch = text.trim().match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
@@ -217,6 +319,7 @@ export class ChallengeClassifierService {
         difficultyMod?: unknown;
         plausibility?: unknown;
         physicalImpact?: unknown;
+        socialImpact?: unknown;
       };
       const result =
         parsed.result === 'FREE' || parsed.result === 'CHECK'
@@ -250,6 +353,31 @@ export class ChallengeClassifierService {
       const physicalImpact =
         parsed.physicalImpact === true && plausibility !== 'IMPLAUSIBLE';
 
+      // [D3-b′] socialImpact 서버 검증 — 축별 정수 clamp ±5, 전 축 0이면 null
+      // (감정 보정 없음 — 기존 테이블 100% 적용을 뜻한다).
+      let socialImpact: SocialImpact | null = null;
+      if (parsed.socialImpact && typeof parsed.socialImpact === 'object') {
+        const raw = parsed.socialImpact as Record<string, unknown>;
+        const clamped = {} as SocialImpact;
+        let nonZero = false;
+        for (const axis of SOCIAL_AXES) {
+          const v =
+            typeof raw[axis] === 'number' && Number.isFinite(raw[axis])
+              ? Math.max(
+                  -SOCIAL_IMPACT_CLAMP,
+                  Math.min(SOCIAL_IMPACT_CLAMP, Math.round(raw[axis])),
+                )
+              : 0;
+          clamped[axis] = v;
+          if (v !== 0) nonZero = true;
+        }
+        // IMPLAUSIBLE 허풍은 신뢰를 얻지 못한다 — 서버 강제 (양수 trust 차단).
+        if (plausibility === 'IMPLAUSIBLE' && clamped.trust > 0) {
+          clamped.trust = 0;
+        }
+        if (nonZero) socialImpact = clamped;
+      }
+
       return {
         result,
         reason,
@@ -257,6 +385,7 @@ export class ChallengeClassifierService {
         difficultyMod,
         plausibility,
         physicalImpact,
+        socialImpact,
       };
     } catch {
       return null;

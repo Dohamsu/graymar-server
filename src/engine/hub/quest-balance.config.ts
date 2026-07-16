@@ -48,6 +48,16 @@ export const QUEST_BALANCE = {
    *  기존 20은 콘텐츠 초기 trust 분포(FRIENDLY 10~15)보다 높아 경고 밴드가
    *  사실상 미도달이었다 (버그 599a00a1). FRIENDLY/FEARFUL은 posture 우선. */
   WITNESS_WARN_TRUST: 15,
+
+  /** [arch/76 D3-c′] 감정→세계 행동화 — 누적 감정 임계·쿨다운.
+   *  witness(당턴 목격, 급성)와 구분되는 만성 경로: 감정이 쌓이면 세계가 움직인다. */
+  AGITATION_FEAR_THRESHOLD: 60,
+  AGITATION_SUSPICION_THRESHOLD: 60,
+  AGITATION_SUSPICION_TRUST_GATE: -10,
+  AGITATION_APPROACH_TRUST: 50,
+  AGITATION_APPROACH_ATTACHMENT: 30,
+  AGITATION_COOLDOWN_TURNS: 6,
+  AGITATION_REPORT_HEAT: 5,
 } as const;
 
 /**

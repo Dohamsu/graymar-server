@@ -581,8 +581,7 @@ export class RunsService {
     // 동기 생성 시 런 생성이 20~55초라 클라가 타임아웃→타이틀 복귀). 프롤로그는
     // plotSeed 불필요 — 첫 실제 LOCATION 턴 전까지 준비된다(미준비 턴은 디렉터
     // graceful 스킵). 트랜잭션엔 plotSeed 없이 insert, 커밋 후 async 동결.
-    const isAutonomousRun =
-      this.content.getNarrativeMode() === 'AUTONOMOUS';
+    const isAutonomousRun = this.content.getNarrativeMode() === 'AUTONOMOUS';
 
     // 5. 트랜잭션: run + 첫 노드 + memory + 첫 턴
     // DAG 모드: 첫 노드는 DAG 그래프의 시작 노드 (common_s0)

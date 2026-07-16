@@ -51,9 +51,7 @@ export class CampaignsService {
     await this.db
       .update(campaigns)
       .set({ status: 'COMPLETED', updatedAt: new Date() })
-      .where(
-        and(eq(campaigns.userId, userId), eq(campaigns.status, 'ACTIVE')),
-      );
+      .where(and(eq(campaigns.userId, userId), eq(campaigns.status, 'ACTIVE')));
     const [campaign] = await this.db
       .insert(campaigns)
       .values({

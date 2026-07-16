@@ -49,4 +49,6 @@ export type BattleStateV1 = {
   }>;
   /** Tier 1 등록 프롭 스냅샷 — 생략 시 Tier 1 비활성 */
   environmentProps?: BattleEnvironmentProp[];
+  /** [arch/76 D3-b′-combat] 이 전투에서 이미 쓴 기만 전술 — 재사용 시 효과 0 */
+  usedTactics?: string[];
 };

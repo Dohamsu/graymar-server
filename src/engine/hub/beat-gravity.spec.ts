@@ -9,6 +9,7 @@ import type {
 import {
   getActProgress,
   getUndiscoveredKeyFacts,
+  isBeatIntentAligned,
   scoreBeatCandidate,
   selectBeatForAdoption,
   type BeatAdoptionContext,
@@ -187,5 +188,30 @@ describe('selectBeatForAdoption', () => {
   it('후보 없음/null이면 null', () => {
     expect(selectBeatForAdoption(null, baseCtx())).toBeNull();
     expect(selectBeatForAdoption(freshBeats([]), baseCtx())).toBeNull();
+  });
+});
+
+// [D1-c — arch/76] 의도 정합 계측 헬퍼
+describe('isBeatIntentAligned', () => {
+  it('affordance가 행동 계열을 포함하면 true', () => {
+    expect(
+      isBeatIntentAligned(
+        beat({ affordances: ['INVESTIGATE', 'OBSERVE'] }),
+        'INVESTIGATE',
+      ),
+    ).toBe(true);
+  });
+
+  it('affordance가 지정됐으나 불일치면 false', () => {
+    expect(isBeatIntentAligned(beat({ affordances: ['SNEAK'] }), 'TALK')).toBe(
+      false,
+    );
+  });
+
+  it('affordances 미지정(행동 무관 비트)이면 null — 정합률 분모 제외', () => {
+    expect(
+      isBeatIntentAligned(beat({ affordances: undefined }), 'TALK'),
+    ).toBeNull();
+    expect(isBeatIntentAligned(beat({ affordances: [] }), 'TALK')).toBeNull();
   });
 });
