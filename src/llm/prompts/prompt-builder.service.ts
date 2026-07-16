@@ -861,112 +861,8 @@ export class PromptBuilderService {
       ),
     );
 
-    // [최근 사용 표현 — 자제] 블록 — 반복 구문 고착 방지 (bug 4624)
-    //   직전 3턴에서 2회+ 사용된 빈출 bigram 을 프롬프트에 주입, LLM이 재사용을 자제하도록 유도.
-    if (ctx.overusedPhrases && ctx.overusedPhrases.length > 0) {
-      const list = ctx.overusedPhrases.map((p) => `"${p}"`).join(', ');
-      factsParts.push(
-        `[최근 사용 표현 — 이번 턴 자제] ${list}\n` +
-          `- 위 표현들은 최근 3턴에서 이미 사용되었습니다. 같은 어휘·구문 반복을 피하고 다른 동사/묘사로 바꾸세요.`,
-      );
-    }
-
-    // [이번 턴 감각 초점] 블록 — 감각 다양성 강제 (bug 4671, 제안 E)
-    //   LLM이 시각 묘사에 치우치는 경향(안경테/시선/고개) 방지를 위해
-    //   턴 번호 기반 rotation 으로 매 턴 다른 감각 카테고리 권장.
-    //   CLAUDE.md LLM 원칙 2 (Positive framing — "다음 중 선택").
-    //   질문 턴에는 억제 (개선 3) — 감각 연출이 질문 답변을 밀어내는 경쟁 지시가 된다.
-    if (!isQuestionTurn) {
-      const turnNo = sr.turnNo ?? 0;
-      const SENSE_POOL: { name: string; examples: string[] }[] = [
-        {
-          name: '청각 + 촉각',
-          examples: [
-            '발소리, 옷자락 스치는 소리, 숨결, 속삭임',
-            '차가운 돌바닥, 거친 나무 결, 끈적한 공기',
-          ],
-        },
-        {
-          name: '후각 + 촉각',
-          examples: [
-            '갓 구운 빵 냄새, 젖은 흙, 생선 비린내, 술 냄새',
-            '어깨에 닿는 찬 바람, 손끝에 닿는 서늘한 금속',
-          ],
-        },
-        {
-          name: '시각 (디테일 중심)',
-          examples: [
-            '먼지가 빛줄기 속에 떠다닌다',
-            '문틈으로 새어 나온 불빛',
-            '거리에 길게 늘어진 그림자',
-          ],
-        },
-        {
-          name: '청각 + 후각',
-          examples: [
-            '멀리서 들리는 종소리, 수레바퀴 굴러가는 소리',
-            '향신료의 매콤한 향, 파도 냄새, 먹구름이 몰고 온 비 냄새',
-          ],
-        },
-      ];
-      const chosen = SENSE_POOL[turnNo % SENSE_POOL.length];
-      factsParts.push(
-        `[이번 턴 감각 초점] ${chosen.name}\n` +
-          `- 서술에 위 감각 카테고리를 1~2개 자연스럽게 포함하세요.\n` +
-          `- 예시: ${chosen.examples.join(' / ')}\n` +
-          `- 시각 묘사(시선/고개/눈)에만 치우치지 않도록 균형을 맞춥니다.`,
-      );
-    }
-
-    // [이번 턴 지목 대상 NPC] 블록 — Player-First 강화 (bug 4624)
-    //   플레이어가 특정 NPC를 지목한 경우, 해당 NPC가 장면 중심이 되어야 함.
-    if (ctx.playerTargetNpcId) {
-      const targetDef = this.content.getNpc(ctx.playerTargetNpcId);
-      if (targetDef?.name) {
-        const targetState = ctx.npcStates?.[ctx.playerTargetNpcId];
-        const displayName = targetState?.introduced
-          ? targetDef.name
-          : (targetDef.unknownAlias ?? targetDef.name);
-        factsParts.push(
-          `[이번 턴 플레이어 지목 대상] ${displayName} (${ctx.playerTargetNpcId})\n` +
-            `- 이 NPC가 반응의 중심입니다. 다른 NPC가 첫 대사를 하거나 장면을 가로채게 만들지 마세요.\n` +
-            `- 주변 NPC는 배경으로만 등장 가능하며, 대사는 지목 대상 이후에만.`,
-        );
-
-        // [NPC 최근 제스처] — 제스처 다양화 (bug 4671, 제안 C)
-        //   해당 NPC 가 이미 사용한 제스처를 명시하고, 다음 턴엔 새 제스처 선택 유도.
-        //   CLAUDE.md LLM 원칙 1 (명시적 주입) + 원칙 2 (Positive pool).
-        const recent = (
-          targetState as unknown as {
-            recentGestures?: { text: string; turnNo: number }[];
-          }
-        )?.recentGestures;
-        if (recent && recent.length > 0) {
-          const uniqueTexts = Array.from(new Set(recent.map((g) => g.text)));
-          const used = uniqueTexts.slice(-5).join(' / ');
-          // posture 기반 권장 풀 (간단 버전 — 모두에게 공통 pool)
-          const recommendPool = [
-            '땀을 훔치다',
-            '헛기침을 하다',
-            '손가락을 까딱거리다',
-            '어깨를 움츠리다',
-            '목덜미를 만지다',
-            '호흡을 가다듬다',
-            '무릎을 살짝 굽히다',
-            '옷깃을 매만지다',
-            '팔짱을 끼다',
-            '주먹을 쥐었다 펴다',
-          ];
-          factsParts.push(
-            `[${displayName}의 최근 사용 제스처 — 반복 금지]\n` +
-              `- 이미 사용: ${used}\n` +
-              `- 이번 턴엔 다른 제스처로 감정을 드러내세요. 권장 예시:\n` +
-              `  ${recommendPool.join(', ')}\n` +
-              `- 위 예시 중 성격에 맞는 것을 골라 자연스럽게 녹이세요.`,
-          );
-        }
-      }
-    }
+    // 반복 억제·감각 초점·지목 대상 — buildStyleFocusBlocks로 추출 (P1.14)
+    factsParts.push(...this.buildStyleFocusBlocks(ctx, sr, isQuestionTurn));
 
     // summary.short — A52 후보 1: 빈 본문 가드 (헤더만 출력 방지)
     if (sr.summary?.short && sr.summary.short.trim().length > 0) {
@@ -1808,6 +1704,126 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * 문체·초점 블록 — 최근 사용 표현 자제 / 감각 초점 로테이션(질문 턴 억제) /
+   * 플레이어 지목 대상 + NPC 최근 제스처 풀.
+   * arch/77 P1.14 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildStyleFocusBlocks(
+    ctx: LlmContext,
+    sr: ServerResultV1,
+    isQuestionTurn: boolean,
+  ): string[] {
+    const factsParts: string[] = [];
+    // [최근 사용 표현 — 자제] 블록 — 반복 구문 고착 방지 (bug 4624)
+    //   직전 3턴에서 2회+ 사용된 빈출 bigram 을 프롬프트에 주입, LLM이 재사용을 자제하도록 유도.
+    if (ctx.overusedPhrases && ctx.overusedPhrases.length > 0) {
+      const list = ctx.overusedPhrases.map((p) => `"${p}"`).join(', ');
+      factsParts.push(
+        `[최근 사용 표현 — 이번 턴 자제] ${list}\n` +
+          `- 위 표현들은 최근 3턴에서 이미 사용되었습니다. 같은 어휘·구문 반복을 피하고 다른 동사/묘사로 바꾸세요.`,
+      );
+    }
+
+    // [이번 턴 감각 초점] 블록 — 감각 다양성 강제 (bug 4671, 제안 E)
+    //   LLM이 시각 묘사에 치우치는 경향(안경테/시선/고개) 방지를 위해
+    //   턴 번호 기반 rotation 으로 매 턴 다른 감각 카테고리 권장.
+    //   CLAUDE.md LLM 원칙 2 (Positive framing — "다음 중 선택").
+    //   질문 턴에는 억제 (개선 3) — 감각 연출이 질문 답변을 밀어내는 경쟁 지시가 된다.
+    if (!isQuestionTurn) {
+      const turnNo = sr.turnNo ?? 0;
+      const SENSE_POOL: { name: string; examples: string[] }[] = [
+        {
+          name: '청각 + 촉각',
+          examples: [
+            '발소리, 옷자락 스치는 소리, 숨결, 속삭임',
+            '차가운 돌바닥, 거친 나무 결, 끈적한 공기',
+          ],
+        },
+        {
+          name: '후각 + 촉각',
+          examples: [
+            '갓 구운 빵 냄새, 젖은 흙, 생선 비린내, 술 냄새',
+            '어깨에 닿는 찬 바람, 손끝에 닿는 서늘한 금속',
+          ],
+        },
+        {
+          name: '시각 (디테일 중심)',
+          examples: [
+            '먼지가 빛줄기 속에 떠다닌다',
+            '문틈으로 새어 나온 불빛',
+            '거리에 길게 늘어진 그림자',
+          ],
+        },
+        {
+          name: '청각 + 후각',
+          examples: [
+            '멀리서 들리는 종소리, 수레바퀴 굴러가는 소리',
+            '향신료의 매콤한 향, 파도 냄새, 먹구름이 몰고 온 비 냄새',
+          ],
+        },
+      ];
+      const chosen = SENSE_POOL[turnNo % SENSE_POOL.length];
+      factsParts.push(
+        `[이번 턴 감각 초점] ${chosen.name}\n` +
+          `- 서술에 위 감각 카테고리를 1~2개 자연스럽게 포함하세요.\n` +
+          `- 예시: ${chosen.examples.join(' / ')}\n` +
+          `- 시각 묘사(시선/고개/눈)에만 치우치지 않도록 균형을 맞춥니다.`,
+      );
+    }
+
+    // [이번 턴 지목 대상 NPC] 블록 — Player-First 강화 (bug 4624)
+    //   플레이어가 특정 NPC를 지목한 경우, 해당 NPC가 장면 중심이 되어야 함.
+    if (ctx.playerTargetNpcId) {
+      const targetDef = this.content.getNpc(ctx.playerTargetNpcId);
+      if (targetDef?.name) {
+        const targetState = ctx.npcStates?.[ctx.playerTargetNpcId];
+        const displayName = targetState?.introduced
+          ? targetDef.name
+          : (targetDef.unknownAlias ?? targetDef.name);
+        factsParts.push(
+          `[이번 턴 플레이어 지목 대상] ${displayName} (${ctx.playerTargetNpcId})\n` +
+            `- 이 NPC가 반응의 중심입니다. 다른 NPC가 첫 대사를 하거나 장면을 가로채게 만들지 마세요.\n` +
+            `- 주변 NPC는 배경으로만 등장 가능하며, 대사는 지목 대상 이후에만.`,
+        );
+
+        // [NPC 최근 제스처] — 제스처 다양화 (bug 4671, 제안 C)
+        //   해당 NPC 가 이미 사용한 제스처를 명시하고, 다음 턴엔 새 제스처 선택 유도.
+        //   CLAUDE.md LLM 원칙 1 (명시적 주입) + 원칙 2 (Positive pool).
+        const recent = (
+          targetState as unknown as {
+            recentGestures?: { text: string; turnNo: number }[];
+          }
+        )?.recentGestures;
+        if (recent && recent.length > 0) {
+          const uniqueTexts = Array.from(new Set(recent.map((g) => g.text)));
+          const used = uniqueTexts.slice(-5).join(' / ');
+          // posture 기반 권장 풀 (간단 버전 — 모두에게 공통 pool)
+          const recommendPool = [
+            '땀을 훔치다',
+            '헛기침을 하다',
+            '손가락을 까딱거리다',
+            '어깨를 움츠리다',
+            '목덜미를 만지다',
+            '호흡을 가다듬다',
+            '무릎을 살짝 굽히다',
+            '옷깃을 매만지다',
+            '팔짱을 끼다',
+            '주먹을 쥐었다 펴다',
+          ];
+          factsParts.push(
+            `[${displayName}의 최근 사용 제스처 — 반복 금지]\n` +
+              `- 이미 사용: ${used}\n` +
+              `- 이번 턴엔 다른 제스처로 감정을 드러내세요. 권장 예시:\n` +
+              `  ${recommendPool.join(', ')}\n` +
+              `- 위 예시 중 성격에 맞는 것을 골라 자연스럽게 녹이세요.`,
+          );
+        }
+      }
+    }
+    return factsParts;
   }
 
   /**
