@@ -3974,6 +3974,21 @@ ${npcList}`,
           locationId,
           turnNo: pending.turnNo,
         });
+
+        // 4-d2. [arch/76 D3-a] 장면 물리 흔적 추출 → propsTraces 링버퍼 (fresh CAS).
+        //   nano가 서술에서 흔적을 추출(생성 아님), narrative-only. DONE 이후라 레이턴시 0.
+        //   killswitch: PROPS_TRACE_DISABLED=1
+        if (
+          locationId &&
+          (process.env.PROPS_TRACE_DISABLED ?? '').toLowerCase() !== '1'
+        ) {
+          void this.extractAndStoreSceneTrace(
+            pending.runId,
+            locationId,
+            narrative,
+            pending.turnNo,
+          );
+        }
       }
 
       // 4-e. [P4 — arch/75 §5.1] Emergent Director 비트 선계산 (AUTONOMOUS 전용).
@@ -4584,6 +4599,52 @@ ${npcList}`,
     } catch (err) {
       this.logger.warn(
         `[PlotDirector] 선계산 실패 (non-fatal): ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  /**
+   * [arch/76 D3-a] 장면 물리 흔적 추출 → propsTraces 링버퍼 저장.
+   * nano로 서술에서 흔적 명사구를 추출(생성 아님)하고, 있으면 fresh CAS로
+   * worldState.locationDynamicStates[loc].propsTraces에 push (max 6, 오래된 것 evict).
+   * narrative-only — 판정·수치 무영향. 실패·미해당 시 무동작(soft data).
+   */
+  private async extractAndStoreSceneTrace(
+    runId: string,
+    locationId: string,
+    narrative: string,
+    turnNo: number,
+  ): Promise<void> {
+    try {
+      const trace = await this.factExtractor.extractSceneTrace({
+        narrative,
+        locationId,
+      });
+      if (!trace) return;
+
+      await this.applyRunStatePatch(runId, 'propsTrace', (fresh) => {
+        const wsFresh = fresh.worldState as
+          | { locationDynamicStates?: Record<string, Record<string, unknown>> }
+          | undefined;
+        const loc = wsFresh?.locationDynamicStates?.[locationId];
+        if (!loc) return false;
+        const traces = (
+          Array.isArray(loc.propsTraces) ? loc.propsTraces : []
+        ) as Array<{ text: string; turnCreated: number }>;
+        // 동일 흔적 중복 방지 (같은 문구 재추출)
+        if (traces.some((t) => t.text === trace)) return false;
+        traces.push({ text: trace, turnCreated: turnNo });
+        // 링버퍼 — 오래된 것부터 evict (MAX_PROPS_TRACES_PER_LOCATION=6)
+        while (traces.length > 6) traces.shift();
+        loc.propsTraces = traces;
+        return true;
+      });
+      this.logger.debug(
+        `[SceneTrace] turn=${turnNo} loc=${locationId} trace="${trace}"`,
+      );
+    } catch (err) {
+      this.logger.debug(
+        `[SceneTrace] store failed (non-fatal): ${err instanceof Error ? err.message : err}`,
       );
     }
   }

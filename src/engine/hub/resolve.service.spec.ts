@@ -227,6 +227,89 @@ describe('ResolveService', () => {
       );
       expect(r.baseMod).toBe(-1);
     });
+
+    // [D2-b — arch/76] 보정치 출처 분해 (판정 투명성)
+    it('modifiers: BLOCK + friction → 항목별 분해, 합=baseMod', () => {
+      const r = service.resolve(
+        makeEvent({ matchPolicy: 'BLOCK', friction: 2 }),
+        makeIntent({ actionType: 'TALK' }),
+        makeWorld(),
+        makeStats({ cha: 4 }),
+        makeRng([6]),
+      );
+      expect(r.modifiers).toEqual([
+        { label: '지형 불리', value: -1 },
+        { label: '소란', value: -2 },
+      ]);
+      // 분해 합 == baseMod (불변)
+      expect((r.modifiers ?? []).reduce((s, m) => s + m.value, 0)).toBe(
+        r.baseMod,
+      );
+    });
+
+    it('modifiers: 보정 없음(NEUTRAL, friction 0) → undefined', () => {
+      const r = service.resolve(
+        makeEvent({ matchPolicy: 'NEUTRAL', friction: 0 }),
+        makeIntent({ actionType: 'TALK' }),
+        makeWorld(),
+        makeStats({ cha: 4 }),
+        makeRng([3]),
+      );
+      expect(r.modifiers).toBeUndefined();
+      expect(r.baseMod).toBe(0);
+    });
+
+    // [arch/76 D3] 행동-특정 감정 파라미터 (appraisal)
+    it('D3-①: statHint가 actionType 기본 스탯을 override', () => {
+      // TALK 기본=cha(4→+1). statHint=dex(8→+2)로 교체되어야 함.
+      const r = service.resolve(
+        makeEvent({ matchPolicy: 'NEUTRAL', friction: 0 }),
+        makeIntent({ actionType: 'TALK' }),
+        makeWorld(),
+        makeStats({ cha: 4, dex: 8 }),
+        makeRng([1]),
+        [],
+        undefined,
+        null,
+        undefined,
+        { statHint: 'dex' },
+      );
+      expect(r.statKey).toBe('dex');
+      expect(r.statBonus).toBe(2); // floor(8/4)
+    });
+
+    it('D3-①: 유효하지 않은 statHint → actionType 기본 유지', () => {
+      const r = service.resolve(
+        makeEvent({ matchPolicy: 'NEUTRAL', friction: 0 }),
+        makeIntent({ actionType: 'TALK' }),
+        makeWorld(),
+        makeStats({ cha: 4, dex: 8 }),
+        makeRng([1]),
+        [],
+        undefined,
+        null,
+        undefined,
+        { statHint: 'nonsense' },
+      );
+      expect(r.statKey).toBe('cha'); // 기본 유지
+    });
+
+    it('D3-②: difficultyMod가 modifiers·baseMod에 반영', () => {
+      const r = service.resolve(
+        makeEvent({ matchPolicy: 'NEUTRAL', friction: 0 }),
+        makeIntent({ actionType: 'TALK' }),
+        makeWorld(),
+        makeStats({ cha: 4 }),
+        makeRng([4]),
+        [],
+        undefined,
+        null,
+        undefined,
+        { difficultyMod: -2 },
+      );
+      expect(r.modifiers).toEqual([{ label: '행동 난이도', value: -2 }]);
+      expect(r.baseMod).toBe(-2);
+    });
   });
 
   // ══════════════════════════════════════════════════════════════

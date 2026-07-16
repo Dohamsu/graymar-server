@@ -12,11 +12,27 @@ import { LlmConfigService } from './llm-config.service.js';
 export type ChallengeResult = 'FREE' | 'CHECK';
 export type ChallengeSource = 'rule' | 'llm' | 'fallback';
 
+// [arch/76 D3 — 자유도 확장] 행동 그럴듯함 3단계.
+//  NORMAL: 평범 / UNUSUAL: 특이하나 세계 안 가능 / IMPLAUSIBLE: 세계 규칙상 불가
+export type Plausibility = 'NORMAL' | 'UNUSUAL' | 'IMPLAUSIBLE';
+
 export interface ChallengeDecision {
   result: ChallengeResult;
   reason: string;
   source: ChallengeSource;
+  // [arch/76 D3] 행동-특정 판정 파라미터 (nano 제안 → 서버 검증).
+  //  actionType 버킷이 아니라 실제 행동에 맞춰 스탯·난이도를 정한다.
+  /** 이 행동에 가장 맞는 스탯 키(검증됨) — 없으면 ACTION_STAT_MAP 기본 사용 */
+  statHint?: string | null;
+  /** 행동의 과감함/규모 보정 — clamp [-2,+2]. 과감할수록 음수(어려움) */
+  difficultyMod?: number;
+  /** 세계 안 그럴듯함 — IMPLAUSIBLE은 서술 치환(거부 아님) */
+  plausibility?: Plausibility;
 }
+
+// [arch/76 D3] statHint 허용 스탯 — 서버 검증용. 파생값(atk 등)·자원(maxHP)은 제외.
+const APPRAISAL_STATS = new Set(['str', 'dex', 'wit', 'con', 'per', 'cha']);
+const DIFFICULTY_CLAMP = 2;
 
 export interface ChallengeClassifierContext {
   rawInput: string;
@@ -47,17 +63,27 @@ const RULE_CHECK_ACTIONS = new Set([
   'PERSUADE',
 ]);
 
-const SYSTEM_PROMPT = `당신은 텍스트 RPG 행동 판정 분류기다.
-플레이어의 행동에 "저항" 또는 "의미있는 결과 분기"가 있는지 판단한다.
+const SYSTEM_PROMPT = `당신은 텍스트 RPG 행동 감정기다. 플레이어 행동을 4가지로 평가한다.
 
-판정 기준:
-- FREE: 의지로 가능한 자유 행동. 저항 없음, 결과 분기 없음.
-  예) 태양을 본다, 한숨 쉰다, 옷을 입는다, 안녕이라고 인사한다, 주변을 둘러본다
-- CHECK: 저항/위험/불확실성이 있는 도전 행동. SUCCESS와 FAIL이 게임 상태를 다르게 만든다.
-  예) 적대적 NPC에게 정보를 캐묻는다, 잠긴 문을 살핀다, 숨겨진 단서를 찾는다, 군중에서 표적을 찾는다
+1) result — 저항/결과분기 유무
+   FREE: 의지로 가능, 저항·분기 없음 (둘러본다, 한숨 쉰다, 인사한다)
+   CHECK: 저항·위험·불확실 (캐묻는다, 잠긴 문을 살핀다, 단서를 찾는다)
+
+2) statHint — 이 행동에 가장 맞는 능력치 (딱히 없으면 null)
+   str(완력·위협) dex(은밀·곡예·손재주) wit(분석·기지·계략)
+   con(인내·강건·보호) per(관찰·감지·직감) cha(설득·화술·매력)
+   ※ actionType이 아니라 실제 행동 성격에 맞춘다.
+     예) "벽을 타 넘는다"→dex, "논리로 몰아붙인다"→wit, "완력으로 문을 부순다"→str
+
+3) difficultyMod — 행동의 과감함/규모 (-2~+2 정수)
+   +2 사소·쉬움 / 0 보통 / -2 매우 과감·무모
+   예) "말을 건다"→0, "왕을 설득해 반역시킨다"→-2
+
+4) plausibility — 세계 안에서의 그럴듯함
+   NORMAL 평범 / UNUSUAL 특이하나 가능 / IMPLAUSIBLE 세계 규칙상 불가(마법·순간이동·세계 밖 지식)
 
 JSON만 출력 (다른 텍스트 금지):
-{"result":"FREE 또는 CHECK","reason":"15자 이내 근거"}`;
+{"result":"CHECK","statHint":"dex","difficultyMod":-1,"plausibility":"UNUSUAL","reason":"15자 이내 근거"}`;
 
 @Injectable()
 export class ChallengeClassifierService {
@@ -111,7 +137,7 @@ export class ChallengeClassifierService {
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: userMsg },
           ],
-          maxTokens: 50,
+          maxTokens: 120,
           temperature: 0.2,
           model: lightConfig.model,
           timeoutMs: lightConfig.timeoutMs,
@@ -137,7 +163,7 @@ export class ChallengeClassifierService {
       }
 
       this.logger.debug(
-        `[Challenge] ${parsed.result} actionType=${ctx.actionType} reason="${parsed.reason}"`,
+        `[Challenge] ${parsed.result} actionType=${ctx.actionType} stat=${parsed.statHint ?? '-'} diff=${parsed.difficultyMod ?? 0} plaus=${parsed.plausibility ?? 'NORMAL'} reason="${parsed.reason}"`,
       );
       return { ...parsed, source: 'llm' };
     } catch (err) {
@@ -159,9 +185,13 @@ export class ChallengeClassifierService {
     return parts.join('\n');
   }
 
-  private parseResponse(
-    text: string,
-  ): { result: ChallengeResult; reason: string } | null {
+  private parseResponse(text: string): {
+    result: ChallengeResult;
+    reason: string;
+    statHint: string | null;
+    difficultyMod: number;
+    plausibility: Plausibility;
+  } | null {
     const jsonMatch = text.trim().match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
 
@@ -169,6 +199,9 @@ export class ChallengeClassifierService {
       const parsed = JSON.parse(jsonMatch[0]) as {
         result?: unknown;
         reason?: unknown;
+        statHint?: unknown;
+        difficultyMod?: unknown;
+        plausibility?: unknown;
       };
       const result =
         parsed.result === 'FREE' || parsed.result === 'CHECK'
@@ -177,7 +210,29 @@ export class ChallengeClassifierService {
       if (!result) return null;
       const reason =
         typeof parsed.reason === 'string' ? parsed.reason.slice(0, 50) : '';
-      return { result, reason };
+
+      // 서버 검증 — nano 제안을 허용 범위로 클램프/폐기 (불변식 1).
+      const statHint =
+        typeof parsed.statHint === 'string' &&
+        APPRAISAL_STATS.has(parsed.statHint)
+          ? parsed.statHint
+          : null;
+      const rawDiff =
+        typeof parsed.difficultyMod === 'number' &&
+        Number.isFinite(parsed.difficultyMod)
+          ? Math.round(parsed.difficultyMod)
+          : 0;
+      const difficultyMod = Math.max(
+        -DIFFICULTY_CLAMP,
+        Math.min(DIFFICULTY_CLAMP, rawDiff),
+      );
+      const plausibility: Plausibility =
+        parsed.plausibility === 'UNUSUAL' ||
+        parsed.plausibility === 'IMPLAUSIBLE'
+          ? parsed.plausibility
+          : 'NORMAL';
+
+      return { result, reason, statHint, difficultyMod, plausibility };
     } catch {
       return null;
     }

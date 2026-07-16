@@ -298,7 +298,7 @@ describe('determineTurnMode', () => {
     ).toBe(TurnMode.WORLD_EVENT);
   });
 
-  it('C: 강제창(beatForceWindow)이면 순수 대화(TALK) 중이어도 beat 우선 → WORLD_EVENT', () => {
+  it('C: 강제창(beatForceWindow) + 대화 잠금 비활성이면 beat 우선 → WORLD_EVENT (정체 해소)', () => {
     expect(
       determineTurnMode(
         baseCtx({
@@ -306,9 +306,77 @@ describe('determineTurnMode', () => {
           lastPrimaryNpcId: 'NPC_A',
           beatAvailable: true,
           beatForceWindow: true,
+          conversationLockActive: false,
         }),
       ),
     ).toBe(TurnMode.WORLD_EVENT);
+  });
+
+  // ── D1-a (arch/76 불변식 47): 대화 잠금 활성 턴은 강제창이 끊지 않는다 ──
+  it('D1-a: 강제창이어도 대화 잠금 활성 턴이면 대화 유지 → CONVERSATION_CONT (의도 존중)', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TALK',
+          lastPrimaryNpcId: 'NPC_A',
+          beatAvailable: true,
+          beatForceWindow: true,
+          conversationLockActive: true,
+        }),
+      ),
+    ).toBe(TurnMode.CONVERSATION_CONT);
+  });
+
+  it('D1-a: 탐색 행동(A)은 대화 잠금 활성이어도 여전히 beat 우선 → WORLD_EVENT', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'INVESTIGATE',
+          lastPrimaryNpcId: 'NPC_A',
+          beatAvailable: true,
+          beatForceWindow: true,
+          conversationLockActive: true,
+        }),
+      ),
+    ).toBe(TurnMode.WORLD_EVENT);
+  });
+
+  // ── D1-b (arch/76 불변식 47): 사교 발화·REST 의도 턴은 비트 채택 금지 ──
+  it('D1-b: 사교 발화(intentSuppressesBeat) 턴은 강제창이어도 beat 승격 금지 → PLAYER_DIRECTED', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TALK',
+          beatAvailable: true,
+          beatForceWindow: true,
+          intentSuppressesBeat: true,
+        }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
+  it('D1-b: REST 의도(intentSuppressesBeat)는 beatAvailable(3.6)이어도 승격 금지 → PLAYER_DIRECTED', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'REST',
+          beatAvailable: true,
+          intentSuppressesBeat: true,
+        }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
+  it('D1-b: 탐색 행동이라도 intentSuppressesBeat면 승격 금지 → PLAYER_DIRECTED', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'OBSERVE',
+          beatAvailable: true,
+          intentSuppressesBeat: true,
+        }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
   });
 
   it('강제창 아니고 순수 대화(TALK)면 대화 연속 유지 → CONVERSATION_CONT (스티키니스 보존)', () => {

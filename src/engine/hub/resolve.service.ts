@@ -18,6 +18,10 @@ import { QUEST_BALANCE } from './quest-balance.config.js';
 const HEAT_DELTA_CLAMP = 8;
 const MAX_COMBAT_PER_WINDOW = 3;
 
+// [불변식 12 / D2 — arch/76] LOCATION 판정 임계 — 단일 정본. UI 부족분 표시에도 사용.
+export const RESOLVE_SUCCESS_THRESHOLD = 5; // SUCCESS >= 5
+export const RESOLVE_PARTIAL_THRESHOLD = 3; // PARTIAL 3~4, FAIL < 3
+
 // 비도전(non-challenge) 행위: 주사위 판정 없이 자동 SUCCESS
 const NON_CHALLENGE_ACTIONS = new Set([
   'MOVE_LOCATION',
@@ -88,6 +92,9 @@ export class ResolveService {
     presetActionBonuses?: Record<string, number>,
     npcFaction?: string | null,
     runState?: RunState,
+    // [arch/76 D3] ChallengeClassifier 감정 결과 — 행동-특정 스탯/난이도.
+    // nano 제안은 classifier에서 이미 검증됨(스탯 허용집합·난이도 clamp).
+    appraisal?: { statHint?: string | null; difficultyMod?: number },
   ): ResolveResult {
     // 비도전 행위 → 주사위 없이 자동 SUCCESS
     if (NON_CHALLENGE_ACTIONS.has(intent.actionType)) {
@@ -98,27 +105,44 @@ export class ResolveService {
     const diceRoll = rng.range(1, 6);
 
     // 그라데이션 스탯 보너스: floor(stat / 4) — 고스탯 과도 성공 방지
-    const statKey = ACTION_STAT_MAP[intent.actionType];
+    // [arch/76 D3-①] statHint가 유효 스탯이면 actionType 기본 대신 사용.
+    //   "벽을 타 넘는다"가 TALK로 분류돼도 dex로 판정 — 버킷 고정 해소.
+    const statHintKey =
+      appraisal?.statHint && appraisal.statHint in stats
+        ? (appraisal.statHint as keyof PermanentStats)
+        : null;
+    const statKey = statHintKey ?? ACTION_STAT_MAP[intent.actionType];
     const statBonus = statKey ? Math.floor((stats[statKey] as number) / 4) : 0;
 
     // base modifier: matchPolicy + friction + riskLevel
+    // [D2-b — arch/76] 각 기여원을 modifiers에 라벨과 함께 누적 (UI 판정 투명성).
     let baseMod = 0;
-    if (event.matchPolicy === 'SUPPORT') baseMod += 1;
-    if (event.matchPolicy === 'BLOCK') baseMod -= 1;
-    baseMod -= event.friction;
-    if (intent.riskLevel === 3) baseMod -= 1;
+    const modifiers: Array<{ label: string; value: number }> = [];
+    const addMod = (label: string, value: number) => {
+      if (value === 0) return;
+      baseMod += value;
+      modifiers.push({ label, value });
+    };
+    if (event.matchPolicy === 'SUPPORT') addMod('지형 유리', 1);
+    if (event.matchPolicy === 'BLOCK') addMod('지형 불리', -1);
+    if (event.friction) addMod('소란', -event.friction);
+    if (intent.riskLevel === 3) addMod('위험 감수', -1);
+    // [arch/76 D3-②] 행동 과감함/규모 보정 (classifier clamp [-2,+2]).
+    //   과감할수록 음수 → 어렵게. "왕을 반역시킨다" 같은 큰 시도가 실제로 어려워진다.
+    if (appraisal?.difficultyMod)
+      addMod('행동 난이도', appraisal.difficultyMod);
 
     // Phase 4c: PERSUADE_BRIBE_BONUS_1 세트 효과 — PERSUADE/BRIBE 판정 시 +1
     if (
       (intent.actionType === 'PERSUADE' || intent.actionType === 'BRIBE') &&
       activeSpecialEffects.includes('PERSUADE_BRIBE_BONUS_1')
     ) {
-      baseMod += 1;
+      addMod('언변 세트', 1);
     }
 
     // 프리셋별 actionType 보너스 — 배경 경험에 기반한 판정 보정 (+1 수준)
     if (presetActionBonuses && presetActionBonuses[intent.actionType]) {
-      baseMod += presetActionBonuses[intent.actionType];
+      addMod('배경 경험', presetActionBonuses[intent.actionType]);
     }
 
     // Living World: 장소 활성 조건(activeConditions)에 의한 판정 보정
@@ -134,10 +158,10 @@ export class ResolveService {
     if (locState?.activeConditions) {
       for (const cond of locState.activeConditions) {
         if (cond.effects.blockedActions?.includes(intent.actionType)) {
-          baseMod -= 2; // 차단된 행동 → 심각한 패널티
+          addMod('장소 제약', -2); // 차단된 행동 → 심각한 패널티
         }
         if (cond.effects.boostedActions?.includes(intent.actionType)) {
-          baseMod += 1; // 유리한 행동 → 소폭 보너스
+          addMod('장소 이점', 1); // 유리한 행동 → 소폭 보너스
         }
       }
     }
@@ -331,6 +355,7 @@ export class ResolveService {
       statValue: statKey ? (stats[statKey] as number) : 0,
       statBonus,
       baseMod,
+      modifiers: modifiers.length > 0 ? modifiers : undefined,
       traitBonus: traitBonus !== 0 ? traitBonus : undefined,
       gamblerLuckTriggered: gamblerLuckTriggered || undefined,
       eventId: event.eventId,
@@ -433,8 +458,8 @@ export class ResolveService {
   }
 
   private computeOutcome(score: number): ResolveOutcome {
-    if (score >= 5) return 'SUCCESS';
-    if (score >= 3) return 'PARTIAL';
+    if (score >= RESOLVE_SUCCESS_THRESHOLD) return 'SUCCESS';
+    if (score >= RESOLVE_PARTIAL_THRESHOLD) return 'PARTIAL';
     return 'FAIL';
   }
 

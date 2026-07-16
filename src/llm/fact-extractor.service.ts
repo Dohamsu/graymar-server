@@ -40,6 +40,19 @@ interface ExtractedFact {
   importance: number;
 }
 
+// [arch/76 D3-a] 장면 물리 흔적 추출 프롬프트 — 생성 아닌 서술 기반 추출.
+const SCENE_TRACE_SYSTEM = `당신은 텍스트 RPG 서술에서 "장소에 지속적으로 남을 물리적 흔적"만 뽑는 파서다.
+플레이어 행동으로 장소 환경에 남는 물리적 변화(부서짐·쓰러짐·쏟아짐·흩어짐·탈취·파손 자국)가 있으면
+짧은 명사구 하나로 출력한다. 없으면 정확히 "null".
+
+규칙:
+- 물리적·환경적 변화만. 감정·대화·관계·이동은 흔적 아님 → null
+- 12자 이내 관형형 명사구. 예: "부서진 좌판", "쏟아진 포도주", "뜯긴 벽보", "쓰러진 진열대"
+- 일시적 동작(지나감·바라봄·말함)은 흔적 아님 → null
+- 서술에 명시된 것만. 추측·창작 금지. 애매하면 null
+
+출력: 명사구 한 줄 또는 null (따옴표·설명·다른 텍스트 금지)`;
+
 @Injectable()
 export class FactExtractorService {
   private readonly logger = new Logger(FactExtractorService.name);
@@ -74,6 +87,57 @@ export class FactExtractorService {
         `[FactExtractor] turn=${params.turnNo} failed (graceful skip): ${err instanceof Error ? err.message : err}`,
       );
     }
+  }
+
+  /**
+   * [arch/76 D3-a] 서술에서 "장소에 남을 물리적 흔적"만 추출 (생성 아님).
+   * 플레이어 행동이 장소를 물리적으로 바꿨을 때만 짧은 명사구, 아니면 null.
+   * 비동기 fire-and-forget 용 — 실패/미해당 시 null. narrative-only(판정 무영향).
+   */
+  async extractSceneTrace(params: {
+    narrative: string;
+    locationId: string;
+  }): Promise<string | null> {
+    // 서술이 짧으면 흔적 판정 불가
+    if (params.narrative.length < 50) return null;
+
+    try {
+      const lightConfig = this.configService.getLightModelConfig();
+      const result = await this.llmCaller.call(
+        {
+          messages: [
+            { role: 'system', content: SCENE_TRACE_SYSTEM },
+            { role: 'user', content: params.narrative.slice(0, 800) },
+          ],
+          maxTokens: 40,
+          temperature: 0.2,
+          model: lightConfig.model,
+          timeoutMs: lightConfig.timeoutMs,
+        },
+        'scene-trace',
+      );
+      if (!result.success || !result.response?.text) return null;
+      return this.parseSceneTrace(result.response.text);
+    } catch (err) {
+      this.logger.debug(
+        `[SceneTrace] extract failed (graceful skip): ${err instanceof Error ? err.message : err}`,
+      );
+      return null;
+    }
+  }
+
+  /** nano 응답 → 흔적 명사구 or null (엄격 검증) */
+  private parseSceneTrace(text: string): string | null {
+    const raw = text
+      .trim()
+      .replace(/^["'`]|["'`]$/g, '')
+      .trim();
+    if (!raw) return null;
+    // 명시적 null / 부정 표현 / 문장형(서술체)·과장 길이는 흔적 아님
+    if (/^(null|없음|없다|해당\s*없음|n\/a)$/i.test(raw)) return null;
+    if (raw.length > 20) return null; // 명사구 상한 (문장형 배제)
+    if (/[.!?]$|[다요]$/.test(raw)) return null; // 서술체 종결 배제
+    return raw;
   }
 
   /**

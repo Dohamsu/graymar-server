@@ -146,6 +146,60 @@ describe('ChallengeClassifierService', () => {
     });
   });
 
+  // [arch/76 D3] 행동-특정 감정 파라미터 (statHint/difficultyMod/plausibility)
+  describe('행동 감정 — statHint / difficultyMod / plausibility', () => {
+    it('유효 statHint + 난이도 + plausibility 파싱', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"CHECK","statHint":"dex","difficultyMod":-1,"plausibility":"UNUSUAL","reason":"곡예"}',
+        },
+      });
+      const d = await service.classify(
+        makeCtx({ actionType: 'TALK', rawInput: '벽을 타 넘어 춤춘다' }),
+      );
+      expect(d.statHint).toBe('dex');
+      expect(d.difficultyMod).toBe(-1);
+      expect(d.plausibility).toBe('UNUSUAL');
+    });
+
+    it('허용되지 않은 statHint(maxHP) → null로 폐기', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"CHECK","statHint":"maxHP","difficultyMod":0,"plausibility":"NORMAL","reason":"x"}',
+        },
+      });
+      const d = await service.classify(makeCtx({ actionType: 'OBSERVE' }));
+      expect(d.statHint).toBeNull();
+    });
+
+    it('difficultyMod 범위 초과 → [-2,+2] 클램프', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"CHECK","statHint":null,"difficultyMod":-9,"plausibility":"IMPLAUSIBLE","reason":"무모"}',
+        },
+      });
+      const d = await service.classify(makeCtx({ actionType: 'TALK' }));
+      expect(d.difficultyMod).toBe(-2);
+      expect(d.plausibility).toBe('IMPLAUSIBLE');
+    });
+
+    it('알 수 없는 plausibility → NORMAL 기본', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"result":"FREE","statHint":"wit","difficultyMod":2,"plausibility":"MAGIC","reason":"x"}',
+        },
+      });
+      const d = await service.classify(makeCtx({ actionType: 'TALK' }));
+      expect(d.plausibility).toBe('NORMAL');
+      expect(d.difficultyMod).toBe(2);
+      expect(d.statHint).toBe('wit');
+    });
+  });
+
   describe('Fallback — 안전한 쪽 (CHECK)', () => {
     it('LLM 실패 → CHECK (fallback)', async () => {
       mockLlmCaller.call.mockResolvedValue({

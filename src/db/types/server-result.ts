@@ -143,6 +143,7 @@ export type ActionContext = {
   // Player-First / 대화 행위 확장 (turns.service buildLocationResult 가 기록)
   turnMode?: string; // PLAYER_DIRECTED | CONVERSATION_CONT | WORLD_EVENT
   dialogueAct?: string; // 순수 사교 발화 (GREETING/WELLBEING/THANKS/FAREWELL)
+  plausibility?: string; // [arch/76 D3-③] UNUSUAL | IMPLAUSIBLE (서술 치환 지시)
   eventId?: string; // 매칭된 이벤트 ID
   primaryNpcId?: string | null; // 이 턴 주 NPC
 };
@@ -154,8 +155,14 @@ export type ResolveBreakdown = {
   statKey: string | null; // 'atk'|'def'|'acc'|'eva'|'speed' 또는 null
   statValue: number; // 원본 스탯 값
   statBonus: number; // floor(stat/3)
-  baseMod: number; // 보정치
+  baseMod: number; // 보정치 (합산)
   totalScore: number; // 최종 점수
+  // [D2 — arch/76] 판정 투명성: 보정치 출처 분해 + 특성 + 임계값
+  modifiers?: Array<{ label: string; value: number }>; // baseMod 출처별 분해
+  traitBonus?: number; // BLOOD_OATH/NIGHT_CHILD 등 특성 보정 합산
+  gamblerLuckTriggered?: boolean; // GAMBLER_LUCK FAIL→PARTIAL 발동
+  successThreshold?: number; // SUCCESS 임계 (기본 5) — FAIL 부족분 표시용
+  partialThreshold?: number; // PARTIAL 임계 (기본 3)
 };
 
 // --- Narrative Engine v1 UI types ---
@@ -223,6 +230,9 @@ export type UIBundle = {
   worldState?: WorldStateUI;
   resolveOutcome?: 'SUCCESS' | 'PARTIAL' | 'FAIL';
   resolveBreakdown?: ResolveBreakdown;
+  /** [D2-a — arch/76] ChallengeClassifier FREE로 주사위를 스킵한 자유 행동 턴.
+   * 클라가 "일상 행동 — 판정 불필요"를 표시한다 (구조적 MOVE/REST/SHOP 제외). */
+  resolveSkipped?: boolean;
   actionContext?: ActionContext;
   /** architecture/58 — 이번 턴 발견 fact (기록·서술 단일화) */
   questReveal?: QuestRevealUI;

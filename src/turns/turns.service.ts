@@ -42,10 +42,30 @@ export interface TurnModeContext {
    * 채택 0이 되는 정체를 막는다. 탐색 행동(A)은 별도로 항상 우선.
    */
   beatForceWindow?: boolean;
+  /**
+   * [D1-a — arch/76 불변식 47] 대화 잠금 활성 턴(직전 대화 NPC + 대화 계열 행동).
+   * true면 강제창(C)이 발동해도 대화를 끊지 않는다 — 몰입 중인 대화 존중.
+   * 탐색 행동(A)에 의한 승격은 이와 무관.
+   */
+  conversationLockActive?: boolean;
+  /**
+   * [D1-b — arch/76 불변식 47] 순수 사교 발화(인사/안부/감사/작별) 또는 REST 의도.
+   * true면 이 턴은 디렉터 비트를 채택하지 않는다 — "인사·휴식하려는데 사건 끼워넣기"
+   * 패턴(조사 최다 이탈 요인) 원천 차단. beat 경로(1.5·3.6) 승격을 모두 막는다.
+   */
+  intentSuppressesBeat?: boolean;
 }
 
 // [A2' 후속] 세계를 탐색하는 비대화 행동 — 이 행동은 장소 저작 이벤트를 우선 탄다.
 const EXPLORE_ACTIONS = new Set(['INVESTIGATE', 'OBSERVE', 'SEARCH']);
+
+// [D1-b — arch/76] 순수 사교 발화 dialogueAct — 이 턴은 비트 채택 금지.
+const SOCIAL_SPEECH_ACTS = new Set([
+  'GREETING',
+  'WELLBEING',
+  'THANKS',
+  'FAREWELL',
+]);
 
 const SOCIAL_ACTIONS = new Set([
   'TALK',
@@ -72,9 +92,13 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
   //   A(탐색 행동): 세계와 상호작용하는 행동엔 사건이 낄 자리를 준다.
   //   C(강제 창): 마지막 채택 후 N턴 이상 정체 시 대화 중이어도 하나 넣는다.
   // NPC 명시 지목(1)만 이보다 우선 — Player-First의 명시 의도는 보존.
+  // [D1 — arch/76 불변식 47] 의도 존중 가드: 사교 발화·REST 턴은 승격 금지(b),
+  // 강제창(C)은 대화 잠금 활성 턴엔 발동하지 않음(a). 탐색 행동(A)은 유지.
   if (
     ctx.beatAvailable &&
-    (EXPLORE_ACTIONS.has(ctx.actionType) || ctx.beatForceWindow)
+    !ctx.intentSuppressesBeat &&
+    (EXPLORE_ACTIONS.has(ctx.actionType) ||
+      (ctx.beatForceWindow && !ctx.conversationLockActive))
   ) {
     return TurnMode.WORLD_EVENT;
   }
@@ -115,7 +139,8 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
   // 3.6) [P4 — arch/75 §5.1] AUTONOMOUS: 선계산 비트 대기 중 → WORLD_EVENT 승격.
   // 채택 자체는 정합 점수 임계(selectBeatForAdoption)를 다시 통과해야 하며,
   // 미채택 시 기존 폴백 체인으로 그 턴이 진행된다.
-  if (ctx.beatAvailable) {
+  // [D1-b — arch/76 불변식 47] 사교 발화·REST 의도 턴은 비트 승격 금지.
+  if (ctx.beatAvailable && !ctx.intentSuppressesBeat) {
     return TurnMode.WORLD_EVENT;
   }
 
@@ -353,7 +378,11 @@ import {
 import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { HeatService } from '../engine/hub/heat.service.js';
 import { EventMatcherService } from '../engine/hub/event-matcher.service.js';
-import { ResolveService } from '../engine/hub/resolve.service.js';
+import {
+  ResolveService,
+  RESOLVE_SUCCESS_THRESHOLD,
+  RESOLVE_PARTIAL_THRESHOLD,
+} from '../engine/hub/resolve.service.js';
 import { AgendaService } from '../engine/hub/agenda.service.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
@@ -362,7 +391,10 @@ import { LlmIntentParserService } from '../engine/hub/llm-intent-parser.service.
 import { LlmCallerService } from '../llm/llm-caller.service.js';
 import { LlmCallLogService } from '../llm/llm-call-log.service.js';
 import { runInTurnContext, currentTurnStore } from '../llm/turn-context.js';
-import { ChallengeClassifierService } from '../llm/challenge-classifier.service.js';
+import {
+  ChallengeClassifierService,
+  type ChallengeDecision,
+} from '../llm/challenge-classifier.service.js';
 import { LlmWorkerService } from '../llm/llm-worker.service.js';
 import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
 // User-Driven System v3
@@ -1488,15 +1520,17 @@ export class TurnsService {
             locationName: this.content.getLocation(locationId)?.name ?? null,
             eventTitle: null, // 병렬화로 이벤트 미확정 — 보조 힌트라 생략
           })
-          .catch(() => ({
-            result: 'CHECK' as const,
-            reason: 'classifier error',
-            source: 'fallback' as const,
-          }))
-      : Promise.resolve({
-          result: 'CHECK' as const,
+          .catch(
+            (): ChallengeDecision => ({
+              result: 'CHECK',
+              reason: 'classifier error',
+              source: 'fallback',
+            }),
+          )
+      : Promise.resolve<ChallengeDecision>({
+          result: 'CHECK',
           reason: 'classifier unavailable',
-          source: 'rule' as const,
+          source: 'rule',
         });
 
     // 이벤트 연속성: 의도 기반 씬 연속성 판단 (3단계)
@@ -1608,6 +1642,19 @@ export class TurnsService {
         turnNo - lastAdoptedBeatTurn >=
           AUTONOMOUS_BALANCE.BEAT_FORCE_AFTER_TURNS;
 
+      // [D1 — arch/76 불변식 47] turnMode 결정보다 먼저 사교 발화 감지 — 사교 발화·
+      // REST 의도 턴은 디렉터 비트 채택 금지, 대화 잠금 활성 턴은 강제창 발동 제외
+      // (의도 존중). dialogueAct 정본은 아래(nano 블록)에서 재계산되어 로그·전달에 쓰임.
+      const earlyDialogueAct: DialogueAct | null =
+        body.input.type === 'ACTION' ? detectDialogueAct(rawInput) : null;
+      // 대화 잠금 활성 = 직전 대화 NPC 존재 + 이번 행동이 대화 계열(불변식 26).
+      const conversationLockActive =
+        !!lastPrimaryNpcId && SOCIAL_ACTIONS.has(intent.actionType);
+      // 비트 채택 억제 의도 = 순수 사교 발화 또는 휴식(REST).
+      const intentSuppressesBeat =
+        intent.actionType === 'REST' ||
+        (!!earlyDialogueAct && SOCIAL_SPEECH_ACTS.has(earlyDialogueAct));
+
       // ── Player-First 턴 모드 결정 ──
       const turnMode = this.determineTurnMode({
         earlyTargetNpcId,
@@ -1621,6 +1668,8 @@ export class TurnsService {
         exploreEventAvailable,
         beatAvailable,
         beatForceWindow,
+        conversationLockActive,
+        intentSuppressesBeat,
       });
       this.logger.log(
         `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'}, beatAvail=${beatAvailable}, beatForce=${beatForceWindow}, beatAge=${beatAge}, cands=${nextBeats?.candidates.length ?? 0})`,
@@ -1690,7 +1739,9 @@ export class TurnsService {
 
           // [P4 — arch/75 §5.1] Emergent Director 비트 채택 — SitGen보다 우선.
           // 미채택(null) 시 그대로 기존 폴백 체인으로 진행 (디렉터 재호출 금지).
-          if (beatAvailable && runState.plotSeed) {
+          // [D1-b — arch/76 불변식 47] 사교 발화·REST 의도 턴은 채택 자체를 건너뛴다
+          // (rule 3 경로로 WORLD_EVENT가 됐어도 비트는 넣지 않음 — 의도 존중).
+          if (beatAvailable && !intentSuppressesBeat && runState.plotSeed) {
             const undiscoveredFactIds = new Set(
               getUndiscoveredKeyFacts(
                 runState.plotSeed,
@@ -2082,6 +2133,11 @@ export class TurnsService {
             presetActionBonuses,
             primaryNpcFaction,
             runState,
+            // [arch/76 D3-①②] 행동-특정 스탯/난이도 (nano 감정 → 서버 검증됨)
+            {
+              statHint: challengeDecision.statHint,
+              difficultyMod: challengeDecision.difficultyMod,
+            },
           );
     if (challengeDecision.result === 'FREE') {
       this.logger.log(
@@ -4537,6 +4593,12 @@ export class TurnsService {
             : 'WORLD_EVENT',
         // 대화 행위 — context/prompt-builder 톤 가이드 + fact 힌트 억제에 사용
         ...(dialogueAct ? { dialogueAct } : {}),
+        // [arch/76 D3-③] 세계 규칙상 불가한 행동 → 거부 아닌 서술 치환 지시.
+        //   prompt-builder가 IMPLAUSIBLE일 때 "합리적 동작으로 치환" 디렉티브 주입.
+        ...(challengeDecision.plausibility &&
+        challengeDecision.plausibility !== 'NORMAL'
+          ? { plausibility: challengeDecision.plausibility }
+          : {}),
         // BRIBE/TRADE 잔액 부족 클램프 정보 — LLM이 부족분을 서술에 반영 (점검 ③)
         ...(goldShortfall ? { goldShortfall } : {}),
         // architecture/49 — NpcResolver audit trail (NPA 디버깅용)
@@ -4559,9 +4621,21 @@ export class TurnsService {
             statBonus: resolveResult.statBonus ?? 0,
             baseMod: resolveResult.baseMod ?? 0,
             totalScore: resolveResult.score,
+            // [D2 — arch/76] 판정 투명성: 보정치 분해 + 특성 + 임계값
+            modifiers: resolveResult.modifiers,
+            traitBonus: resolveResult.traitBonus,
+            gamblerLuckTriggered: resolveResult.gamblerLuckTriggered,
+            successThreshold: RESOLVE_SUCCESS_THRESHOLD,
+            partialThreshold: RESOLVE_PARTIAL_THRESHOLD,
           },
       allEquipmentAdded.length > 0 ? allEquipmentAdded : undefined,
     );
+
+    // [D2-a — arch/76] ChallengeClassifier FREE로 주사위를 스킵한 자유 행동 턴 표식.
+    // 구조적 비도전(MOVE/REST/SHOP)은 제외 — 이들은 "판정 스킵"이 아니라 원래 무판정.
+    if (challengeDecision.result === 'FREE' && !isNonChallenge) {
+      result.ui.resolveSkipped = true;
+    }
 
     // architecture/58 — 이번 턴 발견 fact를 ui에 attach (기록·서술 단일화)
     if (questRevealThisTurn) {
@@ -7027,6 +7101,8 @@ export class TurnsService {
       turnMode?: string;
       /** 대화 행위 — 순수 사교 발화 (GREETING/WELLBEING/THANKS/FAREWELL) */
       dialogueAct?: string;
+      /** [arch/76 D3-③] 세계 규칙상 그럴듯함 — IMPLAUSIBLE이면 서술 치환 지시 */
+      plausibility?: string;
       /** BRIBE/TRADE 잔액 부족 클램프 — 제안 금액 vs 실제 지불 (점검 2026-07-09 ③) */
       goldShortfall?: { requested: number; paid: number };
       /** architecture/49 — NPC Resolver 결정 근거 (NPA 디버깅용) */

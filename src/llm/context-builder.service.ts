@@ -822,6 +822,7 @@ export class ContextBuilderService {
                 activeConditions?: Array<{ id: string }>;
                 security?: number;
                 unrest?: number;
+                propsTraces?: Array<{ text: string }>;
               }
             | undefined;
           if (
@@ -844,6 +845,20 @@ export class ContextBuilderService {
           if (locFullState?.security != null) {
             snapshotParts.push(
               `장소 치안: ${locFullState.security}/100, 불안: ${locFullState.unrest ?? 0}/100`,
+            );
+          }
+
+          // [arch/76 D3-a] 장소 물리 흔적 — 플레이어가 이전에 남긴 자취 (되짚기).
+          //   positive 지시로 주입: 서술·NPC 반응에 반영하되 매 턴 반복 금지.
+          const locTraces = locFullState?.propsTraces;
+          if (locTraces && locTraces.length > 0) {
+            const traceTexts = locTraces
+              .slice(-6)
+              .map((t) => t.text)
+              .join(', ');
+            snapshotParts.push(
+              `이 장소에 남은 흔적: ${traceTexts} — 플레이어의 이전 행동이 남긴 물리적 자취다. ` +
+                `관련 상황이면 서술이나 NPC 반응에 자연스럽게 반영하라(매 문장 반복 금지).`,
             );
           }
         }
@@ -2436,6 +2451,26 @@ export class ContextBuilderService {
         if (pm.encounters.length >= 2) {
           lines.push(
             `※ 이 인물은 당신을 알아본다 — 초면처럼 굴지 말고 아는 사이의 결로 대하되, 지난 일을 매번 들추지 마라. 알려진 사실을 먼저 화두로 꺼내지 말 것(플레이어가 물으면 응대).`,
+          );
+        }
+
+        // [arch/76 B — 되짚기] 고임팩트 과거 행동(위협/전투/절도/도움/뇌물)은 그 일만
+        //   상황과 맞물릴 때 먼저 언급 허용 — 선택이 기억되는 체감. 단, 정보·단서 선제
+        //   유출(부록 M)과는 구분: 행동을 되짚는 것이지 새 단서를 흘리는 게 아니다.
+        const NOTABLE_PAST_ACTIONS = new Set([
+          '위협',
+          '전투',
+          '절도',
+          '도움',
+          '뇌물',
+        ]);
+        const notablePast = pm.encounters.filter((e) =>
+          NOTABLE_PAST_ACTIONS.has(e.playerAction),
+        );
+        const lastNotable = notablePast[notablePast.length - 1];
+        if (lastNotable) {
+          lines.push(
+            `※ 당신은 이 인물에게 과거 '${lastNotable.playerAction}'(T${lastNotable.turnNo})을(를) 했다 — 쉽게 잊힐 일이 아니다. 지금 상황과 맞물리면 그 행동을 먼저 되짚거나 반응해도 좋다(새 정보·단서를 흘리라는 뜻은 아니다).`,
           );
         }
 

@@ -38,7 +38,21 @@ export interface LocationDynamicState {
   recentEventIds: string[]; // 최근 5개 발생 상황 id (중복 방지용)
   playerVisitCount: number;
   lastVisitTurn: number;
+
+  // [arch/76 D3-a] 물리 흔적 — 플레이어 행동이 장소에 남긴 지속적 변화.
+  //   nano가 서술에서 추출(생성 아님) → 다음 턴 서술·NPC 반응이 참조. 링버퍼(max 6).
+  //   narrative-only: 판정·전투·수치에 영향 없음(불변식 1·2).
+  propsTraces?: PropsTrace[];
 }
+
+/** 장소 물리 흔적 1건 (arch/76 D3-a) */
+export interface PropsTrace {
+  text: string; // 짧은 명사구 예: "부서진 좌판", "쓰러진 진열대"
+  turnCreated: number;
+}
+
+/** 장소당 물리 흔적 최대 개수 (링버퍼) */
+export const MAX_PROPS_TRACES_PER_LOCATION = 6;
 
 /** 장소 인접 관계 정의 (콘텐츠 데이터에서 로드) */
 export interface LocationAdjacency {

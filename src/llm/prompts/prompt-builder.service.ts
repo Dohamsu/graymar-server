@@ -1010,6 +1010,19 @@ export class PromptBuilderService {
       );
     }
 
+    // [arch/76 D3-③] LOCATION 세계 규칙상 불가한 행동 → 거부 아닌 서술 치환.
+    //   전투 crFlags.fantasy와 같은 철학을 LOCATION에 이식 (nano plausibility 판정 기반).
+    if (sr.ui?.actionContext?.plausibility === 'IMPLAUSIBLE') {
+      memoryParts.push(
+        `[행동 재해석 지시]\n` +
+          `플레이어가 이 세계 규칙상 직접 실현 불가능한 행동("${rawInput}")을 시도했습니다. ` +
+          `거부하거나 비웃지 말고, 의도의 불꽃을 살려 실제 가능한 동작으로 자연스럽게 치환해 서술하세요. ` +
+          `예) 순간이동 → 재빠른 반 발짝 회피, 마법 소환 → 허세 섞인 위협 몸짓. ` +
+          `메타 거부("그런 힘은 없다")·설교 금지. 시도의 결기·위트는 감정으로 포착하되, ` +
+          `세계에 실제로 남는 결과는 치환된 현실 동작 범위로 한정하세요.`,
+      );
+    }
+
     if (memoryParts.length > 0) {
       // PR1: Token Budget — 총합 2500 토큰 예산 내로 트리밍
       // 우선순위: 낮은 인덱스 = 먼저 트리밍 대상 (저우선)

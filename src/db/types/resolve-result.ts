@@ -14,6 +14,8 @@ export type ResolveResult = {
   statValue?: number;
   statBonus?: number;
   baseMod?: number;
+  // [D2-b — arch/76] baseMod 출처 분해 (UI 판정 투명성). 각 항목은 nonzero 기여원.
+  modifiers?: Array<{ label: string; value: number }>;
   eventId: string;
   heatDelta: number; // ±8 clamp
   tensionDelta: number;
