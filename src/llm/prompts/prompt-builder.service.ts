@@ -1345,33 +1345,9 @@ export class PromptBuilderService {
     // === 대화 행위 톤 가이드 (개선 1) — 사교 발화는 사교로 응답 ===
     // 인사에 단서·경고를 꺼내거나(톤 불일치), 작별에 재인사를 하는 회귀 방지.
     if (ctx.dialogueAct && !isHub) {
-      const ACT_GUIDES: Record<string, string[]> = {
-        GREETING: [
-          `[대화 행위: 인사]`,
-          `플레이어의 이번 입력은 가벼운 인사입니다. NPC도 자기 성격과 말투대로 인사와 짧은 반응으로만 응답하세요 (1~3문장).`,
-          `⚠️ 사건·단서·임무·경고를 화두로 꺼내지 마세요. 무거운 정보 전달 금지.`,
-          `이미 아는 사이라면 관계 깊이에 맞는 인사로 (처음 만난 듯한 반응 금지).`,
-        ],
-        WELLBEING: [
-          `[대화 행위: 안부]`,
-          `플레이어가 가벼운 안부/근황을 물었습니다. NPC는 자기 근황·기분·일상을 가볍게 답하세요 (1~3문장). 안부에는 안부의 무게로 답합니다.`,
-          `⚠️ 사건·단서·임무 정보를 여기에 얹지 마세요.`,
-        ],
-        THANKS: [
-          `[대화 행위: 감사 인사]`,
-          `플레이어가 감사를 표했습니다. NPC는 성격대로 짧게 받아들이세요 (겸양, 농담, 무뚝뚝한 수긍 등, 1~2문장).`,
-          `⚠️ 새로운 정보나 화제를 꺼내지 마세요.`,
-        ],
-        FAREWELL: [
-          `[대화 행위: 작별 인사]`,
-          `플레이어가 대화를 끝내려 합니다. NPC는 짧은 마무리 인사로 대화를 닫으세요 (1~2문장).`,
-          `⚠️ 새 화제·질문·정보 제시 금지. "반갑소" 같은 만남 인사 표현 금지 — 지금은 헤어지는 장면입니다.`,
-          `대화가 자연스럽게 종료되고 각자 하던 일로 돌아가는 장면으로 서술을 닫으세요.`,
-        ],
-      };
-      const guide = ACT_GUIDES[ctx.dialogueAct];
-      if (guide) {
-        factsParts.push(guide.join('\n'));
+      const dialogueActGuide = this.buildDialogueActGuideBlock(ctx.dialogueAct);
+      if (dialogueActGuide) {
+        factsParts.push(dialogueActGuide);
       }
     }
 
@@ -2862,6 +2838,40 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * [대화 행위: …] 톤 가이드 블록 — 사교 발화(인사/안부/감사/작별)는 사교의
+   * 무게로만 응답 (단서 덤핑·작별 재인사 회귀 방지). 해당 없으면 null.
+   * arch/77 P1.2 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildDialogueActGuideBlock(dialogueAct: string): string | null {
+    const ACT_GUIDES: Record<string, string[]> = {
+      GREETING: [
+        `[대화 행위: 인사]`,
+        `플레이어의 이번 입력은 가벼운 인사입니다. NPC도 자기 성격과 말투대로 인사와 짧은 반응으로만 응답하세요 (1~3문장).`,
+        `⚠️ 사건·단서·임무·경고를 화두로 꺼내지 마세요. 무거운 정보 전달 금지.`,
+        `이미 아는 사이라면 관계 깊이에 맞는 인사로 (처음 만난 듯한 반응 금지).`,
+      ],
+      WELLBEING: [
+        `[대화 행위: 안부]`,
+        `플레이어가 가벼운 안부/근황을 물었습니다. NPC는 자기 근황·기분·일상을 가볍게 답하세요 (1~3문장). 안부에는 안부의 무게로 답합니다.`,
+        `⚠️ 사건·단서·임무 정보를 여기에 얹지 마세요.`,
+      ],
+      THANKS: [
+        `[대화 행위: 감사 인사]`,
+        `플레이어가 감사를 표했습니다. NPC는 성격대로 짧게 받아들이세요 (겸양, 농담, 무뚝뚝한 수긍 등, 1~2문장).`,
+        `⚠️ 새로운 정보나 화제를 꺼내지 마세요.`,
+      ],
+      FAREWELL: [
+        `[대화 행위: 작별 인사]`,
+        `플레이어가 대화를 끝내려 합니다. NPC는 짧은 마무리 인사로 대화를 닫으세요 (1~2문장).`,
+        `⚠️ 새 화제·질문·정보 제시 금지. "반갑소" 같은 만남 인사 표현 금지 — 지금은 헤어지는 장면입니다.`,
+        `대화가 자연스럽게 종료되고 각자 하던 일로 돌아가는 장면으로 서술을 닫으세요.`,
+      ],
+    };
+    const guide = ACT_GUIDES[dialogueAct];
+    return guide ? guide.join('\n') : null;
   }
 
   /**
