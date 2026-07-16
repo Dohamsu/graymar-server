@@ -1,0 +1,1193 @@
+{
+  "ctx": {
+    "theme": [
+      {
+        "key": "location",
+        "tags": [
+          "LOCATION",
+          "THEME"
+        ],
+        "value": "그레이마르 항만 — 왕국 남서부 최대 무역항. 세 세력(항만 노동 길드, 해관청, 밀수 조직)이 이권을 다툰다.",
+        "importance": 1
+      },
+      {
+        "key": "quest",
+        "tags": [
+          "QUEST",
+          "THEME"
+        ],
+        "value": "사라진 공물 장부 — 길드가 해관청에 바친 공물 내역이 담긴 장부가 도난당했다. 장부에는 뒷거래 기록도 포함되어 있어, 공개되면 길드 간부 다수가 처형당할 수 있다.",
+        "importance": 1
+      },
+      {
+        "key": "npc_client",
+        "tags": [
+          "NPC",
+          "THEME"
+        ],
+        "value": "의뢰인 로넨 — 항만 노동 길드의 말단 서기관. 장부 관리 책임자였으나 도난 사실을 상부에 보고하지 못해 쫓기는 처지.",
+        "importance": 0.9
+      },
+      {
+        "key": "hub_system",
+        "tags": [
+          "HUB",
+          "THEME"
+        ],
+        "value": "HUB 거점 — '잠긴 닻' 선술집. 항만 한구석의 허름하지만 안전한 선술집. 이곳에서 시장/경비대/항만/빈민가로 이동하며 임무를 수행한다.",
+        "importance": 0.8
+      },
+      {
+        "key": "protagonist",
+        "tags": [
+          "PROTAGONIST",
+          "THEME"
+        ],
+        "value": "이름 없는 용병 — 전직 왕국 수비대 병사 — 남부 수비대에서 복무했으나 상관의 민간인 약탈 명령에 항명하여 탈영했다. 군에서 익힌 검술과 전투 경험이 있으나 수배 중이라 신분을 숨기고 있다. 그레이마르에는 일거리를 찾아 며칠 전 도착했다.",
+        "importance": 0.8
+      }
+    ],
+    "storySummary": null,
+    "nodeFacts": [],
+    "recentSummaries": [
+      "서늘한 새벽 공기가 선술집의 틈새를 타고 들어와 뺨을 스친다. 탁자 위에 놓인 빈 잔을 밀어내며 고개를 짧게 끄덕인다. 손끝에 닿는 나무 탁자의 거친 질감이 차갑게 느껴진다.\n\n@[로넨|/npc-portraits/ronen.webp] \"정말 감사합니다. 부디 이 일을 도와주십시오.\"\n\n그는 떨리는 손을 맞잡으며 안도의 한숨을 내뱉는다. 선술집의 무거운 문을 밀고 밖으로 나서자, 푸르스름한 새벽빛이 깔린 그레이마르의 거리가 펼쳐진다. 젖은 돌바닥 위로 옅은 안개가 깔려 있고, 멀리서 비릿한 바다 냄새가 섞인 찬 바람이 불어온다."
+    ],
+    "recentTurns": [
+      {
+        "turnNo": 1,
+        "inputType": "CHOICE",
+        "rawInput": "accept_quest",
+        "narrative": "서늘한 새벽 공기가 선술집의 틈새를 타고 들어와 뺨을 스친다. 탁자 위에 놓인 빈 잔을 밀어내며 고개를 짧게 끄덕인다. 손끝에 닿는 나무 탁자의 거친 질감이 차갑게 느껴진다.\n\n@[로넨|/npc-portraits/ronen.webp] \"정말 감사합니다. 부디 이 일을 도와주십시오.\"\n\n그는 떨리는 손을 맞잡으며 안도의 한숨을 내뱉는다. 선술집의 무거운 문을 밀고 밖으로 나서자, 푸르스름한 새벽빛이 깔린 그레이마르의 거리가 펼쳐진다. 젖은 돌바닥 위로 옅은 안개가 깔려 있고, 멀리서 비릿한 바다 냄새가 섞인 찬 바람이 불어온다."
+      },
+      {
+        "turnNo": 2,
+        "inputType": "CHOICE",
+        "rawInput": "go_market",
+        "narrative": "시장 거리로 향한다."
+      }
+    ],
+    "locationSessionTurns": [
+      {
+        "turnNo": 1,
+        "inputType": "CHOICE",
+        "rawInput": "accept_quest",
+        "narrative": "서늘한 새벽 공기가 선술집의 틈새를 타고 들어와 뺨을 스친다. 탁자 위에 놓인 빈 잔을 밀어내며 고개를 짧게 끄덕인다. 손끝에 닿는 나무 탁자의 거친 질감이 차갑게 느껴진다.\n\n@[로넨|/npc-portraits/ronen.webp] \"정말 감사합니다. 부디 이 일을 도와주십시오.\"\n\n그는 떨리는 손을 맞잡으며 안도의 한숨을 내뱉는다. 선술집의 무거운 문을 밀고 밖으로 나서자, 푸르스름한 새벽빛이 깔린 그레이마르의 거리가 펼쳐진다. 젖은 돌바닥 위로 옅은 안개가 깔려 있고, 멀리서 비릿한 바다 냄새가 섞인 찬 바람이 불어온다."
+      },
+      {
+        "turnNo": 2,
+        "inputType": "CHOICE",
+        "rawInput": "go_market",
+        "narrative": "시장 거리로 향한다."
+      }
+    ],
+    "currentEvents": [
+      {
+        "id": "sys_2",
+        "kind": "SYSTEM",
+        "tags": [],
+        "text": "시장 거리로 향한다."
+      }
+    ],
+    "summary": "시장 거리로 향한다.",
+    "worldSnapshot": "시간: 낮, 경계도: 15/100 (SAFE), 긴장도: 0/10\n장소 치안: 60/100, 불안: 20/100",
+    "locationContext": "현재 위치: LOC_MARKET",
+    "agendaArc": null,
+    "npcRelationFacts": [],
+    "playerProfile": null,
+    "npcInjection": null,
+    "peakMode": false,
+    "npcPostures": {},
+    "equipmentTags": [],
+    "activeSetNames": [],
+    "gender": "male",
+    "narrativeThread": null,
+    "incidentContext": "활성 사건 2건:\n- 시장 연쇄 절도(CRIMINAL): 잠재/통제0/단계0\n- 항만 밀수 조직(CRIMINAL): 잠재/통제0/단계0",
+    "npcEmotionalContext": null,
+    "npcStates": {
+      "NPC_ROSA": {
+        "funds": 50,
+        "npcId": "NPC_ROSA",
+        "agenda": "고아원 유지, 아이들 보호, 빈민가 안전",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 5,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 5,
+        "encounterCount": 0
+      },
+      "NPC_RONEN": {
+        "funds": 50,
+        "npcId": "NPC_RONEN",
+        "agenda": "도난당한 장부를 되찾아 자신의 목숨을 보전하고 싶다",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 30,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": true,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 30,
+        "encounterCount": 0,
+        "recentGestures": [
+          {
+            "text": "손을 맞잡으며 안도의",
+            "turnNo": 1
+          },
+          {
+            "text": "고개를 짧게",
+            "turnNo": 1
+          }
+        ],
+        "appearanceCount": 1,
+        "introducedAtTurn": -1
+      },
+      "NPC_HARLUN": {
+        "funds": 50,
+        "npcId": "NPC_HARLUN",
+        "agenda": "노동자 권리 보호, 부두 이권 사수",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 10,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 10,
+        "encounterCount": 0
+      },
+      "NPC_MAIREL": {
+        "funds": 50,
+        "npcId": "NPC_MAIREL",
+        "agenda": "도시 치안 유지, 권력 기반 강화",
+        "network": 50,
+        "posture": "CALCULATING",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": -10,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": -10,
+        "encounterCount": 0
+      },
+      "NPC_MIRELA": {
+        "funds": 50,
+        "npcId": "NPC_MIRELA",
+        "agenda": "약초 장사와 단골 관리, 시장 소문 수집",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 10,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 10,
+        "encounterCount": 0
+      },
+      "NPC_TOBREN": {
+        "funds": 50,
+        "npcId": "NPC_TOBREN",
+        "agenda": "밀수 루트 은폐, 생존",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 5,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 5,
+        "encounterCount": 0
+      },
+      "NPC_BG_BARD": {
+        "funds": 50,
+        "npcId": "NPC_BG_BARD",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_COOK": {
+        "funds": 50,
+        "npcId": "NPC_BG_COOK",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_RENNICK": {
+        "funds": 50,
+        "npcId": "NPC_RENNICK",
+        "agenda": "인맥 유지, 생존을 위한 줄타기",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_CLERK": {
+        "funds": 50,
+        "npcId": "NPC_BG_CLERK",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_DRUNK": {
+        "funds": 50,
+        "npcId": "NPC_BG_DRUNK",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_MOON_SEA": {
+        "funds": 50,
+        "npcId": "NPC_MOON_SEA",
+        "agenda": "상단 내부 정보 관리, 자기 안전 확보",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 5,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 5,
+        "encounterCount": 0
+      },
+      "NPC_RAT_KING": {
+        "funds": 50,
+        "npcId": "NPC_RAT_KING",
+        "agenda": "빈민가 지하 조직 유지, 정보 독점, 경비대의 접근 차단",
+        "network": 50,
+        "posture": "HOSTILE",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": -10,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": -10,
+        "encounterCount": 0
+      },
+      "NPC_BG_BEGGAR": {
+        "funds": 50,
+        "npcId": "NPC_BG_BEGGAR",
+        "agenda": "",
+        "network": 50,
+        "posture": "FEARFUL",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_BUTLER": {
+        "funds": 50,
+        "npcId": "NPC_BG_BUTLER",
+        "agenda": "",
+        "network": 50,
+        "posture": "CALCULATING",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_DOCKER": {
+        "funds": 50,
+        "npcId": "NPC_BG_DOCKER",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_ARMORER": {
+        "funds": 50,
+        "npcId": "NPC_BG_ARMORER",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_BARMAID": {
+        "funds": 50,
+        "npcId": "NPC_BG_BARMAID",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_CUSTOMS": {
+        "funds": 50,
+        "npcId": "NPC_BG_CUSTOMS",
+        "agenda": "",
+        "network": 50,
+        "posture": "CALCULATING",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_VAGRANT": {
+        "funds": 50,
+        "npcId": "NPC_BG_VAGRANT",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_EDRIC_VEIL": {
+        "funds": 50,
+        "npcId": "NPC_EDRIC_VEIL",
+        "agenda": "상단 장부 은폐, 개인 이익 추구",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_LORD_VANCE": {
+        "funds": 50,
+        "npcId": "NPC_LORD_VANCE",
+        "agenda": "도시 의회에서의 영향력 확대, 비밀 결사와의 유대 강화",
+        "network": 50,
+        "posture": "CALCULATING",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": -5,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": -5,
+        "encounterCount": 0
+      },
+      "NPC_SERA_DOCKS": {
+        "funds": 50,
+        "npcId": "NPC_SERA_DOCKS",
+        "agenda": "창고구 이권 유지, 밀수품 중개료 확보, 자기 안전",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_GARDENER": {
+        "funds": 50,
+        "npcId": "NPC_BG_GARDENER",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_DAME_ISOLDE": {
+        "funds": 50,
+        "npcId": "NPC_DAME_ISOLDE",
+        "agenda": "사교계 영향력 유지, 귀족들의 약점 수집, 남편의 죽음에 얽힌 진실 추적",
+        "network": 50,
+        "posture": "CALCULATING",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_GUARD_FELIX": {
+        "funds": 50,
+        "npcId": "NPC_GUARD_FELIX",
+        "agenda": "정의로운 경비병이 되기, 상관들의 부패를 이해하고 대처하기",
+        "network": 50,
+        "posture": "HOSTILE",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": -10,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": -10,
+        "encounterCount": 0
+      },
+      "NPC_INFO_BROKER": {
+        "funds": 50,
+        "npcId": "NPC_INFO_BROKER",
+        "agenda": "정보 거래로 이익 극대화",
+        "network": 50,
+        "posture": "CALCULATING",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_OWEN_KEEPER": {
+        "funds": 50,
+        "npcId": "NPC_OWEN_KEEPER",
+        "agenda": "선술집의 중립 지대 유지, 단골 보호, 평화로운 장사",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 15,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 15,
+        "encounterCount": 0
+      },
+      "NPC_BG_MESSENGER": {
+        "funds": 50,
+        "npcId": "NPC_BG_MESSENGER",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_CAPTAIN_BREN": {
+        "funds": 50,
+        "npcId": "NPC_CAPTAIN_BREN",
+        "agenda": "치안 유지, 내부 부패 조사에 관심",
+        "network": 50,
+        "posture": "HOSTILE",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": -15,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": -15,
+        "encounterCount": 0
+      },
+      "NPC_BG_FISHMONGER": {
+        "funds": 50,
+        "npcId": "NPC_BG_FISHMONGER",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_HERB_CRONE": {
+        "funds": 50,
+        "npcId": "NPC_BG_HERB_CRONE",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_NOBLE_MAID": {
+        "funds": 50,
+        "npcId": "NPC_BG_NOBLE_MAID",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_ROPE_MAKER": {
+        "funds": 50,
+        "npcId": "NPC_BG_ROPE_MAKER",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_SHOE_SHINE": {
+        "funds": 50,
+        "npcId": "NPC_BG_SHOE_SHINE",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_STREET_KID": {
+        "funds": 50,
+        "npcId": "NPC_BG_STREET_KID",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_GUARD_CAPTAIN": {
+        "funds": 50,
+        "npcId": "NPC_GUARD_CAPTAIN",
+        "agenda": "내부 부패 척결, 수비대 기강 확립",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_CAPTAIN_OLD": {
+        "funds": 50,
+        "npcId": "NPC_BG_CAPTAIN_OLD",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_DOG_HANDLER": {
+        "funds": 50,
+        "npcId": "NPC_BG_DOG_HANDLER",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_FRUIT_VENDOR": {
+        "funds": 50,
+        "npcId": "NPC_BG_FRUIT_VENDOR",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_ANTIQUE_DEALER": {
+        "funds": 50,
+        "npcId": "NPC_BG_ANTIQUE_DEALER",
+        "agenda": "",
+        "network": 50,
+        "posture": "FRIENDLY",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_CARGO_INSPECTOR": {
+        "funds": 50,
+        "npcId": "NPC_BG_CARGO_INSPECTOR",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      },
+      "NPC_BG_WAREHOUSE_GUARD": {
+        "funds": 50,
+        "npcId": "NPC_BG_WAREHOUSE_GUARD",
+        "agenda": "",
+        "network": 50,
+        "posture": "CAUTIOUS",
+        "exposure": 0,
+        "emotional": {
+          "fear": 0,
+          "trust": 0,
+          "respect": 0,
+          "suspicion": 0,
+          "attachment": 0
+        },
+        "influence": 50,
+        "suspicion": 0,
+        "introduced": false,
+        "currentGoal": "",
+        "currentStage": "INITIAL",
+        "trustToPlayer": 0,
+        "encounterCount": 0
+      }
+    },
+    "npcDeltaHint": null,
+    "hubHeat": 15,
+    "hubSafety": "SAFE",
+    "narrativeMarkContext": null,
+    "signalContext": null,
+    "deadlineContext": null,
+    "introducedNpcIds": [
+      "NPC_RONEN"
+    ],
+    "newlyIntroducedNpcIds": [],
+    "newlyEncounteredNpcIds": [],
+    "playerDisclosures": [],
+    "structuredSummary": null,
+    "npcJournalText": null,
+    "incidentChronicleText": null,
+    "milestonesText": null,
+    "llmFactsText": null,
+    "lorebookContext": null,
+    "currentSceneContext": "최근 상호작용 상대: 로넨\n직전 장면(이어쓸 지점): ...시장 거리로 향한다.\n현재 위치: 시장 거리\n이번 방문 2턴째\n직전 행동: \"go_market\"",
+    "midSummary": null,
+    "intentMemory": null,
+    "activeClues": null,
+    "npcKnowledge": {},
+    "previousVisitContext": null,
+    "locationRevisitContext": null,
+    "locationMemoryText": "[장소 기억: 시장 거리]\n처음 방문하는 장소입니다.",
+    "protagonistBackground": "직업: 탈영병 (추적받는 검)\n배경: 전직 왕국 수비대 병사 — 남부 수비대에서 복무했으나 상관의 민간인 약탈 명령에 항명하여 탈영했다. 군에서 익힌 검술과 전투 경험이 있으나 수배 중이라 신분을 숨기고 있다.\n특기: FIGHT +1, OBSERVE +1\n행동 특징: 군인 특유의 절도 있는 움직임, 본능적으로 퇴로를 확인하는 습관, 전장의 긴장감이 배어있는 자세",
+    "relevantNpcMemoryText": null,
+    "relevantIncidentMemoryText": null,
+    "relevantItemMemoryText": null,
+    "npcRevealableFact": null,
+    "factHandoffHint": null,
+    "factDefaultDescription": null,
+    "factWithheldHint": null,
+    "npcWhereaboutsHint": null,
+    "npcAlreadyRevealedFacts": null,
+    "questFactHint": null,
+    "questDirectionHint": null,
+    "questEndingApproach": null,
+    "agendaWitnessHint": null,
+    "agendaWitnessNpcIds": [],
+    "recentAgendaEvents": [],
+    "conversationLock": null,
+    "dialogueAct": null,
+    "currentLocationId": "LOC_MARKET",
+    "currentTimePhase": "DAWN",
+    "partyActions": null,
+    "overusedPhrases": [],
+    "playerTargetNpcId": null,
+    "narrativeThemes": [],
+    "focusedNpcId": null,
+    "recentAuxSpeakers": [],
+    "recentAuxIdentities": []
+  },
+  "sr": {
+    "ui": {
+      "toneHint": "neutral",
+      "actionSlots": {
+        "max": 3,
+        "base": 2,
+        "bonusAvailable": false
+      },
+      "targetLabels": [],
+      "availableActions": []
+    },
+    "diff": {
+      "meta": {
+        "battle": {
+          "phase": "NONE"
+        },
+        "position": {
+          "env": []
+        }
+      },
+      "player": {
+        "hp": {
+          "to": 0,
+          "from": 0,
+          "delta": 0
+        },
+        "status": [],
+        "stamina": {
+          "to": 0,
+          "from": 0,
+          "delta": 0
+        }
+      },
+      "enemies": [],
+      "inventory": {
+        "goldDelta": 0,
+        "itemsAdded": [],
+        "itemsRemoved": []
+      }
+    },
+    "node": {
+      "id": "a24a9722-2aee-45a1-ad35-96b040e15445",
+      "type": "HUB",
+      "index": 0,
+      "state": "NODE_ACTIVE"
+    },
+    "flags": {
+      "downed": false,
+      "bonusSlot": false,
+      "battleEnded": false
+    },
+    "events": [
+      {
+        "id": "sys_2",
+        "kind": "SYSTEM",
+        "tags": [],
+        "text": "시장 거리로 향한다."
+      }
+    ],
+    "turnNo": 2,
+    "choices": [],
+    "summary": {
+      "short": "시장 거리로 향한다.",
+      "display": "시장 거리로 향한다."
+    },
+    "version": "server_result_v1"
+  },
+  "rawInput": "go_market",
+  "inputType": "CHOICE",
+  "directorHint": null,
+  "nanoEventHint": null,
+  "useJsonMode": false,
+  "npcReaction": null
+}

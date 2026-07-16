@@ -28,6 +28,7 @@ import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { LlmCallLogService } from './llm-call-log.service.js';
 import { runInTurnContext, currentTurnStore } from './turn-context.js';
+import { capturePromptFixture } from './prompts/testing/prompt-fixture-capture.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
@@ -1054,6 +1055,26 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       const config = this.configService.get();
       const isCombat = pending.nodeType === 'COMBAT';
       const useJsonMode = process.env.LLM_JSON_MODE === 'true' && !isCombat;
+      // arch/77 P1.0 — 프롬프트 스냅샷 fixture 캡처 (env 게이트, 평시 무동작)
+      if (process.env.PROMPT_FIXTURE_CAPTURE) {
+        capturePromptFixture(
+          process.env.PROMPT_FIXTURE_CAPTURE,
+          {
+            ctx: llmContext,
+            sr: serverResult,
+            rawInput: pending.rawInput ?? '',
+            inputType: (pending.inputType as string) ?? 'SYSTEM',
+            previousChoiceLabels,
+            directorHint,
+            nanoEventHint: nanoEventHint ?? null,
+            useJsonMode,
+            npcReaction,
+          },
+          serverResult.node.type,
+          pending.turnNo,
+        );
+      }
+
       const messages = this.promptBuilder.buildNarrativePrompt(
         llmContext,
         serverResult,
