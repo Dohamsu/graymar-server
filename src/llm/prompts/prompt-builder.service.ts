@@ -944,75 +944,7 @@ export class PromptBuilderService {
 
     // NpcReactionDirector — 이번 턴 NPC 반응 사전 결정 (서술 LLM이 추측 대신 표현)
     if (npcReaction) {
-      const reactionTypeKr: Record<string, string> = {
-        WELCOME: '환영/적극 호의',
-        OPEN_UP: '마음을 열기 시작',
-        PROBE: '의도 떠보기/질문 응대',
-        DEFLECT: '회피/주제 전환',
-        DISMISS: '무시/거리두기',
-        THREATEN: '위협/경고',
-        SILENCE: '침묵/자리이탈',
-      };
-      const refusalKr: Record<string, string> = {
-        NONE: '거절 없음',
-        POLITE: '정중한 회피',
-        FIRM: '단호한 거절',
-        HOSTILE: '적대적 격화',
-      };
-      const lines: string[] = [
-        '[⚠️ P0 — NPC 즉시 반응 결정 (서버 사전 판단, 절대 위반 금지)]',
-        `▸ 반응 유형: ${reactionTypeKr[npcReaction.reactionType] ?? npcReaction.reactionType}`,
-        `▸ 거절 강도: ${refusalKr[npcReaction.refusalLevel] ?? npcReaction.refusalLevel}`,
-      ];
-      if (npcReaction.immediateGoal) {
-        lines.push(`▸ 이번 턴 NPC의 속내 목표: ${npcReaction.immediateGoal}`);
-      }
-      if (npcReaction.openingStance) {
-        lines.push(`▸ NPC 첫 반응 자세: ${npcReaction.openingStance}`);
-      }
-      if (npcReaction.dialogueHint) {
-        lines.push(`▸ NPC 대사 방향: ${npcReaction.dialogueHint}`);
-      }
-      lines.push(
-        '',
-        '⚠️ 이 결정은 서버가 NPC 감정·이전 흐름·판정 결과를 종합해 사전 판단한 것입니다.',
-        '⚠️ NPC 대사·행동·태도·표정이 모두 위 결정과 일치해야 합니다.',
-        '⚠️ 위반 사례 (절대 금지):',
-        '   - WELCOME인데 차갑게 거리를 두는 묘사',
-        '   - THREATEN인데 친절하거나 부드러운 어조',
-        '   - DEFLECT/DISMISS인데 핵심 정보를 그대로 답해주기',
-        '   - SILENCE인데 NPC가 길게 대사',
-        '   - 거절 강도 FIRM/HOSTILE인데 모호하게 동의하는 말투',
-        '   - immediateGoal과 정반대 방향으로 대사 흐름 전개',
-      );
-
-      // E안 — 추상 톤 3축 (예시 절대 없음, 어휘는 LLM이 자유 선택)
-      const hasToneFields =
-        npcReaction.voiceQuality ||
-        npcReaction.emotionalUndertone ||
-        npcReaction.bodyLanguageMood;
-      if (hasToneFields) {
-        lines.push(
-          '',
-          '[NPC 이번 턴 톤 가이드 — 추상 분위기만, 어휘는 자유롭게 선택]',
-        );
-        if (npcReaction.voiceQuality) {
-          lines.push(`목소리 질감: ${npcReaction.voiceQuality}`);
-        }
-        if (npcReaction.emotionalUndertone) {
-          lines.push(`감정 저류: ${npcReaction.emotionalUndertone}`);
-        }
-        if (npcReaction.bodyLanguageMood) {
-          lines.push(`신체 분위기: ${npcReaction.bodyLanguageMood}`);
-        }
-        lines.push(
-          '⚠️ 위 톤을 외면적 묘사로 표현하되 어휘는 자유롭게 선택하세요.',
-          '⚠️ 정적 시그니처나 직전 사용 어구를 그대로 반복하지 마세요.',
-          '⚠️ 같은 분위기를 매 턴 다른 단어/제스처로 표현하세요.',
-        );
-      }
-
-      factsParts.push(lines.join('\n'));
+      factsParts.push(this.buildNpcReactionBlock(npcReaction));
     }
 
     // NPC 반응 블록 (목격자의 능동 반응) — 방관 NPC 한정 (architecture/72).
@@ -2763,6 +2695,85 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * [P0 NPC 즉시 반응 결정] 블록 — NpcReactionDirector 사전 판단(반응 유형/
+   * 거절 강도/속내 목표/톤 3축)을 절대 준수 지시로 조립.
+   * arch/77 P1.5 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildNpcReactionBlock(
+    npcReaction: import('../npc-reaction-director.service.js').NpcReactionResult,
+  ): string {
+    const reactionTypeKr: Record<string, string> = {
+      WELCOME: '환영/적극 호의',
+      OPEN_UP: '마음을 열기 시작',
+      PROBE: '의도 떠보기/질문 응대',
+      DEFLECT: '회피/주제 전환',
+      DISMISS: '무시/거리두기',
+      THREATEN: '위협/경고',
+      SILENCE: '침묵/자리이탈',
+    };
+    const refusalKr: Record<string, string> = {
+      NONE: '거절 없음',
+      POLITE: '정중한 회피',
+      FIRM: '단호한 거절',
+      HOSTILE: '적대적 격화',
+    };
+    const lines: string[] = [
+      '[⚠️ P0 — NPC 즉시 반응 결정 (서버 사전 판단, 절대 위반 금지)]',
+      `▸ 반응 유형: ${reactionTypeKr[npcReaction.reactionType] ?? npcReaction.reactionType}`,
+      `▸ 거절 강도: ${refusalKr[npcReaction.refusalLevel] ?? npcReaction.refusalLevel}`,
+    ];
+    if (npcReaction.immediateGoal) {
+      lines.push(`▸ 이번 턴 NPC의 속내 목표: ${npcReaction.immediateGoal}`);
+    }
+    if (npcReaction.openingStance) {
+      lines.push(`▸ NPC 첫 반응 자세: ${npcReaction.openingStance}`);
+    }
+    if (npcReaction.dialogueHint) {
+      lines.push(`▸ NPC 대사 방향: ${npcReaction.dialogueHint}`);
+    }
+    lines.push(
+      '',
+      '⚠️ 이 결정은 서버가 NPC 감정·이전 흐름·판정 결과를 종합해 사전 판단한 것입니다.',
+      '⚠️ NPC 대사·행동·태도·표정이 모두 위 결정과 일치해야 합니다.',
+      '⚠️ 위반 사례 (절대 금지):',
+      '   - WELCOME인데 차갑게 거리를 두는 묘사',
+      '   - THREATEN인데 친절하거나 부드러운 어조',
+      '   - DEFLECT/DISMISS인데 핵심 정보를 그대로 답해주기',
+      '   - SILENCE인데 NPC가 길게 대사',
+      '   - 거절 강도 FIRM/HOSTILE인데 모호하게 동의하는 말투',
+      '   - immediateGoal과 정반대 방향으로 대사 흐름 전개',
+    );
+
+    // E안 — 추상 톤 3축 (예시 절대 없음, 어휘는 LLM이 자유 선택)
+    const hasToneFields =
+      npcReaction.voiceQuality ||
+      npcReaction.emotionalUndertone ||
+      npcReaction.bodyLanguageMood;
+    if (hasToneFields) {
+      lines.push(
+        '',
+        '[NPC 이번 턴 톤 가이드 — 추상 분위기만, 어휘는 자유롭게 선택]',
+      );
+      if (npcReaction.voiceQuality) {
+        lines.push(`목소리 질감: ${npcReaction.voiceQuality}`);
+      }
+      if (npcReaction.emotionalUndertone) {
+        lines.push(`감정 저류: ${npcReaction.emotionalUndertone}`);
+      }
+      if (npcReaction.bodyLanguageMood) {
+        lines.push(`신체 분위기: ${npcReaction.bodyLanguageMood}`);
+      }
+      lines.push(
+        '⚠️ 위 톤을 외면적 묘사로 표현하되 어휘는 자유롭게 선택하세요.',
+        '⚠️ 정적 시그니처나 직전 사용 어구를 그대로 반복하지 마세요.',
+        '⚠️ 같은 분위기를 매 턴 다른 단어/제스처로 표현하세요.',
+      );
+    }
+
+    return lines.join('\n');
   }
 
   /**
