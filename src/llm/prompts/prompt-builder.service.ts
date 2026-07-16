@@ -2725,7 +2725,9 @@ export class PromptBuilderService {
     // 잘리던 것(완주 2런 실측) — 프롤로그 3막 지시와 대칭으로 종결 지시를 준다.
     // 통계/에필로그는 EndingScreen(ui.endingResult) 몫 — 서술은 장면의 매듭만.
     const endingResultForFinale = (sr.ui as Record<string, unknown>)
-      ?.endingResult as { endingType?: string } | undefined;
+      ?.endingResult as
+      | { endingType?: string; closingLine?: string; clearanceBand?: string }
+      | undefined;
     if (endingResultForFinale) {
       const endingToneMap: Record<string, string> = {
         NATURAL: '매듭이 지어진 안도 — 길었던 조사가 끝났다는 여운',
@@ -2733,9 +2735,16 @@ export class PromptBuilderService {
         PLAYER_CHOICE: '스스로 내린 결정의 무게 — 돌이킬 수 없는 선택의 뒷맛',
         DEFEAT: '패배의 쓴맛 — 그러나 도시는 아무 일 없다는 듯 계속된다',
       };
+      // [P5 — 75 §6] AUTONOMOUS 엔딩은 endingType이 팩 계약 값(TRUTH_REVEALED·
+      // 팩 커스텀 등)이라 정적 맵에 없다. 오버레이 턴에만 존재하는 clearanceBand로
+      // 판별해 selectEndingTone이 고른 규명율 톤(closingLine)을 그대로 쓴다 —
+      // 마지막 장면 서술이 규명율 톤을 받도록 (AUTHORED 경로는 맵 우선 무변경).
       const tone =
         endingToneMap[endingResultForFinale.endingType ?? ''] ??
-        '한 장(章)이 닫히는 여운';
+        (endingResultForFinale.clearanceBand &&
+        endingResultForFinale.closingLine
+          ? endingResultForFinale.closingLine
+          : '한 장(章)이 닫히는 여운');
       factsParts.push(
         [
           '[서술 지시] 이것은 이 여정의 **마지막 장면**입니다. 이번 서술로 이야기가 끝납니다.',
