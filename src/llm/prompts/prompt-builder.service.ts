@@ -1958,76 +1958,7 @@ export class PromptBuilderService {
 
     // === 작업 3: 행동-반응 매핑 강화 — 플레이어 행동 유형별 NPC 반응 가이드 (LOCATION only) ===
     if (inputType === 'ACTION' && !isHub) {
-      const inputLower = rawInput.toLowerCase();
-      let reactionGuide = '';
-
-      if (
-        inputLower.includes('훔') ||
-        inputLower.includes('절도') ||
-        inputLower.includes('빼앗') ||
-        inputLower.includes('슬쩍')
-      ) {
-        reactionGuide =
-          '⚠️ NPC 반응 가이드: 플레이어가 절도를 시도합니다. NPC는 "조심하시오" 경고가 아니라, 놀람/분노/공포/목격자로서의 반응을 보여야 합니다. 예: 눈이 커지며 뒷걸음질, 물건을 움켜쥠, 경비를 부르려는 시선 등.';
-      } else if (
-        inputLower.includes('부수') ||
-        inputLower.includes('부쉈') ||
-        inputLower.includes('깨뜨') ||
-        inputLower.includes('내리치') ||
-        inputLower.includes('박살') ||
-        inputLower.includes('뜯') ||
-        inputLower.includes('파괴')
-      ) {
-        reactionGuide =
-          '⚠️ NPC 반응 가이드: 플레이어가 물리적 파괴를 시도합니다. 행동의 물리적 결과를 구체적으로 묘사하세요. 무엇이 부서졌는지, 안에서 무엇이 나왔는지, 주변이 어떻게 변했는지를 명확히 서술. SUCCESS: 의미 있는 새 발견(증거, 통로, 숨겨진 물건)이 드러남. PARTIAL: 일부만 드러나고 더 파야 할 것이 암시됨. FAIL: 소음으로 주목을 끌거나, 예상과 다른 결과. 같은 발견을 반복하지 말고 상황이 한 단계 진전되어야 합니다.';
-      } else if (
-        inputLower.includes('싸움') ||
-        inputLower.includes('때') ||
-        inputLower.includes('공격')
-      ) {
-        reactionGuide =
-          '⚠️ NPC 반응 가이드: 플레이어가 폭력을 시도합니다. NPC는 경고가 아니라, 공포/도주/방관/대항 중 하나로 반응하세요. CAUTIOUS NPC는 움츠러들거나 물러남. HOSTILE은 대항. FEARFUL은 도주.';
-      } else if (
-        inputLower.includes('위협') ||
-        inputLower.includes('협박') ||
-        inputLower.includes('겁을') ||
-        inputLower.includes('안 그러면')
-      ) {
-        reactionGuide =
-          '⚠️ NPC 반응 가이드: 플레이어가 위협합니다. NPC의 평소 speechStyle이 무너져야 합니다. SUCCESS: 시선을 피하고, 목소리가 떨리며, 짧고 끊긴 문장으로 복종. 차분한 설명조 금지. PARTIAL: 저항하려 하나 두려움에 일부 정보를 흘림. FAIL: 위협을 무시하거나 적대적으로 돌변.';
-      } else if (
-        inputLower.includes('말을 건') ||
-        inputLower.includes('설득') ||
-        inputLower.includes('대화')
-      ) {
-        reactionGuide =
-          '⚠️ NPC 반응 가이드: 플레이어가 대화를 시도합니다. NPC는 경고 대신 되묻기, 자기 사정 이야기, 조건 제시, 또는 화제 전환으로 반응하세요.';
-      } else if (
-        inputLower.includes('뇌물') ||
-        inputLower.includes('거래') ||
-        inputLower.includes('돈을')
-      ) {
-        reactionGuide =
-          '⚠️ NPC 반응 가이드: 플레이어가 뇌물/거래를 시도합니다. NPC는 경고가 아니라, 탐욕/망설임/거래 조건 제시/주변 경계로 반응하세요.';
-      } else if (
-        inputLower.includes('관찰') ||
-        inputLower.includes('살핀') ||
-        inputLower.includes('살펴')
-      ) {
-        reactionGuide =
-          '⚠️ NPC 반응 가이드: 플레이어가 관찰합니다. NPC는 절대 플레이어에게 말을 걸거나 대사를 하지 않습니다. NPC의 행동만 묘사하세요 — 시선을 피하거나, 무심히 행동하거나, 뭔가를 숨기는 동작 등. 플레이어는 관찰자이므로 NPC와 대화가 일어나지 않습니다.';
-      } else if (
-        inputLower.includes('잠입') ||
-        inputLower.includes('숨') ||
-        inputLower.includes('몰래')
-      ) {
-        reactionGuide =
-          '⚠️ NPC 반응 가이드: 플레이어가 은밀히 행동합니다. NPC는 발각 시 경악/추격, 미발각 시 무관심하게 행동하세요.';
-      }
-
-      if (reactionGuide) {
-        factsParts.push(reactionGuide);
-      }
+      factsParts.push(...this.buildActionReactionGuideBlocks(rawInput));
     }
 
     // === NPC가 이미 공개한 정보 (반복 방지) ===
@@ -2558,6 +2489,89 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * 행동-반응 매핑 가이드 블록 — 절도/파괴/폭력/위협/관찰/잠입 등 행동
+   * 유형별 NPC 반응 지시 (키워드 매칭). 최대 1개 블록 반환.
+   * 호출 게이트(ACTION && !isHub)는 호출부 유지.
+   * arch/77 P1.8 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildActionReactionGuideBlocks(rawInput: string): string[] {
+    const factsParts: string[] = [];
+    {
+      const inputLower = rawInput.toLowerCase();
+      let reactionGuide = '';
+
+      if (
+        inputLower.includes('훔') ||
+        inputLower.includes('절도') ||
+        inputLower.includes('빼앗') ||
+        inputLower.includes('슬쩍')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 절도를 시도합니다. NPC는 "조심하시오" 경고가 아니라, 놀람/분노/공포/목격자로서의 반응을 보여야 합니다. 예: 눈이 커지며 뒷걸음질, 물건을 움켜쥠, 경비를 부르려는 시선 등.';
+      } else if (
+        inputLower.includes('부수') ||
+        inputLower.includes('부쉈') ||
+        inputLower.includes('깨뜨') ||
+        inputLower.includes('내리치') ||
+        inputLower.includes('박살') ||
+        inputLower.includes('뜯') ||
+        inputLower.includes('파괴')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 물리적 파괴를 시도합니다. 행동의 물리적 결과를 구체적으로 묘사하세요. 무엇이 부서졌는지, 안에서 무엇이 나왔는지, 주변이 어떻게 변했는지를 명확히 서술. SUCCESS: 의미 있는 새 발견(증거, 통로, 숨겨진 물건)이 드러남. PARTIAL: 일부만 드러나고 더 파야 할 것이 암시됨. FAIL: 소음으로 주목을 끌거나, 예상과 다른 결과. 같은 발견을 반복하지 말고 상황이 한 단계 진전되어야 합니다.';
+      } else if (
+        inputLower.includes('싸움') ||
+        inputLower.includes('때') ||
+        inputLower.includes('공격')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 폭력을 시도합니다. NPC는 경고가 아니라, 공포/도주/방관/대항 중 하나로 반응하세요. CAUTIOUS NPC는 움츠러들거나 물러남. HOSTILE은 대항. FEARFUL은 도주.';
+      } else if (
+        inputLower.includes('위협') ||
+        inputLower.includes('협박') ||
+        inputLower.includes('겁을') ||
+        inputLower.includes('안 그러면')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 위협합니다. NPC의 평소 speechStyle이 무너져야 합니다. SUCCESS: 시선을 피하고, 목소리가 떨리며, 짧고 끊긴 문장으로 복종. 차분한 설명조 금지. PARTIAL: 저항하려 하나 두려움에 일부 정보를 흘림. FAIL: 위협을 무시하거나 적대적으로 돌변.';
+      } else if (
+        inputLower.includes('말을 건') ||
+        inputLower.includes('설득') ||
+        inputLower.includes('대화')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 대화를 시도합니다. NPC는 경고 대신 되묻기, 자기 사정 이야기, 조건 제시, 또는 화제 전환으로 반응하세요.';
+      } else if (
+        inputLower.includes('뇌물') ||
+        inputLower.includes('거래') ||
+        inputLower.includes('돈을')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 뇌물/거래를 시도합니다. NPC는 경고가 아니라, 탐욕/망설임/거래 조건 제시/주변 경계로 반응하세요.';
+      } else if (
+        inputLower.includes('관찰') ||
+        inputLower.includes('살핀') ||
+        inputLower.includes('살펴')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 관찰합니다. NPC는 절대 플레이어에게 말을 걸거나 대사를 하지 않습니다. NPC의 행동만 묘사하세요 — 시선을 피하거나, 무심히 행동하거나, 뭔가를 숨기는 동작 등. 플레이어는 관찰자이므로 NPC와 대화가 일어나지 않습니다.';
+      } else if (
+        inputLower.includes('잠입') ||
+        inputLower.includes('숨') ||
+        inputLower.includes('몰래')
+      ) {
+        reactionGuide =
+          '⚠️ NPC 반응 가이드: 플레이어가 은밀히 행동합니다. NPC는 발각 시 경악/추격, 미발각 시 무관심하게 행동하세요.';
+      }
+
+      if (reactionGuide) {
+        factsParts.push(reactionGuide);
+      }
+    }
+    return factsParts;
   }
 
   /**
