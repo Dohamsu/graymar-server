@@ -495,250 +495,11 @@ export class PromptBuilderService {
       memoryParts.push(`[최근 서술]\n${ctx.recentSummaries.join('\n---\n')}`);
     }
 
-    // L2 확장: NPC 로스터 — 이번 턴에 등장할 NPC만 선별 (1명 원칙)
-    // 우선순위: ① 플레이어 행동에서 NPC 이름/별칭 파싱 ② 이벤트 primaryNpc ③ 이전 턴 대화 NPC ④ 장소 NPC
-    let allNpcs: import('../../content/content.types.js').NpcDefinition[] = [];
-    const targetNpcIds = new Set<string>(); // [NPC 대화 자세] 필터링에도 사용
-    if (!isHub) {
-      const fullList = this.content.getAllNpcs();
-
-      // ⓪ IntentParser가 파싱한 targetNpcId 최우선 사용
-      const intentTargetNpcId = sr.ui?.actionContext?.targetNpcId;
-      if (intentTargetNpcId) {
-        targetNpcIds.add(intentTargetNpcId);
-      }
-
-      // ① 플레이어 ACTION 텍스트에서 NPC 이름/별칭 파싱 (⓪에서 찾지 못한 경우)
-      const playerInput = rawInput.toLowerCase();
-      let playerTargetedNpc: string | null = intentTargetNpcId ?? null;
-      for (const npc of fullList) {
-        if (intentTargetNpcId) break; // IntentParser 결과가 있으면 스킵
-        const nameMatch =
-          npc.name && playerInput.includes(npc.name.toLowerCase());
-        const aliasMatch =
-          npc.unknownAlias &&
-          playerInput.includes(npc.unknownAlias.toLowerCase());
-        // 부분 키워드 매칭 — 3글자 이상 명사형 토큰만 매칭 (조사/접미사 제거)
-        // "날카로운 눈매의 회계사" → "날카로운", "눈매의", "회계사" 중 3글자 이상만
-        const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
-        const keywordMatch =
-          aliasKeywords.length > 0 &&
-          aliasKeywords.some(
-            (kw: string) =>
-              kw.length >= 3 && playerInput.includes(kw.toLowerCase()),
-          );
-        if (nameMatch || aliasMatch || keywordMatch) {
-          targetNpcIds.add(npc.npcId);
-          playerTargetedNpc = npc.npcId;
-          break; // 1명만
-        }
-      }
-
-      // ② 이벤트 primaryNpc (플레이어 지정이 없을 때만)
-      if (targetNpcIds.size === 0) {
-        const eventPrimaryNpcId = (
-          sr.ui?.actionContext as Record<string, unknown> | undefined
-        )?.primaryNpcId as string | undefined;
-        if (eventPrimaryNpcId) targetNpcIds.add(eventPrimaryNpcId);
-        if (ctx.npcInjection?.npcId) targetNpcIds.add(ctx.npcInjection.npcId);
-      }
-
-      // ③ 새로 만나는 NPC
-      for (const npcId of ctx.newlyEncounteredNpcIds ?? [])
-        targetNpcIds.add(npcId);
-      for (const npcId of ctx.newlyIntroducedNpcIds ?? [])
-        targetNpcIds.add(npcId);
-
-      // ④ 이전 턴 대화 NPC (아무 NPC도 못 찾았을 때)
-      if (targetNpcIds.size === 0 && ctx.locationSessionTurns?.length) {
-        const lastNarr =
-          ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]
-            ?.narrative ?? '';
-        for (const npc of fullList) {
-          if (
-            lastNarr.includes(npc.name) ||
-            (npc.unknownAlias && lastNarr.includes(npc.unknownAlias))
-          ) {
-            targetNpcIds.add(npc.npcId);
-            break;
-          }
-        }
-      }
-
-      // architecture/57: focused 모드에서는 targetNpcIds 를 메인 NPC 한 명으로 강제 좁힘.
-      //   newlyEncounteredNpcIds / npcInjection 등으로 들어온 BG/SUB NPC 의 별칭이
-      //   [등장 가능 NPC 목록] / [NPC 감정 상태] 블록을 통해 LLM 에 노출되어
-      //   매 턴 끼어들기를 유발하는 회귀 (multi_npc_play 2026-05-14 검증) 해소.
-      if (ctx.focusedNpcId) {
-        const focused = ctx.focusedNpcId;
-        targetNpcIds.clear();
-        targetNpcIds.add(focused);
-      }
-
-      // NPC 목록 구성
-      if (targetNpcIds.size > 0) {
-        allNpcs = fullList.filter((npc) => targetNpcIds.has(npc.npcId));
-      } else {
-        // fallback: 현재 장소+시간에 있는 NPC (첫 턴, NPC 미지정 행동)
-        const locId = ctx.currentLocationId;
-        const phase = ctx.currentTimePhase ?? 'DAY';
-        if (locId) {
-          allNpcs = fullList.filter(
-            (npc) =>
-              getNpcSchedulePhaseEntry(npc.schedule, phase)?.locationId ===
-              locId,
-          );
-        }
-
-        // 배경 NPC 로테이션 풀 (bug 4671): 세션 내 3회+ 등장한 BG NPC 제외
-        //   LLM이 익숙한 BG NPC를 반복 선호하는 고착 방지 (CLAUDE.md LLM 원칙 3: 선택지 축소).
-        //   CORE/SUB NPC는 예외 — 스토리 연속성 위해 유지.
-        const bgCounts = this.countBgNpcAppearances(
-          ctx.locationSessionTurns ?? [],
-        );
-        const BG_QUOTA = 3; // 세션당 BG NPC 최대 등장 횟수
-        const beforeFilter = allNpcs.length;
-        allNpcs = allNpcs.filter((npc) => {
-          const def = npc as Record<string, unknown>;
-          const tier = def.tier as string | undefined;
-          if (tier !== 'BACKGROUND') return true; // CORE/SUB 항상 유지
-          const count = bgCounts.get(npc.npcId) ?? 0;
-          return count < BG_QUOTA;
-        });
-        // 가드: BG 풀이 너무 줄면 (2명 미만) 필터 롤백
-        const bgRemaining = allNpcs.filter((n) => {
-          const def = n as Record<string, unknown>;
-          return def.tier === 'BACKGROUND';
-        }).length;
-        if (bgRemaining < 2 && beforeFilter !== allNpcs.length) {
-          // 필터 결과 BG 2명 미만 → 롤백 (장면 빈약 방지)
-          allNpcs = fullList.filter((npc) => {
-            const scheduleDefault = npc.schedule?.default;
-            if (!scheduleDefault) return false;
-            const phaseEntry =
-              scheduleDefault[phase as keyof typeof scheduleDefault] ??
-              scheduleDefault['DAY' as keyof typeof scheduleDefault];
-            return phaseEntry?.locationId === locId;
-          });
-        }
-      }
-
-      // 예외: 플레이어가 등록되지 않은 NPC를 언급한 경우 (매칭 실패 + NPC명 포함)
-      // → 목록이 비어있고 플레이어 입력에 고유명사가 있으면 안내 메시지
-      if (
-        playerTargetedNpc === null &&
-        allNpcs.length === 0 &&
-        /[가-힣]{2,}에게|[가-힣]{2,}을|[가-힣]{2,}와/.test(rawInput)
-      ) {
-        // 등록되지 않은 NPC → 장소 NPC fallback으로 처리 (LLM이 익명 인물로 대체)
-        const locId = ctx.currentLocationId;
-        const phase = ctx.currentTimePhase ?? 'DAY';
-        if (locId) {
-          allNpcs = fullList.filter(
-            (npc) =>
-              getNpcSchedulePhaseEntry(npc.schedule, phase)?.locationId ===
-              locId,
-          );
-        }
-      }
-    }
-    if (allNpcs.length > 0) {
-      const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
-      const newlyIntroducedNpcIds = new Set(ctx.newlyIntroducedNpcIds ?? []);
-      const newlyEncounteredNpcIds = new Set(ctx.newlyEncounteredNpcIds ?? []);
-
-      const npcLines = allNpcs.map((npc) => {
-        const title = npc.title ? ` (${npc.title})` : '';
-        const isNewlyIntroduced = newlyIntroducedNpcIds.has(npc.npcId);
-        const isNewlyEncountered = newlyEncounteredNpcIds.has(npc.npcId);
-        const isIntroduced = introducedNpcIds.has(npc.npcId);
-        const alias = npc.unknownAlias || '낯선 인물';
-        const pronoun = npc.gender === 'female' ? '그녀' : '그';
-
-        // NPC_ID + 성별을 병기
-        const genderTag = npc.gender === 'female' ? '여' : '남';
-        const idTag = `[ID:${npc.npcId}, ${genderTag}, 대명사:${pronoun}]`;
-
-        if (isNewlyIntroduced && isNewlyEncountered) {
-          // 이름 공개 기획 (2026-07-11, arch/65): 첫 만남 소개는 전 성향
-          // 자기소개 통일 — 워커가 사전 확정한 대사를 positive로 주입.
-          // (기존 경로 분기는 메인 LLM의 소개 이행률 0%로 폐지 — 재등장 공개만
-          // buildIntroDirective 외부 경로 유지)
-          if (ctx.introDialogue && ctx.introDialogue.npcId === npc.npcId) {
-            return [
-              `- ${npc.name}${title} ${idTag}: ${npc.role} [자기소개 — 사전 확정 대사] — 이 인물의 이름은 "${npc.name}"이며, 이번 턴 대화 중 아래 대사로 자신을 소개합니다.`,
-              `    "${ctx.introDialogue.text}"`,
-              `    이 대사를 자연스러운 위치에 거의 그대로 포함하세요. 실명 "${npc.name}"은 반드시 유지합니다.`,
-              `    자기소개 이전 서술에서는 "${alias}"로 지칭하고, 이후에는 "${npc.name}"을 사용하세요.`,
-              `    ⚠️ 대사 마커의 표시명은 이번 턴 내내 "${alias}"를 유지하세요 (@[${alias}|…] — 실명은 대사 내용 안에서만).`,
-            ].join('\n');
-          }
-          // 사전 대사 생성 불가 시(예외) 기존 연출 경로 fallback
-          const stIntro = ctx.npcStates?.[npc.npcId];
-          return buildIntroDirective({
-            name: npc.name,
-            alias,
-            idTag,
-            role: npc.role,
-            title,
-            pronoun,
-            isNewlyEncountered: true,
-            posture: stIntro?.posture,
-            introAttempts: stIntro?.introAttempts,
-          });
-        } else if (isNewlyIntroduced && !isNewlyEncountered) {
-          // 임계 도달 소개는 만남 횟수와 무관하게 자기소개 통일 (이름 공개 기획)
-          if (ctx.introDialogue && ctx.introDialogue.npcId === npc.npcId) {
-            return [
-              `- ${npc.name}${title} ${idTag}: ${npc.role} [자기소개 — 사전 확정 대사] — 지금까지 "${alias}"로 불려온 이 인물이 이번 턴 대화 중 아래 대사로 비로소 자신을 소개합니다.`,
-              `    "${ctx.introDialogue.text}"`,
-              `    이 대사를 자연스러운 위치에 거의 그대로 포함하세요. 실명 "${npc.name}"은 반드시 유지합니다.`,
-              `    자기소개 이전 서술에서는 "${alias}"로 지칭하고, 이후에는 "${npc.name}"을 사용하세요.`,
-              `    ⚠️ 대사 마커의 표시명은 이번 턴 내내 "${alias}"를 유지하세요 (@[${alias}|…] — 실명은 대사 내용 안에서만).`,
-            ].join('\n');
-          }
-          const stIntro = ctx.npcStates?.[npc.npcId];
-          return buildIntroDirective({
-            name: npc.name,
-            alias,
-            idTag,
-            role: npc.role,
-            title,
-            pronoun,
-            isNewlyEncountered: false,
-            posture: stIntro?.posture,
-            introAttempts: stIntro?.introAttempts,
-          });
-        } else if (isNewlyEncountered && !isNewlyIntroduced) {
-          return `- "${alias}" ${idTag}: ${npc.role} [첫 만남 — 이름 미공개] 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "${pronoun}", "${pronoun} 인물" 등 짧은 대명사로 대체하세요. 실명 사용 금지.`;
-        } else if (isIntroduced) {
-          const knowledgeEntries = (ctx.npcKnowledge ?? {})[npc.npcId];
-          const knowledgePart =
-            knowledgeEntries && knowledgeEntries.length > 0
-              ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`
-              : '';
-          return `- ${npc.name}${title} ${idTag}: ${npc.role} [이미 소개됨, 대명사: ${pronoun}]${knowledgePart}`;
-        } else {
-          return `- "${alias}" ${idTag}: ${npc.role} [이름 미공개]`;
-        }
-      });
-      const relationPart =
-        ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0
-          ? `\n\n현재 관계:\n${ctx.npcRelationFacts.join('\n')}`
-          : '';
-      memoryParts.push(
-        ['[등장 가능 NPC 목록]', npcLines.join('\n'), relationPart].join('\n'),
-      );
-    } else if (ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0) {
-      memoryParts.push(
-        [
-          '[NPC 관계 — 등장 가능 NPC 목록]',
-          '아래 NPC만 서술에 이름 있는 캐릭터로 등장할 수 있습니다. 이 목록에 없는 새로운 개인 캐릭터를 만들지 마세요.',
-          '',
-          ctx.npcRelationFacts.join('\n'),
-        ].join('\n'),
-      );
-    }
+    // L2 확장: NPC 로스터 — buildNpcRosterBlocks로 추출 (arch/77 P1.11).
+    // targetNpcIds는 후속 블록(NPC 감정 상태·어체·fact)이 공유하는 상태.
+    const rosterResult = this.buildNpcRosterBlocks(ctx, sr, rawInput, isHub);
+    memoryParts.push(...rosterResult.blocks);
+    const targetNpcIds = rosterResult.targetNpcIds;
 
     // Narrative Engine v1: Incident/감정/마크/시그널 컨텍스트
     const hasStructured = !!(
@@ -2308,6 +2069,266 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * NPC 로스터 블록 — 이번 턴 등장 NPC 선별(1명 원칙: 플레이어 지목 →
+   * 이벤트 primaryNpc → 직전 대화 → 장소 NPC) + 목록/관계 블록 조립.
+   * targetNpcIds 는 후속 블록이 공유하는 탈출 상태라 함께 반환한다.
+   * arch/77 P1.11 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildNpcRosterBlocks(
+    ctx: LlmContext,
+    sr: ServerResultV1,
+    rawInput: string,
+    isHub: boolean,
+  ): { blocks: string[]; targetNpcIds: Set<string> } {
+    const memoryParts: string[] = [];
+    // L2 확장: NPC 로스터 — 이번 턴에 등장할 NPC만 선별 (1명 원칙)
+    // 우선순위: ① 플레이어 행동에서 NPC 이름/별칭 파싱 ② 이벤트 primaryNpc ③ 이전 턴 대화 NPC ④ 장소 NPC
+    let allNpcs: import('../../content/content.types.js').NpcDefinition[] = [];
+    const targetNpcIds = new Set<string>(); // [NPC 대화 자세] 필터링에도 사용
+    if (!isHub) {
+      const fullList = this.content.getAllNpcs();
+
+      // ⓪ IntentParser가 파싱한 targetNpcId 최우선 사용
+      const intentTargetNpcId = sr.ui?.actionContext?.targetNpcId;
+      if (intentTargetNpcId) {
+        targetNpcIds.add(intentTargetNpcId);
+      }
+
+      // ① 플레이어 ACTION 텍스트에서 NPC 이름/별칭 파싱 (⓪에서 찾지 못한 경우)
+      const playerInput = rawInput.toLowerCase();
+      let playerTargetedNpc: string | null = intentTargetNpcId ?? null;
+      for (const npc of fullList) {
+        if (intentTargetNpcId) break; // IntentParser 결과가 있으면 스킵
+        const nameMatch =
+          npc.name && playerInput.includes(npc.name.toLowerCase());
+        const aliasMatch =
+          npc.unknownAlias &&
+          playerInput.includes(npc.unknownAlias.toLowerCase());
+        // 부분 키워드 매칭 — 3글자 이상 명사형 토큰만 매칭 (조사/접미사 제거)
+        // "날카로운 눈매의 회계사" → "날카로운", "눈매의", "회계사" 중 3글자 이상만
+        const aliasKeywords = npc.unknownAlias?.split(/\s+/) ?? [];
+        const keywordMatch =
+          aliasKeywords.length > 0 &&
+          aliasKeywords.some(
+            (kw: string) =>
+              kw.length >= 3 && playerInput.includes(kw.toLowerCase()),
+          );
+        if (nameMatch || aliasMatch || keywordMatch) {
+          targetNpcIds.add(npc.npcId);
+          playerTargetedNpc = npc.npcId;
+          break; // 1명만
+        }
+      }
+
+      // ② 이벤트 primaryNpc (플레이어 지정이 없을 때만)
+      if (targetNpcIds.size === 0) {
+        const eventPrimaryNpcId = (
+          sr.ui?.actionContext as Record<string, unknown> | undefined
+        )?.primaryNpcId as string | undefined;
+        if (eventPrimaryNpcId) targetNpcIds.add(eventPrimaryNpcId);
+        if (ctx.npcInjection?.npcId) targetNpcIds.add(ctx.npcInjection.npcId);
+      }
+
+      // ③ 새로 만나는 NPC
+      for (const npcId of ctx.newlyEncounteredNpcIds ?? [])
+        targetNpcIds.add(npcId);
+      for (const npcId of ctx.newlyIntroducedNpcIds ?? [])
+        targetNpcIds.add(npcId);
+
+      // ④ 이전 턴 대화 NPC (아무 NPC도 못 찾았을 때)
+      if (targetNpcIds.size === 0 && ctx.locationSessionTurns?.length) {
+        const lastNarr =
+          ctx.locationSessionTurns[ctx.locationSessionTurns.length - 1]
+            ?.narrative ?? '';
+        for (const npc of fullList) {
+          if (
+            lastNarr.includes(npc.name) ||
+            (npc.unknownAlias && lastNarr.includes(npc.unknownAlias))
+          ) {
+            targetNpcIds.add(npc.npcId);
+            break;
+          }
+        }
+      }
+
+      // architecture/57: focused 모드에서는 targetNpcIds 를 메인 NPC 한 명으로 강제 좁힘.
+      //   newlyEncounteredNpcIds / npcInjection 등으로 들어온 BG/SUB NPC 의 별칭이
+      //   [등장 가능 NPC 목록] / [NPC 감정 상태] 블록을 통해 LLM 에 노출되어
+      //   매 턴 끼어들기를 유발하는 회귀 (multi_npc_play 2026-05-14 검증) 해소.
+      if (ctx.focusedNpcId) {
+        const focused = ctx.focusedNpcId;
+        targetNpcIds.clear();
+        targetNpcIds.add(focused);
+      }
+
+      // NPC 목록 구성
+      if (targetNpcIds.size > 0) {
+        allNpcs = fullList.filter((npc) => targetNpcIds.has(npc.npcId));
+      } else {
+        // fallback: 현재 장소+시간에 있는 NPC (첫 턴, NPC 미지정 행동)
+        const locId = ctx.currentLocationId;
+        const phase = ctx.currentTimePhase ?? 'DAY';
+        if (locId) {
+          allNpcs = fullList.filter(
+            (npc) =>
+              getNpcSchedulePhaseEntry(npc.schedule, phase)?.locationId ===
+              locId,
+          );
+        }
+
+        // 배경 NPC 로테이션 풀 (bug 4671): 세션 내 3회+ 등장한 BG NPC 제외
+        //   LLM이 익숙한 BG NPC를 반복 선호하는 고착 방지 (CLAUDE.md LLM 원칙 3: 선택지 축소).
+        //   CORE/SUB NPC는 예외 — 스토리 연속성 위해 유지.
+        const bgCounts = this.countBgNpcAppearances(
+          ctx.locationSessionTurns ?? [],
+        );
+        const BG_QUOTA = 3; // 세션당 BG NPC 최대 등장 횟수
+        const beforeFilter = allNpcs.length;
+        allNpcs = allNpcs.filter((npc) => {
+          const def = npc as Record<string, unknown>;
+          const tier = def.tier as string | undefined;
+          if (tier !== 'BACKGROUND') return true; // CORE/SUB 항상 유지
+          const count = bgCounts.get(npc.npcId) ?? 0;
+          return count < BG_QUOTA;
+        });
+        // 가드: BG 풀이 너무 줄면 (2명 미만) 필터 롤백
+        const bgRemaining = allNpcs.filter((n) => {
+          const def = n as Record<string, unknown>;
+          return def.tier === 'BACKGROUND';
+        }).length;
+        if (bgRemaining < 2 && beforeFilter !== allNpcs.length) {
+          // 필터 결과 BG 2명 미만 → 롤백 (장면 빈약 방지)
+          allNpcs = fullList.filter((npc) => {
+            const scheduleDefault = npc.schedule?.default;
+            if (!scheduleDefault) return false;
+            const phaseEntry =
+              scheduleDefault[phase as keyof typeof scheduleDefault] ??
+              scheduleDefault['DAY' as keyof typeof scheduleDefault];
+            return phaseEntry?.locationId === locId;
+          });
+        }
+      }
+
+      // 예외: 플레이어가 등록되지 않은 NPC를 언급한 경우 (매칭 실패 + NPC명 포함)
+      // → 목록이 비어있고 플레이어 입력에 고유명사가 있으면 안내 메시지
+      if (
+        playerTargetedNpc === null &&
+        allNpcs.length === 0 &&
+        /[가-힣]{2,}에게|[가-힣]{2,}을|[가-힣]{2,}와/.test(rawInput)
+      ) {
+        // 등록되지 않은 NPC → 장소 NPC fallback으로 처리 (LLM이 익명 인물로 대체)
+        const locId = ctx.currentLocationId;
+        const phase = ctx.currentTimePhase ?? 'DAY';
+        if (locId) {
+          allNpcs = fullList.filter(
+            (npc) =>
+              getNpcSchedulePhaseEntry(npc.schedule, phase)?.locationId ===
+              locId,
+          );
+        }
+      }
+    }
+    if (allNpcs.length > 0) {
+      const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
+      const newlyIntroducedNpcIds = new Set(ctx.newlyIntroducedNpcIds ?? []);
+      const newlyEncounteredNpcIds = new Set(ctx.newlyEncounteredNpcIds ?? []);
+
+      const npcLines = allNpcs.map((npc) => {
+        const title = npc.title ? ` (${npc.title})` : '';
+        const isNewlyIntroduced = newlyIntroducedNpcIds.has(npc.npcId);
+        const isNewlyEncountered = newlyEncounteredNpcIds.has(npc.npcId);
+        const isIntroduced = introducedNpcIds.has(npc.npcId);
+        const alias = npc.unknownAlias || '낯선 인물';
+        const pronoun = npc.gender === 'female' ? '그녀' : '그';
+
+        // NPC_ID + 성별을 병기
+        const genderTag = npc.gender === 'female' ? '여' : '남';
+        const idTag = `[ID:${npc.npcId}, ${genderTag}, 대명사:${pronoun}]`;
+
+        if (isNewlyIntroduced && isNewlyEncountered) {
+          // 이름 공개 기획 (2026-07-11, arch/65): 첫 만남 소개는 전 성향
+          // 자기소개 통일 — 워커가 사전 확정한 대사를 positive로 주입.
+          // (기존 경로 분기는 메인 LLM의 소개 이행률 0%로 폐지 — 재등장 공개만
+          // buildIntroDirective 외부 경로 유지)
+          if (ctx.introDialogue && ctx.introDialogue.npcId === npc.npcId) {
+            return [
+              `- ${npc.name}${title} ${idTag}: ${npc.role} [자기소개 — 사전 확정 대사] — 이 인물의 이름은 "${npc.name}"이며, 이번 턴 대화 중 아래 대사로 자신을 소개합니다.`,
+              `    "${ctx.introDialogue.text}"`,
+              `    이 대사를 자연스러운 위치에 거의 그대로 포함하세요. 실명 "${npc.name}"은 반드시 유지합니다.`,
+              `    자기소개 이전 서술에서는 "${alias}"로 지칭하고, 이후에는 "${npc.name}"을 사용하세요.`,
+              `    ⚠️ 대사 마커의 표시명은 이번 턴 내내 "${alias}"를 유지하세요 (@[${alias}|…] — 실명은 대사 내용 안에서만).`,
+            ].join('\n');
+          }
+          // 사전 대사 생성 불가 시(예외) 기존 연출 경로 fallback
+          const stIntro = ctx.npcStates?.[npc.npcId];
+          return buildIntroDirective({
+            name: npc.name,
+            alias,
+            idTag,
+            role: npc.role,
+            title,
+            pronoun,
+            isNewlyEncountered: true,
+            posture: stIntro?.posture,
+            introAttempts: stIntro?.introAttempts,
+          });
+        } else if (isNewlyIntroduced && !isNewlyEncountered) {
+          // 임계 도달 소개는 만남 횟수와 무관하게 자기소개 통일 (이름 공개 기획)
+          if (ctx.introDialogue && ctx.introDialogue.npcId === npc.npcId) {
+            return [
+              `- ${npc.name}${title} ${idTag}: ${npc.role} [자기소개 — 사전 확정 대사] — 지금까지 "${alias}"로 불려온 이 인물이 이번 턴 대화 중 아래 대사로 비로소 자신을 소개합니다.`,
+              `    "${ctx.introDialogue.text}"`,
+              `    이 대사를 자연스러운 위치에 거의 그대로 포함하세요. 실명 "${npc.name}"은 반드시 유지합니다.`,
+              `    자기소개 이전 서술에서는 "${alias}"로 지칭하고, 이후에는 "${npc.name}"을 사용하세요.`,
+              `    ⚠️ 대사 마커의 표시명은 이번 턴 내내 "${alias}"를 유지하세요 (@[${alias}|…] — 실명은 대사 내용 안에서만).`,
+            ].join('\n');
+          }
+          const stIntro = ctx.npcStates?.[npc.npcId];
+          return buildIntroDirective({
+            name: npc.name,
+            alias,
+            idTag,
+            role: npc.role,
+            title,
+            pronoun,
+            isNewlyEncountered: false,
+            posture: stIntro?.posture,
+            introAttempts: stIntro?.introAttempts,
+          });
+        } else if (isNewlyEncountered && !isNewlyIntroduced) {
+          return `- "${alias}" ${idTag}: ${npc.role} [첫 만남 — 이름 미공개] 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "${pronoun}", "${pronoun} 인물" 등 짧은 대명사로 대체하세요. 실명 사용 금지.`;
+        } else if (isIntroduced) {
+          const knowledgeEntries = (ctx.npcKnowledge ?? {})[npc.npcId];
+          const knowledgePart =
+            knowledgeEntries && knowledgeEntries.length > 0
+              ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`
+              : '';
+          return `- ${npc.name}${title} ${idTag}: ${npc.role} [이미 소개됨, 대명사: ${pronoun}]${knowledgePart}`;
+        } else {
+          return `- "${alias}" ${idTag}: ${npc.role} [이름 미공개]`;
+        }
+      });
+      const relationPart =
+        ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0
+          ? `\n\n현재 관계:\n${ctx.npcRelationFacts.join('\n')}`
+          : '';
+      memoryParts.push(
+        ['[등장 가능 NPC 목록]', npcLines.join('\n'), relationPart].join('\n'),
+      );
+    } else if (ctx.npcRelationFacts && ctx.npcRelationFacts.length > 0) {
+      memoryParts.push(
+        [
+          '[NPC 관계 — 등장 가능 NPC 목록]',
+          '아래 NPC만 서술에 이름 있는 캐릭터로 등장할 수 있습니다. 이 목록에 없는 새로운 개인 캐릭터를 만들지 마세요.',
+          '',
+          ctx.npcRelationFacts.join('\n'),
+        ].join('\n'),
+      );
+    }
+    return { blocks: memoryParts, targetNpcIds };
   }
 
   /**
