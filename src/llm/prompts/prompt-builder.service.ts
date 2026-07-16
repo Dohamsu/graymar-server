@@ -553,146 +553,11 @@ export class PromptBuilderService {
     // 반복 억제·감각 초점·지목 대상 — buildStyleFocusBlocks로 추출 (P1.14)
     factsParts.push(...this.buildStyleFocusBlocks(ctx, sr, isQuestionTurn));
 
-    // summary.short — A52 후보 1: 빈 본문 가드 (헤더만 출력 방지)
-    if (sr.summary?.short && sr.summary.short.trim().length > 0) {
-      factsParts.push(`[상황 요약]\n${sr.summary.short}`);
-    }
+    // 턴 결과(요약·판정·사건·도착·자기정보·톤) — buildTurnOutcomeBlocks (P1.16)
+    factsParts.push(
+      ...this.buildTurnOutcomeBlocks(ctx, sr, inputType, isHub),
+    );
 
-    // 판정 결과 — 해당 턴의 판정+행동 조합만 동적 주입 (system에서 전체 매트릭스 제거)
-    if (sr.ui?.resolveOutcome) {
-      const actionType = (sr.ui as Record<string, unknown>)?.actionContext
-        ? ((
-            (sr.ui as Record<string, unknown>).actionContext as Record<
-              string,
-              unknown
-            >
-          )?.intentActionType as string)
-        : '';
-      const outcome = sr.ui.resolveOutcome as string;
-
-      // 행동별 판정 결과 매트릭스 (해당 조합만 전달)
-      const MATRIX: Record<string, Record<string, string>> = {
-        SUCCESS: {
-          TALK: 'NPC가 충분한 정보를 제공하거나 협조한다. 자신감 있고 역동적으로.',
-          PERSUADE:
-            'NPC가 충분한 정보를 제공하거나 협조한다. 자신감 있고 역동적으로.',
-          BRIBE: 'NPC가 완전히 협조한다.',
-          THREATEN: 'NPC가 굴복한다. 시선을 피하고, 짧고 끊긴 문장으로 복종.',
-          SNEAK: '완벽한 은신 성공.',
-          STEAL: '성공적 탈취.',
-          FIGHT: '제압 성공.',
-          INVESTIGATE: '핵심 단서 발견.',
-          OBSERVE: '핵심 정보 포착.',
-          SEARCH: '핵심 단서 발견.',
-          HELP: 'NPC가 감사하며 신뢰를 보인다.',
-          _DEFAULT: '자신감 있고 역동적. NPC는 행동으로 반응한다.',
-        },
-        PARTIAL: {
-          TALK: '일부 정보만 얻고 핵심은 숨겨짐. ⚠️ "성공했다" 금지. 반드시 불이익 1개: NPC가 입을 다물거나, 목격자가 생기거나, 단서를 놓침.',
-          PERSUADE:
-            '일부 정보만 얻고 핵심은 숨겨짐. ⚠️ "성공했다" 금지. 반드시 불이익 1개.',
-          BRIBE:
-            '돈은 받았으나 의심하며 일부만 알려줌. 불이익: 뇌물 사실이 알려질 위험.',
-          THREATEN: 'NPC가 두려워하며 일부만 흘림. 완전한 복종은 아님.',
-          SNEAK: '간신히 숨었으나 흔적을 남김.',
-          STEAL: '일부만 탈취하거나 목격자가 생김.',
-          FIGHT: '상처를 입혔으나 제압 실패.',
-          INVESTIGATE: '모호한 단서만. 핵심은 놓침.',
-          OBSERVE: '일부만 포착. 핵심은 놓침.',
-          SEARCH: '모호한 단서만.',
-          HELP: '도움은 됐으나 불충분.',
-          _DEFAULT:
-            '⚠️ "성공했다" 금지. ① 행동 시도 → ② 부분 성과 → ③ 명확한 불이익 1가지.',
-        },
-        FAIL: {
-          TALK: 'NPC가 침묵하거나 거부한다. 정보 0.',
-          PERSUADE: 'NPC가 침묵하거나 거부한다. 정보 0.',
-          BRIBE: '돈을 거절하고 의심한다.',
-          THREATEN: 'NPC가 무시하거나 적대적으로 대항한다.',
-          SNEAK: '발각됨.',
-          STEAL: '현장에서 잡힘.',
-          FIGHT: '반격당함.',
-          INVESTIGATE: '아무것도 못 찾음.',
-          OBSERVE: '아무것도 포착 못함.',
-          SEARCH: '아무것도 못 찾음.',
-          HELP: '상황이 악화되거나 거부당함.',
-          _DEFAULT:
-            '⚠️ 실패. NPC가 정보를 주지 않는다. 경고/암시/힌트도 금지. "거의 성공할 뻔했다" 금지.',
-        },
-      };
-
-      const outcomeMap = MATRIX[outcome];
-      if (outcomeMap) {
-        const specific = outcomeMap[actionType] ?? outcomeMap._DEFAULT ?? '';
-        factsParts.push(`⚠️ [이번 턴 판정: ${outcome}]\n${specific}`);
-
-        // 판정별 서술 예시 동적 삽입 (시스템 프롬프트에서 제거됨)
-        const EXAMPLES: Record<string, Record<string, string>> = {
-          TALK: {
-            PARTIAL:
-              '예시: 노부인이 당신을 올려다보았다. "무엇을 찾으시오?" 시장 분위기를 묻자 그녀의 표정이 굳었다. "이 할미는 약초만 팔 뿐이오." 대화는 거기서 끊겼다. 그러나 그녀의 시선이 골목 한쪽을 스쳤다.',
-            SUCCESS:
-              '예시: 노부인이 고개를 끄덕이며 목소리를 낮추었다. "부두 쪽 3번 창고에서 밤마다 불빛이 새어 나온다오." 그녀의 눈빛은 진지했다.',
-            FAIL: '예시: 노부인이 고개를 돌렸다. 약초 다발을 집어 들며 당신을 무시했다. 대화의 문이 닫혔다.',
-          },
-          SNEAK: {
-            SUCCESS:
-              '예시: 그림자 속으로 미끄러지듯 이동했다. 발소리 하나 없이 천막 사이를 빠져나갔다.',
-            FAIL: '예시: 발끝이 빈 상자를 스치며 날카로운 소리가 울렸다. 건너편에서 경비병이 고개를 돌렸다.',
-          },
-          INVESTIGATE: {
-            SUCCESS:
-              '예시: 상자 틈새에서 희미한 잉크 자국이 묻은 종이 조각을 발견했다. 글씨는 반쯤 지워져 있었지만 핵심 단어는 읽을 수 있었다.',
-            FAIL: '예시: 상자를 뒤졌으나 먼지와 거미줄만 손에 묻었다. 아무것도 찾지 못했다.',
-          },
-        };
-        const exMap = EXAMPLES[actionType];
-        if (exMap) {
-          const ex = exMap[outcome] ?? Object.values(exMap)[0];
-          if (ex) factsParts.push(`[서술 참고]\n${ex}`);
-        }
-      }
-    }
-
-    // events (UI kind는 필터링 — 정본: CLAUDE.md Event kind UI 필터링 대상)
-    const filteredEvents = sr.events.filter((e) => e.kind !== 'UI');
-    if (filteredEvents.length > 0) {
-      const eventTexts = filteredEvents.map((e) => `- [${e.kind}] ${e.text}`);
-      factsParts.push(`[이번 턴 사건]\n${eventTexts.join('\n')}`);
-    }
-
-    // 장소 도착 턴: NPC 대사 금지 (환경 묘사만)
-    // 3-B (arch/68 후속, 2026-07-12): ACTION "다른 장소로 이동한다"
-    // (MOVE_LOCATION) 도착 턴이 inputType==='SYSTEM' 한정에 걸리지 않아
-    // LLM이 즉흥 환영 인사를 지어내고 화자 미배정 → 무명 마커가 되던 구멍.
-    // MOVE 이벤트가 실린 이동 전용 턴이면 입력 타입 무관 도착 디렉티브 적용.
-    const hasMoveEvent = filteredEvents.some((e) => e.kind === 'MOVE');
-    const isMoveOnly =
-      filteredEvents.length > 0 &&
-      filteredEvents.every((e) => e.kind === 'MOVE' || e.kind === 'SYSTEM') &&
-      (inputType === 'SYSTEM' || hasMoveEvent);
-    if (isMoveOnly) {
-      factsParts.push(
-        '⚠️ 이것은 **새 장소 도착** 장면입니다. 직전 턴까지 함께 있던 인물들은 이전 장소에 남았습니다 — 이 장면에 등장·언급시키지 마세요 (배경 활동 포함). NPC가 먼저 대화를 시작하지 마세요. 이 장소의 환경 묘사와 분위기만 서술하고, 인물은 아래 [등장 가능 NPC 목록]에 있는 이들의 배경 활동(지나가기, 일하기)까지만 허용하며 대사는 금지합니다.',
-      );
-    }
-
-    // 순회 검증 ② (2026-07-12): 플레이어가 밝힌 자기 정보 — NPC가 이미 들은
-    // 내용과 모순되는 질문("그대도 오래 계셨다면") 방지 (명시적 주입, LLM 원칙 1)
-    if (!isHub && ctx.playerDisclosures && ctx.playerDisclosures.length > 0) {
-      factsParts.push(
-        [
-          `[플레이어가 이미 밝힌 자기 정보 — 근처 NPC는 들어서 알고 있음]`,
-          ...ctx.playerDisclosures.map((d) => `- "${d.text}"`),
-          `NPC는 위 정보와 모순되는 질문이나 가정(예: 신분을 다시 묻기, 이미 밝힌 사실과 반대되는 전제)을 하지 않습니다.`,
-        ].join('\n'),
-      );
-    }
-
-    // toneHint
-    factsParts.push(`[분위기] ${sr.ui.toneHint}`);
-
-    // 감각 순환 시스템 폐기됨 — NanoDirector가 avoid로 반복 억제
 
     // Phase 3: NPC 주입 (Step 5) — 소개 상태 반영
     if (ctx.npcInjection) {
@@ -1393,6 +1258,161 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * 턴 결과 블록 — 상황 요약/판정 결과+행동 조합/이번 턴 사건(UI 필터)/
+   * 장소 도착 디렉티브/플레이어 자기 정보/분위기 톤 힌트.
+   * arch/77 P1.16 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildTurnOutcomeBlocks(
+    ctx: LlmContext,
+    sr: ServerResultV1,
+    inputType: string,
+    isHub: boolean,
+  ): string[] {
+    const factsParts: string[] = [];
+    // summary.short — A52 후보 1: 빈 본문 가드 (헤더만 출력 방지)
+    if (sr.summary?.short && sr.summary.short.trim().length > 0) {
+      factsParts.push(`[상황 요약]\n${sr.summary.short}`);
+    }
+
+    // 판정 결과 — 해당 턴의 판정+행동 조합만 동적 주입 (system에서 전체 매트릭스 제거)
+    if (sr.ui?.resolveOutcome) {
+      const actionType = (sr.ui as Record<string, unknown>)?.actionContext
+        ? ((
+            (sr.ui as Record<string, unknown>).actionContext as Record<
+              string,
+              unknown
+            >
+          )?.intentActionType as string)
+        : '';
+      const outcome = sr.ui.resolveOutcome as string;
+
+      // 행동별 판정 결과 매트릭스 (해당 조합만 전달)
+      const MATRIX: Record<string, Record<string, string>> = {
+        SUCCESS: {
+          TALK: 'NPC가 충분한 정보를 제공하거나 협조한다. 자신감 있고 역동적으로.',
+          PERSUADE:
+            'NPC가 충분한 정보를 제공하거나 협조한다. 자신감 있고 역동적으로.',
+          BRIBE: 'NPC가 완전히 협조한다.',
+          THREATEN: 'NPC가 굴복한다. 시선을 피하고, 짧고 끊긴 문장으로 복종.',
+          SNEAK: '완벽한 은신 성공.',
+          STEAL: '성공적 탈취.',
+          FIGHT: '제압 성공.',
+          INVESTIGATE: '핵심 단서 발견.',
+          OBSERVE: '핵심 정보 포착.',
+          SEARCH: '핵심 단서 발견.',
+          HELP: 'NPC가 감사하며 신뢰를 보인다.',
+          _DEFAULT: '자신감 있고 역동적. NPC는 행동으로 반응한다.',
+        },
+        PARTIAL: {
+          TALK: '일부 정보만 얻고 핵심은 숨겨짐. ⚠️ "성공했다" 금지. 반드시 불이익 1개: NPC가 입을 다물거나, 목격자가 생기거나, 단서를 놓침.',
+          PERSUADE:
+            '일부 정보만 얻고 핵심은 숨겨짐. ⚠️ "성공했다" 금지. 반드시 불이익 1개.',
+          BRIBE:
+            '돈은 받았으나 의심하며 일부만 알려줌. 불이익: 뇌물 사실이 알려질 위험.',
+          THREATEN: 'NPC가 두려워하며 일부만 흘림. 완전한 복종은 아님.',
+          SNEAK: '간신히 숨었으나 흔적을 남김.',
+          STEAL: '일부만 탈취하거나 목격자가 생김.',
+          FIGHT: '상처를 입혔으나 제압 실패.',
+          INVESTIGATE: '모호한 단서만. 핵심은 놓침.',
+          OBSERVE: '일부만 포착. 핵심은 놓침.',
+          SEARCH: '모호한 단서만.',
+          HELP: '도움은 됐으나 불충분.',
+          _DEFAULT:
+            '⚠️ "성공했다" 금지. ① 행동 시도 → ② 부분 성과 → ③ 명확한 불이익 1가지.',
+        },
+        FAIL: {
+          TALK: 'NPC가 침묵하거나 거부한다. 정보 0.',
+          PERSUADE: 'NPC가 침묵하거나 거부한다. 정보 0.',
+          BRIBE: '돈을 거절하고 의심한다.',
+          THREATEN: 'NPC가 무시하거나 적대적으로 대항한다.',
+          SNEAK: '발각됨.',
+          STEAL: '현장에서 잡힘.',
+          FIGHT: '반격당함.',
+          INVESTIGATE: '아무것도 못 찾음.',
+          OBSERVE: '아무것도 포착 못함.',
+          SEARCH: '아무것도 못 찾음.',
+          HELP: '상황이 악화되거나 거부당함.',
+          _DEFAULT:
+            '⚠️ 실패. NPC가 정보를 주지 않는다. 경고/암시/힌트도 금지. "거의 성공할 뻔했다" 금지.',
+        },
+      };
+
+      const outcomeMap = MATRIX[outcome];
+      if (outcomeMap) {
+        const specific = outcomeMap[actionType] ?? outcomeMap._DEFAULT ?? '';
+        factsParts.push(`⚠️ [이번 턴 판정: ${outcome}]\n${specific}`);
+
+        // 판정별 서술 예시 동적 삽입 (시스템 프롬프트에서 제거됨)
+        const EXAMPLES: Record<string, Record<string, string>> = {
+          TALK: {
+            PARTIAL:
+              '예시: 노부인이 당신을 올려다보았다. "무엇을 찾으시오?" 시장 분위기를 묻자 그녀의 표정이 굳었다. "이 할미는 약초만 팔 뿐이오." 대화는 거기서 끊겼다. 그러나 그녀의 시선이 골목 한쪽을 스쳤다.',
+            SUCCESS:
+              '예시: 노부인이 고개를 끄덕이며 목소리를 낮추었다. "부두 쪽 3번 창고에서 밤마다 불빛이 새어 나온다오." 그녀의 눈빛은 진지했다.',
+            FAIL: '예시: 노부인이 고개를 돌렸다. 약초 다발을 집어 들며 당신을 무시했다. 대화의 문이 닫혔다.',
+          },
+          SNEAK: {
+            SUCCESS:
+              '예시: 그림자 속으로 미끄러지듯 이동했다. 발소리 하나 없이 천막 사이를 빠져나갔다.',
+            FAIL: '예시: 발끝이 빈 상자를 스치며 날카로운 소리가 울렸다. 건너편에서 경비병이 고개를 돌렸다.',
+          },
+          INVESTIGATE: {
+            SUCCESS:
+              '예시: 상자 틈새에서 희미한 잉크 자국이 묻은 종이 조각을 발견했다. 글씨는 반쯤 지워져 있었지만 핵심 단어는 읽을 수 있었다.',
+            FAIL: '예시: 상자를 뒤졌으나 먼지와 거미줄만 손에 묻었다. 아무것도 찾지 못했다.',
+          },
+        };
+        const exMap = EXAMPLES[actionType];
+        if (exMap) {
+          const ex = exMap[outcome] ?? Object.values(exMap)[0];
+          if (ex) factsParts.push(`[서술 참고]\n${ex}`);
+        }
+      }
+    }
+
+    // events (UI kind는 필터링 — 정본: CLAUDE.md Event kind UI 필터링 대상)
+    const filteredEvents = sr.events.filter((e) => e.kind !== 'UI');
+    if (filteredEvents.length > 0) {
+      const eventTexts = filteredEvents.map((e) => `- [${e.kind}] ${e.text}`);
+      factsParts.push(`[이번 턴 사건]\n${eventTexts.join('\n')}`);
+    }
+
+    // 장소 도착 턴: NPC 대사 금지 (환경 묘사만)
+    // 3-B (arch/68 후속, 2026-07-12): ACTION "다른 장소로 이동한다"
+    // (MOVE_LOCATION) 도착 턴이 inputType==='SYSTEM' 한정에 걸리지 않아
+    // LLM이 즉흥 환영 인사를 지어내고 화자 미배정 → 무명 마커가 되던 구멍.
+    // MOVE 이벤트가 실린 이동 전용 턴이면 입력 타입 무관 도착 디렉티브 적용.
+    const hasMoveEvent = filteredEvents.some((e) => e.kind === 'MOVE');
+    const isMoveOnly =
+      filteredEvents.length > 0 &&
+      filteredEvents.every((e) => e.kind === 'MOVE' || e.kind === 'SYSTEM') &&
+      (inputType === 'SYSTEM' || hasMoveEvent);
+    if (isMoveOnly) {
+      factsParts.push(
+        '⚠️ 이것은 **새 장소 도착** 장면입니다. 직전 턴까지 함께 있던 인물들은 이전 장소에 남았습니다 — 이 장면에 등장·언급시키지 마세요 (배경 활동 포함). NPC가 먼저 대화를 시작하지 마세요. 이 장소의 환경 묘사와 분위기만 서술하고, 인물은 아래 [등장 가능 NPC 목록]에 있는 이들의 배경 활동(지나가기, 일하기)까지만 허용하며 대사는 금지합니다.',
+      );
+    }
+
+    // 순회 검증 ② (2026-07-12): 플레이어가 밝힌 자기 정보 — NPC가 이미 들은
+    // 내용과 모순되는 질문("그대도 오래 계셨다면") 방지 (명시적 주입, LLM 원칙 1)
+    if (!isHub && ctx.playerDisclosures && ctx.playerDisclosures.length > 0) {
+      factsParts.push(
+        [
+          `[플레이어가 이미 밝힌 자기 정보 — 근처 NPC는 들어서 알고 있음]`,
+          ...ctx.playerDisclosures.map((d) => `- "${d.text}"`),
+          `NPC는 위 정보와 모순되는 질문이나 가정(예: 신분을 다시 묻기, 이미 밝힌 사실과 반대되는 전제)을 하지 않습니다.`,
+        ].join('\n'),
+      );
+    }
+
+    // toneHint
+    factsParts.push(`[분위기] ${sr.ui.toneHint}`);
+
+    // 감각 순환 시스템 폐기됨 — NanoDirector가 avoid로 반복 억제
+    return factsParts;
   }
 
   /**
