@@ -844,33 +844,7 @@ export class PromptBuilderService {
     }
 
     // 이번 턴 서버가 확정한 획득 아이템·골드 (LLM이 구체 아이템 서술할 때 유일한 허용 목록)
-    const acquiredLines: string[] = [];
-    const itemsAdded = sr.diff?.inventory?.itemsAdded ?? [];
-    for (const a of itemsAdded) {
-      const def = this.content.getItem(a.itemId);
-      const name = def?.name ?? a.itemId;
-      acquiredLines.push(`- ${name} × ${a.qty}`);
-    }
-    const equipmentAdded =
-      (
-        sr.diff as {
-          equipmentAdded?: Array<{ displayName: string; baseItemId: string }>;
-        }
-      ).equipmentAdded ?? [];
-    for (const e of equipmentAdded) {
-      acquiredLines.push(`- [장비] ${e.displayName}`);
-    }
-    const goldDelta = sr.diff?.inventory?.goldDelta ?? 0;
-    if (goldDelta > 0) acquiredLines.push(`- ${goldDelta}골드`);
-    if (acquiredLines.length > 0) {
-      memoryParts.push(
-        `[이번 턴 획득 아이템]\n${acquiredLines.join('\n')}\n이 목록에 있는 아이템만 서술에서 "받았다/건넸다/손에 쥐여졌다" 등 구체적 증여 표현을 쓸 수 있습니다. 목록에 없는 아이템은 구체 사물을 건네주는 장면을 만들지 마세요.`,
-      );
-    } else {
-      memoryParts.push(
-        `[이번 턴 획득 아이템]\n없음.\n이번 턴에는 NPC가 구체적 아이템을 건네주는 장면을 서술하지 마세요. 대화·태도 변화로 결과를 표현하세요.`,
-      );
-    }
+    memoryParts.push(this.buildAcquiredItemsBlock(sr));
 
     // L4 확장: Agenda/Arc 진행도
     if (ctx.agendaArc) {
@@ -2888,6 +2862,36 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * [이번 턴 획득 아이템] 블록 — 서버 확정 획득 아이템·장비·골드 목록.
+   * LLM 이 구체 아이템 증여를 서술할 때 유일한 허용 목록(환각 방지). 항상 1개 문자열 반환.
+   * arch/77 P1.1 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildAcquiredItemsBlock(sr: ServerResultV1): string {
+    const acquiredLines: string[] = [];
+    const itemsAdded = sr.diff?.inventory?.itemsAdded ?? [];
+    for (const a of itemsAdded) {
+      const def = this.content.getItem(a.itemId);
+      const name = def?.name ?? a.itemId;
+      acquiredLines.push(`- ${name} × ${a.qty}`);
+    }
+    const equipmentAdded =
+      (
+        sr.diff as {
+          equipmentAdded?: Array<{ displayName: string; baseItemId: string }>;
+        }
+      ).equipmentAdded ?? [];
+    for (const e of equipmentAdded) {
+      acquiredLines.push(`- [장비] ${e.displayName}`);
+    }
+    const goldDelta = sr.diff?.inventory?.goldDelta ?? 0;
+    if (goldDelta > 0) acquiredLines.push(`- ${goldDelta}골드`);
+    if (acquiredLines.length > 0) {
+      return `[이번 턴 획득 아이템]\n${acquiredLines.join('\n')}\n이 목록에 있는 아이템만 서술에서 "받았다/건넸다/손에 쥐여졌다" 등 구체적 증여 표현을 쓸 수 있습니다. 목록에 없는 아이템은 구체 사물을 건네주는 장면을 만들지 마세요.`;
+    }
+    return `[이번 턴 획득 아이템]\n없음.\n이번 턴에는 NPC가 구체적 아이템을 건네주는 장면을 서술하지 마세요. 대화·태도 변화로 결과를 표현하세요.`;
   }
 
   /**
