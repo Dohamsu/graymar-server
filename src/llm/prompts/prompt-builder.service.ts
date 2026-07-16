@@ -1055,33 +1055,7 @@ export class PromptBuilderService {
     //     - focused 블록 = 1인 응답 강제 + 보조 NPC 차단 + recentAuxSpeakers 동적 침묵
     //   focusedNpcId 가 set 되면 단일 응답 강제 라인은 focused 블록이 전담 — lock 에서는 제거.
     if (ctx.conversationLock && !isCombat) {
-      const { npcDisplayName, consecutiveTurns } = ctx.conversationLock;
-      const depth =
-        consecutiveTurns >= 4
-          ? '깊은 신뢰'
-          : consecutiveTurns >= 3
-            ? '점차 마음을 여는'
-            : '경계를 낮추는';
-      const focusedTakesSingleResponseDuty = !!ctx.focusedNpcId;
-      const lockLines = [
-        `[대화 연속 상태]`,
-        `${npcDisplayName}와(과) ${consecutiveTurns}턴째 연속 대화 중입니다.`,
-        `⚠️ 이 NPC는 처음 만난 것처럼 행동하면 안 됩니다. ${depth} 단계의 대화를 이어가세요.`,
-        `- 이전 대화에서 나온 내용을 참조하며 더 깊은 정보/감정을 드러내세요.`,
-        `- "다가와서 경고한다" 같은 첫 만남 패턴 금지. 이미 옆에 서서 대화하는 중입니다.`,
-        // verify57 회귀: NPC가 한 답변 안에서 모순된 사실 표명
-        `- ⚠️ NPC는 한 답변 안에서 자기 모순된 사실을 동시에 말하지 마시오. 예: "본 자가 없다" + "본 자는 입을 다문다" 동시 발언 금지. 한 가지 입장만 선택해서 답하시오.`,
-      ];
-      // focused 블록이 없는 경우(=비사회적 lock 등 엣지)만 lock 이 단일 응답 강제 전담.
-      if (!focusedTakesSingleResponseDuty) {
-        lockLines.push(
-          `⚠️ 단일 NPC 응답 강제 (architecture/51 §B R6): 이 턴은 ${npcDisplayName}만 말합니다.`,
-          `- 다른 NPC(경비, 행인, 점원, 군중, 동료)의 따옴표 대사 절대 금지. 끼어들기 금지.`,
-          `- 주변 인물은 서술(narration)로만 묘사 (예: "옆에서 누군가 지나간다"). 그들의 대사를 따옴표로 쓰지 마세요.`,
-          `- 특히 "이 시간에 무엇을 하고 계십니까?", "두 분의 대화가..." 같은 일반 끼어들기를 매 턴 반복하면 게임이 깨집니다.`,
-        );
-      }
-      factsParts.push(lockLines.join('\n'));
+      factsParts.push(...this.buildConversationLockBlocks(ctx));
     }
     // [arch/76 후속] 전투 장면 서술 초점 — 대화 연속 블록을 게이트한 자리를
     // positive 디렉티브로 대체. 장소 NPC가 아니라 적·전투 동작이 중심.
@@ -2489,6 +2463,47 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * [대화 연속 상태] 블록 — 연속 대화 깊이 가이드 + (focused 부재 시)
+   * 단일 NPC 응답 강제(R6). 호출 게이트(conversationLock && !isCombat)는
+   * 호출부 유지 (전투 턴 제외 — arch/76 후속).
+   * arch/77 P1.9 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildConversationLockBlocks(ctx: LlmContext): string[] {
+    const factsParts: string[] = [];
+    if (!ctx.conversationLock) return factsParts; // 호출 게이트와 이중 방어
+    {
+      const { npcDisplayName, consecutiveTurns } = ctx.conversationLock;
+      const depth =
+        consecutiveTurns >= 4
+          ? '깊은 신뢰'
+          : consecutiveTurns >= 3
+            ? '점차 마음을 여는'
+            : '경계를 낮추는';
+      const focusedTakesSingleResponseDuty = !!ctx.focusedNpcId;
+      const lockLines = [
+        `[대화 연속 상태]`,
+        `${npcDisplayName}와(과) ${consecutiveTurns}턴째 연속 대화 중입니다.`,
+        `⚠️ 이 NPC는 처음 만난 것처럼 행동하면 안 됩니다. ${depth} 단계의 대화를 이어가세요.`,
+        `- 이전 대화에서 나온 내용을 참조하며 더 깊은 정보/감정을 드러내세요.`,
+        `- "다가와서 경고한다" 같은 첫 만남 패턴 금지. 이미 옆에 서서 대화하는 중입니다.`,
+        // verify57 회귀: NPC가 한 답변 안에서 모순된 사실 표명
+        `- ⚠️ NPC는 한 답변 안에서 자기 모순된 사실을 동시에 말하지 마시오. 예: "본 자가 없다" + "본 자는 입을 다문다" 동시 발언 금지. 한 가지 입장만 선택해서 답하시오.`,
+      ];
+      // focused 블록이 없는 경우(=비사회적 lock 등 엣지)만 lock 이 단일 응답 강제 전담.
+      if (!focusedTakesSingleResponseDuty) {
+        lockLines.push(
+          `⚠️ 단일 NPC 응답 강제 (architecture/51 §B R6): 이 턴은 ${npcDisplayName}만 말합니다.`,
+          `- 다른 NPC(경비, 행인, 점원, 군중, 동료)의 따옴표 대사 절대 금지. 끼어들기 금지.`,
+          `- 주변 인물은 서술(narration)로만 묘사 (예: "옆에서 누군가 지나간다"). 그들의 대사를 따옴표로 쓰지 마세요.`,
+          `- 특히 "이 시간에 무엇을 하고 계십니까?", "두 분의 대화가..." 같은 일반 끼어들기를 매 턴 반복하면 게임이 깨집니다.`,
+        );
+      }
+      factsParts.push(lockLines.join('\n'));
+    }
+    return factsParts;
   }
 
   /**
