@@ -1953,40 +1953,7 @@ export class PromptBuilderService {
       ctx.npcPostures &&
       Object.keys(ctx.npcPostures).length > 0
     ) {
-      const sessionTurnsForCounter = ctx.locationSessionTurns ?? [];
-      const introducedNpcIdsForCounter = new Set(ctx.introducedNpcIds ?? []);
-      const npcAppearanceCounts: Record<string, number> = {};
-
-      for (const npcId of Object.keys(ctx.npcPostures)) {
-        const npcDef = this.content.getNpc(npcId);
-        const displayName = npcDef
-          ? introducedNpcIdsForCounter.has(npcId)
-            ? npcDef.name
-            : npcDef.unknownAlias || '낯선 인물'
-          : '낯선 인물';
-        const count = sessionTurnsForCounter.filter((t) =>
-          t.narrative?.includes(displayName),
-        ).length;
-        if (count >= 2) {
-          npcAppearanceCounts[displayName] = count;
-        }
-      }
-
-      if (Object.keys(npcAppearanceCounts).length > 0) {
-        const lines = Object.entries(npcAppearanceCounts).map(
-          ([name, count]) => {
-            if (count === 2)
-              return `- ${name}: 2턴째 대화 → 플레이어 행동에 대한 평가, 자기 입장 표명`;
-            if (count === 3)
-              return `- ${name}: 3턴째 대화 → 자기 사정 토로, 감정 변화(한숨, 자조, 초조), 새로운 화제`;
-            return `- ${name}: ${count}턴째 대화 → 거래 제안, 비밀 암시, 또는 대화 종료 시도. 더 이상 같은 경고를 반복하지 마세요.`;
-          },
-        );
-        factsParts.push(
-          '[NPC 대화 단계]\n이 NPC와 연속 대화 중입니다. 대화 단계에 맞는 반응을 하세요:\n' +
-            lines.join('\n'),
-        );
-      }
+      factsParts.push(...this.buildNpcConversationStageBlocks(ctx));
     }
 
     // === 작업 3: 행동-반응 매핑 강화 — 플레이어 행동 유형별 NPC 반응 가이드 (LOCATION only) ===
@@ -2591,6 +2558,53 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * [NPC 대화 단계] 블록 — 세션 내 NPC 등장 횟수(2턴+)에 따른 단계별 반응
+   * 가이드. 최대 1개 블록 반환 (빈 배열 = 주입 없음). 호출 게이트(!isHub/
+   * !isCombat/npcPostures 존재)는 호출부 유지.
+   * arch/77 P1.7 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildNpcConversationStageBlocks(ctx: LlmContext): string[] {
+    const factsParts: string[] = [];
+    {
+      const sessionTurnsForCounter = ctx.locationSessionTurns ?? [];
+      const introducedNpcIdsForCounter = new Set(ctx.introducedNpcIds ?? []);
+      const npcAppearanceCounts: Record<string, number> = {};
+
+      for (const npcId of Object.keys(ctx.npcPostures)) {
+        const npcDef = this.content.getNpc(npcId);
+        const displayName = npcDef
+          ? introducedNpcIdsForCounter.has(npcId)
+            ? npcDef.name
+            : npcDef.unknownAlias || '낯선 인물'
+          : '낯선 인물';
+        const count = sessionTurnsForCounter.filter((t) =>
+          t.narrative?.includes(displayName),
+        ).length;
+        if (count >= 2) {
+          npcAppearanceCounts[displayName] = count;
+        }
+      }
+
+      if (Object.keys(npcAppearanceCounts).length > 0) {
+        const lines = Object.entries(npcAppearanceCounts).map(
+          ([name, count]) => {
+            if (count === 2)
+              return `- ${name}: 2턴째 대화 → 플레이어 행동에 대한 평가, 자기 입장 표명`;
+            if (count === 3)
+              return `- ${name}: 3턴째 대화 → 자기 사정 토로, 감정 변화(한숨, 자조, 초조), 새로운 화제`;
+            return `- ${name}: ${count}턴째 대화 → 거래 제안, 비밀 암시, 또는 대화 종료 시도. 더 이상 같은 경고를 반복하지 마세요.`;
+          },
+        );
+        factsParts.push(
+          '[NPC 대화 단계]\n이 NPC와 연속 대화 중입니다. 대화 단계에 맞는 반응을 하세요:\n' +
+            lines.join('\n'),
+        );
+      }
+    }
+    return factsParts;
   }
 
   /**
