@@ -99,16 +99,19 @@ export class NanoDirectorService {
         .join('\n');
 
       const lightConfig = this.configService.getLightModelConfig();
-      const result = await this.llmCaller.call({
-        messages: [
-          { role: 'system', content: DIRECTOR_SYSTEM },
-          { role: 'user', content: userMsg },
-        ],
-        maxTokens: 180,
-        temperature: 0.9,
-        model: lightConfig.model,
-        timeoutMs: lightConfig.timeoutMs,
-      }, 'nano-director');
+      const result = await this.llmCaller.call(
+        {
+          messages: [
+            { role: 'system', content: DIRECTOR_SYSTEM },
+            { role: 'user', content: userMsg },
+          ],
+          maxTokens: 180,
+          temperature: 0.9,
+          model: lightConfig.model,
+          timeoutMs: lightConfig.timeoutMs,
+        },
+        'nano-director',
+      );
 
       if (!result.response?.text) {
         return this.buildFallbackHint(previousSenseCategory, resolve);

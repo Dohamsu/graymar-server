@@ -25,9 +25,9 @@ describe('[P2] initPackMeters', () => {
     expect(initPackMeters(undefined)).toEqual({});
   });
   it('초기값 clamp (음수/초과)', () => {
-    expect(
-      initPackMeters([{ id: 'X', name: 'x', initial: 150 }]),
-    ).toEqual({ X: 100 });
+    expect(initPackMeters([{ id: 'X', name: 'x', initial: 150 }])).toEqual({
+      X: 100,
+    });
   });
 });
 

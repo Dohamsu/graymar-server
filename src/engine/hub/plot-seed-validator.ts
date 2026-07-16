@@ -80,9 +80,21 @@ export function validatePlotSeedCore(
   if (!seed.truth?.why?.trim()) v.push('truth.why 비어있음');
   if (!isKnownActor(seed.truth?.culpritNpcId ?? '', ctx)) {
     v.push(`truth.culpritNpcId '${seed.truth?.culpritNpcId}' 코어/동적 아님`);
+  } else if (
+    // 진범도 castingConstraints.forbiddenRoles(CULPRIT)를 존중해야 한다 —
+    // casting뿐 아니라 truth.culprit에도 "이 인물은 배후 아님" 제약을 적용.
+    (ctx.forbiddenRolesByNpc[seed.truth?.culpritNpcId ?? ''] ?? []).includes(
+      'CULPRIT',
+    )
+  ) {
+    v.push(
+      `truth.culpritNpcId '${seed.truth?.culpritNpcId}' 은 CULPRIT 금지 코어 (castingConstraints 위반)`,
+    );
   }
   if (!ctx.validLocationIds.has(seed.truth?.whereLocationId ?? '')) {
-    v.push(`truth.whereLocationId '${seed.truth?.whereLocationId}' 실재 장소 아님`);
+    v.push(
+      `truth.whereLocationId '${seed.truth?.whereLocationId}' 실재 장소 아님`,
+    );
   }
 
   // 3) casting: 대상은 코어만, role 유효, forbiddenRoles 위반 금지
@@ -95,7 +107,9 @@ export function validatePlotSeedCore(
     }
     const forbidden = ctx.forbiddenRolesByNpc[npcId];
     if (forbidden && forbidden.includes(role)) {
-      v.push(`casting '${npcId}' 금지 역할 '${role}' 배정 (castingConstraints 위반)`);
+      v.push(
+        `casting '${npcId}' 금지 역할 '${role}' 배정 (castingConstraints 위반)`,
+      );
     }
   }
 
@@ -143,7 +157,9 @@ export function validatePlotSeedCore(
   // 6) acts: 정확히 3막, no 1/2/3, turnBudget 양수
   const acts = seed.acts ?? [];
   if (acts.length !== PLOT_SEED_LIMITS.ACTS) {
-    v.push(`acts 수 ${acts.length} (정확히 ${PLOT_SEED_LIMITS.ACTS}막 규약 위반)`);
+    v.push(
+      `acts 수 ${acts.length} (정확히 ${PLOT_SEED_LIMITS.ACTS}막 규약 위반)`,
+    );
   }
   for (let i = 0; i < acts.length; i++) {
     if (acts[i].turnBudget <= 0) {

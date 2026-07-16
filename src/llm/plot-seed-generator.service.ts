@@ -7,11 +7,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 
 import { ContentLoaderService } from '../content/content-loader.service.js';
-import type {
-  PlotSeed,
-  PlotRole,
-  KeyFact,
-} from '../db/types/plot-seed.js';
+import type { PlotSeed, PlotRole, KeyFact } from '../db/types/plot-seed.js';
 import {
   validatePlotSeedCore,
   PLOT_SEED_LIMITS,
@@ -97,14 +93,17 @@ export class PlotSeedGeneratorService {
           );
           continue;
         }
-        const seed = this.parseSeed(result.response.text);
-        if (!seed) {
+        const parsed = this.parseSeed(result.response.text);
+        if (!parsed) {
           const t = result.response.text;
           this.logger.warn(
             `[PlotSeed] 파싱 실패 재롤 (attempt=${attempt}) len=${t.length} 끝80="${t.slice(-80)}"`,
           );
           continue;
         }
+        // nano 위반 흡수(P4 비트 정제 철학): motifs 초과 클램프 + casting 금지역할·
+        // 비코어·무효role 제거. 재롤 낭비를 줄이되, 구조 결함은 아래 검증이 잡는다.
+        const seed = sanitizeGeneratedSeed(parsed, valCtx);
         const check = validatePlotSeedCore(seed, valCtx);
         if (check.valid) {
           this.logger.log(
@@ -208,6 +207,42 @@ export class PlotSeedGeneratorService {
   }
 }
 
+const VALID_PLOT_ROLES: ReadonlySet<string> = new Set<PlotRole>([
+  'CLIENT',
+  'CULPRIT',
+  'RED_HERRING',
+  'WITNESS',
+  'ACCOMPLICE',
+  'VICTIM',
+  'BYSTANDER',
+]);
+
+/**
+ * nano 생성 시드 정제(순수) — 구조 결함이 아닌 "초과·위반"만 흡수해 재롤 낭비를
+ * 줄인다. 정제 후에도 통과 못 하는 진짜 결함(장소 실재·keyFacts 수 등)은
+ * validatePlotSeedCore가 잡아 재롤/폴백으로 넘긴다.
+ *  - motifs: 팩 풀 내로 필터 + 최대 개수 클램프
+ *  - casting: 비코어·무효 role·castingConstraints 금지역할 항목 제거
+ */
+export function sanitizeGeneratedSeed(
+  seed: PlotSeed,
+  ctx: PlotSeedValidationContext,
+): PlotSeed {
+  const motifs = (seed.motifs ?? [])
+    .filter((m) => ctx.motifPool.has(m))
+    .slice(0, PLOT_SEED_LIMITS.MOTIFS_MAX);
+
+  const casting: Record<string, PlotRole> = {};
+  for (const [npcId, role] of Object.entries(seed.casting ?? {})) {
+    if (!ctx.coreNpcIds.has(npcId)) continue;
+    if (!VALID_PLOT_ROLES.has(role)) continue;
+    if ((ctx.forbiddenRolesByNpc[npcId] ?? []).includes(role)) continue;
+    casting[npcId] = role;
+  }
+
+  return { ...seed, motifs, casting };
+}
+
 /**
  * 결정론적 폴백 Plot Seed — nano 없이 항상 validatePlotSeedCore를 통과하는 최소
  * 시드. 순수 함수(테스트). 재료가 최소 요건을 충족하면 유효 시드를 보장한다.
@@ -219,14 +254,18 @@ export function buildFallbackPlotSeed(inputs: PlotGenInputs): PlotSeed {
 
   // 진범: CULPRIT 금지가 아닌 첫 코어 (없으면 동적 stub)
   const culprit =
-    inputs.coreNpcs.find(
-      (c) => !(c.forbiddenRoles ?? []).includes('CULPRIT'),
-    )?.npcId ??
+    inputs.coreNpcs.find((c) => !(c.forbiddenRoles ?? []).includes('CULPRIT'))
+      ?.npcId ??
     coreIds[0] ??
     'NPC_DYN_1';
 
   // casting: 진범=CULPRIT, 나머지 코어에 CLIENT→RED_HERRING→WITNESS→BYSTANDER 순환
-  const otherRoles: PlotRole[] = ['CLIENT', 'RED_HERRING', 'WITNESS', 'BYSTANDER'];
+  const otherRoles: PlotRole[] = [
+    'CLIENT',
+    'RED_HERRING',
+    'WITNESS',
+    'BYSTANDER',
+  ];
   const casting: Record<string, PlotRole> = {};
   let ri = 0;
   for (const id of coreIds) {

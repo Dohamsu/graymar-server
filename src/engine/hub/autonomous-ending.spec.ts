@@ -11,7 +11,12 @@ import type { PlotSeed, PlotProgress } from '../../db/types/plot-seed.js';
 function seed(keyFactCount = 9, actsBudget = [8, 12, 8]): PlotSeed {
   return {
     motifs: ['M1', 'M2'],
-    truth: { what: 'x', culpritNpcId: 'NPC_A', why: 'y', whereLocationId: 'L1' },
+    truth: {
+      what: 'x',
+      culpritNpcId: 'NPC_A',
+      why: 'y',
+      whereLocationId: 'L1',
+    },
     casting: {},
     keyFacts: Array.from({ length: keyFactCount }, (_, i) => ({
       factId: `FACT_${i}`,

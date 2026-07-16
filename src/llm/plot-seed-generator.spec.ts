@@ -54,7 +54,11 @@ describe('buildFallbackPlotSeed', () => {
 
   it('모든 코어가 배역을 받고, 모티프·keyFacts·acts 규약을 충족한다', () => {
     const seed = buildFallbackPlotSeed(inputs);
-    expect(Object.keys(seed.casting).sort()).toEqual(['NPC_A', 'NPC_B', 'NPC_C']);
+    expect(Object.keys(seed.casting).sort()).toEqual([
+      'NPC_A',
+      'NPC_B',
+      'NPC_C',
+    ]);
     expect(seed.motifs.length).toBe(2);
     expect(seed.keyFacts.length).toBe(8);
     expect(seed.acts.length).toBe(3);

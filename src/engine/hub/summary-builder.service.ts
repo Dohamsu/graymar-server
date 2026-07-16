@@ -318,7 +318,9 @@ export class SummaryBuilderService {
     const are = this.content.getEndingsData()?.arcRouteEndings as
       | Record<string, Record<string, { title?: string }>>
       | undefined;
-    return are?.[arcRouteKey]?.[stability]?.title ?? NEUTRAL_ARC_TITLE[stability];
+    return (
+      are?.[arcRouteKey]?.[stability]?.title ?? NEUTRAL_ARC_TITLE[stability]
+    );
   }
 
   // ── 3-a. synopsis 조립 ──
@@ -382,7 +384,10 @@ export class SummaryBuilderService {
     const are = this.content.getEndingsData()?.arcRouteEndings as
       | Record<string, Record<string, { closingLine?: string }>>
       | undefined;
-    return are?.[arcRouteKey]?.[stability]?.closingLine ?? NEUTRAL_ARC_CLOSING[stability];
+    return (
+      are?.[arcRouteKey]?.[stability]?.closingLine ??
+      NEUTRAL_ARC_CLOSING[stability]
+    );
   }
 
   private buildJourneySentence(dominantVectors: string[]): string | null {

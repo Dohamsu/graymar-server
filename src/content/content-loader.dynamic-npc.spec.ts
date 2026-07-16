@@ -6,10 +6,7 @@
 // 합집합이 증명되면 마커/자기소개/반응 디렉터 경로도 전이적으로 커버된다.
 
 import { ContentLoaderService } from './content-loader.service.js';
-import {
-  runWithDynamicNpcs,
-  type DynamicNpcStub,
-} from './scenario-context.js';
+import { runWithDynamicNpcs, type DynamicNpcStub } from './scenario-context.js';
 
 describe('[P0] Dynamic NPC 해석 심 (architecture/75 §4.2)', () => {
   let loader: ContentLoaderService;
@@ -79,9 +76,9 @@ describe('[P0] Dynamic NPC 해석 심 (architecture/75 §4.2)', () => {
 
   it('컨텍스트 격리: 컨텍스트 밖에서는 동적 NPC 미노출', () => {
     expect(loader.getNpc('NPC_DYN_TEST_1')).toBeUndefined();
-    expect(
-      loader.getAllNpcs().some((n) => n.npcId === 'NPC_DYN_TEST_1'),
-    ).toBe(false);
+    expect(loader.getAllNpcs().some((n) => n.npcId === 'NPC_DYN_TEST_1')).toBe(
+      false,
+    );
   });
 
   it('무회귀: 콘텐츠 NPC는 동적 컨텍스트 안에서도 팩 원본 반환', () => {

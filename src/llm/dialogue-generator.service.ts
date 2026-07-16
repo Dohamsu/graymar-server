@@ -356,16 +356,19 @@ export class DialogueGeneratorService {
       process.env.LLM_DIALOGUE_MODEL ??
       process.env.LLM_ALTERNATE_MODEL ??
       this.configService.getLightModelConfig().model;
-    const result = await this.llmCaller.call({
-      messages: [
-        { role: 'system', content: DIALOGUE_SYSTEM },
-        { role: 'user', content: userMsg },
-      ],
-      maxTokens: 100,
-      temperature: 0.8,
-      model: dialogueModel,
-      timeoutMs: 10000, // nano 감사 1번 — 26B 대사 생성 상한 (전역 60초 대체)
-    }, 'dialogue');
+    const result = await this.llmCaller.call(
+      {
+        messages: [
+          { role: 'system', content: DIALOGUE_SYSTEM },
+          { role: 'user', content: userMsg },
+        ],
+        maxTokens: 100,
+        temperature: 0.8,
+        model: dialogueModel,
+        timeoutMs: 10000, // nano 감사 1번 — 26B 대사 생성 상한 (전역 60초 대체)
+      },
+      'dialogue',
+    );
 
     if (!result.success || !result.response?.text) {
       return this.buildFallback(input);
@@ -492,23 +495,26 @@ export class DialogueGeneratorService {
     ].join('\n');
 
     for (let attempt = 0; attempt < 2; attempt++) {
-      const result = await this.llmCaller.call({
-        messages: [
-          { role: 'system', content: DIALOGUE_SYSTEM },
-          {
-            role: 'user',
-            content:
-              attempt === 0
-                ? userMsg
-                : userMsg +
-                  `\n\n⚠️ 이전 출력에 실명 "${name}"이 없거나 어체가 틀렸습니다. 두 조건을 반드시 지키세요.`,
-          },
-        ],
-        maxTokens: 120,
-        temperature: 0.7,
-        model: dialogueModel,
-        timeoutMs: 10000, // nano 감사 1번 — 26B 대사 생성 상한 (전역 60초 대체)
-      }, 'dialogue');
+      const result = await this.llmCaller.call(
+        {
+          messages: [
+            { role: 'system', content: DIALOGUE_SYSTEM },
+            {
+              role: 'user',
+              content:
+                attempt === 0
+                  ? userMsg
+                  : userMsg +
+                    `\n\n⚠️ 이전 출력에 실명 "${name}"이 없거나 어체가 틀렸습니다. 두 조건을 반드시 지키세요.`,
+            },
+          ],
+          maxTokens: 120,
+          temperature: 0.7,
+          model: dialogueModel,
+          timeoutMs: 10000, // nano 감사 1번 — 26B 대사 생성 상한 (전역 60초 대체)
+        },
+        'dialogue',
+      );
       if (result.success && result.response?.text) {
         const d = result.response.text
           .trim()

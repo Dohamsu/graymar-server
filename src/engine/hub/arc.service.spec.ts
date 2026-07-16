@@ -17,8 +17,14 @@ describe('ArcService.checkUnlockConditions (pack-driven)', () => {
 
   // graymar scenario.json arcRoutes 미러
   const GRAYMAR_ROUTES: ArcRouteUnlockDef[] = [
-    { id: 'EXPOSE_CORRUPTION', unlock: { field: 'hubHeat', op: 'gte', value: 40 } },
-    { id: 'PROFIT_FROM_CHAOS', unlock: { field: 'tension', op: 'gte', value: 5 } },
+    {
+      id: 'EXPOSE_CORRUPTION',
+      unlock: { field: 'hubHeat', op: 'gte', value: 40 },
+    },
+    {
+      id: 'PROFIT_FROM_CHAOS',
+      unlock: { field: 'tension', op: 'gte', value: 5 },
+    },
     { id: 'ALLY_GUARD', unlock: { field: 'flags.guard_trust', op: 'truthy' } },
   ];
 
@@ -28,23 +34,26 @@ describe('ArcService.checkUnlockConditions (pack-driven)', () => {
   });
 
   it('hubHeat 40+ → EXPOSE_CORRUPTION (gte)', () => {
-    expect(svc.checkUnlockConditions(ws({ hubHeat: 40 }), GRAYMAR_ROUTES)).toContain(
-      'EXPOSE_CORRUPTION',
-    );
+    expect(
+      svc.checkUnlockConditions(ws({ hubHeat: 40 }), GRAYMAR_ROUTES),
+    ).toContain('EXPOSE_CORRUPTION');
     expect(
       svc.checkUnlockConditions(ws({ hubHeat: 39 }), GRAYMAR_ROUTES),
     ).not.toContain('EXPOSE_CORRUPTION');
   });
 
   it('tension 5+ → PROFIT_FROM_CHAOS (gte)', () => {
-    expect(svc.checkUnlockConditions(ws({ tension: 5 }), GRAYMAR_ROUTES)).toContain(
-      'PROFIT_FROM_CHAOS',
-    );
+    expect(
+      svc.checkUnlockConditions(ws({ tension: 5 }), GRAYMAR_ROUTES),
+    ).toContain('PROFIT_FROM_CHAOS');
   });
 
   it('flags.guard_trust truthy → ALLY_GUARD (점표기 field + truthy op)', () => {
     expect(
-      svc.checkUnlockConditions(ws({ flags: { guard_trust: true } }), GRAYMAR_ROUTES),
+      svc.checkUnlockConditions(
+        ws({ flags: { guard_trust: true } }),
+        GRAYMAR_ROUTES,
+      ),
     ).toContain('ALLY_GUARD');
     expect(
       svc.checkUnlockConditions(ws({ flags: {} }), GRAYMAR_ROUTES),

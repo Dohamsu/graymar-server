@@ -105,16 +105,19 @@ export class ChallengeClassifierService {
       const userMsg = this.buildUserMessage(ctx);
       const lightConfig = this.configService.getLightModelConfig();
 
-      const result = await this.llmCaller.call({
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMsg },
-        ],
-        maxTokens: 50,
-        temperature: 0.2,
-        model: lightConfig.model,
-        timeoutMs: lightConfig.timeoutMs,
-      }, 'challenge-classifier');
+      const result = await this.llmCaller.call(
+        {
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userMsg },
+          ],
+          maxTokens: 50,
+          temperature: 0.2,
+          model: lightConfig.model,
+          timeoutMs: lightConfig.timeoutMs,
+        },
+        'challenge-classifier',
+      );
 
       if (!result.success || !result.response?.text) {
         return {

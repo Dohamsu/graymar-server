@@ -78,6 +78,14 @@ describe('validatePlotSeedCore', () => {
     expect(validatePlotSeedCore(s, ctx).valid).toBe(true);
   });
 
+  it('진범이 CULPRIT 금지 코어(castingConstraints) → invalid', () => {
+    const s = validSeed();
+    s.truth.culpritNpcId = 'NPC_A'; // ctx: NPC_A는 CULPRIT 금지
+    delete s.casting['NPC_A'];
+    const r = validatePlotSeedCore(s, ctx);
+    expect(r.violations.some((x) => x.includes('CULPRIT 금지'))).toBe(true);
+  });
+
   it('castingConstraints 금지 역할 위반 → invalid', () => {
     const s = validSeed();
     s.casting = { NPC_A: 'CULPRIT', NPC_B: 'CLIENT', NPC_C: 'WITNESS' }; // NPC_A 진범 금지

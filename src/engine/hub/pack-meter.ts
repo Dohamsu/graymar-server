@@ -29,14 +29,13 @@ export function buildPackMetersUI(
     name: d.name,
     value: current?.[d.id] ?? clamp(d.initial ?? 0),
     max: 100,
-    warnAt: d.thresholds && d.thresholds.length > 0 ? d.thresholds[0].at : undefined,
+    warnAt:
+      d.thresholds && d.thresholds.length > 0 ? d.thresholds[0].at : undefined,
   }));
 }
 
 /** 팩 미터 초기값 맵 생성 (createRun). 미선언 시 빈 객체. */
-export function initPackMeters(
-  defs?: PackMeterDef[],
-): Record<string, number> {
+export function initPackMeters(defs?: PackMeterDef[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const d of defs ?? []) out[d.id] = clamp(d.initial ?? 0);
   return out;

@@ -196,7 +196,10 @@ export class LlmCallerService {
 
     if (hasStream(primary)) {
       try {
-        for await (const chunk of primary.generateStream(request, actualModel)) {
+        for await (const chunk of primary.generateStream(
+          request,
+          actualModel,
+        )) {
           if (chunk.type === 'done') {
             this.record(chunk.response, primary.name, 1, stage);
           }

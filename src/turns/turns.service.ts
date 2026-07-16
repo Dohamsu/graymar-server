@@ -1605,7 +1605,8 @@ export class TurnsService {
         runState.plotProgress?.lastAdoptedBeatTurn ?? 0;
       const beatForceWindow =
         beatAvailable &&
-        turnNo - lastAdoptedBeatTurn >= AUTONOMOUS_BALANCE.BEAT_FORCE_AFTER_TURNS;
+        turnNo - lastAdoptedBeatTurn >=
+          AUTONOMOUS_BALANCE.BEAT_FORCE_AFTER_TURNS;
 
       // ── Player-First 턴 모드 결정 ──
       const turnMode = this.determineTurnMode({
@@ -5031,7 +5032,7 @@ export class TurnsService {
       this.content.getNarrativeMode() === 'AUTONOMOUS' &&
       updatedRunState.plotSeed
     ) {
-      const meters = (endWs.packMeters ?? {}) as Record<string, number>;
+      const meters = endWs.packMeters ?? {};
       const meterDefs = this.content.getScenarioMeta()?.meters ?? [];
       const gaugeCritical = meterDefs.some((d) =>
         (d.thresholds ?? []).some(
@@ -5192,9 +5193,7 @@ export class TurnsService {
       );
       const endingResult = this.endingGenerator.generateEnding(
         endingInput,
-        endReason as Parameters<
-          EndingGeneratorService['generateEnding']
-        >[1],
+        endReason as Parameters<EndingGeneratorService['generateEnding']>[1],
         turnNo,
       );
 
