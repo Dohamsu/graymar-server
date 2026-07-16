@@ -182,7 +182,14 @@ export class EndingGeneratorService {
    */
   generateEnding(
     input: EndingInput,
-    endingReason: 'ALL_RESOLVED' | 'DEADLINE' | 'PLAYER_CHOICE' | 'DEFEAT',
+    endingReason:
+      | 'ALL_RESOLVED'
+      | 'DEADLINE'
+      | 'PLAYER_CHOICE'
+      | 'DEFEAT'
+      // [P5 — 75 §6] AUTONOMOUS 종결 사유 (규명율 톤은 turns.service가 오버레이)
+      | 'AUTONOMOUS_ACTS'
+      | 'AUTONOMOUS_GAUGE',
     totalTurns: number,
   ): EndingResult {
     const endingsData = this.content.getEndingsData();

@@ -336,6 +336,12 @@ import {
   getUndiscoveredKeyFacts,
   selectBeatForAdoption,
 } from '../engine/hub/beat-gravity.js';
+import {
+  checkAutonomousEnding,
+  computeClearanceRate,
+  clearanceBand,
+  selectEndingTone,
+} from '../engine/hub/autonomous-ending.js';
 import { registerDynamicNpc } from '../content/dynamic-npc.js';
 import { extractKoreanKeywords } from '../common/text-utils.js';
 import {
@@ -5006,7 +5012,7 @@ export class TurnsService {
 
     // === Narrative Engine v1: Ending 조건 체크 ===
     const endWs = postTickRunState.worldState!;
-    const { shouldEnd, reason: endReason } =
+    let { shouldEnd, reason: endReason } =
       this.endingGenerator.checkEndingConditions(
         endWs.activeIncidents ?? [],
         endWs.mainArcClock ?? {
@@ -5017,6 +5023,39 @@ export class TurnsService {
         endWs.day ?? 1,
         turnNo,
       );
+    // [P5 — 75 §6] AUTONOMOUS 팩: 종결 축이 다르다(acts 소진·게이지 임계·규명율).
+    // Incident 기반 판정을 규명율 기반으로 대체. AUTHORED 팩은 위 결과 유지.
+    let autonomousClearance: number | null = null;
+    let autonomousGaugeEnd = false;
+    if (
+      this.content.getNarrativeMode() === 'AUTONOMOUS' &&
+      updatedRunState.plotSeed
+    ) {
+      const meters = (endWs.packMeters ?? {}) as Record<string, number>;
+      const meterDefs = this.content.getScenarioMeta()?.meters ?? [];
+      const gaugeCritical = meterDefs.some((d) =>
+        (d.thresholds ?? []).some(
+          (t) => t.endingTrigger && (meters[d.id] ?? 0) >= t.at,
+        ),
+      );
+      const autoEnd = checkAutonomousEnding({
+        seed: updatedRunState.plotSeed,
+        totalTurns: turnNo,
+        gaugeCritical,
+      });
+      shouldEnd = autoEnd.shouldEnd;
+      endReason = autoEnd.reason as unknown as typeof endReason;
+      autonomousGaugeEnd = autoEnd.reason === 'AUTONOMOUS_GAUGE';
+      if (shouldEnd) {
+        autonomousClearance = computeClearanceRate(
+          updatedRunState.plotSeed,
+          updatedRunState.plotProgress,
+        );
+        this.logger.log(
+          `[PlotEnding] AUTONOMOUS 종결 reason=${autoEnd.reason} 규명율=${(autonomousClearance * 100).toFixed(0)}% (${updatedRunState.plotProgress?.discoveredKeyFactIds?.length ?? 0}/${updatedRunState.plotSeed.keyFacts.length}) turn=${turnNo}`,
+        );
+      }
+    }
 
     // === Structured Memory v2: 실시간 수집 ===
     try {
@@ -5153,9 +5192,30 @@ export class TurnsService {
       );
       const endingResult = this.endingGenerator.generateEnding(
         endingInput,
-        endReason,
+        endReason as Parameters<
+          EndingGeneratorService['generateEnding']
+        >[1],
         turnNo,
       );
+
+      // [P5 — 75 §6] AUTONOMOUS: 규명율×게이지 → endingTone 오버레이.
+      // truth 불변(신규 불변식 A) — 엔딩은 "얼마나 규명했나"만 반영, 진상은 안 바꾼다.
+      if (autonomousClearance !== null && updatedRunState.plotSeed) {
+        const band = clearanceBand(autonomousClearance);
+        const tone = selectEndingTone(
+          band,
+          autonomousGaugeEnd,
+          this.content.getScenarioMeta()?.endingTones,
+        );
+        const er = endingResult as unknown as Record<string, unknown>;
+        er.endingType = tone.endingType;
+        er.closingLine = tone.tone;
+        er.clearanceRate = autonomousClearance;
+        er.clearanceBand = band;
+        this.logger.log(
+          `[PlotEnding] endingTone=${tone.endingType} band=${band} gaugeEnd=${autonomousGaugeEnd}`,
+        );
+      }
 
       // 엔딩 결과를 UI + 이벤트에 노출 (commitTurnRecord 이전에 수행)
       (result.ui as any).endingResult = endingResult;

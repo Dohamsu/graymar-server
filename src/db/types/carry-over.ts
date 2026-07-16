@@ -205,6 +205,12 @@ export interface ScenarioMeta {
    */
   narrativeMode?: import('./enums.js').NarrativeMode;
   /**
+   * [75 §6 P5] 규명율×게이지 → 엔딩 톤 매트릭스. AUTONOMOUS 종결 시 규명율 구간
+   * (HIGH/MID/LOW) 톤 선택, 게이지 임계 종결이면 gaugeCollapse 오버레이.
+   * 미선언 시 팩 중립 fallback(autonomous-ending.NEUTRAL_TONE).
+   */
+  endingTones?: import('../../engine/hub/autonomous-ending.js').EndingTonesConfig;
+  /**
    * [75 §2/§3] 사건 모티프 풀(8~12개) — Plot Seed 진상 생성의 조합 재료.
    * P3 1차는 scenario.json 인라인(P6 팩 저작 시 motifs.json 별도 파일로 승격 —
    * ContentLoader.getMotifs 소스만 교체). AUTONOMOUS 팩 필수.
