@@ -183,7 +183,6 @@ export class PromptBuilderService {
       ...this.buildMemoryContextBlocks(ctx, sr, rawInput, inputType, isHub),
     );
 
-
     // L2 확장: NPC 로스터 — buildNpcRosterBlocks로 추출 (arch/77 P1.11).
     // targetNpcIds는 후속 블록(NPC 감정 상태·어체·fact)이 공유하는 상태.
     const rosterResult = this.buildNpcRosterBlocks(ctx, sr, rawInput, isHub);
@@ -554,10 +553,7 @@ export class PromptBuilderService {
     factsParts.push(...this.buildStyleFocusBlocks(ctx, sr, isQuestionTurn));
 
     // 턴 결과(요약·판정·사건·도착·자기정보·톤) — buildTurnOutcomeBlocks (P1.16)
-    factsParts.push(
-      ...this.buildTurnOutcomeBlocks(ctx, sr, inputType, isHub),
-    );
-
+    factsParts.push(...this.buildTurnOutcomeBlocks(ctx, sr, inputType, isHub));
 
     // Phase 3: NPC 주입 (Step 5) — 소개 상태 반영
     if (ctx.npcInjection) {
@@ -581,7 +577,6 @@ export class PromptBuilderService {
     factsParts.push(
       ...this.buildNpcPostureBlocks(ctx, sr, targetNpcIds, isHub),
     );
-
 
     // === 작업 1: 직전 NPC 발화 — 이어받을 맥락 + 반복 방지 (LOCATION only, 개선 2) ===
     // ⚠️ locationSessionTurns 마지막 entry는 현재 턴(self) — llmOutput이 아직 없을 때

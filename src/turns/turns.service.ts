@@ -306,6 +306,7 @@ import {
   decideAgitatedBehavior,
 } from './npc-agitation.core.js';
 import { computeTacticEffects } from '../engine/combat/combat-tactic.core.js';
+import { mergeInventoryItem } from './run-state-apply.core.js';
 
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { and, asc, eq, ne } from 'drizzle-orm';
@@ -3591,15 +3592,7 @@ export class TurnsService {
 
     // 아이템 보상 반영 (인벤토리에 추가)
     for (const added of locationReward.items) {
-      const existing = updatedRunState.inventory.find(
-        (i) => i.itemId === added.itemId,
-      );
-      if (existing) existing.qty += added.qty;
-      else
-        updatedRunState.inventory.push({
-          itemId: added.itemId,
-          qty: added.qty,
-        });
+      mergeInventoryItem(updatedRunState.inventory, added.itemId, added.qty);
     }
 
     // 이벤트 payload.itemRewards 지급 (대화·상호작용 계열 NPC 선물 등)
@@ -3623,11 +3616,7 @@ export class TurnsService {
             resolveResult.outcome === 'PARTIAL';
       if (!pass) continue;
       const qty = reward.qty ?? 1;
-      const existing = updatedRunState.inventory.find(
-        (i) => i.itemId === reward.itemId,
-      );
-      if (existing) existing.qty += qty;
-      else updatedRunState.inventory.push({ itemId: reward.itemId, qty });
+      mergeInventoryItem(updatedRunState.inventory, reward.itemId, qty);
       // locationReward.items에 병합 → buildLocationResult가 diff.inventory.itemsAdded로 반영
       locationReward.items.push({ itemId: reward.itemId, qty });
     }
@@ -3806,15 +3795,11 @@ export class TurnsService {
                   tags: ['SHOP', 'BUY', 'EQUIPMENT'],
                 });
               } else {
-                const existing = updatedRunState.inventory.find(
-                  (i) => i.itemId === matchedItem.itemId,
+                mergeInventoryItem(
+                  updatedRunState.inventory,
+                  matchedItem.itemId,
+                  1,
                 );
-                if (existing) existing.qty += 1;
-                else
-                  updatedRunState.inventory.push({
-                    itemId: matchedItem.itemId,
-                    qty: 1,
-                  });
                 shopActionEvents.push({
                   id: `shop_buy_${turnNo}`,
                   kind: 'GOLD',
@@ -5534,6 +5519,8 @@ export class TurnsService {
     const updatedRunState: RunState = { ...runState };
 
     // NodeResolver로 노드 처리
+    // ⚠️ [DAG 노드 경로] — 아래 COMBAT 경로(handleCombatTurn)에 유사 블록이
+    // 하나 더 있다. 편집 전 어느 경로인지 확인할 것 (arch/77 P3.X 오배치 방지).
     const resolveResult = this.nodeResolver.resolve({
       turnNo,
       nodeId: currentNode.id,
@@ -5579,15 +5566,7 @@ export class TurnsService {
     }
     if (resolveResult.itemsBought) {
       for (const item of resolveResult.itemsBought) {
-        const existing = updatedRunState.inventory.find(
-          (i) => i.itemId === item.itemId,
-        );
-        if (existing) existing.qty += item.qty;
-        else
-          updatedRunState.inventory.push({
-            itemId: item.itemId,
-            qty: item.qty,
-          });
+        mergeInventoryItem(updatedRunState.inventory, item.itemId, item.qty);
       }
     }
 
@@ -5941,6 +5920,8 @@ export class TurnsService {
       }
     }
 
+    // ⚠️ [COMBAT 경로] — 위 DAG 노드 경로(handleDagNodeTurn)에 유사 블록이
+    // 하나 더 있다. 편집 전 어느 경로인지 확인할 것 (arch/77 P3.X 오배치 방지).
     const resolveResult = this.nodeResolver.resolve({
       turnNo,
       nodeId: currentNode.id,
@@ -5995,15 +5976,7 @@ export class TurnsService {
     }
     for (const added of resolveResult.serverResult.diff.inventory.itemsAdded ??
       []) {
-      const existing = updatedRunState.inventory.find(
-        (i) => i.itemId === added.itemId,
-      );
-      if (existing) existing.qty += added.qty;
-      else
-        updatedRunState.inventory.push({
-          itemId: added.itemId,
-          qty: added.qty,
-        });
+      mergeInventoryItem(updatedRunState.inventory, added.itemId, added.qty);
     }
 
     // Phase 4a: 전투 승리 시 장비 드랍
