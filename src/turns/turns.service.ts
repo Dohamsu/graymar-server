@@ -2615,6 +2615,29 @@ export class TurnsService {
       ws = { ...ws, combatWindowCount: ws.combatWindowCount + 1 };
       updatedRunState.worldState = ws;
 
+      // [arch/76 후속] 전투 전이 턴도 행동 이력에 기록 — 조기 커밋이 정상
+      // 기록 지점(이 분기 아래쪽)을 건너뛰어 FIGHT 턴이 이력에서 빠지고,
+      // 대화 잠금이 직전 TALK 기준으로 오산출되던 버그 (전투 중 장소 NPC가
+      // 유일 화자로 강제되던 FEINT 오웬 등판 실측, 2026-07-16).
+      updatedRunState.actionHistory = [
+        ...actionHistory,
+        {
+          turnNo,
+          actionType: intent.actionType,
+          secondaryActionType: intent.secondaryActionType,
+          suppressedActionType: intent.suppressedActionType,
+          inputText: rawInput,
+          eventId: event.eventId,
+          choiceId:
+            body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
+          primaryNpcId:
+            ((event.payload as Record<string, unknown>)?.primaryNpcId as
+              | string
+              | undefined) ?? undefined,
+          resolveOutcome: resolveResult.outcome,
+        },
+      ].slice(-10);
+
       const combatSceneFrame = resolveNpcPlaceholders(
         event.payload.sceneFrame,
         runState.npcStates ?? {},
@@ -4702,6 +4725,11 @@ export class TurnsService {
         challengeDecision.plausibility !== 'NORMAL'
           ? { plausibility: challengeDecision.plausibility }
           : {}),
+        // [arch/76 후속] nano가 요약한 행동의 성격 — 어휘 인용 가이드를 대체하는
+        //   의미 단서로 prompt-builder 답변 가이드에 주입 ("주의 돌리기" 등).
+        ...(challengeDecision.source === 'llm' && challengeDecision.reason
+          ? { appraisalNote: challengeDecision.reason }
+          : {}),
         // [arch/76 D3-a] nano가 판단한 물리 흔적 여부 → 워커 흔적 추출 게이트.
         ...(challengeDecision.physicalImpact ? { physicalImpact: true } : {}),
         // BRIBE/TRADE 잔액 부족 클램프 정보 — LLM이 부족분을 서술에 반영 (점검 ③)
@@ -5789,6 +5817,8 @@ export class TurnsService {
     let actionPlan: ActionPlan | undefined;
     let policyResult: 'ALLOW' | 'TRANSFORM' | 'PARTIAL' | 'DENY' = 'ALLOW';
     let transformedIntent: ParsedIntent | undefined;
+    // [arch/76 후속] 기만 전술 의미 단서 — resolve 후 serverResult.ui에 부착
+    let combatAppraisalNote: string | null = null;
 
     if (body.input.type === 'ACTION') {
       parsedIntent = this.ruleParser.parse(rawInput);
@@ -5878,6 +5908,9 @@ export class TurnsService {
           this.logger.log(
             `[CombatTactic] ${appraisal.tactic} flee+${effects.fleeBonus} debuff=${Object.keys(effects.accDebuff).length}적 hit+${effects.playerHitBonus}${effects.reused ? ' (재사용 — 효과 0)' : ''}`,
           );
+          // [arch/76 후속] 의미 단서 — prompt-builder 답변 가이드가 소비하는
+          // appraisalNote(LOCATION nano reason과 동일 채널)에 기만 성격 전달.
+          combatAppraisalNote = `상대를 속이기 위한 ${appraisal.reason || '기만 행동'} — 발화·동작의 내용은 실제가 아니다`;
         }
       }
     }
@@ -5935,6 +5968,19 @@ export class TurnsService {
       nodeState: currentNode.nodeState ?? undefined,
       traitEffects: runState.traitEffects,
     });
+
+    // [arch/76 후속] 기만 전술 의미 단서 → prompt-builder 답변 가이드 채널
+    // (LOCATION nano appraisalNote와 동일 소비처 — ui.actionContext)
+    if (combatAppraisalNote) {
+      const srUi = resolveResult.serverResult as unknown as {
+        ui?: Record<string, unknown>;
+      };
+      srUi.ui = srUi.ui ?? {};
+      srUi.ui.actionContext = {
+        ...((srUi.ui.actionContext as Record<string, unknown>) ?? {}),
+        appraisalNote: combatAppraisalNote,
+      };
+    }
 
     // runState 업데이트
     const updatedRunState: RunState = { ...runState };

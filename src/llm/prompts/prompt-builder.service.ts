@@ -50,81 +50,6 @@ function sanitizeUserInput(text: string): string {
  * architecture/51 §B (R2) — 사용자 입력에서 핵심 명사 추출.
  * NPC 답변에 키워드 인용을 권장하기 위한 Positive framing 데이터.
  */
-const KEYWORD_STOPWORDS = new Set([
-  '안녕',
-  '하시',
-  '하시오',
-  '하세요',
-  '하시는',
-  '있다',
-  '없다',
-  '하다',
-  '되다',
-  '가다',
-  '오다',
-  '보다',
-  '주다',
-  '이다',
-  '있는',
-  '있소',
-  '있어',
-  '있어요',
-  '됩니다',
-  '한다',
-  '하는',
-  '하면',
-  '어떻소',
-  '어떻습',
-  '어떻게',
-  '어떤',
-  '얼마나',
-  '어디',
-  '언제',
-  '왜',
-  '무엇',
-  '오늘',
-  '내일',
-  '어제',
-  '지금',
-  '예전',
-  '뵙소',
-  '드릴',
-  '보시',
-  '주시',
-  '처음',
-  '들었',
-  '들었소',
-  '들었어요',
-  '하시군',
-  '하시는군',
-  '하시는데',
-  '말씀',
-  '말을',
-  '얘기',
-  '이야기',
-  '같소',
-  '같아요',
-  '같다',
-  '같은',
-  '같이',
-  '소이까',
-  '하시오',
-  '들으시',
-  '있으시',
-  '하시면',
-]);
-function extractTopUserKeywords(s: string, max = 3): string[] {
-  if (!s) return [];
-  const matches = (s.match(/[가-힣]{2,}/g) ?? [])
-    .filter((m) => !KEYWORD_STOPWORDS.has(m))
-    .filter((m) => m.length >= 2);
-  const freq = new Map<string, number>();
-  for (const m of matches) freq.set(m, (freq.get(m) ?? 0) + 1);
-  return [...freq.entries()]
-    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
-    .slice(0, max)
-    .map(([w]) => w);
-}
 
 @Injectable()
 export class PromptBuilderService {
@@ -170,6 +95,10 @@ export class PromptBuilderService {
     }
     const messages: LlmMessage[] = [];
     const isHub = sr.node.type === 'HUB';
+    // [arch/76 후속] 전투 턴 — 대화 연속 블록(잠금/이어받기/카운터)을 조립하지
+    // 않는다. 전이 직전 장소 NPC가 "유일 화자"로 강제되어 적 대신 등판하던
+    // 결함 실측 (FEINT 오웬 사례). 서술 초점은 적·전투 동작 디렉티브가 대체.
+    const isCombat = sr.node.type === 'COMBAT';
     // 질문 턴 (개선 3): NPC 첫 대사가 질문의 직접 답으로 시작하도록 강제하고,
     // 질문을 밀어내는 부차 연출(감각 초점, 목격 장면)을 이번 턴 억제한다.
     const isQuestionTurn =
@@ -1294,7 +1223,7 @@ export class PromptBuilderService {
     //     - lock 블록  = 관계 깊이/처음 만남 패턴 금지 (다회 대화 맥락)
     //     - focused 블록 = 1인 응답 강제 + 보조 NPC 차단 + recentAuxSpeakers 동적 침묵
     //   focusedNpcId 가 set 되면 단일 응답 강제 라인은 focused 블록이 전담 — lock 에서는 제거.
-    if (ctx.conversationLock) {
+    if (ctx.conversationLock && !isCombat) {
       const { npcDisplayName, consecutiveTurns } = ctx.conversationLock;
       const depth =
         consecutiveTurns >= 4
@@ -1323,10 +1252,23 @@ export class PromptBuilderService {
       }
       factsParts.push(lockLines.join('\n'));
     }
+    // [arch/76 후속] 전투 장면 서술 초점 — 대화 연속 블록을 게이트한 자리를
+    // positive 디렉티브로 대체. 장소 NPC가 아니라 적·전투 동작이 중심.
+    if (isCombat) {
+      factsParts.push(
+        [
+          `[전투 장면 — 서술 초점]`,
+          `지금은 전투 중입니다. 서술의 중심은 적의 움직임·반응, 플레이어의 전투 동작, 그리고 [이번 턴 사건]의 결과입니다.`,
+          `주변 인물(주인·상인·행인)은 몸을 피하거나 지켜보는 배경 반응으로만 짧게 묘사하세요 — 이들의 따옴표 대사는 금지.`,
+          `적의 짧은 외침·위협은 허용됩니다 (1문장 이내).`,
+        ].join('\n'),
+      );
+    }
+
     // architecture/57: focused 모드 directive — 단일 응답 강제 + 보조 NPC 동적 차단 전담.
     //   lock 과 동시 set 일 때 lock 은 관계 깊이만 다루고, 단일 응답 강제는 focused 가 책임.
     //   recentAuxSpeakers 동적 차단 정보는 focused 만 제공.
-    if (ctx.focusedNpcId) {
+    if (ctx.focusedNpcId && !isCombat) {
       const focusedDef = this.content.getNpc(ctx.focusedNpcId);
       const focusedState = ctx.npcStates?.[ctx.focusedNpcId];
       const focusedDisplay = focusedDef
@@ -1478,14 +1420,22 @@ export class PromptBuilderService {
           `${sanitizeUserInput(rawInput)}`,
           `위 행동의 결과를 서술하세요. 행동 내용을 반복하거나 요약하지 말고, NPC 반응이나 환경 변화부터 바로 시작하세요. 첫 문장은 '당신은/당신이'로 시작하지 마세요.`,
         ];
-        // architecture/51 §B (R2) — 사용자 키워드 응답률 강화.
-        // NPC가 사용자 질문/말의 핵심 단어를 답변에 자연스럽게 인용하도록 Positive framing.
-        const userKeywords = extractTopUserKeywords(rawInput, 3);
-        if (userKeywords.length >= 1) {
-          parts.push(
-            `답변 가이드: 사용자가 언급한 단어 [${userKeywords.join(', ')}] 중 1~2개를 NPC 대사 또는 서술 안에 자연스럽게 인용하시오. 사용자 질문/말의 주제를 답변에서 그대로 반영하세요.`,
-          );
-        }
+        // [arch/76 후속] R2 어휘 인용 가이드 → 의미 단서 교체.
+        // 낱말 리스트는 의미 역할(한 일/거짓 주장/질문 주제)을 구분하지 못해
+        // 플레이어의 거짓 외침 속 단어("운석이 떨어진다")까지 장면에 짜넣도록
+        // 유도했다 (실측 — 가짜 운석이 폭발음·진동으로 실체화). 주제 반영
+        // 지시는 유지하되, 진위·인과의 정본은 사건·판정임을 명시한다.
+        const appraisalNote = (actionCtx as Record<string, unknown> | undefined)
+          ?.appraisalNote as string | undefined;
+        parts.push(
+          [
+            `답변 가이드: 플레이어 입력의 주제를 답변에 그대로 반영하세요.`,
+            appraisalNote ? `이 행동의 성격: ${appraisalNote}.` : '',
+            `입력 속 주장·외침·소문의 내용은 플레이어가 "말한 것"일 뿐, 사실이라는 뜻이 아닙니다. 실제로 일어난 일의 정본은 [이번 턴 사건]과 판정 결과입니다 — 말로만 언급된 현상이 실제로 벌어지는 묘사를 하지 마세요.`,
+          ]
+            .filter(Boolean)
+            .join(' '),
+        );
         // BRIBE/TRADE 잔액 부족 (점검 2026-07-09 ③) — 클램프된 지불액을 서술에 반영.
         // "전액을 건넸다" 서술이 실지급과 어긋나는 것 방지 + NPC가 부족분에 반응.
         const goldShortfallCtx = (
@@ -2182,6 +2132,7 @@ export class PromptBuilderService {
     // 따옴표 추출(반복 금지 negative)은 마커 추출 실패 시의 fallback으로 유지.
     if (
       !isHub &&
+      !isCombat &&
       ctx.locationSessionTurns &&
       ctx.locationSessionTurns.length >= 2
     ) {
@@ -2293,7 +2244,12 @@ export class PromptBuilderService {
     }
 
     // === 작업 2: NPC 대화 턴 카운터 — 연속 대화 단계별 가이드 (LOCATION only) ===
-    if (!isHub && ctx.npcPostures && Object.keys(ctx.npcPostures).length > 0) {
+    if (
+      !isHub &&
+      !isCombat &&
+      ctx.npcPostures &&
+      Object.keys(ctx.npcPostures).length > 0
+    ) {
       const sessionTurnsForCounter = ctx.locationSessionTurns ?? [];
       const introducedNpcIdsForCounter = new Set(ctx.introducedNpcIds ?? []);
       const npcAppearanceCounts: Record<string, number> = {};
