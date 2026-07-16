@@ -577,124 +577,11 @@ export class PromptBuilderService {
       );
     }
 
-    // Phase 3: NPC 대화 자세 (Step 7) — posture + personality 기반 개인화 가이드 — HUB에서는 생략
-    if (!isHub && ctx.npcPostures && Object.keys(ctx.npcPostures).length > 0) {
-      const POSTURE_BASELINE: Record<string, string> = {
-        FRIENDLY:
-          '마음이 열려 있고 상대에게 호감을 느낀다. 대화를 즐기며, 자기 이야기도 기꺼이 꺼낸다. 다만 무조건적인 순종은 아니다 — 자기 선이 있고, 어리석은 부탁은 거절할 수 있다.',
-        CAUTIOUS:
-          '쉽게 믿지 않는다. 속내를 드러내기 전에 상대를 시험하고 떠본다. 말보다 침묵이 많고, 대답할 때도 핵심을 돌려 말한다. 하지만 신뢰를 얻으면 태도가 서서히 달라진다.',
-        HOSTILE:
-          '적의가 있다. 상대의 존재 자체가 불쾌하거나 위협적으로 느껴진다. 대화를 원치 않으며, 응하더라도 짧고 날카롭다. 그러나 적대감 아래에도 이유가 있다 — 두려움, 배신의 기억, 또는 지켜야 할 것.',
-        FEARFUL:
-          '겁을 먹고 있다. 불안이 몸과 목소리에 배어 나온다. 대화를 피하고 싶지만 상황이 허락하지 않을 때, 말이 짧아지거나 엉뚱한 방향으로 튄다. 압박에 약하지만 자존심이 아예 없는 건 아니다.',
-        CALCULATING:
-          '이익을 따진다. 모든 대화에서 자신에게 돌아올 것을 계산하고, 빈손으로 무언가를 내주는 법이 없다. 하지만 계산하는 방식은 다양하다 — 눈앞의 이익, 장기적 관계, 정치적 포석, 또는 자존심.',
-      };
-      const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
+    // NPC 대화 자세 (Step 7) — buildNpcPostureBlocks로 추출 (arch/77 P1.17)
+    factsParts.push(
+      ...this.buildNpcPostureBlocks(ctx, sr, targetNpcIds, isHub),
+    );
 
-      // 이번 턴 등장 NPC만 필터링 (말투 오염 방지)
-      const relevantNpcIds =
-        targetNpcIds.size > 0
-          ? new Set(targetNpcIds)
-          : new Set(Object.keys(ctx.npcPostures)); // fallback: 전체
-
-      // 실제 발화자(primaryNpcId / speakingNpc)를 반드시 포함 — BACKGROUND NPC가
-      // targetNpcIds / npcPostures 에서 제외되어도 어체 규칙을 확보해 오염을 막는다.
-      // BG NPC 는 NPC_LOCATION_AFFINITY 에 미등록이라 postures 계산에서 빠지므로
-      // 발화자 기준으로 강제 추가 + 기본 posture(CAUTIOUS)를 보조 주입한다.
-      const actualSpeaker =
-        (
-          (sr.ui as Record<string, unknown>)?.speakingNpc as
-            | { npcId?: string }
-            | undefined
-        )?.npcId ??
-        (
-          (sr.ui as Record<string, unknown>)?.actionContext as
-            | { primaryNpcId?: string }
-            | undefined
-        )?.primaryNpcId;
-      const speakerExtraPosture: Record<string, string> = {};
-      if (actualSpeaker) {
-        relevantNpcIds.add(actualSpeaker);
-        if (!ctx.npcPostures?.[actualSpeaker]) {
-          speakerExtraPosture[actualSpeaker] = 'CAUTIOUS';
-        }
-      }
-      // 기존 npcPostures 와 발화자 보조 posture 를 합쳐 반복 대상 구성
-      const effectivePostures: Record<string, string> = {
-        ...(ctx.npcPostures ?? {}),
-        ...speakerExtraPosture,
-      };
-      const postureLines = Object.entries(effectivePostures)
-        .filter(([npcId]) => relevantNpcIds.has(npcId))
-        .map(([npcId, posture]) => {
-          const baseline = POSTURE_BASELINE[posture] ?? '';
-          const npcDef = this.content.getNpc(npcId);
-          let displayName: string;
-          if (npcDef) {
-            displayName = introducedNpcIds.has(npcId)
-              ? npcDef.name
-              : npcDef.unknownAlias || '낯선 인물';
-          } else {
-            displayName = '낯선 인물';
-          }
-
-          // personality: 첫 등장 시에만 traits 포함, 이후에는 posture+말투만
-          // 반복 방지: traits를 매 턴 보내면 LLM이 직접 인용하여 반복함
-          const personality = npcDef?.personality;
-          if (personality) {
-            const sessionTurns = ctx.locationSessionTurns ?? [];
-            const isFirstAppearance = !sessionTurns.some((t) =>
-              t.narrative?.includes(displayName),
-            );
-
-            const parts = [`- ${displayName}: ${posture} — ${baseline}`];
-            if (isFirstAppearance && personality.traits?.length) {
-              parts.push(`    성격 특성: ${personality.traits.join(' / ')}`);
-            }
-
-            // 어체(speechRegister) 규칙 — Dual-Track: LLM이 직접 대사 생성하므로 필수
-            // CLAUDE.md LLM 설계 원칙: Positive framing 우선 + 경계 강화. 짧은 경고 외에
-            // 관찰·질문·설명 문형 예시로 확장해 긴 대사도 일관된 어미 유지.
-            const register = (personality as Record<string, unknown>)
-              .speechRegister as string | undefined;
-            parts.push(...buildRegisterLines(register));
-
-            if (personality.speechStyle) {
-              const speechParts = personality.speechStyle
-                .split(/[.。,，]\s*/)
-                .filter((s: string) => s.trim().length > 3);
-              if (speechParts.length > 1) {
-                const turnNo = ctx.locationSessionTurns?.length ?? 0;
-                const rotateIdx = turnNo % speechParts.length;
-                const base = speechParts[0].trim();
-                const emphasis = speechParts[rotateIdx].trim();
-                parts.push(`    말투: ${base}. ⚠️ 이번 턴 강조: ${emphasis}`);
-              } else {
-                parts.push(
-                  `    말투 (이 어조로 새 대사를 만들 것): ${personality.speechStyle}`,
-                );
-              }
-            }
-            return parts.join('\n');
-          }
-          return `- ${displayName}: ${posture} — ${baseline}`;
-        });
-      factsParts.push(
-        [
-          '[NPC 대화 자세]',
-          '이 장소의 NPC들이 보이는 태도입니다. 대사와 행동은 반드시 아래 태도에 맞춰 서술하세요.',
-          '⚠️ 태도에 맞지 않는 행동(CAUTIOUS NPC의 자발적 정보 제공, HOSTILE NPC의 호의적 태도 등)은 절대 서술하지 마세요.',
-          '⚠️ NPC의 agenda는 배경 동기입니다. 매 대사에서 agenda를 직접 언급하지 마세요. 대화 3번 중 1번 정도만 동기와 관련된 말을 하고, 나머지는 상황 반응, 개인적 감상, 또는 플레이어 평가를 보여주세요.',
-          '⚠️ NPC 대사 다양성: 같은 NPC가 연속 턴에서 비슷한 말("조심하시오", "위험하오" 등)을 반복하면 안 됩니다. 턴마다 다른 화제를 꺼내세요: 자기 사정, 주변 상황 관찰, 과거 경험, 플레이어 행동에 대한 평가, 질문, 침묵과 행동 등. 사람은 같은 말만 반복하지 않습니다.',
-          '⚠️ NPC별 호칭을 구분하세요. "그대"는 마이렐 단 경만의 고유 호칭입니다. 다른 NPC는 "당신", "이보게", "자네", "손님" 등 각자의 말투에 맞는 호칭을 사용하세요.',
-          '⚠️ 각 NPC의 "말투" 항목을 반드시 적용하세요. 더듬기, 비유, 횡설수설, 한숨 등 말투 특성이 대사에 드러나야 합니다.',
-          '',
-          postureLines.join('\n'),
-        ].join('\n'),
-      );
-    }
 
     // === 작업 1: 직전 NPC 발화 — 이어받을 맥락 + 반복 방지 (LOCATION only, 개선 2) ===
     // ⚠️ locationSessionTurns 마지막 entry는 현재 턴(self) — llmOutput이 아직 없을 때
@@ -1258,6 +1145,139 @@ export class PromptBuilderService {
     }
 
     return messages;
+  }
+
+  /**
+   * NPC 대화 자세 블록 (Step 7) — posture+personality 기반 개인화 가이드,
+   * 장면 NPC(targetNpcIds ∩ npcPostures + npcInjection) 한정.
+   * arch/77 P1.17 — buildNarrativePrompt 에서 추출 (동작 보존).
+   */
+  private buildNpcPostureBlocks(
+    ctx: LlmContext,
+    sr: ServerResultV1,
+    targetNpcIds: ReadonlySet<string>,
+    isHub: boolean,
+  ): string[] {
+    const factsParts: string[] = [];
+    // Phase 3: NPC 대화 자세 (Step 7) — posture + personality 기반 개인화 가이드 — HUB에서는 생략
+    if (!isHub && ctx.npcPostures && Object.keys(ctx.npcPostures).length > 0) {
+      const POSTURE_BASELINE: Record<string, string> = {
+        FRIENDLY:
+          '마음이 열려 있고 상대에게 호감을 느낀다. 대화를 즐기며, 자기 이야기도 기꺼이 꺼낸다. 다만 무조건적인 순종은 아니다 — 자기 선이 있고, 어리석은 부탁은 거절할 수 있다.',
+        CAUTIOUS:
+          '쉽게 믿지 않는다. 속내를 드러내기 전에 상대를 시험하고 떠본다. 말보다 침묵이 많고, 대답할 때도 핵심을 돌려 말한다. 하지만 신뢰를 얻으면 태도가 서서히 달라진다.',
+        HOSTILE:
+          '적의가 있다. 상대의 존재 자체가 불쾌하거나 위협적으로 느껴진다. 대화를 원치 않으며, 응하더라도 짧고 날카롭다. 그러나 적대감 아래에도 이유가 있다 — 두려움, 배신의 기억, 또는 지켜야 할 것.',
+        FEARFUL:
+          '겁을 먹고 있다. 불안이 몸과 목소리에 배어 나온다. 대화를 피하고 싶지만 상황이 허락하지 않을 때, 말이 짧아지거나 엉뚱한 방향으로 튄다. 압박에 약하지만 자존심이 아예 없는 건 아니다.',
+        CALCULATING:
+          '이익을 따진다. 모든 대화에서 자신에게 돌아올 것을 계산하고, 빈손으로 무언가를 내주는 법이 없다. 하지만 계산하는 방식은 다양하다 — 눈앞의 이익, 장기적 관계, 정치적 포석, 또는 자존심.',
+      };
+      const introducedNpcIds = new Set(ctx.introducedNpcIds ?? []);
+
+      // 이번 턴 등장 NPC만 필터링 (말투 오염 방지)
+      const relevantNpcIds =
+        targetNpcIds.size > 0
+          ? new Set(targetNpcIds)
+          : new Set(Object.keys(ctx.npcPostures)); // fallback: 전체
+
+      // 실제 발화자(primaryNpcId / speakingNpc)를 반드시 포함 — BACKGROUND NPC가
+      // targetNpcIds / npcPostures 에서 제외되어도 어체 규칙을 확보해 오염을 막는다.
+      // BG NPC 는 NPC_LOCATION_AFFINITY 에 미등록이라 postures 계산에서 빠지므로
+      // 발화자 기준으로 강제 추가 + 기본 posture(CAUTIOUS)를 보조 주입한다.
+      const actualSpeaker =
+        (
+          (sr.ui as Record<string, unknown>)?.speakingNpc as
+            | { npcId?: string }
+            | undefined
+        )?.npcId ??
+        (
+          (sr.ui as Record<string, unknown>)?.actionContext as
+            | { primaryNpcId?: string }
+            | undefined
+        )?.primaryNpcId;
+      const speakerExtraPosture: Record<string, string> = {};
+      if (actualSpeaker) {
+        relevantNpcIds.add(actualSpeaker);
+        if (!ctx.npcPostures?.[actualSpeaker]) {
+          speakerExtraPosture[actualSpeaker] = 'CAUTIOUS';
+        }
+      }
+      // 기존 npcPostures 와 발화자 보조 posture 를 합쳐 반복 대상 구성
+      const effectivePostures: Record<string, string> = {
+        ...(ctx.npcPostures ?? {}),
+        ...speakerExtraPosture,
+      };
+      const postureLines = Object.entries(effectivePostures)
+        .filter(([npcId]) => relevantNpcIds.has(npcId))
+        .map(([npcId, posture]) => {
+          const baseline = POSTURE_BASELINE[posture] ?? '';
+          const npcDef = this.content.getNpc(npcId);
+          let displayName: string;
+          if (npcDef) {
+            displayName = introducedNpcIds.has(npcId)
+              ? npcDef.name
+              : npcDef.unknownAlias || '낯선 인물';
+          } else {
+            displayName = '낯선 인물';
+          }
+
+          // personality: 첫 등장 시에만 traits 포함, 이후에는 posture+말투만
+          // 반복 방지: traits를 매 턴 보내면 LLM이 직접 인용하여 반복함
+          const personality = npcDef?.personality;
+          if (personality) {
+            const sessionTurns = ctx.locationSessionTurns ?? [];
+            const isFirstAppearance = !sessionTurns.some((t) =>
+              t.narrative?.includes(displayName),
+            );
+
+            const parts = [`- ${displayName}: ${posture} — ${baseline}`];
+            if (isFirstAppearance && personality.traits?.length) {
+              parts.push(`    성격 특성: ${personality.traits.join(' / ')}`);
+            }
+
+            // 어체(speechRegister) 규칙 — Dual-Track: LLM이 직접 대사 생성하므로 필수
+            // CLAUDE.md LLM 설계 원칙: Positive framing 우선 + 경계 강화. 짧은 경고 외에
+            // 관찰·질문·설명 문형 예시로 확장해 긴 대사도 일관된 어미 유지.
+            const register = (personality as Record<string, unknown>)
+              .speechRegister as string | undefined;
+            parts.push(...buildRegisterLines(register));
+
+            if (personality.speechStyle) {
+              const speechParts = personality.speechStyle
+                .split(/[.。,，]\s*/)
+                .filter((s: string) => s.trim().length > 3);
+              if (speechParts.length > 1) {
+                const turnNo = ctx.locationSessionTurns?.length ?? 0;
+                const rotateIdx = turnNo % speechParts.length;
+                const base = speechParts[0].trim();
+                const emphasis = speechParts[rotateIdx].trim();
+                parts.push(`    말투: ${base}. ⚠️ 이번 턴 강조: ${emphasis}`);
+              } else {
+                parts.push(
+                  `    말투 (이 어조로 새 대사를 만들 것): ${personality.speechStyle}`,
+                );
+              }
+            }
+            return parts.join('\n');
+          }
+          return `- ${displayName}: ${posture} — ${baseline}`;
+        });
+      factsParts.push(
+        [
+          '[NPC 대화 자세]',
+          '이 장소의 NPC들이 보이는 태도입니다. 대사와 행동은 반드시 아래 태도에 맞춰 서술하세요.',
+          '⚠️ 태도에 맞지 않는 행동(CAUTIOUS NPC의 자발적 정보 제공, HOSTILE NPC의 호의적 태도 등)은 절대 서술하지 마세요.',
+          '⚠️ NPC의 agenda는 배경 동기입니다. 매 대사에서 agenda를 직접 언급하지 마세요. 대화 3번 중 1번 정도만 동기와 관련된 말을 하고, 나머지는 상황 반응, 개인적 감상, 또는 플레이어 평가를 보여주세요.',
+          '⚠️ NPC 대사 다양성: 같은 NPC가 연속 턴에서 비슷한 말("조심하시오", "위험하오" 등)을 반복하면 안 됩니다. 턴마다 다른 화제를 꺼내세요: 자기 사정, 주변 상황 관찰, 과거 경험, 플레이어 행동에 대한 평가, 질문, 침묵과 행동 등. 사람은 같은 말만 반복하지 않습니다.',
+          '⚠️ NPC별 호칭을 구분하세요. "그대"는 마이렐 단 경만의 고유 호칭입니다. 다른 NPC는 "당신", "이보게", "자네", "손님" 등 각자의 말투에 맞는 호칭을 사용하세요.',
+          '⚠️ 각 NPC의 "말투" 항목을 반드시 적용하세요. 더듬기, 비유, 횡설수설, 한숨 등 말투 특성이 대사에 드러나야 합니다.',
+          '',
+          postureLines.join('\n'),
+        ].join('\n'),
+      );
+    }
+    return factsParts;
   }
 
   /**
