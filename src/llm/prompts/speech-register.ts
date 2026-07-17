@@ -69,7 +69,8 @@ export const REGISTER_RULES: Record<string, SpeechRegisterRule> = {
     // arch/69 C2.5 — C2 실측 HAPSYO 위반 52%가 전부 하오체 종결(로넨 "지나치겠소",
     // 브렌 "묻고 싶소")인데 기존 forbidHint에 ~소 계열이 없었다. 명시 보강.
     // 2026-07-17 — 해요체 표류 실측(펠릭스 "드는군요")으로 ~군요·~지요 명시.
-    forbidHint: '~이오 / ~하오 / ~소·~겠소·~시오 / ~해요 / ~군요·~지요·~까요 / ~야',
+    forbidHint:
+      '~이오 / ~하오 / ~소·~겠소·~시오 / ~해요 / ~군요·~지요·~까요 / ~야',
     playerRef: '당신',
   },
   HAECHE: {

@@ -44,7 +44,11 @@ function buildEnemies(
     const def = defs.get(entry.ref);
     if (!def) throw new Error(`enemy def 없음: ${entry.ref}`);
     for (let i = 0; i < entry.count; i++) {
-      out.push({ id: `${entry.ref}_${i}`, hp: def.hp, personality: def.personality });
+      out.push({
+        id: `${entry.ref}_${i}`,
+        hp: def.hp,
+        personality: def.personality,
+      });
     }
   }
   return out;

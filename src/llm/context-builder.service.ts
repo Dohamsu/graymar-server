@@ -618,294 +618,29 @@ export class ContextBuilderService {
     // 이름 공개 정밀 분석(2026-07-10) C: 소개 턴(introducedAtTurn===turnNo)에는
     // 별칭을 유지하도록 모든 표시명 파생에 현재 턴 번호를 전달 (2턴 분리).
     const turnNoForNames = serverResult.turnNo;
-    // L0 + L1: run_memories
-    const memory = await this.db.query.runMemories.findFirst({
-      where: eq(runMemories.runId, runId),
-    });
+    // L0~L3 메모리 계층 로드 (P2.7 추출) — run/node 메모리 + 최근 턴 +
+    // 현 LOCATION 세션 턴(부모 LOCATION 병합) DB 조회 묶음.
+    const {
+      memory,
+      nodeMem,
+      recents,
+      recentTurns,
+      allLocationTurnRows,
+      locationSessionTurns,
+    } = await this.loadMemoryLayers(runId, nodeInstanceId);
 
-    // L2: node_memories
-    const nodeMem = await this.db.query.nodeMemories.findFirst({
-      where: and(
-        eq(nodeMemories.runId, runId),
-        eq(nodeMemories.nodeInstanceId, nodeInstanceId),
-      ),
-    });
+    // architecture/57: 보조 NPC 끼어들기 억제 산출 (P2.6 추출)
+    const { focusedNpcId, recentAuxSpeakers, recentAuxIdentities } =
+      this.buildAuxSuppressionContext(
+        serverResult,
+        runState,
+        locationSessionTurns,
+        turnNoForNames,
+      );
 
-    // L3: recent_summaries (최근 5개)
-    const recents = await this.db
-      .select()
-      .from(recentSummaries)
-      .where(eq(recentSummaries.runId, runId))
-      .orderBy(desc(recentSummaries.turnNo))
-      .limit(5);
-
-    // L3 확장: 최근 턴의 플레이어 행동 + 결과 조회 (LLM 대화 연속성)
-    const recentTurnRows = await this.db
-      .select({
-        turnNo: turns.turnNo,
-        inputType: turns.inputType,
-        rawInput: turns.rawInput,
-        serverResult: turns.serverResult,
-        llmOutput: turns.llmOutput,
-      })
-      .from(turns)
-      .where(
-        and(
-          eq(turns.runId, runId),
-          ne(turns.inputType, 'SYSTEM'), // SYSTEM 입력 제외
-        ),
-      )
-      .orderBy(desc(turns.turnNo))
-      .limit(5);
-
-    const recentTurns: RecentTurnEntry[] = recentTurnRows
-      .reverse() // 시간순 정렬
-      .map((t) => {
-        const sr = t.serverResult as ServerResultV1 | null;
-        return {
-          turnNo: t.turnNo,
-          inputType: t.inputType,
-          rawInput: t.rawInput,
-          resolveOutcome: (sr?.ui as Record<string, unknown>)
-            ?.resolveOutcome as string | undefined,
-          narrative: t.llmOutput ?? sr?.summary?.short ?? '',
-        };
-      });
-
-    // L3 확장: 현재 LOCATION 방문 전체 대화 (단기 기억)
-    // COMBAT 노드인 경우 부모 LOCATION의 대화 이력도 포함 (내러티브 연속성)
-    const currentNodeRow = await this.db.query.nodeInstances.findFirst({
-      where: eq(nodeInstances.id, nodeInstanceId),
-    });
-    const parentNodeId = currentNodeRow?.parentNodeInstanceId;
-
-    let parentLocationTurnRows: typeof locationTurnRows = [];
-    if (parentNodeId) {
-      parentLocationTurnRows = await this.db
-        .select({
-          turnNo: turns.turnNo,
-          inputType: turns.inputType,
-          rawInput: turns.rawInput,
-          serverResult: turns.serverResult,
-          llmOutput: turns.llmOutput,
-        })
-        .from(turns)
-        .where(
-          and(
-            eq(turns.runId, runId),
-            eq(turns.nodeInstanceId, parentNodeId),
-            ne(turns.inputType, 'SYSTEM'),
-          ),
-        )
-        .orderBy(asc(turns.turnNo))
-        .limit(10); // 부모 노드 최근 10턴
-    }
-
-    const locationTurnRows = await this.db
-      .select({
-        turnNo: turns.turnNo,
-        inputType: turns.inputType,
-        rawInput: turns.rawInput,
-        serverResult: turns.serverResult,
-        llmOutput: turns.llmOutput,
-      })
-      .from(turns)
-      .where(
-        and(
-          eq(turns.runId, runId),
-          eq(turns.nodeInstanceId, nodeInstanceId),
-          ne(turns.inputType, 'SYSTEM'),
-        ),
-      )
-      .orderBy(asc(turns.turnNo))
-      .limit(20); // 최대 20턴 (토큰 제한 고려)
-
-    // 부모 LOCATION 턴 + 현재 노드 턴 병합 (시간순 유지)
-    const allLocationTurnRows = [
-      ...parentLocationTurnRows,
-      ...locationTurnRows,
-    ];
-
-    const locationSessionTurns: RecentTurnEntry[] = allLocationTurnRows.map(
-      (t) => {
-        const sr = t.serverResult as ServerResultV1 | null;
-        return {
-          turnNo: t.turnNo,
-          inputType: t.inputType,
-          rawInput: t.rawInput,
-          resolveOutcome: (sr?.ui as Record<string, unknown>)
-            ?.resolveOutcome as string | undefined,
-          narrative: t.llmOutput ?? sr?.summary?.short ?? '',
-        };
-      },
-    );
-
-    // architecture/57: 보조 NPC 끼어들기 억제용 focusedNpcId 산출
-    //   사회적 행동(TALK/PERSUADE/BRIBE/THREATEN/HELP/INVESTIGATE/TRADE) +
-    //   특정 NPC 지목 시 set. 메인 LLM 컨텍스트에서 보조 NPC 별칭 노출을 차단해
-    //   "라이라가 매 턴 끼어드는" 류 회귀를 막는다.
-    const focusedActionCtx = (serverResult.ui as Record<string, unknown>)
-      ?.actionContext as
-      | { primaryNpcId?: string | null; actionType?: string | null }
-      | undefined;
-    const focusedNpcId =
-      ContextBuilderService.detectFocusedNpcId(focusedActionCtx);
-
-    // 메인 NPC 의 이름 변형 집합 (recentAuxSpeakers 필터 + npcRelationFacts 필터)
-    const focusedDisplayNames: string[] = [];
-    if (focusedNpcId) {
-      const focusedState = (
-        runState?.npcStates as Record<string, NPCState> | undefined
-      )?.[focusedNpcId];
-      const focusedDef = this.content.getNpc(focusedNpcId);
-      if (focusedDef) {
-        if (focusedDef.name) focusedDisplayNames.push(focusedDef.name);
-        if (focusedDef.unknownAlias)
-          focusedDisplayNames.push(focusedDef.unknownAlias);
-      }
-      if (focusedState && focusedDef) {
-        focusedDisplayNames.push(
-          getNpcDisplayName(focusedState, focusedDef, turnNoForNames),
-        );
-      }
-    }
-
-    // 직전 2턴에 끼어든 보조 NPC 별칭 목록 (메인 LLM 에 "이번 턴 침묵" 가이드로 전달)
-    const recentAuxSpeakers = focusedNpcId
-      ? ContextBuilderService.extractRecentAuxSpeakers(
-          locationSessionTurns,
-          focusedDisplayNames,
-        )
-      : [];
-
-    // 직전 3턴 본문에서 등장한 익명 배경 인물 신원 키워드 (마커 밖 서술)
-    //  - focused 여부 무관하게 항상 추출 — 일반 턴에서도 LLM 이 같은 단역을 반복 사용하는
-    //    경향이 있어 hard 차단 명단이 도움이 된다.
-    const recentAuxIdentities =
-      ContextBuilderService.extractRecentAuxIdentities(locationSessionTurns);
-
-    // HUB 확장: WorldState, Location, Agenda/Arc 컨텍스트 구축
-    let worldSnapshot: string | null = null;
-    let locationContext: string | null = null;
-    let agendaArc: string | null = null;
-
-    if (runState) {
-      const ws = runState.worldState as Record<string, unknown> | undefined;
-      if (ws) {
-        const snapshotParts = [
-          `시간: ${ws.timePhase === 'NIGHT' ? '밤' : '낮'}, 경계도: ${String(ws.hubHeat)}/100 (${String(ws.hubSafety)}), 긴장도: ${String((ws.tension as number | undefined) ?? 0)}/10`,
-        ];
-        if (ws.currentLocationId) {
-          locationContext = `현재 위치: ${ws.currentLocationId as string}`;
-
-          // Living World v2: 장소에 있는 NPC 목록
-          const locDynamic = ws.locationDynamicStates as
-            | Record<string, { presentNpcs?: string[] }>
-            | undefined;
-          const presentNpcs =
-            locDynamic?.[ws.currentLocationId as string]?.presentNpcs;
-          if (presentNpcs && presentNpcs.length > 0) {
-            // architecture/57: focused 모드에서는 메인 NPC 만 노출.
-            //  보조 NPC 이름을 LLM 에 알려주면 "라이라가 매 턴 끼어드는" 회귀 유발.
-            const visibleNpcs = focusedNpcId
-              ? presentNpcs.filter((id) => id === focusedNpcId)
-              : presentNpcs;
-            if (visibleNpcs.length > 0) {
-              const npcNames = visibleNpcs.map((id: string) => {
-                const npcDef = this.content.getNpc(id);
-                return npcDef?.name ?? id;
-              });
-              locationContext += ` (이 장소에 있는 인물: ${npcNames.join(', ')})`;
-            }
-          }
-
-          // Living World v2: 장소 활성 조건
-          const locFullState = locDynamic?.[ws.currentLocationId as string] as
-            | {
-                activeConditions?: Array<{ id: string }>;
-                security?: number;
-                unrest?: number;
-                propsTraces?: Array<{ text: string }>;
-              }
-            | undefined;
-          if (
-            locFullState?.activeConditions &&
-            locFullState.activeConditions.length > 0
-          ) {
-            const condDescs: Record<string, string> = {
-              INCREASED_PATROLS: '경비 순찰 강화 중',
-              LOCKDOWN: '지역 봉쇄 중',
-              UNREST_RUMORS: '불안한 소문이 돌고 있다',
-              RIOT: '폭동 발생 중',
-              CURFEW: '야간 통금 중',
-              FESTIVAL: '축제 진행 중',
-            };
-            const condTexts = locFullState.activeConditions.map(
-              (c: { id: string }) => condDescs[c.id] ?? c.id,
-            );
-            locationContext += ` [${condTexts.join(', ')}]`;
-          }
-          if (locFullState?.security != null) {
-            snapshotParts.push(
-              `장소 치안: ${locFullState.security}/100, 불안: ${locFullState.unrest ?? 0}/100`,
-            );
-          }
-
-          // [arch/76 D3-a] 장소 물리 흔적 — 플레이어가 이전에 남긴 자취 (되짚기).
-          //   positive 지시로 주입: 서술·NPC 반응에 반영하되 매 턴 반복 금지.
-          const locTraces = locFullState?.propsTraces;
-          if (locTraces && locTraces.length > 0) {
-            const traceTexts = locTraces
-              .slice(-6)
-              .map((t) => t.text)
-              .join(', ');
-            snapshotParts.push(
-              `이 장소에 남은 흔적: ${traceTexts} — 플레이어의 이전 행동이 남긴 물리적 자취다. ` +
-                `관련 상황이면 서술이나 NPC 반응에 자연스럽게 반영하라(매 문장 반복 금지).`,
-            );
-          }
-        }
-
-        // Living World v2: 최근 WorldFacts 요약
-        const worldFacts = ws.worldFacts as Array<{ text: string }> | undefined;
-        if (worldFacts && worldFacts.length > 0) {
-          const recentFacts = worldFacts.slice(-5).map((f) => f.text);
-          snapshotParts.push(`최근 사실: ${recentFacts.join('; ')}`);
-        }
-
-        // Living World v2: 활성 목표
-        const playerGoals = (runState.playerGoals ?? runState.playerGoals) as
-          | Array<{ description: string; completed: boolean; progress: number }>
-          | undefined;
-        if (playerGoals) {
-          const activeGoals = playerGoals.filter((g) => !g.completed);
-          if (activeGoals.length > 0) {
-            snapshotParts.push(
-              `플레이어 목표: ${activeGoals.map((g) => `${g.description} (${g.progress}%)`).join('; ')}`,
-            );
-          }
-        }
-
-        worldSnapshot = snapshotParts.join('\n');
-      }
-
-      const agenda = runState.agenda as Record<string, unknown> | undefined;
-      const arcState = runState.arcState as Record<string, unknown> | undefined;
-      if (agenda || arcState) {
-        const parts: string[] = [];
-        if (agenda) {
-          const dominant = (agenda as { dominant?: string }).dominant;
-          if (dominant) parts.push(`주요 성향: ${dominant}`);
-        }
-        if (arcState) {
-          const route = (arcState as { currentRoute?: string }).currentRoute;
-          const commitment = (arcState as { commitment?: number }).commitment;
-          if (route)
-            parts.push(`아크 경로: ${route} (참여도: ${commitment ?? 0}/3)`);
-        }
-        if (parts.length > 0) agendaArc = parts.join(', ');
-      }
-    }
+    // HUB 확장: WorldState / Location / Agenda·Arc 컨텍스트 (P2.4 추출)
+    const { worldSnapshot, locationContext, agendaArc } =
+      this.buildWorldContext(runState, focusedNpcId);
 
     // resolveOutcome 컨텍스트
     const resolveOutcome = serverResult.ui?.resolveOutcome;
@@ -974,111 +709,14 @@ export class ContextBuilderService {
     // Narrative Thread Cache: node_memories에서 읽기
     const narrativeThread = nodeMem?.narrativeThread ?? null;
 
-    // Narrative Engine v1: Incident / NPC Emotional / Marks / Signals 컨텍스트
-    let incidentContext: string | null = null;
-    let npcEmotionalContext: string | null = null;
-    let npcDeltaHint: string | null = null;
-    let narrativeMarkContext: string | null = null;
-    let signalContext: string | null = null;
-
-    if (runState) {
-      const ws = runState.worldState as Record<string, unknown> | undefined;
-      const currentLocationId =
-        (ws?.currentLocationId as string | undefined) ?? null;
-
-      // Incident 요약 — A1 코드 기반 압축 (장소·pressure·stage 가중치로 상위 3건)
-      // 이전 nano LLM 하이브리드 경로는 실측 결과 그레이마르 콘텐츠에서
-      // 활성 사건이 2~3건을 초과하지 않아 데드 코드였으므로 제거.
-      const activeIncidents = (ws?.activeIncidents ?? []) as IncidentRuntime[];
-      const selectedIncidents = this.compressIncidents(
-        activeIncidents,
-        currentLocationId,
-      );
-      if (selectedIncidents.length > 0) {
-        const lines = selectedIncidents.map((inc) => {
-          const def = this.content.getIncident(inc.incidentId);
-          const title = def?.title ?? inc.incidentId;
-          const tension =
-            inc.pressure >= 70 ? '위기' : inc.pressure >= 40 ? '긴장' : '잠재';
-          return `- ${title}(${inc.kind}): ${tension}/통제${inc.control}/단계${inc.stage}`;
-        });
-        const total = activeIncidents.length;
-        const sel = selectedIncidents.length;
-        const suffix = total > sel ? ` · ${total - sel}건 생략` : '';
-        incidentContext = `활성 사건 ${sel}건${suffix}:\n${lines.join('\n')}`;
-      }
-
-      // NPC 감정 상태 → prompt-builder에서 targetNpcIds 기반으로 빌드
-      // 여기서는 npcDeltaHint(이번 턴 감정 변화 delta)만 추출
-      const npcStates = runState.npcStates as
-        | Record<string, NPCState>
-        | undefined;
-      if (npcStates) {
-        const lastDelta = (runState as unknown as Record<string, unknown>)
-          .lastNpcDelta as
-          | {
-              npcId: string;
-              delta: Record<string, number>;
-              actionType: string;
-              outcome: string;
-            }
-          | undefined;
-        if (lastDelta && Object.keys(lastDelta.delta).length > 0) {
-          const axisNames: Record<string, string> = {
-            trust: '신뢰',
-            fear: '공포',
-            respect: '존경',
-            suspicion: '의심',
-            attachment: '유대',
-          };
-          const deltaDesc = Object.entries(lastDelta.delta)
-            .map(([k, v]) => `${axisNames[k] ?? k}${v > 0 ? '+' : ''}${v}`)
-            .join(', ');
-          const npcDef = this.content.getNpc(lastDelta.npcId);
-          const npcState = npcStates[lastDelta.npcId];
-          const dName = npcState
-            ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
-            : (npcDef?.unknownAlias ?? '관련 인물');
-          npcDeltaHint = `⚡ 이번 턴 변화: ${dName}의 감정이 변했다 (${deltaDesc}). 이 변화를 NPC의 표정, 목소리, 행동에 반영하세요.`;
-        }
-      }
-      npcEmotionalContext = null; // deprecated — prompt-builder에서 빌드
-
-      // Narrative Mark 요약 (npcId 대신 displayName 사용)
-      const marks = (ws?.narrativeMarks ?? []) as NarrativeMark[];
-      if (marks.length > 0) {
-        const markLines = marks.map((m) => {
-          if (!m.npcId) return `- [${m.type}] ${m.context} (전체)`;
-          const markNpcDef = this.content.getNpc(m.npcId);
-          const markNpcState = npcStates?.[m.npcId];
-          const markNpcName =
-            markNpcDef && markNpcState
-              ? getNpcDisplayName(markNpcState, markNpcDef, turnNoForNames)
-              : (markNpcDef?.unknownAlias ?? '관련 인물');
-          return `- [${m.type}] ${m.context} (${markNpcName})`;
-        });
-        narrativeMarkContext = `서사 표식 ${marks.length}개:\n${markLines.join('\n')}`;
-      }
-
-      // Signal Feed 요약 — A1 압축
-      //  · 우선순위: ① 선별된 incident의 sourceIncidentId 일치 ② severity≥5(긴급) ③ 현재 장소 일치
-      //  · 최대 3개 (기존 5개에서 축소)
-      const signals = (ws?.signalFeed ?? []) as SignalFeedItem[];
-      const selectedSignalIncidentIds = new Set(
-        selectedIncidents.map((i) => i.incidentId),
-      );
-      const selectedSignals = this.compressSignals(
-        signals,
-        selectedSignalIncidentIds,
-        currentLocationId,
-      );
-      if (selectedSignals.length > 0) {
-        const sigLines = selectedSignals.map(
-          (s) => `- [${s.channel}/${s.severity}] ${s.text}`,
-        );
-        signalContext = `주요 시그널:\n${sigLines.join('\n')}`;
-      }
-    }
+    // Narrative Engine v1 컨텍스트 — Incident/Emotional/Marks/Signals (P2.5 추출)
+    const {
+      incidentContext,
+      npcEmotionalContext,
+      npcDeltaHint,
+      narrativeMarkContext,
+      signalContext,
+    } = this.buildNarrativeEngineContext(runState, turnNoForNames);
 
     // Deadline 컨텍스트 (조건 충족 시에만 — 평소 제로 오버헤드)
     let deadlineContext: string | null = null;
@@ -2032,6 +1670,473 @@ export class ContextBuilderService {
   }
 
   /**
+   * Narrative Engine v1 컨텍스트 — Incident / NPC Emotional / Marks / Signals.
+   * P2.5 추출 (동작 보존 컷-페이스트).
+   */
+  private buildNarrativeEngineContext(
+    runState: Record<string, unknown> | null | undefined,
+    turnNoForNames: number,
+  ): {
+    incidentContext: LlmContext['incidentContext'];
+    npcEmotionalContext: LlmContext['npcEmotionalContext'];
+    npcDeltaHint: LlmContext['npcDeltaHint'];
+    narrativeMarkContext: LlmContext['narrativeMarkContext'];
+    signalContext: LlmContext['signalContext'];
+  } {
+    // Narrative Engine v1: Incident / NPC Emotional / Marks / Signals 컨텍스트
+    let incidentContext: string | null = null;
+    let npcEmotionalContext: string | null = null;
+    let npcDeltaHint: string | null = null;
+    let narrativeMarkContext: string | null = null;
+    let signalContext: string | null = null;
+
+    if (runState) {
+      const ws = runState.worldState as Record<string, unknown> | undefined;
+      const currentLocationId =
+        (ws?.currentLocationId as string | undefined) ?? null;
+
+      // Incident 요약 — A1 코드 기반 압축 (장소·pressure·stage 가중치로 상위 3건)
+      // 이전 nano LLM 하이브리드 경로는 실측 결과 그레이마르 콘텐츠에서
+      // 활성 사건이 2~3건을 초과하지 않아 데드 코드였으므로 제거.
+      const activeIncidents = (ws?.activeIncidents ?? []) as IncidentRuntime[];
+      const selectedIncidents = this.compressIncidents(
+        activeIncidents,
+        currentLocationId,
+      );
+      if (selectedIncidents.length > 0) {
+        const lines = selectedIncidents.map((inc) => {
+          const def = this.content.getIncident(inc.incidentId);
+          const title = def?.title ?? inc.incidentId;
+          const tension =
+            inc.pressure >= 70 ? '위기' : inc.pressure >= 40 ? '긴장' : '잠재';
+          return `- ${title}(${inc.kind}): ${tension}/통제${inc.control}/단계${inc.stage}`;
+        });
+        const total = activeIncidents.length;
+        const sel = selectedIncidents.length;
+        const suffix = total > sel ? ` · ${total - sel}건 생략` : '';
+        incidentContext = `활성 사건 ${sel}건${suffix}:\n${lines.join('\n')}`;
+      }
+
+      // NPC 감정 상태 → prompt-builder에서 targetNpcIds 기반으로 빌드
+      // 여기서는 npcDeltaHint(이번 턴 감정 변화 delta)만 추출
+      const npcStates = runState.npcStates as
+        | Record<string, NPCState>
+        | undefined;
+      if (npcStates) {
+        const lastDelta = (runState as unknown as Record<string, unknown>)
+          .lastNpcDelta as
+          | {
+              npcId: string;
+              delta: Record<string, number>;
+              actionType: string;
+              outcome: string;
+            }
+          | undefined;
+        if (lastDelta && Object.keys(lastDelta.delta).length > 0) {
+          const axisNames: Record<string, string> = {
+            trust: '신뢰',
+            fear: '공포',
+            respect: '존경',
+            suspicion: '의심',
+            attachment: '유대',
+          };
+          const deltaDesc = Object.entries(lastDelta.delta)
+            .map(([k, v]) => `${axisNames[k] ?? k}${v > 0 ? '+' : ''}${v}`)
+            .join(', ');
+          const npcDef = this.content.getNpc(lastDelta.npcId);
+          const npcState = npcStates[lastDelta.npcId];
+          const dName = npcState
+            ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
+            : (npcDef?.unknownAlias ?? '관련 인물');
+          npcDeltaHint = `⚡ 이번 턴 변화: ${dName}의 감정이 변했다 (${deltaDesc}). 이 변화를 NPC의 표정, 목소리, 행동에 반영하세요.`;
+        }
+      }
+      npcEmotionalContext = null; // deprecated — prompt-builder에서 빌드
+
+      // Narrative Mark 요약 (npcId 대신 displayName 사용)
+      const marks = (ws?.narrativeMarks ?? []) as NarrativeMark[];
+      if (marks.length > 0) {
+        const markLines = marks.map((m) => {
+          if (!m.npcId) return `- [${m.type}] ${m.context} (전체)`;
+          const markNpcDef = this.content.getNpc(m.npcId);
+          const markNpcState = npcStates?.[m.npcId];
+          const markNpcName =
+            markNpcDef && markNpcState
+              ? getNpcDisplayName(markNpcState, markNpcDef, turnNoForNames)
+              : (markNpcDef?.unknownAlias ?? '관련 인물');
+          return `- [${m.type}] ${m.context} (${markNpcName})`;
+        });
+        narrativeMarkContext = `서사 표식 ${marks.length}개:\n${markLines.join('\n')}`;
+      }
+
+      // Signal Feed 요약 — A1 압축
+      //  · 우선순위: ① 선별된 incident의 sourceIncidentId 일치 ② severity≥5(긴급) ③ 현재 장소 일치
+      //  · 최대 3개 (기존 5개에서 축소)
+      const signals = (ws?.signalFeed ?? []) as SignalFeedItem[];
+      const selectedSignalIncidentIds = new Set(
+        selectedIncidents.map((i) => i.incidentId),
+      );
+      const selectedSignals = this.compressSignals(
+        signals,
+        selectedSignalIncidentIds,
+        currentLocationId,
+      );
+      if (selectedSignals.length > 0) {
+        const sigLines = selectedSignals.map(
+          (s) => `- [${s.channel}/${s.severity}] ${s.text}`,
+        );
+        signalContext = `주요 시그널:\n${sigLines.join('\n')}`;
+      }
+    }
+    return {
+      incidentContext,
+      npcEmotionalContext,
+      npcDeltaHint,
+      narrativeMarkContext,
+      signalContext,
+    };
+  }
+
+  /**
+   * 보조 NPC 끼어들기 억제 (arch/57) — focusedNpcId·별칭 변형·최근 보조
+   * 화자/익명 신원 산출. P2.6 추출 (동작 보존 컷-페이스트).
+   */
+  private buildAuxSuppressionContext(
+    serverResult: ServerResultV1,
+    runState: Record<string, unknown> | null | undefined,
+    locationSessionTurns: RecentTurnEntry[],
+    turnNoForNames: number,
+  ): {
+    focusedNpcId: string | null;
+    focusedDisplayNames: string[];
+    recentAuxSpeakers: string[];
+    recentAuxIdentities: string[];
+  } {
+    // architecture/57: 보조 NPC 끼어들기 억제용 focusedNpcId 산출
+    //   사회적 행동(TALK/PERSUADE/BRIBE/THREATEN/HELP/INVESTIGATE/TRADE) +
+    //   특정 NPC 지목 시 set. 메인 LLM 컨텍스트에서 보조 NPC 별칭 노출을 차단해
+    //   "라이라가 매 턴 끼어드는" 류 회귀를 막는다.
+    const focusedActionCtx = (serverResult.ui as Record<string, unknown>)
+      ?.actionContext as
+      | { primaryNpcId?: string | null; actionType?: string | null }
+      | undefined;
+    const focusedNpcId =
+      ContextBuilderService.detectFocusedNpcId(focusedActionCtx);
+
+    // 메인 NPC 의 이름 변형 집합 (recentAuxSpeakers 필터 + npcRelationFacts 필터)
+    const focusedDisplayNames: string[] = [];
+    if (focusedNpcId) {
+      const focusedState = (
+        runState?.npcStates as Record<string, NPCState> | undefined
+      )?.[focusedNpcId];
+      const focusedDef = this.content.getNpc(focusedNpcId);
+      if (focusedDef) {
+        if (focusedDef.name) focusedDisplayNames.push(focusedDef.name);
+        if (focusedDef.unknownAlias)
+          focusedDisplayNames.push(focusedDef.unknownAlias);
+      }
+      if (focusedState && focusedDef) {
+        focusedDisplayNames.push(
+          getNpcDisplayName(focusedState, focusedDef, turnNoForNames),
+        );
+      }
+    }
+
+    // 직전 2턴에 끼어든 보조 NPC 별칭 목록 (메인 LLM 에 "이번 턴 침묵" 가이드로 전달)
+    const recentAuxSpeakers = focusedNpcId
+      ? ContextBuilderService.extractRecentAuxSpeakers(
+          locationSessionTurns,
+          focusedDisplayNames,
+        )
+      : [];
+
+    // 직전 3턴 본문에서 등장한 익명 배경 인물 신원 키워드 (마커 밖 서술)
+    //  - focused 여부 무관하게 항상 추출 — 일반 턴에서도 LLM 이 같은 단역을 반복 사용하는
+    //    경향이 있어 hard 차단 명단이 도움이 된다.
+    const recentAuxIdentities =
+      ContextBuilderService.extractRecentAuxIdentities(locationSessionTurns);
+    return {
+      focusedNpcId,
+      focusedDisplayNames,
+      recentAuxSpeakers,
+      recentAuxIdentities,
+    };
+  }
+
+  /**
+   * L0~L3 메모리 계층 로드 — run_memories / node_memories / recent_summaries /
+   * 최근 턴 / 현 LOCATION 세션 턴(부모 병합). P2.7 추출 (동작 보존 컷-페이스트).
+   */
+  private async loadMemoryLayers(runId: string, nodeInstanceId: string) {
+    // L0 + L1: run_memories
+    const memory = await this.db.query.runMemories.findFirst({
+      where: eq(runMemories.runId, runId),
+    });
+
+    // L2: node_memories
+    const nodeMem = await this.db.query.nodeMemories.findFirst({
+      where: and(
+        eq(nodeMemories.runId, runId),
+        eq(nodeMemories.nodeInstanceId, nodeInstanceId),
+      ),
+    });
+
+    // L3: recent_summaries (최근 5개)
+    const recents = await this.db
+      .select()
+      .from(recentSummaries)
+      .where(eq(recentSummaries.runId, runId))
+      .orderBy(desc(recentSummaries.turnNo))
+      .limit(5);
+
+    // L3 확장: 최근 턴의 플레이어 행동 + 결과 조회 (LLM 대화 연속성)
+    const recentTurnRows = await this.db
+      .select({
+        turnNo: turns.turnNo,
+        inputType: turns.inputType,
+        rawInput: turns.rawInput,
+        serverResult: turns.serverResult,
+        llmOutput: turns.llmOutput,
+      })
+      .from(turns)
+      .where(
+        and(
+          eq(turns.runId, runId),
+          ne(turns.inputType, 'SYSTEM'), // SYSTEM 입력 제외
+        ),
+      )
+      .orderBy(desc(turns.turnNo))
+      .limit(5);
+
+    const recentTurns: RecentTurnEntry[] = recentTurnRows
+      .reverse() // 시간순 정렬
+      .map((t) => {
+        const sr = t.serverResult as ServerResultV1 | null;
+        return {
+          turnNo: t.turnNo,
+          inputType: t.inputType,
+          rawInput: t.rawInput,
+          resolveOutcome: (sr?.ui as Record<string, unknown>)
+            ?.resolveOutcome as string | undefined,
+          narrative: t.llmOutput ?? sr?.summary?.short ?? '',
+        };
+      });
+
+    // L3 확장: 현재 LOCATION 방문 전체 대화 (단기 기억)
+    // COMBAT 노드인 경우 부모 LOCATION의 대화 이력도 포함 (내러티브 연속성)
+    const currentNodeRow = await this.db.query.nodeInstances.findFirst({
+      where: eq(nodeInstances.id, nodeInstanceId),
+    });
+    const parentNodeId = currentNodeRow?.parentNodeInstanceId;
+
+    let parentLocationTurnRows: typeof locationTurnRows = [];
+    if (parentNodeId) {
+      parentLocationTurnRows = await this.db
+        .select({
+          turnNo: turns.turnNo,
+          inputType: turns.inputType,
+          rawInput: turns.rawInput,
+          serverResult: turns.serverResult,
+          llmOutput: turns.llmOutput,
+        })
+        .from(turns)
+        .where(
+          and(
+            eq(turns.runId, runId),
+            eq(turns.nodeInstanceId, parentNodeId),
+            ne(turns.inputType, 'SYSTEM'),
+          ),
+        )
+        .orderBy(asc(turns.turnNo))
+        .limit(10); // 부모 노드 최근 10턴
+    }
+
+    const locationTurnRows = await this.db
+      .select({
+        turnNo: turns.turnNo,
+        inputType: turns.inputType,
+        rawInput: turns.rawInput,
+        serverResult: turns.serverResult,
+        llmOutput: turns.llmOutput,
+      })
+      .from(turns)
+      .where(
+        and(
+          eq(turns.runId, runId),
+          eq(turns.nodeInstanceId, nodeInstanceId),
+          ne(turns.inputType, 'SYSTEM'),
+        ),
+      )
+      .orderBy(asc(turns.turnNo))
+      .limit(20); // 최대 20턴 (토큰 제한 고려)
+
+    // 부모 LOCATION 턴 + 현재 노드 턴 병합 (시간순 유지)
+    const allLocationTurnRows = [
+      ...parentLocationTurnRows,
+      ...locationTurnRows,
+    ];
+
+    const locationSessionTurns: RecentTurnEntry[] = allLocationTurnRows.map(
+      (t) => {
+        const sr = t.serverResult as ServerResultV1 | null;
+        return {
+          turnNo: t.turnNo,
+          inputType: t.inputType,
+          rawInput: t.rawInput,
+          resolveOutcome: (sr?.ui as Record<string, unknown>)
+            ?.resolveOutcome as string | undefined,
+          narrative: t.llmOutput ?? sr?.summary?.short ?? '',
+        };
+      },
+    );
+    return {
+      memory,
+      nodeMem,
+      recents,
+      recentTurns,
+      allLocationTurnRows,
+      locationSessionTurns,
+    };
+  }
+
+  /**
+   * HUB 확장 컨텍스트 — WorldState 스냅샷 / 현재 장소 / Agenda·Arc 요약.
+   * P2.4 추출 (동작 보존 컷-페이스트).
+   */
+  private buildWorldContext(
+    runState: Record<string, unknown> | null | undefined,
+    focusedNpcId: string | null,
+  ): {
+    worldSnapshot: LlmContext['worldSnapshot'];
+    locationContext: LlmContext['locationContext'];
+    agendaArc: LlmContext['agendaArc'];
+  } {
+    // HUB 확장: WorldState, Location, Agenda/Arc 컨텍스트 구축
+    let worldSnapshot: string | null = null;
+    let locationContext: string | null = null;
+    let agendaArc: string | null = null;
+
+    if (runState) {
+      const ws = runState.worldState as Record<string, unknown> | undefined;
+      if (ws) {
+        const snapshotParts = [
+          `시간: ${ws.timePhase === 'NIGHT' ? '밤' : '낮'}, 경계도: ${String(ws.hubHeat)}/100 (${String(ws.hubSafety)}), 긴장도: ${String((ws.tension as number | undefined) ?? 0)}/10`,
+        ];
+        if (ws.currentLocationId) {
+          locationContext = `현재 위치: ${ws.currentLocationId as string}`;
+
+          // Living World v2: 장소에 있는 NPC 목록
+          const locDynamic = ws.locationDynamicStates as
+            | Record<string, { presentNpcs?: string[] }>
+            | undefined;
+          const presentNpcs =
+            locDynamic?.[ws.currentLocationId as string]?.presentNpcs;
+          if (presentNpcs && presentNpcs.length > 0) {
+            // architecture/57: focused 모드에서는 메인 NPC 만 노출.
+            //  보조 NPC 이름을 LLM 에 알려주면 "라이라가 매 턴 끼어드는" 회귀 유발.
+            const visibleNpcs = focusedNpcId
+              ? presentNpcs.filter((id) => id === focusedNpcId)
+              : presentNpcs;
+            if (visibleNpcs.length > 0) {
+              const npcNames = visibleNpcs.map((id: string) => {
+                const npcDef = this.content.getNpc(id);
+                return npcDef?.name ?? id;
+              });
+              locationContext += ` (이 장소에 있는 인물: ${npcNames.join(', ')})`;
+            }
+          }
+
+          // Living World v2: 장소 활성 조건
+          const locFullState = locDynamic?.[ws.currentLocationId as string] as
+            | {
+                activeConditions?: Array<{ id: string }>;
+                security?: number;
+                unrest?: number;
+                propsTraces?: Array<{ text: string }>;
+              }
+            | undefined;
+          if (
+            locFullState?.activeConditions &&
+            locFullState.activeConditions.length > 0
+          ) {
+            const condDescs: Record<string, string> = {
+              INCREASED_PATROLS: '경비 순찰 강화 중',
+              LOCKDOWN: '지역 봉쇄 중',
+              UNREST_RUMORS: '불안한 소문이 돌고 있다',
+              RIOT: '폭동 발생 중',
+              CURFEW: '야간 통금 중',
+              FESTIVAL: '축제 진행 중',
+            };
+            const condTexts = locFullState.activeConditions.map(
+              (c: { id: string }) => condDescs[c.id] ?? c.id,
+            );
+            locationContext += ` [${condTexts.join(', ')}]`;
+          }
+          if (locFullState?.security != null) {
+            snapshotParts.push(
+              `장소 치안: ${locFullState.security}/100, 불안: ${locFullState.unrest ?? 0}/100`,
+            );
+          }
+
+          // [arch/76 D3-a] 장소 물리 흔적 — 플레이어가 이전에 남긴 자취 (되짚기).
+          //   positive 지시로 주입: 서술·NPC 반응에 반영하되 매 턴 반복 금지.
+          const locTraces = locFullState?.propsTraces;
+          if (locTraces && locTraces.length > 0) {
+            const traceTexts = locTraces
+              .slice(-6)
+              .map((t) => t.text)
+              .join(', ');
+            snapshotParts.push(
+              `이 장소에 남은 흔적: ${traceTexts} — 플레이어의 이전 행동이 남긴 물리적 자취다. ` +
+                `관련 상황이면 서술이나 NPC 반응에 자연스럽게 반영하라(매 문장 반복 금지).`,
+            );
+          }
+        }
+
+        // Living World v2: 최근 WorldFacts 요약
+        const worldFacts = ws.worldFacts as Array<{ text: string }> | undefined;
+        if (worldFacts && worldFacts.length > 0) {
+          const recentFacts = worldFacts.slice(-5).map((f) => f.text);
+          snapshotParts.push(`최근 사실: ${recentFacts.join('; ')}`);
+        }
+
+        // Living World v2: 활성 목표
+        const playerGoals = (runState.playerGoals ?? runState.playerGoals) as
+          | Array<{ description: string; completed: boolean; progress: number }>
+          | undefined;
+        if (playerGoals) {
+          const activeGoals = playerGoals.filter((g) => !g.completed);
+          if (activeGoals.length > 0) {
+            snapshotParts.push(
+              `플레이어 목표: ${activeGoals.map((g) => `${g.description} (${g.progress}%)`).join('; ')}`,
+            );
+          }
+        }
+
+        worldSnapshot = snapshotParts.join('\n');
+      }
+
+      const agenda = runState.agenda as Record<string, unknown> | undefined;
+      const arcState = runState.arcState as Record<string, unknown> | undefined;
+      if (agenda || arcState) {
+        const parts: string[] = [];
+        if (agenda) {
+          const dominant = (agenda as { dominant?: string }).dominant;
+          if (dominant) parts.push(`주요 성향: ${dominant}`);
+        }
+        if (arcState) {
+          const route = (arcState as { currentRoute?: string }).currentRoute;
+          const commitment = (arcState as { commitment?: number }).commitment;
+          if (route)
+            parts.push(`아크 경로: ${route} (참여도: ${commitment ?? 0}/3)`);
+        }
+        if (parts.length > 0) agendaArc = parts.join(', ');
+      }
+    }
+    return { worldSnapshot, locationContext, agendaArc };
+  }
+
+  /**
    * Fact Pool + 기록·서술 단일화 (arch/46+58) — P2.1 추출 (동작 보존 컷-페이스트).
    * 0. 서버 발견 fact(ui.questReveal) 최우선 — 기록 fact = 서술 fact 보장
    * 1. 키워드 매칭 분기: a.보류(factWithheldHint) b.인계(factHandoffHint)
@@ -2181,9 +2286,7 @@ export class ContextBuilderService {
                   npcDefCurrent,
                   turnNoForNames,
                 )
-              : npcDefCurrent?.unknownAlias ||
-                npcDefCurrent?.name ||
-                factNpcId;
+              : npcDefCurrent?.unknownAlias || npcDefCurrent?.name || factNpcId;
           // 입력에서 가장 두드러진 키워드를 topic으로
           const topicKw = [...inputKw].find((k) => k.length >= 2) ?? '';
           factHandoffHint = {

@@ -158,10 +158,14 @@ import { normalizeUtteranceRegistersCore } from './npc-utterance.util.js';
 
 describe('normalizeUtteranceRegistersCore (R5v2)', () => {
   const resolve = (label: string) => {
-    if (label.includes('회계사')) return { npcId: 'NPC_EDRIC', register: 'HAOCHE' };
-    if (label.includes('실무자')) return { npcId: 'NPC_MOON_SEA', register: 'HAPSYO' };
-    if (label.includes('행상')) return { npcId: 'NPC_PEDDLER', register: 'HAEYO' };
-    if (label.includes('요리사')) return { npcId: 'NPC_COOK', register: 'HAECHE' };
+    if (label.includes('회계사'))
+      return { npcId: 'NPC_EDRIC', register: 'HAOCHE' };
+    if (label.includes('실무자'))
+      return { npcId: 'NPC_MOON_SEA', register: 'HAPSYO' };
+    if (label.includes('행상'))
+      return { npcId: 'NPC_PEDDLER', register: 'HAEYO' };
+    if (label.includes('요리사'))
+      return { npcId: 'NPC_COOK', register: 'HAECHE' };
     return null;
   };
 
@@ -186,7 +190,8 @@ describe('normalizeUtteranceRegistersCore (R5v2)', () => {
   });
 
   it('HAPSYO 화자의 ~시오 → ~십시오 (기존 십시오는 불변)', () => {
-    const narrative = '@[조용한 실무자|/y.webp] "이만 물러나 주시오. 확인하십시오."';
+    const narrative =
+      '@[조용한 실무자|/y.webp] "이만 물러나 주시오. 확인하십시오."';
     const r = normalizeUtteranceRegistersCore(narrative, resolve);
     expect(r.text).toContain('"이만 물러나 주십시오. 확인하십시오."');
   });

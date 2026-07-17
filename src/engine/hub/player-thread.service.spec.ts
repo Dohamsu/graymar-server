@@ -40,7 +40,15 @@ describe('PlayerThreadService — COMPLETED 정산', () => {
         { incidentId: 'INC_SMUGGLE', resolved: true, outcome: 'CONTAINED' },
       ] as WorldState['activeIncidents'],
     });
-    const out = svc.update(ws, 10, 'LOC_B', 'VIOLENT', 'ESCALATE', 'FAIL', null);
+    const out = svc.update(
+      ws,
+      10,
+      'LOC_B',
+      'VIOLENT',
+      'ESCALATE',
+      'FAIL',
+      null,
+    );
     const t = (out.playerThreads ?? []).find(
       (x) => x.threadId === 'thread_LOC_A:SOCIAL:GET_INFO_3',
     );
@@ -68,11 +76,19 @@ describe('PlayerThreadService — COMPLETED 정산', () => {
         { incidentId: 'INC_OPEN', resolved: false },
       ] as WorldState['activeIncidents'],
     });
-    const out = svc.update(ws, 10, 'LOC_B', 'VIOLENT', 'ESCALATE', 'FAIL', null);
-    const threads = out.playerThreads ?? [];
-    expect(threads.find((x) => x.relatedIncidentId === 'INC_OPEN')?.status).toBe(
-      'EMERGING',
+    const out = svc.update(
+      ws,
+      10,
+      'LOC_B',
+      'VIOLENT',
+      'ESCALATE',
+      'FAIL',
+      null,
     );
+    const threads = out.playerThreads ?? [];
+    expect(
+      threads.find((x) => x.relatedIncidentId === 'INC_OPEN')?.status,
+    ).toBe('EMERGING');
     // 미해결 공존 중에도 신규 스레드는 정상 생성 (억제 없음)
     expect(
       threads.some((x) => x.locationId === 'LOC_B' && x.status === 'EMERGING'),
