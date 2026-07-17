@@ -96,6 +96,21 @@ describe('decideAgitatedBehavior', () => {
     expect(below).toBeNull();
   });
 
+  it('APPROACH trust 임계 경계 — 42 도달 시 발동, 미만은 침묵 (30턴 롱런 실측 조정)', () => {
+    const at = decideAgitatedBehavior(
+      '에드릭',
+      emo({ trust: 42, attachment: 22 }),
+      'CAUTIOUS',
+    );
+    expect(at?.type).toBe('APPROACH');
+    const below = decideAgitatedBehavior(
+      '에드릭',
+      emo({ trust: 41, attachment: 22 }),
+      'CAUTIOUS',
+    );
+    expect(below).toBeNull();
+  });
+
   it('우선순위 — fear가 suspicion·trust보다 먼저', () => {
     const r = decideAgitatedBehavior(
       '오웬',

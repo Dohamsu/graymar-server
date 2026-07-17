@@ -54,11 +54,12 @@ export const QUEST_BALANCE = {
   AGITATION_FEAR_THRESHOLD: 60,
   AGITATION_SUSPICION_THRESHOLD: 60,
   AGITATION_SUSPICION_TRUST_GATE: -10,
-  /** APPROACH(우호 접근) — 2026-07-17 실측 조정: 15턴 지속 우호 플레이가
-   *  trust 38 / attach 4.4 (attach ≈0.3/턴) → 기존 trust 50·attach 30은
-   *  attach 기준 ~100턴으로 구조적 미도달. attach 10이면 ~30턴 장기 우호
-   *  관계에서 도달 가능 (trust 50이 여전히 주 게이트). */
-  AGITATION_APPROACH_TRUST: 50,
+  /** APPROACH(우호 접근) — 2026-07-17 실측 조정 2회:
+   *  ① attach 30→10 (15턴 우호 attach 4.4, ≈0.3/턴 — 30은 ~100턴 미도달)
+   *  ② trust 50→42 (30턴 롱런 실측: trust 45/attach 22.7로 미발동 —
+   *     trust가 로그 감속(15턴 38→30턴 45)이라 50은 ~50턴+, 런 수명 밖.
+   *     42면 단기 친분(15턴 38)은 미발동, 장기 우호(30턴 45)는 발동권). */
+  AGITATION_APPROACH_TRUST: 42,
   AGITATION_APPROACH_ATTACHMENT: 10,
   AGITATION_COOLDOWN_TURNS: 6,
   AGITATION_REPORT_HEAT: 5,
