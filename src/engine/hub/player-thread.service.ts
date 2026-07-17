@@ -89,6 +89,28 @@ export class PlayerThreadService {
       threads.push(newThread);
     }
 
+    // 연결 사건 해소 → COMPLETED 정산 (2026-07-17 — 스레드 억제 정책 검토).
+    // COMPLETED 전환 코드가 어디에도 없어 데드 상태였다 (전 런 미해결 100% —
+    // D4-3 계측이 무의미했던 원인). 사건 해소 지점이 3곳(quest→ending /
+    // incident-management / world-tick)으로 흩어져 있어, 매 턴 도는 이곳에서
+    // ws.activeIncidents 대조로 단일 정산한다. 엔딩 성향 요약의 정확도 개선.
+    const resolvedIncidentIds = new Set(
+      (ws.activeIncidents ?? [])
+        .filter((i) => i.resolved)
+        .map((i) => i.incidentId),
+    );
+    for (let i = 0; i < threads.length; i++) {
+      const t = threads[i];
+      if (
+        t.status !== 'COMPLETED' &&
+        t.status !== 'ABANDONED' &&
+        t.relatedIncidentId &&
+        resolvedIncidentIds.has(t.relatedIncidentId)
+      ) {
+        threads[i] = { ...t, status: 'COMPLETED' };
+      }
+    }
+
     // 오래된 thread ABANDONED 처리
     for (let i = 0; i < threads.length; i++) {
       const t = threads[i];
