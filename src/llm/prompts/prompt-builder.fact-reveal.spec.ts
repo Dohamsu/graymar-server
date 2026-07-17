@@ -231,6 +231,29 @@ describe('PromptBuilderService — architecture/58 fact 공개/보류 블록', (
     expect(text).not.toContain('[이번 턴 NPC가 공개할 정보]');
   });
 
+  it('factHandoffHint → 인계 블록: 지칭을 따옴표로 감싸지 않는다 (별칭 인용 부자연 해소)', () => {
+    const ctx = baseCtx({
+      factHandoffHint: {
+        npcDisplayName: '하를룬',
+        topic: '순찰 기록',
+        otherNpcAliases: ['경비 책임자', '펠릭스'],
+      },
+    });
+    const text = promptText(
+      promptBuilder.buildNarrativePrompt(
+        ctx,
+        baseSr(),
+        '순찰 기록에 대해 묻는다',
+        'ACTION',
+      ),
+    );
+    expect(text).toContain('[NPC 모름 — 인계 가이드]');
+    expect(text).toContain('경비 책임자 또는 펠릭스');
+    expect(text).toContain('따옴표로 감싸지 마세요');
+    expect(text).not.toContain('"경비 책임자"');
+    expect(text).not.toContain('"펠릭스"');
+  });
+
   it('npcRevealableFact와 factWithheldHint 동시 존재 시 공개 블록만 발화 (우선순위)', () => {
     const ctx = baseCtx({
       npcRevealableFact: {

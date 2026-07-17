@@ -144,7 +144,7 @@ export interface LlmContext {
   factHandoffHint: {
     npcDisplayName: string; // 현재 대화 NPC
     topic: string; // 입력에서 인지된 화제 (단순 추출)
-    otherNpcAliases: string[]; // 다른 NPC 별칭/이름 (LLM이 인계 시 활용)
+    otherNpcAliases: string[]; // 다른 NPC 지칭 — 공개 시 실명, 미공개 시 shortAlias 직책 호칭 (인상 별칭 인용 부자연 해소)
   } | null;
   // architecture/46: NPC 누구도 fact 모를 때 default 일반 서술 (quest.facts.description)
   factDefaultDescription: string | null;
@@ -1813,6 +1813,9 @@ export class ContextBuilderService {
             };
           } else {
             // mode B: 현재 NPC 미보유 → 다른 NPC가 알면 인계 가이드
+            // 지칭 규칙: 실명 공개된 인물은 실명, 미공개면 shortAlias(직책 호칭).
+            // unknownAlias(플레이어 시점 인상 별칭 — "풋풋한 경비병")를 NPC가
+            // 동료 지칭에 그대로 인용하면 부자연스럽다 (에이전트 실플레이 관찰).
             const firstFact = factCandidates[0];
             const otherAliases: string[] = [];
             for (const npcId of firstFact.knownBy) {
@@ -1820,10 +1823,14 @@ export class ContextBuilderService {
               const st = (
                 runState?.npcStates as Record<string, NPCState> | undefined
               )?.[npcId];
-              const aliasRaw =
+              const display =
                 st && def
                   ? getNpcDisplayName(st, def, turnNoForNames)
-                  : def?.unknownAlias || def?.name || npcId;
+                  : undefined;
+              const aliasRaw =
+                def && display === def.name
+                  ? def.name
+                  : def?.shortAlias || def?.unknownAlias || def?.name || npcId;
               const alias = this.sanitizeNpcNames(aliasRaw, runState);
               if (alias) otherAliases.push(alias);
             }

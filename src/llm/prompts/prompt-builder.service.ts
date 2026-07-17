@@ -751,19 +751,19 @@ export class PromptBuilderService {
     if (!ctx.npcRevealableFact && ctx.factHandoffHint) {
       const { npcDisplayName, topic, otherNpcAliases } = ctx.factHandoffHint;
       const hintList =
-        otherNpcAliases.length > 0
-          ? otherNpcAliases.map((a) => `"${a}"`).join(' 또는 ')
-          : '';
-      // 추상 회피 표현 금지 + 구체 NPC 별칭 강제
+        otherNpcAliases.length > 0 ? otherNpcAliases.join(' 또는 ') : '';
+      // 추상 회피 표현 금지 + 구체 인물 지칭 강제.
+      // 지칭은 따옴표 없이 — 따옴표로 감싸 주입하면 LLM이 대사 안에 인용부호째
+      // 복제해 "'단정한 장교'를 찾아가시오" 같은 부자연 대사가 나온다 (실측).
       const lines: string[] = [
         `[NPC 모름 — 인계 가이드]`,
         `${npcDisplayName}은(는) "${topic}"에 대해 잘 모릅니다.`,
       ];
       if (hintList) {
         lines.push(
-          `직접적인 답을 주지 말되, 다른 NPC ${hintList}을(를) 반드시 NPC 별칭으로 명시하며 인계하세요.`,
+          `직접적인 답을 주지 말되, 다른 인물 ${hintList}에게 물어보라고 구체적으로 인계하세요. 동료·지인을 부르듯 직책이나 호칭으로 자연스럽게 지칭하고, 지칭을 따옴표로 감싸지 마세요.`,
           `예: "그건 잘 모르오. ${hintList}한테 물어보면 알 수도 있겠지."`,
-          `⚠️ 절대 금지 — "다른 곳을 뒤져보시오", "더 확실한 근거를 찾으려면" 같은 모호한 회피 표현. 반드시 위의 구체 NPC 별칭을 직접 언급해야 합니다.`,
+          `⚠️ 절대 금지 — "다른 곳을 뒤져보시오", "더 확실한 근거를 찾으려면" 같은 모호한 회피 표현. 반드시 위의 구체 인물을 직접 언급해야 합니다.`,
         );
       } else {
         lines.push(
