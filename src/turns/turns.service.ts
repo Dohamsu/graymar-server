@@ -3332,6 +3332,26 @@ export class TurnsService {
                 hubHeat: Math.min(100, ws.hubHeat + agitation.heatDelta),
               };
             }
+            if (agitation.type === 'REPORT') {
+              // 신고 가시화 (2026-07-17 실측 공백) — 디렉티브("낌새로 드러나게")를
+              // 메인 LLM이 무시해 플레이어가 신고를 알 수 없던 문제. 이벤트 라인
+              // (당턴 소멸)에 더해 시그널 피드(SECURITY, 지속)로 기계적 노출.
+              // 밀고자 실명은 밝히지 않는다 — 누가 알렸는지는 추리 소재.
+              const reportSignalFeed = (ws.signalFeed ?? []) as Array<
+                Record<string, unknown>
+              >;
+              reportSignalFeed.push({
+                id: `agitation_report_${npcId}_${turnNo}`,
+                channel: 'SECURITY',
+                severity: 2,
+                locationId,
+                text: '🚨 경비대가 당신의 행적을 주시하기 시작했다 — 누군가 밀고한 듯하다',
+                sourceIncidentId: null,
+                createdAtClock: ws.globalClock ?? turnNo,
+                expiresAtClock: (ws.globalClock ?? turnNo) + 12,
+              });
+              ws = { ...ws, signalFeed: reportSignalFeed } as WorldState;
+            }
             if (agitation.type === 'FLEE_LOCATION') {
               // 도주 — npcLocations 즉시 반영 + npcFleeOverrides 기록.
               // 스케줄(updateAllNpcLocations)이 npcLocations를 매 갱신마다
