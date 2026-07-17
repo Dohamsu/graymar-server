@@ -125,3 +125,35 @@ describe('sanitizeProposedNpc', () => {
     expect(npc?.role).toBeUndefined();
   });
 });
+
+// [P8 중간안 — arch/75 §19.3] TRAVEL 모드 — 장소 무관 비트
+describe('parseBeatCandidates — TRAVEL 모드 (locationId 없음)', () => {
+  it('빈 locationId → 후보 locationId undefined (장소 무관 비트)', () => {
+    const beats = parseBeatCandidates(
+      wrap([
+        {
+          premise: '길에서 낯선 전갈이 도착한다',
+          involvedNpcIds: ['NPC_A'],
+          hintedFactId: 'FACT_1',
+          affordances: ['OBSERVE'],
+        },
+      ]),
+      ctx({ locationId: '' }),
+    );
+    expect(beats).toHaveLength(1);
+    expect(beats[0].locationId).toBeUndefined();
+  });
+
+  it('일반 모드는 기존대로 현재 장소 구속 유지', () => {
+    const beats = parseBeatCandidates(
+      wrap([
+        {
+          premise: '시장에서 소란',
+          involvedNpcIds: ['NPC_A'],
+        },
+      ]),
+      ctx(),
+    );
+    expect(beats[0].locationId).toBe('LOC_MARKET');
+  });
+});

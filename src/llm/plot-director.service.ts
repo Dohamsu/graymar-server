@@ -150,7 +150,10 @@ export function parseBeatCandidates(
       proposedNpc: involvedNpcIds.includes('NPC_DYN_NEW')
         ? proposedNpc
         : undefined,
-      locationId: ctx.locationId,
+      // [P8 중간안 — arch/75 §19.3] TRAVEL 모드(장소 밖 선계산)는 locationId가
+      // 빈 문자열 → 장소 무관 비트로 저장 (하드 차단·장소 보너스 모두 비적용).
+      // 도착 턴(WORLD_EVENT 확정)에 age 1로 채택 경쟁 가능해진다.
+      locationId: ctx.locationId || undefined,
     });
   }
   return beats;
@@ -202,7 +205,7 @@ export class PlotDirectorService {
       });
       if (!beats || beats.length === 0) return null;
       this.logger.log(
-        `[PlotDirector] 비트 ${beats.length}개 선계산 (turn=${inputs.turnNo}, fact힌트=${beats.filter((b) => b.hintedFactId).length})`,
+        `[PlotDirector] 비트 ${beats.length}개 선계산 (turn=${inputs.turnNo}, fact힌트=${beats.filter((b) => b.hintedFactId).length}${inputs.locationId ? '' : ', travel'})`,
       );
       return beats;
     } catch (err) {
@@ -249,7 +252,7 @@ ${pressureLine}
 [미발견 단서]
 ${factsBlock || '(전부 발견됨 — 대결/해소 비트를 만드십시오)'}
 
-[현재 장소] ${inputs.locationId}${inputs.locationName ? ` (${inputs.locationName})` : ''}
+[현재 장소] ${inputs.locationId ? `${inputs.locationId}${inputs.locationName ? ` (${inputs.locationName})` : ''}` : '이동 중 (다음 장소 미정) — 특정 장소에 묶이지 않고 어느 장소에서든 성립하는 사건으로 만드십시오 (소문·전갈·마주침·뒤따르는 기척 등)'}
 [등장인물]
 ${npcBlock || '(없음)'}
 ${actionsBlock ? `[최근 플레이어 행동]\n${actionsBlock}` : ''}

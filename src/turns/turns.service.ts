@@ -309,7 +309,7 @@ import { computeTacticEffects } from '../engine/combat/combat-tactic.core.js';
 import { mergeInventoryItem } from './run-state-apply.core.js';
 
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { and, asc, eq, ne } from 'drizzle-orm';
+import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import {
   runSessions,
@@ -6419,14 +6419,39 @@ export class TurnsService {
       serverResult,
       llmStatus,
     });
-    await this.db
-      .update(runSessions)
-      .set({
-        currentTurnNo: turnNo,
-        runState: runStateUpdate,
-        updatedAt: new Date(),
-      })
-      .where(eq(runSessions.id, run.id));
+    // [P8 실측 수정 — arch/75 §19.4] AUTONOMOUS 런: 전체 되쓰기가 워커 소유
+    // 필드를 클로버하는 레이스 차단. 동기 커밋의 runState는 제출 시점 스냅샷이라,
+    // 그 사이 워커가 쓴 nextBeatCandidates(비트 선계산)·plotSeed(비동기 동결)를
+    // 낡은 값으로 되돌린다 (빠른 페이스에서 거의 매 턴 — beatAge 고착 실측).
+    // DB 수준 병합: 두 필드는 DB 현재값을 보존한다. 예외 — 이번 턴에 비트를
+    // 채택(소비)했으면 nextBeatCandidates는 payload(null)가 정본.
+    const isAutonomousCommit = this.content.getNarrativeMode() === 'AUTONOMOUS';
+    if (isAutonomousCommit) {
+      const beatConsumedThisTurn =
+        runStateUpdate.plotProgress?.lastAdoptedBeatTurn === turnNo;
+      const payloadJson = JSON.stringify(runStateUpdate);
+      const seedMerged = sql`jsonb_set(${payloadJson}::jsonb, '{plotSeed}', COALESCE(${runSessions.runState}->'plotSeed', (${payloadJson}::jsonb)->'plotSeed', 'null'::jsonb), true)`;
+      const runStateExpr = beatConsumedThisTurn
+        ? seedMerged
+        : sql`jsonb_set(${seedMerged}, '{nextBeatCandidates}', COALESCE(${runSessions.runState}->'nextBeatCandidates', (${payloadJson}::jsonb)->'nextBeatCandidates', 'null'::jsonb), true)`;
+      await this.db
+        .update(runSessions)
+        .set({
+          currentTurnNo: turnNo,
+          runState: runStateExpr as never,
+          updatedAt: new Date(),
+        })
+        .where(eq(runSessions.id, run.id));
+    } else {
+      await this.db
+        .update(runSessions)
+        .set({
+          currentTurnNo: turnNo,
+          runState: runStateUpdate,
+          updatedAt: new Date(),
+        })
+        .where(eq(runSessions.id, run.id));
+    }
     // 레이턴시 #3 — PENDING 턴 커밋 직후 워커 즉시 킥 (평균 ~0.5초 폴링 대기 제거)
     if (llmStatus === 'PENDING') {
       this.llmWorker?.wake();

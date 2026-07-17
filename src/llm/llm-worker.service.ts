@@ -4620,7 +4620,10 @@ ${npcList}`,
         | Record<string, unknown>
         | undefined;
       const locationId = (ws?.currentLocationId as string) ?? '';
-      if (!locationId) return; // HUB 등 장소 밖 — 비트는 LOCATION 기준 생성
+      // [P8 중간안 — arch/75 §19.3] 장소 밖(HUB·이동)에서도 선계산을 돌린다
+      // (TRAVEL 모드 — 장소 무관 비트, plot-director가 locationId '' 처리).
+      // "도착 턴 = WORLD_EVENT 확정인데 비트가 없어 PROC 폴백" 공백(P8 실측)을
+      // 공급 측에서 메꾼다. 신선도 창(2턴)·의도 존중 가드(D1)는 무변.
 
       const history = rs.actionHistory ?? [];
       const recentNpcIds = [
