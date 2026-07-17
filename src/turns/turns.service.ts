@@ -2029,7 +2029,19 @@ export class TurnsService {
     }
 
     // matchedEvent는 이 시점에서 항상 non-null (FREE 이벤트 셸이 보장)
-    const event = matchedEvent!;
+    //
+    // [버그 V10 분열 2026-07-17] 딥카피 필수 — EventMatcher/getEventById가
+    // ContentLoader 캐시 객체를 참조로 반환하고, 아래 NpcOverride·primaryNpcId
+    // 동기화가 payload를 제자리 변조한다. 카피 없이는 그 변조가 **팩 캐시
+    // 원본에 영구 반영**되어 이후 모든 런의 이벤트 정의를 오염시킨다
+    // (실측: coercer 런의 "그 경비병" 지목이 EVT_GUARD_INT_1 정의를 펠릭스로
+    // 바꿔, 몇 분 뒤 chatty 런에서 브렌 벤치 선택지↔펠릭스 화자 분열 4연속).
+    const event = structuredClone(matchedEvent!);
+    // 이벤트 콘텐츠 정의 원본 NPC — NpcOverride/동기화로 payload가 덮이기 전
+    // 캡처 (EventChoiceGate가 "유저 지목 ≠ 이벤트 정의 NPC"를 판별하는 기준).
+    const eventContentPrimaryNpc =
+      ((event.payload as Record<string, unknown> | undefined)
+        ?.primaryNpcId as string | undefined) ?? null;
 
     // Notification + WorldDelta: 변경 전 상태 스냅샷
     const prevHeat = ws.hubHeat;
@@ -3081,9 +3093,11 @@ export class TurnsService {
     const resolvedTargetNpcId = textMatchedNpcId ?? null;
 
     // effectiveNpcId: (1) 텍스트 매칭 NPC (2) intent.targetNpcId (3) conversationLockedNpcId (4) event.payload.primaryNpcId
-    // 이벤트 정의 원본 NPC (아래에서 payload.primaryNpcId가 덮이기 전 캡처 —
-    // arch/68 부록 L 이벤트-서술 선택지 정합 게이트에 사용)
-    const eventDefinedNpc = event.payload.primaryNpcId ?? null;
+    // 이벤트 정의 원본 NPC — arch/68 부록 L 이벤트-서술 선택지 정합 게이트 기준.
+    // [V10 분열 2026-07-17] 여기서 payload를 읽으면 상류 NpcOverride(플레이어
+    // 텍스트 지목)가 이미 덮은 값이라 게이트가 "지목=이벤트 NPC"로 착각해
+    // 무력화된다 — 딥카피 직후 캡처한 콘텐츠 원본(eventContentPrimaryNpc) 사용.
+    const eventDefinedNpc = eventContentPrimaryNpc;
     let eventPrimaryNpc = event.payload.primaryNpcId ?? null;
     if (resolvedTargetNpcId) {
       // 입력 텍스트 키워드 또는 IntentParser가 NPC를 지정 → 최우선
