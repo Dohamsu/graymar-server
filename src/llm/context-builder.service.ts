@@ -194,6 +194,9 @@ export interface LlmContext {
     | null;
   // 반복 구문 방지 (bug 4624): 직전 3턴에 2회+ 등장한 빈출 어구 — 이번 턴 자제
   overusedPhrases: string[];
+  // 문장 개시어 편중 (2026-07-17 계측: 26런 2,162문장에서 '그는/그녀는' 개시
+  // 15.3% 고정 편향) — 최근 세션 턴에서 과사용된 서술 문장 첫 단어
+  overusedOpeners: string[];
   // Player-First 지목 대상 (bug 4624): extractTargetNpcFromInput 결과 NPC
   playerTargetNpcId: string | null;
   // architecture/44 §이슈② — 런 전역 NPC 대사 테마 이력 (최근 10턴)
@@ -2051,6 +2054,7 @@ export class ContextBuilderService {
       partyActions: null, // 파티 모드 시 PartyTurnService에서 주입
       // 반복 구문 방지 — 직전 3턴 narrative 에서 2회+ 등장한 빈출 bigram top 5
       overusedPhrases: this.extractOverusedPhrases(finalLocationSessionTurns),
+      overusedOpeners: this.extractOverusedOpeners(finalLocationSessionTurns),
       // Player-First — turns.service에서 extractTargetNpcFromInput 결과 전달
       playerTargetNpcId: playerTargetNpcId ?? null,
       // architecture/44 §이슈② — 런 전역 테마 이력 (최근 10턴)
@@ -2095,6 +2099,35 @@ export class ContextBuilderService {
       .slice(0, 8)
       .map(([k]) => k);
     return top;
+  }
+
+  /**
+   * 서술 문장 개시어 편중 추출 (2026-07-17) — bigram 채널이 못 잡는 위치성
+   * 반복. 최근 세션 턴의 서술 문장 첫 단어를 집계해 3회+ 개시어를 반환한다
+   * (마커 대사·인용 제외). 실측: '그는/그녀는' 개시가 전 런 15.3%로 고정 편향.
+   */
+  private extractOverusedOpeners(recentTurns: RecentTurnEntry[]): string[] {
+    if (recentTurns.length === 0) return [];
+    const count = new Map<string, number>();
+    for (const t of recentTurns) {
+      const txt = t.narrative ?? '';
+      if (!txt) continue;
+      const narrOnly = txt
+        .replace(/@\[[^\]]*\]\s*"[^"]*"/g, '')
+        .replace(/"[^"]*"/g, '');
+      for (const raw of narrOnly.split(/(?<=[.!?…다])\s+/)) {
+        const s = raw.trim();
+        if (s.length < 6) continue;
+        const first = s.split(/\s+/)[0];
+        if (!first || !/^[가-힣]{2,}/.test(first)) continue;
+        count.set(first, (count.get(first) ?? 0) + 1);
+      }
+    }
+    return [...count.entries()]
+      .filter(([, n]) => n >= 3)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([k]) => k);
   }
 
   /**

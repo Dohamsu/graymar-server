@@ -1443,12 +1443,29 @@ export class PromptBuilderService {
     const factsParts: string[] = [];
     // [최근 사용 표현 — 자제] 블록 — 반복 구문 고착 방지 (bug 4624)
     //   직전 3턴에서 2회+ 사용된 빈출 bigram 을 프롬프트에 주입, LLM이 재사용을 자제하도록 유도.
-    if (ctx.overusedPhrases && ctx.overusedPhrases.length > 0) {
-      const list = ctx.overusedPhrases.map((p) => `"${p}"`).join(', ');
-      factsParts.push(
-        `[최근 사용 표현 — 이번 턴 자제] ${list}\n` +
+    if (
+      (ctx.overusedPhrases && ctx.overusedPhrases.length > 0) ||
+      (ctx.overusedOpeners && ctx.overusedOpeners.length > 0)
+    ) {
+      const lines: string[] = [];
+      if (ctx.overusedPhrases && ctx.overusedPhrases.length > 0) {
+        const list = ctx.overusedPhrases.map((p) => `"${p}"`).join(', ');
+        lines.push(
+          `[최근 사용 표현 — 이번 턴 자제] ${list}`,
           `- 위 표현들은 최근 3턴에서 이미 사용되었습니다. 같은 어휘·구문 반복을 피하고 다른 동사/묘사로 바꾸세요.`,
-      );
+        );
+      } else {
+        lines.push(`[최근 사용 표현 — 이번 턴 자제]`);
+      }
+      // 개시어 편중 (2026-07-17 계측: '그는/그녀는' 개시 15.3% 고정) —
+      // Positive framing: 대안 개시 방식을 제시 (금지 나열보다 준수율 높음).
+      if (ctx.overusedOpeners && ctx.overusedOpeners.length > 0) {
+        const openers = ctx.overusedOpeners.map((o) => `"${o}"`).join(', ');
+        lines.push(
+          `- 문장 첫머리 ${openers} 시작이 반복되고 있습니다. 이번 턴 서술 문장은 주어를 생략하거나(한국어에서 자연스러움) 행동·소리·사물·공간 묘사로 여세요. 위 단어로 시작하는 문장은 최대 1개.`,
+        );
+      }
+      factsParts.push(lines.join('\n'));
     }
 
     // [이번 턴 감각 초점] 블록 — 감각 다양성 강제 (bug 4671, 제안 E)
