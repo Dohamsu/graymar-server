@@ -189,3 +189,75 @@ describe('NpcResolver — 언급 질문 가드 확장 (자유 대화 검증 2026
     expect(r.npcId).toBe('NPC_RAT_KING');
   });
 });
+
+// [V10-② — 2026-07-17] Step 0b: 이벤트 고유 선택지(sourceEventId) — 이벤트 NPC 우선
+describe('NpcResolver — 이벤트 고유 CHOICE의 이벤트 NPC 우선 (V10-② Step 0b)', () => {
+  const service = new NpcResolverService(
+    new FakeContent() as never,
+    new FakeWhereabouts() as never,
+  );
+
+  it('sourceEventId가 매칭 이벤트와 일치하면 이벤트 primaryNpcId가 잠금을 이긴다', () => {
+    // 로사 잠금 중, 쥐왕 전제 이벤트의 고유 선택지를 클릭 (선택지에 npcId 없음)
+    const r = service.resolve(
+      choiceCtx({
+        rawInput: '자리에 앉아 심문에 응한다',
+        candidateEvent: {
+          eventId: 'EVT_GUARD_INT_1',
+          payload: { primaryNpcId: 'NPC_RAT_KING' },
+        },
+        choiceNpcId: null,
+        choiceSourceEventId: 'EVT_GUARD_INT_1',
+      }),
+    );
+    expect(r.npcId).toBe('NPC_RAT_KING');
+    expect(r.source).toBe('CHOICE_EVENT');
+    expect(r.lockApplied).toBe(false);
+  });
+
+  it('sourceEventId가 매칭 이벤트와 다르면 Step 0b 미발동 — 잠금 유지', () => {
+    const r = service.resolve(
+      choiceCtx({
+        candidateEvent: {
+          eventId: 'EVT_OTHER',
+          payload: { primaryNpcId: 'NPC_RAT_KING' },
+        },
+        choiceNpcId: null,
+        choiceSourceEventId: 'EVT_GUARD_INT_1',
+      }),
+    );
+    expect(r.source).not.toBe('CHOICE_EVENT');
+    expect(r.npcId).toBe('NPC_ROSA'); // 잠금 유지
+  });
+
+  it('선택지 npcId 지정(Step 0)이 있으면 그쪽이 먼저다', () => {
+    const r = service.resolve(
+      choiceCtx({
+        candidateEvent: {
+          eventId: 'EVT_GUARD_INT_1',
+          payload: { primaryNpcId: 'NPC_ROSA' },
+        },
+        choiceNpcId: 'NPC_RAT_KING',
+        choiceSourceEventId: 'EVT_GUARD_INT_1',
+      }),
+    );
+    expect(r.source).toBe('CHOICE_EXPLICIT');
+    expect(r.npcId).toBe('NPC_RAT_KING');
+  });
+
+  it('ACTION 입력은 Step 0b를 타지 않는다', () => {
+    const r = service.resolve(
+      choiceCtx({
+        inputType: 'ACTION',
+        rawInput: '로사에게 계속 묻는다',
+        choiceNpcId: null,
+        choiceSourceEventId: 'EVT_GUARD_INT_1',
+        candidateEvent: {
+          eventId: 'EVT_GUARD_INT_1',
+          payload: { primaryNpcId: 'NPC_RAT_KING' },
+        },
+      }),
+    );
+    expect(r.source).not.toBe('CHOICE_EVENT');
+  });
+});

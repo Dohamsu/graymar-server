@@ -3024,6 +3024,9 @@ export class TurnsService {
           ((choicePayload?.sourceNpcId ?? choicePayload?.npcId) as
             | string
             | undefined) ?? null,
+        // [V10-②] 이벤트 고유 선택지 — 이벤트 NPC가 잠금보다 우선 (Step 0b)
+        choiceSourceEventId:
+          (choicePayload?.sourceEventId as string | undefined) ?? null,
       });
       npcResolutionSource = resolution.source;
       npcResolutionConfidence = resolution.confidence;

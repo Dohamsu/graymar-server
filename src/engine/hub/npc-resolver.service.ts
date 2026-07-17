@@ -36,6 +36,7 @@ import {
 
 export type NpcResolutionSource =
   | 'CHOICE_EXPLICIT' // 선택지 payload의 NPC 지정 (nano sourceNpcId 등) — 구조화된 명시 지정
+  | 'CHOICE_EVENT' // 이벤트 고유 선택지(sourceEventId) 클릭 — 이벤트 primaryNpcId 우선 (V10-②)
   | 'STRONG_EXPLICIT_NAME' // 실명 또는 unknownAlias 전체 매칭
   | 'STRONG_PARTICLE' // "X에게/X와/X을" 호명 조사 패턴
   | 'MEDIUM_ROLE_KEYWORD' // 명시 roleKeywords
@@ -73,6 +74,11 @@ export interface NpcResolutionContext {
    *  플레이어가 그 NPC의 선택지를 명시적으로 클릭한 것이므로 대화 잠금보다 우선
    *  (경제 루프 검증에서 BRIBE 선택지의 뇌물 대상이 잠금 NPC로 어긋난 갭 — arch/65) */
   choiceNpcId?: string | null;
+  /** [V10-② — 2026-07-17] CHOICE 선택지의 sourceEventId — 이벤트 고유 선택지를
+   *  클릭한 턴은 그 이벤트에 대한 명시 의도이므로, 선택지 자체에 npcId가 없어도
+   *  이벤트 primaryNpcId가 대화 잠금보다 우선해야 한다 (심문 이벤트 선택지의
+   *  응답 화자가 직전 대화 상대(골목 아이)로 어긋난 분열 실측). */
+  choiceSourceEventId?: string | null;
 }
 
 export interface NpcResolution {
@@ -164,6 +170,30 @@ export class NpcResolverService {
           npcId: choiceNpc.npcId,
           source: 'CHOICE_EXPLICIT',
           confidence: 0.95,
+          alternatives,
+          lockApplied: false,
+        };
+      }
+    }
+
+    // ── Step 0b: 이벤트 고유 선택지 (CHOICE + sourceEventId = 매칭 이벤트) ──
+    // [V10-② — 2026-07-17] 선택지에 npcId가 없어도, 이벤트 고유 선택지를 클릭한
+    // 것은 그 이벤트(와 그 NPC)에 대한 명시 의도 — 이벤트 primaryNpcId가 대화
+    // 잠금보다 우선한다. Step 0(선택지 명시 NPC)과 동일한 Player-First 근거.
+    if (
+      isChoice &&
+      ctx.choiceSourceEventId &&
+      ctx.candidateEvent?.eventId === ctx.choiceSourceEventId &&
+      ctx.candidateEvent.payload.primaryNpcId
+    ) {
+      const eventNpc = allNpcs.find(
+        (n) => n.npcId === ctx.candidateEvent!.payload.primaryNpcId,
+      );
+      if (eventNpc) {
+        return {
+          npcId: eventNpc.npcId,
+          source: 'CHOICE_EVENT',
+          confidence: 0.9,
           alternatives,
           lockApplied: false,
         };
