@@ -81,6 +81,21 @@ describe('decideAgitatedBehavior', () => {
     expect(r?.type).toBe('APPROACH');
   });
 
+  it('APPROACH attach 임계 경계 — 10 도달 시 발동, 미만은 침묵 (2026-07-17 실측 조정)', () => {
+    const at = decideAgitatedBehavior(
+      '미렐라',
+      emo({ trust: 55, attachment: 10 }),
+      'FRIENDLY',
+    );
+    expect(at?.type).toBe('APPROACH');
+    const below = decideAgitatedBehavior(
+      '미렐라',
+      emo({ trust: 55, attachment: 9 }),
+      'FRIENDLY',
+    );
+    expect(below).toBeNull();
+  });
+
   it('우선순위 — fear가 suspicion·trust보다 먼저', () => {
     const r = decideAgitatedBehavior(
       '오웬',
