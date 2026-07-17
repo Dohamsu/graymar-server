@@ -88,6 +88,14 @@ export interface BeatAdoptionContext {
   undiscoveredFactIds: ReadonlySet<string>;
   /** 막 진행 (getActProgress 산출) */
   actProgress: ActProgress;
+  /**
+   * [버그 d20c1de8 — 불변식 47 확장] 연속 상호작용 필수 NPC. 플레이어가 직전
+   * 턴과 같은 NPC와 상호작용을 잇는 중(사교든 폭력이든, contextNpcId)이면,
+   * 이 NPC를 포함하지 않는 비트는 채택하지 않는다 — 채택 비트가 화자를
+   * 가로채 "구타 대상이 관리로 스왑"되던 실측 결함 차단. 의도 존중은
+   * 대화가 아니라 상호작용 단위다.
+   */
+  requiredNpcId?: string | null;
 }
 
 /**
@@ -171,6 +179,10 @@ export function selectBeatForAdoption(
 
   let best: BeatAdoptionResult | null = null;
   for (const beat of nextBeats.candidates) {
+    // [불변식 47 확장] 연속 상호작용 중 — 그 NPC 무관 비트는 하드 불채택.
+    if (ctx.requiredNpcId && !beat.involvedNpcIds.includes(ctx.requiredNpcId)) {
+      continue;
+    }
     const score = scoreBeatCandidate(beat, ctx);
     if (score < 0) continue;
     if (!best || score > best.score) best = { beat, score };

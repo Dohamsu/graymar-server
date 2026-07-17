@@ -215,3 +215,46 @@ describe('isBeatIntentAligned', () => {
     expect(isBeatIntentAligned(beat({ affordances: [] }), 'TALK')).toBeNull();
   });
 });
+
+// [버그 d20c1de8 — 불변식 47 확장] 연속 상호작용 필수 NPC 필터
+describe('selectBeatForAdoption — requiredNpcId (연속 상호작용 게이트)', () => {
+  const freshBeats2 = (candidates: BeatCandidate[]): NextBeats => ({
+    generatedAtTurn: 4,
+    candidates,
+  });
+
+  it('requiredNpcId 미포함 비트는 하드 불채택 — 구타 대상 스왑 차단', () => {
+    const other = beat({
+      beatId: 'OTHER',
+      involvedNpcIds: ['NPC_WARDEN'],
+      hintedFactId: 'F1',
+    });
+    const r = selectBeatForAdoption(
+      freshBeats2([other]),
+      baseCtx({ requiredNpcId: 'NPC_GUILDMASTER' }),
+    );
+    expect(r).toBeNull();
+  });
+
+  it('requiredNpcId 포함 비트는 정상 채택', () => {
+    const match = beat({
+      beatId: 'MATCH',
+      involvedNpcIds: ['NPC_A'],
+      hintedFactId: 'F1',
+    });
+    const r = selectBeatForAdoption(
+      freshBeats2([match]),
+      baseCtx({ requiredNpcId: 'NPC_A' }),
+    );
+    expect(r?.beat.beatId).toBe('MATCH');
+  });
+
+  it('requiredNpcId 없으면(도착 턴 등) 기존 동작', () => {
+    const any = beat({ beatId: 'ANY', hintedFactId: 'F1' });
+    const r = selectBeatForAdoption(
+      freshBeats2([any]),
+      baseCtx({ requiredNpcId: null }),
+    );
+    expect(r?.beat.beatId).toBe('ANY');
+  });
+});

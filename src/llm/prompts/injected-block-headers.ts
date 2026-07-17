@@ -29,6 +29,7 @@ export const INJECTED_BLOCK_HEADERS: readonly string[] = [
   '행동 재해석 지시',
   'NPC 능동 행동',
   '전투 장면',
+  '주변 반응',
   '관련 사건 기록',
   '대화 연속 상태',
   '인물 소재 안내',

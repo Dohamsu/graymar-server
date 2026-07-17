@@ -1742,6 +1742,30 @@ export class PromptBuilderService {
           `- 시간 전환이 필요하면 "시간이 흘러", "해가 기울어" 같은 전환 문구를 먼저 명시.`,
       );
     }
+
+    // [버그 d20c1de8 ②] 주변 반응 — 폭력·물리 파괴가 공공장소에서 벌어졌는데
+    // 대화 상대만 반응하고 주변이 무풍이던 실측("다리를 부러뜨렸는데 주민이
+    // 비명도 안 지름"). 소란 턴에 불특정 주변 반응 1문장을 positive로 요구.
+    {
+      const acForCommotion = sr.ui?.actionContext as
+        | { parsedType?: string; physicalImpact?: boolean }
+        | undefined;
+      const isCommotionTurn =
+        !isHub &&
+        inputType === 'ACTION' &&
+        (acForCommotion?.physicalImpact === true ||
+          acForCommotion?.parsedType === 'FIGHT' ||
+          acForCommotion?.parsedType === 'THREATEN');
+      if (isCommotionTurn) {
+        factsParts.push(
+          [
+            `[주변 반응 — 소란]`,
+            `이번 행동은 주변에 드러나는 소란(폭력·파괴·위협)입니다. 대화 상대 외에 **불특정 주변 인물의 반응 1문장**을 서술에 포함하세요 — 비명, 수군거림, 황급히 물러섬, 말리려는 움직임, 자리를 뜨는 발소리 등.`,
+            `이름 있는 새 인물을 만들지 말고, 주변 반응에는 따옴표 대사를 쓰지 마세요 (서술로만).`,
+          ].join('\n'),
+        );
+      }
+    }
     return factsParts;
   }
 

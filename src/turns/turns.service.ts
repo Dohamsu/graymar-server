@@ -37,6 +37,13 @@ export interface TurnModeContext {
    */
   beatAvailable?: boolean;
   /**
+   * [버그 d20c1de8 — 불변식 47 확장] 연속 상호작용(contextNpcId) 중일 때,
+   * 대기 비트 후보 중 그 NPC를 포함하는 것이 있는지. contextNpcId가 없으면
+   * true. false면 비트 승격(1.5·3.6)을 하지 않는다 — 무관 비트가 상호작용을
+   * 가로채는 것 차단 (구타 대상 스왑 실측).
+   */
+  beatMatchesInteraction?: boolean;
+  /**
    * [P4 채택 개선 — §15.4] beat 강제 창(C): 마지막 채택 후 BEAT_FORCE_AFTER_TURNS
    * 이상 경과. true면 대화 연속 중이어도 beat 우선(WORLD_EVENT). 대화 스티키니스로
    * 채택 0이 되는 정체를 막는다. 탐색 행동(A)은 별도로 항상 우선.
@@ -94,9 +101,11 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
   // NPC 명시 지목(1)만 이보다 우선 — Player-First의 명시 의도는 보존.
   // [D1 — arch/76 불변식 47] 의도 존중 가드: 사교 발화·REST 턴은 승격 금지(b),
   // 강제창(C)은 대화 잠금 활성 턴엔 발동하지 않음(a). 탐색 행동(A)은 유지.
+  // [버그 d20c1de8 — 불변식 47 확장] 연속 상호작용 중 무관 비트는 승격 금지.
   if (
     ctx.beatAvailable &&
     !ctx.intentSuppressesBeat &&
+    ctx.beatMatchesInteraction !== false &&
     (EXPLORE_ACTIONS.has(ctx.actionType) ||
       (ctx.beatForceWindow && !ctx.conversationLockActive))
   ) {
@@ -140,7 +149,12 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
   // 채택 자체는 정합 점수 임계(selectBeatForAdoption)를 다시 통과해야 하며,
   // 미채택 시 기존 폴백 체인으로 그 턴이 진행된다.
   // [D1-b — arch/76 불변식 47] 사교 발화·REST 의도 턴은 비트 승격 금지.
-  if (ctx.beatAvailable && !ctx.intentSuppressesBeat) {
+  // [버그 d20c1de8] 연속 상호작용 중 무관 비트도 승격 금지 (구타 대상 스왑 차단).
+  if (
+    ctx.beatAvailable &&
+    !ctx.intentSuppressesBeat &&
+    ctx.beatMatchesInteraction !== false
+  ) {
     return TurnMode.WORLD_EVENT;
   }
 
@@ -1662,6 +1676,16 @@ export class TurnsService {
         intent.actionType === 'REST' ||
         (!!earlyDialogueAct && SOCIAL_SPEECH_ACTS.has(earlyDialogueAct));
 
+      // [버그 d20c1de8 — 불변식 47 확장] 연속 상호작용(contextNpcId) 중이면
+      // 대기 비트가 그 NPC를 포함할 때만 승격·채택 — 무관 비트의 가로채기 차단.
+      // 단, 플레이어가 이번 턴 다른 NPC를 명시 지목하면(rule 1 우선) 무관.
+      const beatMatchesInteraction =
+        !contextNpcId ||
+        !nextBeats ||
+        nextBeats.candidates.some((b) =>
+          b.involvedNpcIds.includes(contextNpcId),
+        );
+
       // ── Player-First 턴 모드 결정 ──
       const turnMode = this.determineTurnMode({
         earlyTargetNpcId,
@@ -1677,6 +1701,7 @@ export class TurnsService {
         beatForceWindow,
         conversationLockActive,
         intentSuppressesBeat,
+        beatMatchesInteraction,
       });
       this.logger.log(
         `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'}, beatAvail=${beatAvailable}, beatForce=${beatForceWindow}, beatAge=${beatAge}, cands=${nextBeats?.candidates.length ?? 0})`,
@@ -1763,6 +1788,10 @@ export class TurnsService {
               lastPrimaryNpcId: lastPrimaryNpcId ?? null,
               undiscoveredFactIds,
               actProgress: getActProgress(runState.plotSeed.acts, turnNo),
+              // [버그 d20c1de8] 연속 상호작용 NPC 무관 비트 하드 불채택 —
+              // 단 플레이어가 이번 턴 다른 NPC를 명시 지목했으면 그쪽 의도 우선.
+              requiredNpcId:
+                earlyTargetNpcId ?? intentV3.targetNpcId ?? contextNpcId,
             });
             const pp = runState.plotProgress ?? { discoveredKeyFactIds: [] };
             if (adoption) {

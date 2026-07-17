@@ -42,6 +42,7 @@ export type NpcResolutionSource =
   | 'MEDIUM_ROLE_KEYWORD' // 명시 roleKeywords
   | 'WEAK_ALIAS_PARTIAL' // 별칭 부분 키워드 (lock 부재 시만)
   | 'CONVERSATION_LOCK' // 직전 SOCIAL NPC 잠금
+  | 'CONTEXT_CONTINUITY' // 비대화 행동(FIGHT/STEAL) 대상 미명시 — 직전 상대에게 연속 (불변식 35 확장)
   | 'EVENT_PRIMARY' // EventMatcher 이벤트 NPC
   | 'NO_NPC'; // NPC 없음
 
@@ -107,6 +108,10 @@ const SOCIAL_ACTIONS = new Set([
 
 /** STRONG 호명 조사 — "X에게/X께/X와/X한테" 등. */
 const PARTICLE_RE = /(.+?)(에게|께|와|하고|한테)\s/;
+
+/** [불변식 35 확장] 대상 미명시 시 직전 상대에게 잇는 것으로 보는 대인 비대화 행동.
+ *  SNEAK/OBSERVE 등 환경 지향 행동은 제외 — 사람을 향하는 직접 행동만. */
+const CONTEXT_CONTINUITY_ACTIONS = new Set(['FIGHT', 'STEAL']);
 
 /**
  * 언급(3인칭) 질문 패턴 — 잠금 대화 중 다른 NPC 이름이 이 패턴과 함께 나오면
@@ -472,6 +477,30 @@ export class NpcResolverService {
         alternatives,
         lockApplied: true,
       };
+    }
+
+    // ── Step 5b: 비대화 행동의 맥락 연속 (불변식 35 확장 — 버그 d20c1de8) ──
+    // FIGHT/STEAL은 대화 잠금(SOCIAL 체인)을 잇지 않지만, 대상 미명시라면
+    // 플레이어는 직전 상대에게 행동을 잇는 중이다 ("그의 다리를 부러뜨린다" 뒤
+    // "얼굴을 때린다"). 이벤트 NPC가 이보다 이기면 구타 대상이 통째로 스왑되는
+    // 몰입 파괴 실측 — 직전 primaryNpc를 EVENT_PRIMARY보다 우선한다.
+    // (명시 지목·STRONG 신호는 Step 0~1이 이미 처리 — 여기 도달 = 대상 미명시)
+    if (
+      !isChoice &&
+      CONTEXT_CONTINUITY_ACTIONS.has(ctx.intent.actionType) &&
+      ctx.actionHistory.length > 0
+    ) {
+      const lastEntry = ctx.actionHistory[ctx.actionHistory.length - 1];
+      const contextNpcId = lastEntry?.primaryNpcId as string | undefined;
+      if (contextNpcId && allNpcs.some((n) => n.npcId === contextNpcId)) {
+        return {
+          npcId: contextNpcId,
+          source: 'CONTEXT_CONTINUITY',
+          confidence: 0.75,
+          alternatives,
+          lockApplied: false,
+        };
+      }
     }
 
     // ── Step 6: EventMatcher NPC ──

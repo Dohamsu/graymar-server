@@ -745,3 +745,52 @@ describe('extractTargetNpcFromInput', () => {
     ).toBe('NPC_E');
   });
 });
+
+// [버그 d20c1de8 — 불변식 47 확장] 연속 상호작용 중 무관 비트 승격 금지
+describe('determineTurnMode — beatMatchesInteraction 게이트', () => {
+  it('연속 상호작용 중 무관 비트(false) → 3.6 승격 안 함 (구타 대상 스왑 차단)', () => {
+    const mode = determineTurnMode(
+      baseCtx({
+        actionType: 'FIGHT',
+        contextNpcId: 'NPC_GUILDMASTER',
+        beatAvailable: true,
+        beatMatchesInteraction: false,
+      }),
+    );
+    expect(mode).not.toBe('WORLD_EVENT');
+  });
+
+  it('비트가 상호작용 NPC를 포함(true) → 기존대로 승격', () => {
+    const mode = determineTurnMode(
+      baseCtx({
+        actionType: 'FIGHT',
+        contextNpcId: 'NPC_GUILDMASTER',
+        beatAvailable: true,
+        beatMatchesInteraction: true,
+      }),
+    );
+    expect(mode).toBe('WORLD_EVENT');
+  });
+
+  it('미지정(undefined)은 하위 호환 — 승격 유지', () => {
+    const mode = determineTurnMode(
+      baseCtx({ actionType: 'FIGHT', beatAvailable: true }),
+    );
+    expect(mode).toBe('WORLD_EVENT');
+  });
+
+  it('강제창(1.5-C)도 동일 게이트 적용', () => {
+    const mode = determineTurnMode(
+      baseCtx({
+        actionType: 'TALK',
+        lastPrimaryNpcId: 'NPC_GUILDMASTER',
+        contextNpcId: 'NPC_GUILDMASTER',
+        beatAvailable: true,
+        beatForceWindow: true,
+        conversationLockActive: false,
+        beatMatchesInteraction: false,
+      }),
+    );
+    expect(mode).not.toBe('WORLD_EVENT');
+  });
+});
