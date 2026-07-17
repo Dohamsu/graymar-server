@@ -1246,202 +1246,15 @@ export class ContextBuilderService {
       }
     }
 
-    // 장면 연속성: 현재 장면 상태 구축
-    let currentSceneContext: string | null = null;
-    if (locationSessionTurns.length > 0) {
-      const sceneParts: string[] = [];
-
-      // 1. 대화 상대 추출: actionContext에서 primaryNpcId 확인
-      const uiData = serverResult.ui as Record<string, unknown>;
-      const actionCtx = uiData?.actionContext as
-        | Record<string, unknown>
-        | undefined;
-      const primaryNpcId = actionCtx?.primaryNpcId as string | null | undefined;
-
-      // 1a. 플레이어 입력(rawInput)에서 NPC 이름 감지 → 서술 중심 NPC 지정
-      const rawInput =
-        ((
-          (serverResult as Record<string, unknown>)?.summary as Record<
-            string,
-            unknown
-          >
-        )?.short as string) ?? '';
-      const npcStatesAll = runState?.npcStates as
-        | Record<string, NPCState>
-        | undefined;
-      let choiceTargetNpcName: string | null = null;
-      if (rawInput && npcStatesAll) {
-        for (const [npcId, npcState] of Object.entries(npcStatesAll)) {
-          const npcDef = this.content.getNpc(npcId);
-          if (!npcDef) continue;
-          const displayName = getNpcDisplayName(
-            npcState,
-            npcDef,
-            turnNoForNames,
-          );
-          if (rawInput.includes(displayName)) {
-            choiceTargetNpcName = displayName;
-            break;
-          }
-        }
-      }
-      if (choiceTargetNpcName) {
-        sceneParts.push(
-          `⚠️ 플레이어가 선택한 대화/행동 대상: ${choiceTargetNpcName} — 이 NPC가 서술의 중심이어야 합니다`,
-        );
-      }
-
-      if (primaryNpcId) {
-        const npcStates = runState?.npcStates as
-          | Record<string, NPCState>
-          | undefined;
-        const npc = npcStates?.[primaryNpcId];
-        if (npc) {
-          const npcDef = this.content.getNpc(primaryNpcId);
-          const displayName = getNpcDisplayName(npc, npcDef, turnNoForNames);
-          const posture = computeEffectivePosture(npc);
-          const isChoiceTarget = choiceTargetNpcName === displayName;
-          sceneParts.push(
-            `이벤트 NPC: ${displayName} (${posture})${isChoiceTarget ? '' : ' — 배경에만 등장, 대화 주도하지 말 것'}`,
-          );
-        }
-      } else {
-        // 직전 턴들에서 NPC 추적 (최근 3턴 내 actionContext에서 primaryNpcId 검색)
-        const recentLocationTurns = allLocationTurnRows.slice(-3);
-        for (const t of recentLocationTurns.reverse()) {
-          const sr = t.serverResult as ServerResultV1 | null;
-          const prevActionCtx = (sr?.ui as Record<string, unknown>)
-            ?.actionContext as Record<string, unknown> | undefined;
-          const prevNpcId = prevActionCtx?.primaryNpcId as
-            | string
-            | null
-            | undefined;
-          if (prevNpcId) {
-            const npcStates = runState?.npcStates as
-              | Record<string, NPCState>
-              | undefined;
-            const npc = npcStates?.[prevNpcId];
-            if (npc) {
-              const npcDef = this.content.getNpc(prevNpcId);
-              const displayName = getNpcDisplayName(
-                npc,
-                npcDef,
-                turnNoForNames,
-              );
-              sceneParts.push(`최근 상호작용 상대: ${displayName}`);
-            }
-            break;
-          }
-        }
-      }
-
-      // 2. 세부 위치: 진행 중인 장면에서는 sceneFrame 대신 직전 내러티브 마지막 문장 활용
-      const ongoingNarrativeTurns = locationSessionTurns.filter(
-        (t) => t.narrative && t.narrative.length > 0,
-      );
-      if (ongoingNarrativeTurns.length >= 2) {
-        // 2턴 이상 진행: sceneFrame 완전 무시, 직전 내러티브의 마지막 150자로 장면 파악
-        const lastNarrative =
-          ongoingNarrativeTurns[ongoingNarrativeTurns.length - 1].narrative;
-        if (lastNarrative) {
-          const tail =
-            lastNarrative.length > 150
-              ? lastNarrative.slice(-150)
-              : lastNarrative;
-          sceneParts.push(`직전 장면(이어쓸 지점): ...${tail}`);
-        }
-      } else {
-        // 첫/두번째 턴: sceneFrame 활용
-        const sceneFrame = actionCtx?.eventSceneFrame as string | undefined;
-        if (sceneFrame) {
-          sceneParts.push(
-            `장면 배경(참고용, NPC가 직접 정보를 전달하지 말 것): ${sceneFrame}`,
-          );
-        } else {
-          const lastTurn = allLocationTurnRows[allLocationTurnRows.length - 1];
-          if (lastTurn) {
-            const sr = lastTurn.serverResult as ServerResultV1 | null;
-            const prevSceneFrame = (
-              (sr?.ui as Record<string, unknown>)?.actionContext as Record<
-                string,
-                unknown
-              >
-            )?.eventSceneFrame as string | undefined;
-            if (prevSceneFrame) {
-              sceneParts.push(
-                `장면 배경(참고용, NPC가 직접 정보를 전달하지 말 것): ${prevSceneFrame}`,
-              );
-            }
-          }
-        }
-      }
-
-      // 3. 현재 위치 (locationId → 한국어)
-      const ws = runState?.worldState as Record<string, unknown> | undefined;
-      const currentLocationId = ws?.currentLocationId as string | undefined;
-      if (currentLocationId) {
-        sceneParts.push(
-          `현재 위치: ${this.content.getLocationDisplayName(currentLocationId)}`,
-        );
-      }
-
-      // 4. 이번 방문 턴 수
-      sceneParts.push(`이번 방문 ${locationSessionTurns.length}턴째`);
-
-      // 4a. 대화 연속 감지: 직전 턴의 NPC와 이번 턴의 NPC가 같으면 "대화 연속 중" 지시
-      const currentTargetNpcId =
-        (actionCtx?.targetNpcId as string | undefined) ?? primaryNpcId ?? null;
-      if (currentTargetNpcId && allLocationTurnRows.length >= 1) {
-        const prevTurn = allLocationTurnRows[allLocationTurnRows.length - 1];
-        const prevSr = prevTurn?.serverResult as ServerResultV1 | null;
-        const prevAc = (prevSr?.ui as Record<string, unknown>)
-          ?.actionContext as Record<string, unknown> | undefined;
-        const prevTargetNpcId =
-          (prevAc?.targetNpcId as string | undefined) ??
-          (prevAc?.primaryNpcId as string | undefined) ??
-          null;
-        if (prevTargetNpcId === currentTargetNpcId) {
-          const npcDef = this.content.getNpc(currentTargetNpcId);
-          const npcState = npcStatesAll?.[currentTargetNpcId];
-          const displayName =
-            npcDef && npcState
-              ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
-              : (npcDef?.unknownAlias ?? '상대 인물');
-          if (dialogueAct === 'FAREWELL') {
-            // 작별 턴 — "열린 상태로 마무리" 지시와 충돌하므로 대화 종결 유도로 교체
-            sceneParts.push(
-              `대화 마무리 국면: 플레이어가 ${displayName}와(과)의 대화를 끝내려 합니다. 대화가 자연스럽게 닫히는 장면으로 서술을 마무리하세요.`,
-            );
-          } else {
-            sceneParts.push(
-              `⚠️ 대화 연속 중: ${displayName}와(과) 대화가 이어지고 있습니다. 이 NPC가 떠나거나 장면이 종료되지 않아야 합니다. 대화가 자연스럽게 계속될 수 있는 열린 상태로 서술을 마무리하세요.`,
-            );
-          }
-        }
-      }
-
-      // 5. 직전 행동 요약
-      const lastSessionTurn =
-        locationSessionTurns[locationSessionTurns.length - 1];
-      if (lastSessionTurn) {
-        const outcomeText =
-          lastSessionTurn.resolveOutcome === 'SUCCESS'
-            ? '성공'
-            : lastSessionTurn.resolveOutcome === 'PARTIAL'
-              ? '부분 성공'
-              : lastSessionTurn.resolveOutcome === 'FAIL'
-                ? '실패'
-                : '';
-        const outcomePart = outcomeText ? ` → ${outcomeText}` : '';
-        sceneParts.push(
-          `직전 행동: "${lastSessionTurn.rawInput}"${outcomePart}`,
-        );
-      }
-
-      if (sceneParts.length > 0) {
-        currentSceneContext = sceneParts.join('\n');
-      }
-    }
+    // 장면 연속성: 현재 장면 상태 구축 (P2.2 추출)
+    const currentSceneContext = this.buildSceneContinuityContext(
+      serverResult,
+      runState,
+      locationSessionTurns,
+      allLocationTurnRows,
+      dialogueAct,
+      turnNoForNames,
+    );
 
     // PR3: Intent Memory — actionHistory에서 패턴 감지 (midSummary보다 먼저 계산)
     let intentMemory: string | null = null;
@@ -1635,237 +1448,27 @@ export class ContextBuilderService {
       }
     }
 
-    // === NPC 개인 기록: 현재 턴 관련 NPC만 선별 ===
-    let relevantNpcMemoryText: string | null = null;
-    if (runState) {
-      const allNpcStates = runState.npcStates as
-        | Record<string, NPCState>
-        | undefined;
-      if (allNpcStates) {
-        const relevantNpcIds = new Set<string>();
+    // === NPC 개인 기록: 현재 턴 관련 NPC만 선별 (P2.3 추출) ===
+    const relevantNpcMemoryText = this.buildRelevantNpcMemoryText(
+      serverResult,
+      runState,
+      turnNoForNames,
+      focusedNpcId,
+    );
 
-        // 1. 현재 이벤트의 primaryNpcId
-        const uiForNpc = serverResult.ui as Record<string, unknown>;
-        const acForNpc = uiForNpc?.actionContext as
-          | Record<string, unknown>
-          | undefined;
-        const primaryNpc = acForNpc?.primaryNpcId as string | null | undefined;
-        if (primaryNpc) relevantNpcIds.add(primaryNpc);
-
-        // architecture/57: focused 모드에서는 메인 NPC 만 personalMemory 노출.
-        //   presentNpcs 의 BG NPC 별칭이 [NPC: 별칭] 블록을 통해 LLM 에 들어가
-        //   매 턴 끼어들기를 유발 (multi_npc_play 2026-05-14 검증) — focused 시 step 2~4 스킵.
-        const focusedSkip = !!focusedNpcId;
-
-        // 2. 현재 장소에 present하는 NPC
-        const wsForNpc = runState.worldState as
-          | Record<string, unknown>
-          | undefined;
-        const currentLocForNpc = wsForNpc?.currentLocationId as
-          | string
-          | undefined;
-        const locDynForNpc = wsForNpc?.locationDynamicStates as
-          | Record<string, { presentNpcs?: string[] }>
-          | undefined;
-        if (
-          !focusedSkip &&
-          currentLocForNpc &&
-          locDynForNpc?.[currentLocForNpc]?.presentNpcs
-        ) {
-          for (const nid of locDynForNpc[currentLocForNpc].presentNpcs) {
-            relevantNpcIds.add(nid);
-          }
-        }
-
-        // 3. npcInjection의 NPC
-        const injNpc = (uiForNpc?.npcInjection as { npcId?: string } | null)
-          ?.npcId;
-        if (!focusedSkip && injNpc) relevantNpcIds.add(injNpc);
-
-        // 4. 이벤트 sceneFrame/태그에 언급된 NPC (이름 매칭)
-        const sceneFrameForNpc = acForNpc?.eventSceneFrame as
-          | string
-          | undefined;
-        if (!focusedSkip && sceneFrameForNpc) {
-          for (const [npcId] of Object.entries(allNpcStates)) {
-            const npcDef = this.content.getNpc(npcId);
-            if (npcDef?.name && sceneFrameForNpc.includes(npcDef.name)) {
-              relevantNpcIds.add(npcId);
-            }
-          }
-        }
-
-        // 선별된 NPC의 personalMemory 렌더링
-        if (relevantNpcIds.size > 0) {
-          relevantNpcMemoryText = this.renderRelevantNpcMemory(
-            allNpcStates,
-            relevantNpcIds,
-            turnNoForNames,
-          );
-        }
-      }
-    }
-
-    // === architecture/46 + 58: Fact Pool + 기록·서술 단일화 ===
-    // 0. (58) 서버가 이번 턴 발견 처리한 fact(ui.questReveal)가 있으면 그 fact를 그대로 서술
-    //    — 기록된 fact와 LLM이 말하는 fact가 반드시 일치.
-    // 1. 없으면 (46) 입력 키워드 → fact 풀 매칭으로 분기:
-    //    a. 현재 NPC 보유 → 보류 가이드 (factWithheldHint — 기록 없는 detail 공개 금지)
-    //    b. 미보유 + 다른 NPC 보유 → 인계 가이드 (factHandoffHint)
-    //    c. 누구도 미보유 → default 텍스트 (factDefaultDescription)
-    //    d. 키워드 매칭 0 → 잡담 모드 (모두 null, prompt-builder가 daily_topics 주입)
-    let npcRevealableFact: LlmContext['npcRevealableFact'] = null;
-    let factHandoffHint: LlmContext['factHandoffHint'] = null;
-    let factDefaultDescription: LlmContext['factDefaultDescription'] = null;
-    let factWithheldHint: LlmContext['factWithheldHint'] = null;
-    {
-      const outcome = resolveOutcome as string | undefined;
-      if (outcome === 'SUCCESS' || outcome === 'PARTIAL') {
-        const uiForFact = serverResult.ui as Record<string, unknown>;
-        const acForFact = uiForFact?.actionContext as
-          | Record<string, unknown>
-          | undefined;
-        const factNpcId = acForFact?.primaryNpcId as string | null | undefined;
-
-        // === architecture/58 — 서버 발견 fact 최우선 주입 ===
-        const questReveal = uiForFact?.questReveal as
-          | {
-              factId: string;
-              npcId: string;
-              revealMode: 'direct' | 'indirect' | 'observe';
-              matchedByTopic: boolean;
-            }
-          | undefined;
-        if (questReveal?.factId) {
-          const revealedFact = this.content.getFact(questReveal.factId);
-          if (revealedFact) {
-            const npcDef = this.content.getNpc(questReveal.npcId);
-            const npcStatesForFact = runState?.npcStates as
-              | Record<string, NPCState>
-              | undefined;
-            const npcState = npcStatesForFact?.[questReveal.npcId];
-            const displayName =
-              npcState && npcDef
-                ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
-                : npcDef?.unknownAlias || npcDef?.name || questReveal.npcId;
-            const detail =
-              revealedFact.versions[questReveal.npcId] ??
-              revealedFact.description ??
-              '';
-            npcRevealableFact = {
-              npcDisplayName: displayName,
-              factId: revealedFact.factId,
-              detail: this.sanitizeNpcNames(detail, runState),
-              resolveOutcome: outcome,
-              trust: npcState?.emotional?.trust ?? 0,
-              posture: npcState?.posture ?? 'CAUTIOUS',
-              revealMode: questReveal.revealMode,
-            };
-          }
-        }
-
-        const rawInputForFact =
-          (acForFact?.originalInput as string | undefined) ??
-          ((
-            (serverResult as Record<string, unknown>)?.summary as
-              | Record<string, unknown>
-              | undefined
-          )?.short as string | undefined) ??
-          '';
-        const actionTypeForFact = (acForFact?.parsedType as string) ?? '';
-        const inputKw = ContextBuilderService.collectFactKeywords(
-          rawInputForFact,
-          actionTypeForFact,
-        );
-
-        const discoveredFacts =
-          (runState?.discoveredQuestFacts as string[]) ?? [];
-        const revealedFactIds = new Set(discoveredFacts);
-
-        // === Step A: facts.json에서 키워드 매칭 fact 후보 추출 (architecture/46) ===
-        // 서버 발견 fact가 이미 결정된 턴에는 인계/보류 분기가 필요 없음.
-        // 사교 발화(인사/안부/감사/작별) 턴에도 억제 — 인사에 인계/보류 가이드가 끼면
-        // NPC가 단서 화두를 꺼내는 어색함이 된다 (개선 1). 잡담 모드(D)로 자연 전환.
-        const factCandidates =
-          npcRevealableFact || dialogueAct
-            ? []
-            : this.content.getFactsByKeywords(inputKw, revealedFactIds);
-
-        if (factCandidates.length > 0 && factNpcId) {
-          // === Step B: 현재 NPC가 후보 fact 중 하나라도 보유? (knownBy 기반) ===
-          const ownFact = factCandidates.find((f) =>
-            f.knownBy.includes(factNpcId),
-          );
-
-          if (ownFact) {
-            // mode A' (58): 서버가 기록하지 않은 fact detail을 서술로 공개하면
-            // 발견 로그와 어긋나는 정보 누출이 된다 → detail 없이 '보류' 가이드만.
-            const npcDef = this.content.getNpc(factNpcId);
-            const npcStatesForFact = runState?.npcStates as
-              | Record<string, NPCState>
-              | undefined;
-            const npcState = npcStatesForFact?.[factNpcId];
-            const displayName =
-              npcState && npcDef
-                ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
-                : npcDef?.unknownAlias || npcDef?.name || factNpcId;
-            factWithheldHint = {
-              npcDisplayName: displayName,
-              topic:
-                ownFact.topic ?? [...inputKw].find((k) => k.length >= 2) ?? '',
-            };
-          } else {
-            // mode B: 현재 NPC 미보유 → 다른 NPC가 알면 인계 가이드
-            // 지칭 규칙: 실명 공개된 인물은 실명, 미공개면 shortAlias(직책 호칭).
-            // unknownAlias(플레이어 시점 인상 별칭 — "풋풋한 경비병")를 NPC가
-            // 동료 지칭에 그대로 인용하면 부자연스럽다 (에이전트 실플레이 관찰).
-            const firstFact = factCandidates[0];
-            const otherAliases: string[] = [];
-            for (const npcId of firstFact.knownBy) {
-              const def = this.content.getNpc(npcId);
-              const st = (
-                runState?.npcStates as Record<string, NPCState> | undefined
-              )?.[npcId];
-              const display =
-                st && def
-                  ? getNpcDisplayName(st, def, turnNoForNames)
-                  : undefined;
-              const aliasRaw =
-                def && display === def.name
-                  ? def.name
-                  : def?.shortAlias || def?.unknownAlias || def?.name || npcId;
-              const alias = this.sanitizeNpcNames(aliasRaw, runState);
-              if (alias) otherAliases.push(alias);
-            }
-            const npcDefCurrent = this.content.getNpc(factNpcId);
-            const npcStateCurrent = (
-              runState?.npcStates as Record<string, NPCState> | undefined
-            )?.[factNpcId];
-            const currentDisplay =
-              npcStateCurrent && npcDefCurrent
-                ? getNpcDisplayName(
-                    npcStateCurrent,
-                    npcDefCurrent,
-                    turnNoForNames,
-                  )
-                : npcDefCurrent?.unknownAlias ||
-                  npcDefCurrent?.name ||
-                  factNpcId;
-            // 입력에서 가장 두드러진 키워드를 topic으로
-            const topicKw = [...inputKw].find((k) => k.length >= 2) ?? '';
-            factHandoffHint = {
-              npcDisplayName: currentDisplay,
-              topic: topicKw,
-              otherNpcAliases: [...new Set(otherAliases)].slice(0, 2), // 최대 2명만 (프롬프트 간결)
-            };
-          }
-        } else if (factCandidates.length > 0 && !factNpcId) {
-          // mode C: NPC 미지정 + fact 매칭 → fact.description 활용 (default 텍스트)
-          factDefaultDescription = factCandidates[0].description || null;
-        }
-        // mode D: factCandidates.length === 0 → 잡담 모드 (모두 null 유지)
-      }
-    }
+    // === architecture/46 + 58: Fact Pool + 기록·서술 단일화 (P2.1 추출) ===
+    const {
+      npcRevealableFact,
+      factHandoffHint,
+      factDefaultDescription,
+      factWithheldHint,
+    } = this.buildFactPoolContext(
+      serverResult,
+      runState,
+      resolveOutcome as string | undefined,
+      dialogueAct,
+      turnNoForNames,
+    );
 
     // === NPC 이미 공개한 정보 리스트 (LLM 반복 방지용) ===
     let npcAlreadyRevealedFacts: LlmContext['npcAlreadyRevealedFacts'] = null;
@@ -2128,6 +1731,479 @@ export class ContextBuilderService {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
       .map(([k]) => k);
+  }
+
+  /**
+   * 장면 연속성 컨텍스트 (Scene Continuity) — P2.2 추출 (동작 보존 컷-페이스트).
+   * 대화 상대·장면 프레임·직전 행동/판정·작별 여부를 요약해 메인 LLM 에
+   * "이어지는 장면" 텍스트로 전달한다.
+   */
+  private buildSceneContinuityContext(
+    serverResult: ServerResultV1,
+    runState: Record<string, unknown> | null | undefined,
+    locationSessionTurns: RecentTurnEntry[],
+    allLocationTurnRows: Array<{
+      turnNo: number;
+      rawInput: string | null;
+      serverResult: unknown;
+      llmOutput: string | null;
+    }>,
+    dialogueAct: string | null,
+    turnNoForNames: number,
+  ): string | null {
+    let currentSceneContext: string | null = null;
+    if (locationSessionTurns.length > 0) {
+      const sceneParts: string[] = [];
+
+      // 1. 대화 상대 추출: actionContext에서 primaryNpcId 확인
+      const uiData = serverResult.ui as Record<string, unknown>;
+      const actionCtx = uiData?.actionContext as
+        | Record<string, unknown>
+        | undefined;
+      const primaryNpcId = actionCtx?.primaryNpcId as string | null | undefined;
+
+      // 1a. 플레이어 입력(rawInput)에서 NPC 이름 감지 → 서술 중심 NPC 지정
+      const rawInput =
+        ((
+          (serverResult as Record<string, unknown>)?.summary as Record<
+            string,
+            unknown
+          >
+        )?.short as string) ?? '';
+      const npcStatesAll = runState?.npcStates as
+        | Record<string, NPCState>
+        | undefined;
+      let choiceTargetNpcName: string | null = null;
+      if (rawInput && npcStatesAll) {
+        for (const [npcId, npcState] of Object.entries(npcStatesAll)) {
+          const npcDef = this.content.getNpc(npcId);
+          if (!npcDef) continue;
+          const displayName = getNpcDisplayName(
+            npcState,
+            npcDef,
+            turnNoForNames,
+          );
+          if (rawInput.includes(displayName)) {
+            choiceTargetNpcName = displayName;
+            break;
+          }
+        }
+      }
+      if (choiceTargetNpcName) {
+        sceneParts.push(
+          `⚠️ 플레이어가 선택한 대화/행동 대상: ${choiceTargetNpcName} — 이 NPC가 서술의 중심이어야 합니다`,
+        );
+      }
+
+      if (primaryNpcId) {
+        const npcStates = runState?.npcStates as
+          | Record<string, NPCState>
+          | undefined;
+        const npc = npcStates?.[primaryNpcId];
+        if (npc) {
+          const npcDef = this.content.getNpc(primaryNpcId);
+          const displayName = getNpcDisplayName(npc, npcDef, turnNoForNames);
+          const posture = computeEffectivePosture(npc);
+          const isChoiceTarget = choiceTargetNpcName === displayName;
+          sceneParts.push(
+            `이벤트 NPC: ${displayName} (${posture})${isChoiceTarget ? '' : ' — 배경에만 등장, 대화 주도하지 말 것'}`,
+          );
+        }
+      } else {
+        // 직전 턴들에서 NPC 추적 (최근 3턴 내 actionContext에서 primaryNpcId 검색)
+        const recentLocationTurns = allLocationTurnRows.slice(-3);
+        for (const t of recentLocationTurns.reverse()) {
+          const sr = t.serverResult as ServerResultV1 | null;
+          const prevActionCtx = (sr?.ui as Record<string, unknown>)
+            ?.actionContext as Record<string, unknown> | undefined;
+          const prevNpcId = prevActionCtx?.primaryNpcId as
+            | string
+            | null
+            | undefined;
+          if (prevNpcId) {
+            const npcStates = runState?.npcStates as
+              | Record<string, NPCState>
+              | undefined;
+            const npc = npcStates?.[prevNpcId];
+            if (npc) {
+              const npcDef = this.content.getNpc(prevNpcId);
+              const displayName = getNpcDisplayName(
+                npc,
+                npcDef,
+                turnNoForNames,
+              );
+              sceneParts.push(`최근 상호작용 상대: ${displayName}`);
+            }
+            break;
+          }
+        }
+      }
+
+      // 2. 세부 위치: 진행 중인 장면에서는 sceneFrame 대신 직전 내러티브 마지막 문장 활용
+      const ongoingNarrativeTurns = locationSessionTurns.filter(
+        (t) => t.narrative && t.narrative.length > 0,
+      );
+      if (ongoingNarrativeTurns.length >= 2) {
+        // 2턴 이상 진행: sceneFrame 완전 무시, 직전 내러티브의 마지막 150자로 장면 파악
+        const lastNarrative =
+          ongoingNarrativeTurns[ongoingNarrativeTurns.length - 1].narrative;
+        if (lastNarrative) {
+          const tail =
+            lastNarrative.length > 150
+              ? lastNarrative.slice(-150)
+              : lastNarrative;
+          sceneParts.push(`직전 장면(이어쓸 지점): ...${tail}`);
+        }
+      } else {
+        // 첫/두번째 턴: sceneFrame 활용
+        const sceneFrame = actionCtx?.eventSceneFrame as string | undefined;
+        if (sceneFrame) {
+          sceneParts.push(
+            `장면 배경(참고용, NPC가 직접 정보를 전달하지 말 것): ${sceneFrame}`,
+          );
+        } else {
+          const lastTurn = allLocationTurnRows[allLocationTurnRows.length - 1];
+          if (lastTurn) {
+            const sr = lastTurn.serverResult as ServerResultV1 | null;
+            const prevSceneFrame = (
+              (sr?.ui as Record<string, unknown>)?.actionContext as Record<
+                string,
+                unknown
+              >
+            )?.eventSceneFrame as string | undefined;
+            if (prevSceneFrame) {
+              sceneParts.push(
+                `장면 배경(참고용, NPC가 직접 정보를 전달하지 말 것): ${prevSceneFrame}`,
+              );
+            }
+          }
+        }
+      }
+
+      // 3. 현재 위치 (locationId → 한국어)
+      const ws = runState?.worldState as Record<string, unknown> | undefined;
+      const currentLocationId = ws?.currentLocationId as string | undefined;
+      if (currentLocationId) {
+        sceneParts.push(
+          `현재 위치: ${this.content.getLocationDisplayName(currentLocationId)}`,
+        );
+      }
+
+      // 4. 이번 방문 턴 수
+      sceneParts.push(`이번 방문 ${locationSessionTurns.length}턴째`);
+
+      // 4a. 대화 연속 감지: 직전 턴의 NPC와 이번 턴의 NPC가 같으면 "대화 연속 중" 지시
+      const currentTargetNpcId =
+        (actionCtx?.targetNpcId as string | undefined) ?? primaryNpcId ?? null;
+      if (currentTargetNpcId && allLocationTurnRows.length >= 1) {
+        const prevTurn = allLocationTurnRows[allLocationTurnRows.length - 1];
+        const prevSr = prevTurn?.serverResult as ServerResultV1 | null;
+        const prevAc = (prevSr?.ui as Record<string, unknown>)
+          ?.actionContext as Record<string, unknown> | undefined;
+        const prevTargetNpcId =
+          (prevAc?.targetNpcId as string | undefined) ??
+          (prevAc?.primaryNpcId as string | undefined) ??
+          null;
+        if (prevTargetNpcId === currentTargetNpcId) {
+          const npcDef = this.content.getNpc(currentTargetNpcId);
+          const npcState = npcStatesAll?.[currentTargetNpcId];
+          const displayName =
+            npcDef && npcState
+              ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
+              : (npcDef?.unknownAlias ?? '상대 인물');
+          if (dialogueAct === 'FAREWELL') {
+            // 작별 턴 — "열린 상태로 마무리" 지시와 충돌하므로 대화 종결 유도로 교체
+            sceneParts.push(
+              `대화 마무리 국면: 플레이어가 ${displayName}와(과)의 대화를 끝내려 합니다. 대화가 자연스럽게 닫히는 장면으로 서술을 마무리하세요.`,
+            );
+          } else {
+            sceneParts.push(
+              `⚠️ 대화 연속 중: ${displayName}와(과) 대화가 이어지고 있습니다. 이 NPC가 떠나거나 장면이 종료되지 않아야 합니다. 대화가 자연스럽게 계속될 수 있는 열린 상태로 서술을 마무리하세요.`,
+            );
+          }
+        }
+      }
+
+      // 5. 직전 행동 요약
+      const lastSessionTurn =
+        locationSessionTurns[locationSessionTurns.length - 1];
+      if (lastSessionTurn) {
+        const outcomeText =
+          lastSessionTurn.resolveOutcome === 'SUCCESS'
+            ? '성공'
+            : lastSessionTurn.resolveOutcome === 'PARTIAL'
+              ? '부분 성공'
+              : lastSessionTurn.resolveOutcome === 'FAIL'
+                ? '실패'
+                : '';
+        const outcomePart = outcomeText ? ` → ${outcomeText}` : '';
+        sceneParts.push(
+          `직전 행동: "${lastSessionTurn.rawInput}"${outcomePart}`,
+        );
+      }
+
+      if (sceneParts.length > 0) {
+        currentSceneContext = sceneParts.join('\n');
+      }
+    }
+    return currentSceneContext;
+  }
+
+  /**
+   * NPC 개인 기록 선별 (Memory v3 — 불변식 24 선별 주입) — P2.3 추출
+   * (동작 보존 컷-페이스트). 등장 NPC 만의 개인 기록을 텍스트로 렌더.
+   */
+  private buildRelevantNpcMemoryText(
+    serverResult: ServerResultV1,
+    runState: Record<string, unknown> | null | undefined,
+    turnNoForNames: number,
+    focusedNpcId: string | null,
+  ): string | null {
+    let relevantNpcMemoryText: string | null = null;
+    if (runState) {
+      const allNpcStates = runState.npcStates as
+        | Record<string, NPCState>
+        | undefined;
+      if (allNpcStates) {
+        const relevantNpcIds = new Set<string>();
+
+        // 1. 현재 이벤트의 primaryNpcId
+        const uiForNpc = serverResult.ui as Record<string, unknown>;
+        const acForNpc = uiForNpc?.actionContext as
+          | Record<string, unknown>
+          | undefined;
+        const primaryNpc = acForNpc?.primaryNpcId as string | null | undefined;
+        if (primaryNpc) relevantNpcIds.add(primaryNpc);
+
+        // architecture/57: focused 모드에서는 메인 NPC 만 personalMemory 노출.
+        //   presentNpcs 의 BG NPC 별칭이 [NPC: 별칭] 블록을 통해 LLM 에 들어가
+        //   매 턴 끼어들기를 유발 (multi_npc_play 2026-05-14 검증) — focused 시 step 2~4 스킵.
+        const focusedSkip = !!focusedNpcId;
+
+        // 2. 현재 장소에 present하는 NPC
+        const wsForNpc = runState.worldState as
+          | Record<string, unknown>
+          | undefined;
+        const currentLocForNpc = wsForNpc?.currentLocationId as
+          | string
+          | undefined;
+        const locDynForNpc = wsForNpc?.locationDynamicStates as
+          | Record<string, { presentNpcs?: string[] }>
+          | undefined;
+        if (
+          !focusedSkip &&
+          currentLocForNpc &&
+          locDynForNpc?.[currentLocForNpc]?.presentNpcs
+        ) {
+          for (const nid of locDynForNpc[currentLocForNpc].presentNpcs) {
+            relevantNpcIds.add(nid);
+          }
+        }
+
+        // 3. npcInjection의 NPC
+        const injNpc = (uiForNpc?.npcInjection as { npcId?: string } | null)
+          ?.npcId;
+        if (!focusedSkip && injNpc) relevantNpcIds.add(injNpc);
+
+        // 4. 이벤트 sceneFrame/태그에 언급된 NPC (이름 매칭)
+        const sceneFrameForNpc = acForNpc?.eventSceneFrame as
+          | string
+          | undefined;
+        if (!focusedSkip && sceneFrameForNpc) {
+          for (const [npcId] of Object.entries(allNpcStates)) {
+            const npcDef = this.content.getNpc(npcId);
+            if (npcDef?.name && sceneFrameForNpc.includes(npcDef.name)) {
+              relevantNpcIds.add(npcId);
+            }
+          }
+        }
+
+        // 선별된 NPC의 personalMemory 렌더링
+        if (relevantNpcIds.size > 0) {
+          relevantNpcMemoryText = this.renderRelevantNpcMemory(
+            allNpcStates,
+            relevantNpcIds,
+            turnNoForNames,
+          );
+        }
+      }
+    }
+    return relevantNpcMemoryText;
+  }
+
+  /**
+   * Fact Pool + 기록·서술 단일화 (arch/46+58) — P2.1 추출 (동작 보존 컷-페이스트).
+   * 0. 서버 발견 fact(ui.questReveal) 최우선 — 기록 fact = 서술 fact 보장
+   * 1. 키워드 매칭 분기: a.보류(factWithheldHint) b.인계(factHandoffHint)
+   *    c.default 텍스트 d.잡담 모드(전부 null). 사교 발화 턴은 억제.
+   */
+  private buildFactPoolContext(
+    serverResult: ServerResultV1,
+    runState: Record<string, unknown> | null | undefined,
+    outcome: string | undefined,
+    dialogueAct: string | null,
+    turnNoForNames: number,
+  ): {
+    npcRevealableFact: LlmContext['npcRevealableFact'];
+    factHandoffHint: LlmContext['factHandoffHint'];
+    factDefaultDescription: LlmContext['factDefaultDescription'];
+    factWithheldHint: LlmContext['factWithheldHint'];
+  } {
+    let npcRevealableFact: LlmContext['npcRevealableFact'] = null;
+    let factHandoffHint: LlmContext['factHandoffHint'] = null;
+    let factDefaultDescription: LlmContext['factDefaultDescription'] = null;
+    let factWithheldHint: LlmContext['factWithheldHint'] = null;
+    if (outcome === 'SUCCESS' || outcome === 'PARTIAL') {
+      const uiForFact = serverResult.ui as Record<string, unknown>;
+      const acForFact = uiForFact?.actionContext as
+        | Record<string, unknown>
+        | undefined;
+      const factNpcId = acForFact?.primaryNpcId as string | null | undefined;
+
+      // === architecture/58 — 서버 발견 fact 최우선 주입 ===
+      const questReveal = uiForFact?.questReveal as
+        | {
+            factId: string;
+            npcId: string;
+            revealMode: 'direct' | 'indirect' | 'observe';
+            matchedByTopic: boolean;
+          }
+        | undefined;
+      if (questReveal?.factId) {
+        const revealedFact = this.content.getFact(questReveal.factId);
+        if (revealedFact) {
+          const npcDef = this.content.getNpc(questReveal.npcId);
+          const npcStatesForFact = runState?.npcStates as
+            | Record<string, NPCState>
+            | undefined;
+          const npcState = npcStatesForFact?.[questReveal.npcId];
+          const displayName =
+            npcState && npcDef
+              ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
+              : npcDef?.unknownAlias || npcDef?.name || questReveal.npcId;
+          const detail =
+            revealedFact.versions[questReveal.npcId] ??
+            revealedFact.description ??
+            '';
+          npcRevealableFact = {
+            npcDisplayName: displayName,
+            factId: revealedFact.factId,
+            detail: this.sanitizeNpcNames(detail, runState),
+            resolveOutcome: outcome,
+            trust: npcState?.emotional?.trust ?? 0,
+            posture: npcState?.posture ?? 'CAUTIOUS',
+            revealMode: questReveal.revealMode,
+          };
+        }
+      }
+
+      const rawInputForFact =
+        (acForFact?.originalInput as string | undefined) ??
+        ((
+          (serverResult as Record<string, unknown>)?.summary as
+            | Record<string, unknown>
+            | undefined
+        )?.short as string | undefined) ??
+        '';
+      const actionTypeForFact = (acForFact?.parsedType as string) ?? '';
+      const inputKw = ContextBuilderService.collectFactKeywords(
+        rawInputForFact,
+        actionTypeForFact,
+      );
+
+      const discoveredFacts =
+        (runState?.discoveredQuestFacts as string[]) ?? [];
+      const revealedFactIds = new Set(discoveredFacts);
+
+      // === Step A: facts.json에서 키워드 매칭 fact 후보 추출 (architecture/46) ===
+      // 서버 발견 fact가 이미 결정된 턴에는 인계/보류 분기가 필요 없음.
+      // 사교 발화(인사/안부/감사/작별) 턴에도 억제 — 인사에 인계/보류 가이드가 끼면
+      // NPC가 단서 화두를 꺼내는 어색함이 된다 (개선 1). 잡담 모드(D)로 자연 전환.
+      const factCandidates =
+        npcRevealableFact || dialogueAct
+          ? []
+          : this.content.getFactsByKeywords(inputKw, revealedFactIds);
+
+      if (factCandidates.length > 0 && factNpcId) {
+        // === Step B: 현재 NPC가 후보 fact 중 하나라도 보유? (knownBy 기반) ===
+        const ownFact = factCandidates.find((f) =>
+          f.knownBy.includes(factNpcId),
+        );
+
+        if (ownFact) {
+          // mode A' (58): 서버가 기록하지 않은 fact detail을 서술로 공개하면
+          // 발견 로그와 어긋나는 정보 누출이 된다 → detail 없이 '보류' 가이드만.
+          const npcDef = this.content.getNpc(factNpcId);
+          const npcStatesForFact = runState?.npcStates as
+            | Record<string, NPCState>
+            | undefined;
+          const npcState = npcStatesForFact?.[factNpcId];
+          const displayName =
+            npcState && npcDef
+              ? getNpcDisplayName(npcState, npcDef, turnNoForNames)
+              : npcDef?.unknownAlias || npcDef?.name || factNpcId;
+          factWithheldHint = {
+            npcDisplayName: displayName,
+            topic:
+              ownFact.topic ?? [...inputKw].find((k) => k.length >= 2) ?? '',
+          };
+        } else {
+          // mode B: 현재 NPC 미보유 → 다른 NPC가 알면 인계 가이드
+          // 지칭 규칙: 실명 공개된 인물은 실명, 미공개면 shortAlias(직책 호칭).
+          // unknownAlias(플레이어 시점 인상 별칭 — "풋풋한 경비병")를 NPC가
+          // 동료 지칭에 그대로 인용하면 부자연스럽다 (에이전트 실플레이 관찰).
+          const firstFact = factCandidates[0];
+          const otherAliases: string[] = [];
+          for (const npcId of firstFact.knownBy) {
+            const def = this.content.getNpc(npcId);
+            const st = (
+              runState?.npcStates as Record<string, NPCState> | undefined
+            )?.[npcId];
+            const display =
+              st && def
+                ? getNpcDisplayName(st, def, turnNoForNames)
+                : undefined;
+            const aliasRaw =
+              def && display === def.name
+                ? def.name
+                : def?.shortAlias || def?.unknownAlias || def?.name || npcId;
+            const alias = this.sanitizeNpcNames(aliasRaw, runState);
+            if (alias) otherAliases.push(alias);
+          }
+          const npcDefCurrent = this.content.getNpc(factNpcId);
+          const npcStateCurrent = (
+            runState?.npcStates as Record<string, NPCState> | undefined
+          )?.[factNpcId];
+          const currentDisplay =
+            npcStateCurrent && npcDefCurrent
+              ? getNpcDisplayName(
+                  npcStateCurrent,
+                  npcDefCurrent,
+                  turnNoForNames,
+                )
+              : npcDefCurrent?.unknownAlias ||
+                npcDefCurrent?.name ||
+                factNpcId;
+          // 입력에서 가장 두드러진 키워드를 topic으로
+          const topicKw = [...inputKw].find((k) => k.length >= 2) ?? '';
+          factHandoffHint = {
+            npcDisplayName: currentDisplay,
+            topic: topicKw,
+            otherNpcAliases: [...new Set(otherAliases)].slice(0, 2), // 최대 2명만 (프롬프트 간결)
+          };
+        }
+      } else if (factCandidates.length > 0 && !factNpcId) {
+        // mode C: NPC 미지정 + fact 매칭 → fact.description 활용 (default 텍스트)
+        factDefaultDescription = factCandidates[0].description || null;
+      }
+      // mode D: factCandidates.length === 0 → 잡담 모드 (모두 null 유지)
+    }
+    return {
+      npcRevealableFact,
+      factHandoffHint,
+      factDefaultDescription,
+      factWithheldHint,
+    };
   }
 
   /**
