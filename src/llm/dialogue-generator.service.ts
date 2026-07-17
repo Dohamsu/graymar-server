@@ -150,12 +150,16 @@ export function validateSpeechRegister(
   //   ① (?<!십)시오 로 "십시오" 제외 ② [소오] → [가-힣]소 로 바꿔 "오"
   //   종결(십시오·이오 등)이 아니라 "~소" 종결(있소/없소/했소)만 하오체로 감지.
   const HAOCHE_FOREIGN = /(?:[가-힣]소|이오|하오|되오|(?<!십)시오|겠소)\s*$/;
+  // 어체 전수 검증(2026-07-17) — 격식체(하오/합쇼) NPC의 해요체 표류
+  // (~군요/~지요, 펠릭스·로넨 실측)가 기존 foreign 목록에 없어 통과하던 갭.
+  // ※ 계측 기준 강화 — llm_speech_audit 수치는 이 시점 전후 직접 비교 불가.
+  const HAEYO_FOREIGN = /(?:세요|해요|이에요|거예요|군요|네요|지요|까요)\s*$/;
 
   // 다른 register 의 어미 패턴 — 혼용 감지용
   const FOREIGN_ENDINGS: Record<string, RegExp[]> = {
-    HAOCHE: [/(?:합니다|입니다|습니다|겠습니다)\s*$/], // HAPSYO 혼용 금지
-    HAEYO: [/(?:합니다|입니다|습니다|겠습니다)\s*$/], // HAPSYO 혼용 금지
-    HAPSYO: [HAOCHE_FOREIGN], // HAOCHE 혼용 금지
+    HAOCHE: [/(?:합니다|입니다|습니다|겠습니다)\s*$/, HAEYO_FOREIGN], // HAPSYO·HAEYO 혼용 금지
+    HAEYO: [/(?:합니다|입니다|습니다|겠습니다)\s*$/, HAOCHE_FOREIGN], // HAPSYO·HAOCHE 혼용 금지
+    HAPSYO: [HAOCHE_FOREIGN, HAEYO_FOREIGN], // HAOCHE·HAEYO 혼용 금지
     // arch/69 C2.5 — 낮춤체(반말·해체)도 문장 중간의 하오체 종결(~소/~겠소 등)
     // 혼용을 감지한다. 기존엔 이오|하오만 봐서 "했소" 류 침식을 놓쳤음
     // (HAECHE 계측이 하오체 침식을 과소 집계하던 원인). 합쇼체도 HAOCHE와

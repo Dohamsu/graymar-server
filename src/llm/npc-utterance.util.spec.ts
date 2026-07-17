@@ -152,3 +152,73 @@ describe('auditUtteranceRegisterCore (arch/69 C2)', () => {
     expect(auditUtteranceRegisterCore(null, resolve, validateFn)).toEqual([]);
   });
 });
+
+// ─── R5v2 — 화자 인지 어체 정규화 (2026-07-17) ───
+import { normalizeUtteranceRegistersCore } from './npc-utterance.util.js';
+
+describe('normalizeUtteranceRegistersCore (R5v2)', () => {
+  const resolve = (label: string) => {
+    if (label.includes('회계사')) return { npcId: 'NPC_EDRIC', register: 'HAOCHE' };
+    if (label.includes('실무자')) return { npcId: 'NPC_MOON_SEA', register: 'HAPSYO' };
+    if (label.includes('행상')) return { npcId: 'NPC_PEDDLER', register: 'HAEYO' };
+    if (label.includes('요리사')) return { npcId: 'NPC_COOK', register: 'HAECHE' };
+    return null;
+  };
+
+  it('오폭 회귀 — HAOCHE 화자 정상 대사는 불변, 같은 턴 HAPSYO 화자의 하오체만 교정', () => {
+    const narrative = [
+      '@[날카로운 회계사|/x.webp] "장부가 비었소."',
+      '@[조용한 실무자|/y.webp] "너무 큰 소란은 곤란하오."',
+    ].join('\n\n');
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toContain('"장부가 비었소."');
+    expect(r.text).toContain('"너무 큰 소란은 곤란합니다."');
+    expect(r.fixes).toEqual([
+      { npcId: 'NPC_MOON_SEA', register: 'HAPSYO', count: 1 },
+    ]);
+  });
+
+  it('HAOCHE 화자의 합쇼체·해요체 어미 교정', () => {
+    const narrative =
+      '@[날카로운 회계사|/x.webp] "그건 제가 확인했습니다. 조심하세요."';
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toContain('"그건 제가 확인했소. 조심하시오."');
+  });
+
+  it('HAPSYO 화자의 ~시오 → ~십시오 (기존 십시오는 불변)', () => {
+    const narrative = '@[조용한 실무자|/y.webp] "이만 물러나 주시오. 확인하십시오."';
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toContain('"이만 물러나 주십시오. 확인하십시오."');
+  });
+
+  it('HAEYO 화자의 하오체 교정', () => {
+    // '좋소' 같은 일반 ~소 종결은 명사 오폭(숙소/장소) 위험으로 치환하지
+    // 않는다 — 명시 목록(있소/없소/했소/겠소/하오/이오/시오)만 교정.
+    const narrative = '@[말 많은 행상|/z.webp] "물건이 있소. 한번 보시오."';
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toContain('"물건이 있어요. 한번 보세요."');
+  });
+
+  it('낮춤체(HAECHE) 화자와 무명 화자는 치환하지 않는다', () => {
+    const narrative = [
+      '@[거친 요리사|/y.webp] "그건 나도 모릅니다."', // HAECHE — 치환 스킵(계측 몫)
+      '@[무명 인물|/z.webp] "무슨 일입니까?"',
+    ].join('\n\n');
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toBe(narrative);
+    expect(r.fixes).toEqual([]);
+  });
+
+  it('마커 밖 인용(무마커)은 건드리지 않는다', () => {
+    const narrative = '지나가던 이가 중얼거린다. "큰일입니다."';
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toBe(narrative);
+  });
+
+  it('문장 중간(종결 경계 아님)의 동형 문자열은 오치환하지 않는다', () => {
+    const narrative = '@[날카로운 회계사|/x.webp] "합니다만 두고 볼 일이오."';
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    // "합니다만" — 종결 아님 → 불변
+    expect(r.text).toContain('"합니다만 두고 볼 일이오."');
+  });
+});

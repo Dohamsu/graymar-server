@@ -85,6 +85,117 @@ export function collectRecentNpcUtterances(
   return collected; // 최신 → 과거 순
 }
 
+// ─── R5v2 — 화자 인지 어체 정규화 (교정) ───
+//
+// 구 R5(arch/51 §B)는 primary NPC가 HAOCHE면 서술의 **모든** 따옴표를 하오체로
+// 일괄 치환해, 같은 턴 합쇼체 보조 화자의 정상 대사까지 파괴했다
+// (실측: 문세아 "곤란합니다"→"곤란하오", llm_speech_audit 위반으로 자가 계측).
+// 마커 화자별로 register를 해석해 그 어체 어미만 교정한다. 무마커 인용
+// (무명·배경·문서)은 건드리지 않는다. 낮춤체(BANMAL/HAECHE)는 높임 불일치
+// 위험이 커서 치환하지 않는다 (계측만 — auditUtteranceRegisterCore).
+
+/** 어미 치환 규칙 — 긴 패턴 우선. 문장 종결 경계([.!?…\s]|$)에 앵커됨. */
+const REGISTER_ENDING_FIXES: Record<string, Array<[RegExp, string]>> = {
+  HAOCHE: [
+    [/하겠습니다/g, '하겠소'],
+    [/했습니다/g, '했소'],
+    [/되었습니다/g, '되었소'],
+    [/있습니다/g, '있소'],
+    [/없습니다/g, '없소'],
+    [/겠습니다/g, '겠소'],
+    [/합니다/g, '하오'],
+    [/입니다/g, '이오'],
+    [/하십시오/g, '하시오'],
+    [/이에요/g, '이오'],
+    [/세요/g, '시오'],
+    [/해요/g, '하오'],
+    [/군요/g, '구려'],
+  ],
+  HAPSYO: [
+    [/하겠소/g, '하겠습니다'],
+    [/했소/g, '했습니다'],
+    [/되었소/g, '되었습니다'],
+    [/있소/g, '있습니다'],
+    [/없소/g, '없습니다'],
+    [/겠소/g, '겠습니다'],
+    [/하오/g, '합니다'],
+    [/이오/g, '입니다'],
+    [/되오/g, '됩니다'],
+    [/(?<!십)시오/g, '십시오'],
+    [/이에요/g, '입니다'],
+    [/세요/g, '십시오'],
+    [/해요/g, '합니다'],
+  ],
+  HAEYO: [
+    [/하겠습니다/g, '하겠어요'],
+    [/했습니다/g, '했어요'],
+    [/겠습니다/g, '겠어요'],
+    [/합니다/g, '해요'],
+    [/입니다/g, '이에요'],
+    [/하겠소/g, '하겠어요'],
+    [/했소/g, '했어요'],
+    [/있소/g, '있어요'],
+    [/없소/g, '없어요'],
+    [/겠소/g, '겠어요'],
+    [/하오/g, '해요'],
+    [/이오/g, '예요'],
+    [/십시오/g, '세요'],
+    [/(?<!십)시오/g, '세요'],
+    [/구려/g, '군요'],
+  ],
+};
+
+export interface RegisterNormalizeResult {
+  text: string;
+  /** 교정 발생 화자별 건수 (로그·violations 기록용) */
+  fixes: Array<{ npcId: string; register: string; count: number }>;
+}
+
+/**
+ * 서술의 @마커 대사를 화자별 register에 맞게 어미 교정한다.
+ * resolveNpcRegister가 null(무명·미배정)을 반환한 화자는 건드리지 않는다.
+ */
+export function normalizeUtteranceRegistersCore(
+  narrative: string,
+  resolveNpcRegister: (
+    label: string,
+  ) => { npcId: string; register: string } | null,
+): RegisterNormalizeResult {
+  const fixCounts = new Map<string, { register: string; count: number }>();
+  const text = narrative.replace(
+    /(@\[([^\]|]+?)(?:\|[^\]]*)?\]\s*["“])([^"”]+)(["”])/g,
+    (whole, head: string, label: string, body: string, cq: string) => {
+      const resolved = resolveNpcRegister(label.trim());
+      if (!resolved) return whole;
+      const rules = REGISTER_ENDING_FIXES[resolved.register];
+      if (!rules) return whole; // BANMAL/HAECHE 등 — 치환 없음
+      let fixed = body;
+      for (const [pat, repl] of rules) {
+        // 문장 종결 경계 앵커 — 단어 중간 오치환 방지
+        const anchored = new RegExp(`${pat.source}(?=[.!?…\\s]|$)`, pat.flags);
+        fixed = fixed.replace(anchored, repl);
+      }
+      if (fixed !== body) {
+        const cur = fixCounts.get(resolved.npcId) ?? {
+          register: resolved.register,
+          count: 0,
+        };
+        cur.count++;
+        fixCounts.set(resolved.npcId, cur);
+      }
+      return `${head}${fixed}${cq}`;
+    },
+  );
+  return {
+    text,
+    fixes: [...fixCounts.entries()].map(([npcId, v]) => ({
+      npcId,
+      register: v.register,
+      count: v.count,
+    })),
+  };
+}
+
 // ─── arch/69 C2 — 화자 인지 어체 계측 (교정 없이 위반만 측정) ───
 
 export interface UtteranceRegisterAudit {

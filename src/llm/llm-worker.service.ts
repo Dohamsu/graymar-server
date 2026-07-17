@@ -53,6 +53,7 @@ import {
   collectRecentNpcUtterances,
   extractNpcUtterances,
   auditUtteranceRegisterCore,
+  normalizeUtteranceRegistersCore,
 } from './npc-utterance.util.js';
 import {
   pushNarrativeTheme,
@@ -1795,53 +1796,10 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
-        // architecture/51 §B (R5) — speechRegister 이탈 후처리.
-        // primary NPC가 HAOCHE인데 narrative 안 따옴표 대사가 ~합니다/~해요/~세요 같은
-        // 다른 register 어미로 끝나면 ~하오/~시오로 강제 치환. dual-track 비활성/혼합
-        // 모드에서 narrative에 직접 인용된 NPC 대사의 어미 일관성 보강.
-        {
-          const rs = runSession?.runState as
-            | Record<string, unknown>
-            | undefined;
-          const primaryNpcId = (
-            (rs?.ui as Record<string, unknown> | undefined)?.actionContext as
-              | Record<string, unknown>
-              | undefined
-          )?.primaryNpcId as string | null | undefined;
-          if (primaryNpcId) {
-            const npcDef = this.content.getNpc(primaryNpcId);
-            const register = (
-              npcDef?.personality as Record<string, unknown> | undefined
-            )?.speechRegister as string | undefined;
-            if (register === 'HAOCHE') {
-              let registerFixCount = 0;
-              narrative = narrative.replace(
-                /"([^"]{4,300})"/g,
-                (_match, body: string) => {
-                  const before = body;
-                  const fixed = body
-                    .replace(/하겠습니다([.!?…\s]|$)/g, '하겠소$1')
-                    .replace(/했습니다([.!?…\s]|$)/g, '했소$1')
-                    .replace(/되었습니다([.!?…\s]|$)/g, '되었소$1')
-                    .replace(/합니다([.!?…\s]|$)/g, '하오$1')
-                    .replace(/입니다([.!?…\s]|$)/g, '이오$1')
-                    .replace(/하십시오([.!?…\s]|$)/g, '하시오$1')
-                    .replace(/이에요([.!?…\s]|$)/g, '이오$1')
-                    .replace(/세요([.!?…\s]|$)/g, '시오$1')
-                    .replace(/하세([.!?…\s]|$)/g, '하시$1')
-                    .replace(/해요([.!?…\s]|$)/g, '하오$1');
-                  if (fixed !== before) registerFixCount++;
-                  return `"${fixed}"`;
-                },
-              );
-              if (registerFixCount > 0) {
-                violations.push(
-                  `R5(architecture/51): HAOCHE 어미 ${registerFixCount}건 치환`,
-                );
-              }
-            }
-          }
-        }
+        // R5v2 — 화자 인지 어체 정규화는 5.14 이후(마커 확정 뒤) 일괄 수행.
+        // 구 R5(primary HAOCHE 시 모든 따옴표 일괄 하오체 치환)는 같은 턴의
+        // 합쇼체 보조 화자 대사를 파괴하는 오폭이 실측되어 제거됨
+        // (문세아 "곤란합니다"→"곤란하오" — llm_speech_audit 자가 계측).
 
         // P4. 미소개 NPC 실명 sanitize (서술 + 선택지 label)
         const rs = runSession?.runState as Record<string, unknown> | undefined;
@@ -3726,9 +3684,12 @@ ${npcList}`,
         narrative = this.sanitizeAliasArtifacts(narrative);
       }
 
-      // arch/69 C2 — 화자 인지 어체 위반 계측 (교정 없음, 측정 전용).
+      // 5.15 + arch/69 C2 — 화자 인지 어체 정규화(R5v2) 후 위반 계측.
       //   등장 후보 NPC(llmContext.npcStates)의 표시명으로 라벨을 해소해
-      //   배정 register 대비 어미 위반을 집계. 무명·register 미배정은 스킵.
+      //   ① 화자별 register에 맞게 마커 대사 어미를 교정하고(HAOCHE/HAPSYO/
+      //   HAEYO — 낮춤체는 치환 위험이 커서 계측만) ② 교정 후 텍스트의 잔존
+      //   위반을 집계한다. 무명·register 미배정은 둘 다 스킵.
+      //   ※ audit 수치는 교정 후 기준 — 구 R5(계측만) 시기와 직접 비교 불가.
       let speechAudit: ReturnType<typeof auditUtteranceRegisterCore> = [];
       try {
         const auditCandidateIds = Object.keys(llmContext.npcStates ?? {});
@@ -3755,6 +3716,20 @@ ${npcList}`,
           }
           return null; // 무명·미매칭 스킵
         };
+        if (narrative) {
+          const normalized = normalizeUtteranceRegistersCore(
+            narrative,
+            resolveNpcRegister,
+          );
+          if (normalized.fixes.length > 0) {
+            narrative = normalized.text;
+            this.logger.log(
+              `[R5v2] 어체 교정: ${normalized.fixes
+                .map((f) => `${f.npcId}(${f.register})×${f.count}`)
+                .join(', ')}`,
+            );
+          }
+        }
         speechAudit = auditUtteranceRegisterCore(
           narrative,
           resolveNpcRegister,
