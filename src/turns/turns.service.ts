@@ -2040,8 +2040,9 @@ export class TurnsService {
     // 이벤트 콘텐츠 정의 원본 NPC — NpcOverride/동기화로 payload가 덮이기 전
     // 캡처 (EventChoiceGate가 "유저 지목 ≠ 이벤트 정의 NPC"를 판별하는 기준).
     const eventContentPrimaryNpc =
-      ((event.payload as Record<string, unknown> | undefined)
-        ?.primaryNpcId as string | undefined) ?? null;
+      ((event.payload as Record<string, unknown> | undefined)?.primaryNpcId as
+        | string
+        | undefined) ?? null;
 
     // Notification + WorldDelta: 변경 전 상태 스냅샷
     const prevHeat = ws.hubHeat;
