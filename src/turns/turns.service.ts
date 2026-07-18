@@ -1732,6 +1732,109 @@ export class TurnsService {
     }
   }
 
+  // [arch/77 P3.5] Layer 3: NPC 능동 반응 — WITNESSED NPC가 trust/posture에 따라 반응.
+  // architecture/72 (가) 스코프 분리: 대화 상대(primaryNpcId)의 태도는
+  // NpcReactionDirector 단일 권한 — 이 블록은 **방관 NPC에만** 적용한다.
+  // 대화 상대의 목격 사실은 ui.primaryNpcWitnessedTags로 ②에 전달.
+  private collectWitnessReactions(params: {
+    ws: WorldState;
+    runState: RunState;
+    event: import('../db/types/event-def.js').EventDefV2;
+    turnNo: number;
+  }): {
+    ws: WorldState;
+    npcReactions: Array<{
+      npcId: string;
+      npcName: string;
+      type: 'warn' | 'inform' | 'avoid' | 'hostile';
+      text: string;
+      heatDelta: number;
+    }>;
+    primaryNpcWitnessedTags: string[] | null;
+  } {
+    const { runState, event, turnNo } = params;
+    let ws = params.ws;
+    const npcReactions: Array<{
+      npcId: string;
+      npcName: string;
+      type: 'warn' | 'inform' | 'avoid' | 'hostile';
+      text: string;
+      heatDelta: number;
+    }> = [];
+    let primaryNpcWitnessedTags: string[] | null = null;
+
+    // 최근 WorldFacts에서 WITNESSED 기록 조회
+    const worldFacts = (ws.worldFacts ?? []) as Array<{
+      turnCreated: number;
+      category: string;
+      tags: string[];
+      impact?: { npcKnowledge?: Record<string, string> };
+    }>;
+    // architecture/72 (1회 발화 보장): 당턴 fact만 수집.
+    // PLAYER_ACTION fact는 직전의 ConsequenceProcessor.process()가 같은 턴에
+    // 생성하므로 당턴 한정으로 정확히 1회 발화한다. 기존 2턴 윈도우는 같은
+    // 목격을 다음 턴에 동일 하드코딩 문장으로 재주입했다 (버그 599a00a1 턴 4→5 실측).
+    const recentWitnesses = new Map<string, string[]>(); // npcId → witnessed action tags
+    for (const fact of worldFacts) {
+      if (fact.category !== 'PLAYER_ACTION') continue;
+      if (fact.turnCreated !== turnNo) continue; // 당턴만 — 1회 발화
+      const witnesses = fact.impact?.npcKnowledge ?? {};
+      for (const [npcId, status] of Object.entries(witnesses)) {
+        if (status === 'WITNESSED') {
+          const existing = recentWitnesses.get(npcId) ?? [];
+          existing.push(...fact.tags);
+          recentWitnesses.set(npcId, existing);
+        }
+      }
+    }
+
+    // 각 목격 NPC의 posture/trust에 따라 반응 결정 (판정 코어: witness-reaction.core).
+    // 'success'는 모든 성공 행동에 붙는 범용 태그라 제외 — 포함 시 OBSERVE/TALK 등
+    // 평범한 성공 행동이 "위험 목격"으로 오판돼 친근 NPC가 거리를 두는 톤 붕괴 발생
+    // (버그 599a00a1). 성공한 FIGHT/STEAL은 fight/steal 태그로 이미 커버됨.
+    const DANGEROUS_TAGS = new Set(['fight', 'steal', 'threaten']);
+    const existingNpcStatesForReaction = runState.npcStates ?? {};
+    const primaryNpcIdForWitness = (event.payload as Record<string, unknown>)
+      ?.primaryNpcId as string | undefined;
+
+    for (const [npcId, tags] of recentWitnesses) {
+      const npcState = existingNpcStatesForReaction[npcId];
+      if (!npcState) continue;
+      const dangerTags = tags.filter((t) => DANGEROUS_TAGS.has(t));
+      if (dangerTags.length === 0) continue; // 위험한 행동 목격만 반응
+
+      // (가) 대화 상대 제외 — 완성 문장 주입 대신 목격 사실만 ②에 넘긴다.
+      // NpcReactionDirector의 P0 태도 결정이 하드코딩 문장에 덮이는 것을 차단.
+      if (primaryNpcIdForWitness && npcId === primaryNpcIdForWitness) {
+        primaryNpcWitnessedTags = [...new Set(dangerTags)];
+        continue;
+      }
+
+      const npcDef = this.content.getNpc(npcId);
+      const npcName = getNpcDisplayName(npcState, npcDef);
+      const trust = npcState.emotional?.trust ?? npcState.trustToPlayer ?? 0;
+      const reaction = decideWitnessReaction(npcName, npcState.posture, trust);
+
+      npcReactions.push({ npcId, npcName, ...reaction });
+
+      // Heat 변동 적용
+      if (reaction.heatDelta > 0) {
+        ws = {
+          ...ws,
+          hubHeat: Math.min(100, ws.hubHeat + reaction.heatDelta),
+        };
+      }
+    }
+
+    if (npcReactions.length > 0 || primaryNpcWitnessedTags) {
+      this.logger.log(
+        `[NpcReaction] ${npcReactions.map((r) => `${r.npcName}:${r.type}(heat+${r.heatDelta})`).join(', ')}${primaryNpcWitnessedTags ? ` | primary=${primaryNpcIdForWitness}:witnessed(${primaryNpcWitnessedTags.join(',')})→director` : ''}`,
+      );
+    }
+
+    return { ws, npcReactions, primaryNpcWitnessedTags };
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -2714,92 +2817,16 @@ export class TurnsService {
       }
     }
 
-    // === Layer 3: NPC 능동 반응 — WITNESSED NPC가 trust/posture에 따라 반응 ===
-    // architecture/72 (가) 스코프 분리: 대화 상대(primaryNpcId)의 태도는
-    // NpcReactionDirector 단일 권한 — 이 블록은 **방관 NPC에만** 적용한다.
-    // 대화 상대의 목격 사실은 ui.primaryNpcWitnessedTags로 ②에 전달.
-    const npcReactions: Array<{
-      npcId: string;
-      npcName: string;
-      type: 'warn' | 'inform' | 'avoid' | 'hostile';
-      text: string;
-      heatDelta: number;
-    }> = [];
-    let primaryNpcWitnessedTags: string[] | null = null;
-    {
-      // 최근 WorldFacts에서 WITNESSED 기록 조회
-      const worldFacts = (ws.worldFacts ?? []) as Array<{
-        turnCreated: number;
-        category: string;
-        tags: string[];
-        impact?: { npcKnowledge?: Record<string, string> };
-      }>;
-      // architecture/72 (1회 발화 보장): 당턴 fact만 수집.
-      // PLAYER_ACTION fact는 직전의 ConsequenceProcessor.process()가 같은 턴에
-      // 생성하므로 당턴 한정으로 정확히 1회 발화한다. 기존 2턴 윈도우는 같은
-      // 목격을 다음 턴에 동일 하드코딩 문장으로 재주입했다 (버그 599a00a1 턴 4→5 실측).
-      const recentWitnesses = new Map<string, string[]>(); // npcId → witnessed action tags
-      for (const fact of worldFacts) {
-        if (fact.category !== 'PLAYER_ACTION') continue;
-        if (fact.turnCreated !== turnNo) continue; // 당턴만 — 1회 발화
-        const witnesses = fact.impact?.npcKnowledge ?? {};
-        for (const [npcId, status] of Object.entries(witnesses)) {
-          if (status === 'WITNESSED') {
-            const existing = recentWitnesses.get(npcId) ?? [];
-            existing.push(...fact.tags);
-            recentWitnesses.set(npcId, existing);
-          }
-        }
-      }
-
-      // 각 목격 NPC의 posture/trust에 따라 반응 결정 (판정 코어: witness-reaction.core).
-      // 'success'는 모든 성공 행동에 붙는 범용 태그라 제외 — 포함 시 OBSERVE/TALK 등
-      // 평범한 성공 행동이 "위험 목격"으로 오판돼 친근 NPC가 거리를 두는 톤 붕괴 발생
-      // (버그 599a00a1). 성공한 FIGHT/STEAL은 fight/steal 태그로 이미 커버됨.
-      const DANGEROUS_TAGS = new Set(['fight', 'steal', 'threaten']);
-      const existingNpcStatesForReaction = runState.npcStates ?? {};
-      const primaryNpcIdForWitness = (event.payload as Record<string, unknown>)
-        ?.primaryNpcId as string | undefined;
-
-      for (const [npcId, tags] of recentWitnesses) {
-        const npcState = existingNpcStatesForReaction[npcId];
-        if (!npcState) continue;
-        const dangerTags = tags.filter((t) => DANGEROUS_TAGS.has(t));
-        if (dangerTags.length === 0) continue; // 위험한 행동 목격만 반응
-
-        // (가) 대화 상대 제외 — 완성 문장 주입 대신 목격 사실만 ②에 넘긴다.
-        // NpcReactionDirector의 P0 태도 결정이 하드코딩 문장에 덮이는 것을 차단.
-        if (primaryNpcIdForWitness && npcId === primaryNpcIdForWitness) {
-          primaryNpcWitnessedTags = [...new Set(dangerTags)];
-          continue;
-        }
-
-        const npcDef = this.content.getNpc(npcId);
-        const npcName = getNpcDisplayName(npcState, npcDef);
-        const trust = npcState.emotional?.trust ?? npcState.trustToPlayer ?? 0;
-        const reaction = decideWitnessReaction(
-          npcName,
-          npcState.posture,
-          trust,
-        );
-
-        npcReactions.push({ npcId, npcName, ...reaction });
-
-        // Heat 변동 적용
-        if (reaction.heatDelta > 0) {
-          ws = {
-            ...ws,
-            hubHeat: Math.min(100, ws.hubHeat + reaction.heatDelta),
-          };
-        }
-      }
-
-      if (npcReactions.length > 0 || primaryNpcWitnessedTags) {
-        this.logger.log(
-          `[NpcReaction] ${npcReactions.map((r) => `${r.npcName}:${r.type}(heat+${r.heatDelta})`).join(', ')}${primaryNpcWitnessedTags ? ` | primary=${primaryNpcIdForWitness}:witnessed(${primaryNpcWitnessedTags.join(',')})→director` : ''}`,
-        );
-      }
-    }
+    // [arch/77 P3.5] Layer 3 목격 반응 — collectWitnessReactions로 추출.
+    const witnessOutcome = this.collectWitnessReactions({
+      ws,
+      runState,
+      event,
+      turnNo,
+    });
+    ws = witnessOutcome.ws;
+    const npcReactions = witnessOutcome.npcReactions;
+    const primaryNpcWitnessedTags = witnessOutcome.primaryNpcWitnessedTags;
 
     // Living World v2: PlayerGoal 진행도 체크 + 암시적 목표 감지
     if (this.playerGoalService) {
