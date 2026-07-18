@@ -1198,9 +1198,35 @@ export class ContextBuilderService {
    * 반복. 최근 세션 턴의 서술 문장 첫 단어를 집계해 3회+ 개시어를 반환한다
    * (마커 대사·인용 제외). 실측: '그는/그녀는' 개시가 전 런 15.3%로 고정 편향.
    */
+  /**
+   * 대명사 개시어 화이트리스트 — 계열 전체를 1키로 합산 (2026-07-18 서술 품질 사이클).
+   * '그는' 2회 + '그가' 1회처럼 형태별 분산으로 개별 임계 미달로 새는 구멍을 막는다.
+   * 접두 매칭이 아닌 명시 목록만 사용 — 그러나/그리고/그때/그런 등 비대명사 개시어를
+   * 오탐으로 억제하면 문장이 부자연스러워진다 ("한복"→"한복판" 오매칭과 같은 계열 위험).
+   */
+  private static readonly PRONOUN_OPENERS = new Set([
+    '그는',
+    '그가',
+    '그의',
+    '그를',
+    '그도',
+    '그에게',
+    '그녀는',
+    '그녀가',
+    '그녀의',
+    '그녀를',
+    '그녀도',
+    '그녀에게',
+  ]);
+
+  /** 개시어 반복 임계 — 3→2 (2026-07-18): 반복이 굳기 전 조기 개입. 26런 계측 15.3%→11.8% 후 롱런 잔여 처방. */
+  private static readonly OPENER_REPEAT_MIN = 2;
+
   private extractOverusedOpeners(recentTurns: RecentTurnEntry[]): string[] {
     if (recentTurns.length === 0) return [];
     const count = new Map<string, number>();
+    const pronounForms = new Map<string, number>();
+    let pronounTotal = 0;
     for (const t of recentTurns) {
       const txt = t.narrative ?? '';
       if (!txt) continue;
@@ -1212,12 +1238,33 @@ export class ContextBuilderService {
         if (s.length < 6) continue;
         const first = s.split(/\s+/)[0];
         if (!first || !/^[가-힣]{2,}/.test(first)) continue;
-        count.set(first, (count.get(first) ?? 0) + 1);
+        if (ContextBuilderService.PRONOUN_OPENERS.has(first)) {
+          pronounTotal += 1;
+          pronounForms.set(first, (pronounForms.get(first) ?? 0) + 1);
+        } else {
+          count.set(first, (count.get(first) ?? 0) + 1);
+        }
       }
     }
-    return [...count.entries()]
-      .filter(([, n]) => n >= 3)
-      .sort((a, b) => b[1] - a[1])
+    const entries = [...count.entries()];
+    let pronounKey: string | null = null;
+    if (pronounTotal >= ContextBuilderService.OPENER_REPEAT_MIN) {
+      // 프롬프트에는 실관측 형태만 예시 — 최빈 2형태를 '/'로 병기 (예: "그는/그가")
+      const forms = [...pronounForms.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 2)
+        .map(([k]) => k);
+      pronounKey = forms.join('/');
+      entries.push([pronounKey, pronounTotal]);
+    }
+    return entries
+      .filter(([, n]) => n >= ContextBuilderService.OPENER_REPEAT_MIN)
+      .sort(
+        // 동률이면 대명사 합산 키 우선 — 이번 사이클 표적('그는' 톱1)이 슬롯 경쟁에서 밀리지 않게
+        (a, b) =>
+          b[1] - a[1] ||
+          (a[0] === pronounKey ? -1 : b[0] === pronounKey ? 1 : 0),
+      )
       .slice(0, 3)
       .map(([k]) => k);
   }
