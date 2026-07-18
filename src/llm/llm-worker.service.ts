@@ -1063,6 +1063,91 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  // [arch/77 P4.5] architecture/44 §이슈② — 런 전역 narrativeThemes 기록.
+  // narrative의 @마커 대사를 테마 분류해 runState.narrativeThemes FIFO 저장.
+  // NPC 등장/롤백 여부와 무관하게 항상 실행 (dialogue_split 경로 포함).
+  private async recordNarrativeThemes(
+    narrative: string,
+    runSession: { runState?: unknown } | null | undefined,
+    pending: typeof turns.$inferSelect,
+  ): Promise<void> {
+    if (narrative && runSession?.runState) {
+      try {
+        // architecture/60 — stale 스냅샷 전체 되쓰기 금지: fresh 재조회 후 narrativeThemes만 패치
+        await this.applyRunStatePatch(
+          pending.runId,
+          'ThemeRecord',
+          (themeRs) => {
+            const themeNpcStates =
+              (themeRs.npcStates as Record<string, unknown> | undefined) ?? {};
+            const candidateNpcIds = Object.keys(themeNpcStates);
+
+            const markerToNpcId = (bracketName: string): string | null => {
+              const trimmed = bracketName.trim();
+              for (const npcId of candidateNpcIds) {
+                const def = this.content.getNpc(npcId);
+                if (!def) continue;
+                const short = (def as Record<string, unknown>).shortAlias as
+                  | string
+                  | undefined;
+                if (
+                  def.name === trimmed ||
+                  def.unknownAlias === trimmed ||
+                  short === trimmed
+                ) {
+                  return npcId;
+                }
+              }
+              return null;
+            };
+
+            const dialogueRegex =
+              /@(?:\[([^\]|]+)(?:\|[^\]]+)?\]|([A-Z][A-Z_0-9]+))\s*["\u201C]([^"\u201D]{3,})["\u201D]/g;
+            let themeChanged = false;
+            let themeRecorded = 0;
+            let m: RegExpExecArray | null;
+            while ((m = dialogueRegex.exec(narrative)) !== null) {
+              const bracketName = m[1];
+              const plainId = m[2];
+              const dialogue = m[3];
+              const npcId =
+                plainId ?? (bracketName ? markerToNpcId(bracketName) : null);
+              if (!npcId) continue;
+              const theme = this.themeClassifier.classify(dialogue);
+              if (theme === 'OTHER') continue;
+              const entry: NarrativeThemeEntry = {
+                turnNo: pending.turnNo,
+                npcId,
+                theme,
+                snippet: dialogue.slice(0, 20),
+              };
+              const runStateAny = themeRs as {
+                narrativeThemes?: NarrativeThemeEntry[];
+              };
+              runStateAny.narrativeThemes = pushNarrativeTheme(
+                runStateAny.narrativeThemes,
+                entry,
+              );
+              themeChanged = true;
+              themeRecorded++;
+            }
+
+            if (themeChanged) {
+              this.logger.debug(
+                `[ThemeRecord] turn=${pending.turnNo} recorded=${themeRecorded}`,
+              );
+            }
+            return themeChanged;
+          },
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[ThemeRecord] 분류 실패: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+  }
+
   private async processTurnInner(
     pending: typeof turns.$inferSelect,
   ): Promise<void> {
@@ -3310,86 +3395,9 @@ ${npcList}`,
         pending,
       });
 
-      // architecture/44 §이슈② — 런 전역 narrativeThemes 기록 (독립 블록)
-      // narrative 에서 @NPC_ID "대사" / @[이름|URL] "대사" 패턴을 추출해
-      // 테마 분류 후 runState.narrativeThemes 에 FIFO 저장. NPC 등장/롤백 여부와
-      // 무관하게 항상 실행되어야 한다 (dialogue_split 경로 포함).
-      if (narrative && runSession?.runState) {
-        try {
-          // architecture/60 — stale 스냅샷 전체 되쓰기 금지: fresh 재조회 후 narrativeThemes만 패치
-          await this.applyRunStatePatch(
-            pending.runId,
-            'ThemeRecord',
-            (themeRs) => {
-              const themeNpcStates =
-                (themeRs.npcStates as Record<string, unknown> | undefined) ??
-                {};
-              const candidateNpcIds = Object.keys(themeNpcStates);
-
-              const markerToNpcId = (bracketName: string): string | null => {
-                const trimmed = bracketName.trim();
-                for (const npcId of candidateNpcIds) {
-                  const def = this.content.getNpc(npcId);
-                  if (!def) continue;
-                  const short = (def as Record<string, unknown>).shortAlias as
-                    | string
-                    | undefined;
-                  if (
-                    def.name === trimmed ||
-                    def.unknownAlias === trimmed ||
-                    short === trimmed
-                  ) {
-                    return npcId;
-                  }
-                }
-                return null;
-              };
-
-              const dialogueRegex =
-                /@(?:\[([^\]|]+)(?:\|[^\]]+)?\]|([A-Z][A-Z_0-9]+))\s*["\u201C]([^"\u201D]{3,})["\u201D]/g;
-              let themeChanged = false;
-              let themeRecorded = 0;
-              let m: RegExpExecArray | null;
-              while ((m = dialogueRegex.exec(narrative)) !== null) {
-                const bracketName = m[1];
-                const plainId = m[2];
-                const dialogue = m[3];
-                const npcId =
-                  plainId ?? (bracketName ? markerToNpcId(bracketName) : null);
-                if (!npcId) continue;
-                const theme = this.themeClassifier.classify(dialogue);
-                if (theme === 'OTHER') continue;
-                const entry: NarrativeThemeEntry = {
-                  turnNo: pending.turnNo,
-                  npcId,
-                  theme,
-                  snippet: dialogue.slice(0, 20),
-                };
-                const runStateAny = themeRs as {
-                  narrativeThemes?: NarrativeThemeEntry[];
-                };
-                runStateAny.narrativeThemes = pushNarrativeTheme(
-                  runStateAny.narrativeThemes,
-                  entry,
-                );
-                themeChanged = true;
-                themeRecorded++;
-              }
-
-              if (themeChanged) {
-                this.logger.debug(
-                  `[ThemeRecord] turn=${pending.turnNo} recorded=${themeRecorded}`,
-                );
-              }
-              return themeChanged;
-            },
-          );
-        } catch (err) {
-          this.logger.warn(
-            `[ThemeRecord] 분류 실패: ${err instanceof Error ? err.message : err}`,
-          );
-        }
-      }
+      // [arch/77 P4.5] 런 전역 narrativeThemes 기록 — recordNarrativeThemes로
+      // 추출 (arch/44 §이슈②, CAS 원 구조 내부 보존).
+      await this.recordNarrativeThemes(narrative, runSession, pending);
 
       // 5.14. 별칭 아티팩트 정리 (멱등 배리어 최종 — arch/68 부록 H/J).
       //   5.11(IntroFallback/IntroDialogueInsert)이 5.10 1차 배리어 '이후'에
