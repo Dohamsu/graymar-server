@@ -1096,6 +1096,105 @@ export class TurnsService {
     });
   }
 
+  // [arch/77 P3.1] HP≤0 패배 엔딩 서브플로우 — handleLocationTurnInner에서 추출.
+  private async handleDefeatByHpZero(
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    body: SubmitTurnBody,
+    runState: RunState,
+  ) {
+    // 패배 엔딩 생성
+    const result = this.buildSystemResult(
+      turnNo,
+      currentNode,
+      '더 이상 버틸 수 없다...',
+    );
+    let endingSummaryHp: ReturnType<
+      SummaryBuilderService['buildEndingSummary']
+    > | null = null;
+    try {
+      const ws = runState.worldState ?? this.worldStateService.initWorldState();
+      const endingThreads = (ws.playerThreads ?? []).map((t) => ({
+        approachVector: t.approachVector,
+        goalCategory: t.goalCategory,
+        actionCount: t.actionCount,
+        successCount: t.successCount,
+        status: t.status,
+      }));
+      const endingInput = this.endingGenerator.gatherEndingInputs(
+        ws.activeIncidents ?? [],
+        runState.npcStates ?? {},
+        ws.narrativeMarks ?? [],
+        ws as unknown as Record<string, unknown>,
+        runState.arcState ?? null,
+        runState.actionHistory ?? [],
+        endingThreads,
+      );
+      const endingResult = this.endingGenerator.generateEnding(
+        endingInput,
+        'DEFEAT',
+        turnNo,
+      );
+      (result.ui as any).endingResult = endingResult;
+      result.events.push({
+        id: `ending_${turnNo}`,
+        kind: 'SYSTEM',
+        text: `[엔딩] ${endingResult.closingLine}`,
+        tags: ['RUN_ENDED'],
+        data: { endingResult },
+      });
+      // Journey Archive: summary 조립
+      try {
+        endingSummaryHp = this.summaryBuilder.buildEndingSummary(
+          {
+            id: run.id,
+            presetId: run.presetId ?? null,
+            gender: (run.gender as 'male' | 'female' | null) ?? null,
+            updatedAt: new Date(),
+            currentTurnNo: turnNo,
+          },
+          runState,
+          endingResult,
+        );
+      } catch (se) {
+        this.logger.warn(
+          `EndingSummary build failed (HP<=0) runId=${run.id}: ${String(se)}`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(`HP≤0 DEFEAT ending generation failed: ${e}`);
+    }
+
+    await this.db
+      .update(runSessions)
+      .set({
+        status: 'RUN_ENDED',
+        updatedAt: new Date(),
+        ...(endingSummaryHp ? { endingSummary: endingSummaryHp } : {}),
+      })
+      .where(eq(runSessions.id, run.id));
+
+    // Campaign: 시나리오 결과 저장
+    await this.saveCampaignResultIfNeeded(run.id);
+
+    await this.commitTurnRecord(
+      run,
+      currentNode,
+      turnNo,
+      body,
+      '',
+      result,
+      runState,
+    );
+
+    return {
+      turnNo,
+      result,
+      meta: { nodeOutcome: 'RUN_ENDED' },
+    };
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -1106,96 +1205,7 @@ export class TurnsService {
   ) {
     // HP≤0 방어: 전투 패배 등으로 HP가 0 이하인 상태에서 행동 방지
     if (runState.hp <= 0) {
-      // 패배 엔딩 생성
-      const result = this.buildSystemResult(
-        turnNo,
-        currentNode,
-        '더 이상 버틸 수 없다...',
-      );
-      let endingSummaryHp: ReturnType<
-        SummaryBuilderService['buildEndingSummary']
-      > | null = null;
-      try {
-        const ws =
-          runState.worldState ?? this.worldStateService.initWorldState();
-        const endingThreads = (ws.playerThreads ?? []).map((t) => ({
-          approachVector: t.approachVector,
-          goalCategory: t.goalCategory,
-          actionCount: t.actionCount,
-          successCount: t.successCount,
-          status: t.status,
-        }));
-        const endingInput = this.endingGenerator.gatherEndingInputs(
-          ws.activeIncidents ?? [],
-          runState.npcStates ?? {},
-          ws.narrativeMarks ?? [],
-          ws as unknown as Record<string, unknown>,
-          runState.arcState ?? null,
-          runState.actionHistory ?? [],
-          endingThreads,
-        );
-        const endingResult = this.endingGenerator.generateEnding(
-          endingInput,
-          'DEFEAT',
-          turnNo,
-        );
-        (result.ui as any).endingResult = endingResult;
-        result.events.push({
-          id: `ending_${turnNo}`,
-          kind: 'SYSTEM',
-          text: `[엔딩] ${endingResult.closingLine}`,
-          tags: ['RUN_ENDED'],
-          data: { endingResult },
-        });
-        // Journey Archive: summary 조립
-        try {
-          endingSummaryHp = this.summaryBuilder.buildEndingSummary(
-            {
-              id: run.id,
-              presetId: run.presetId ?? null,
-              gender: (run.gender as 'male' | 'female' | null) ?? null,
-              updatedAt: new Date(),
-              currentTurnNo: turnNo,
-            },
-            runState,
-            endingResult,
-          );
-        } catch (se) {
-          this.logger.warn(
-            `EndingSummary build failed (HP<=0) runId=${run.id}: ${String(se)}`,
-          );
-        }
-      } catch (e) {
-        this.logger.warn(`HP≤0 DEFEAT ending generation failed: ${e}`);
-      }
-
-      await this.db
-        .update(runSessions)
-        .set({
-          status: 'RUN_ENDED',
-          updatedAt: new Date(),
-          ...(endingSummaryHp ? { endingSummary: endingSummaryHp } : {}),
-        })
-        .where(eq(runSessions.id, run.id));
-
-      // Campaign: 시나리오 결과 저장
-      await this.saveCampaignResultIfNeeded(run.id);
-
-      await this.commitTurnRecord(
-        run,
-        currentNode,
-        turnNo,
-        body,
-        '',
-        result,
-        runState,
-      );
-
-      return {
-        turnNo,
-        result,
-        meta: { nodeOutcome: 'RUN_ENDED' },
-      };
+      return this.handleDefeatByHpZero(run, currentNode, turnNo, body, runState);
     }
 
     let ws = runState.worldState ?? this.worldStateService.initWorldState();
