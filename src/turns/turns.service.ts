@@ -4055,6 +4055,273 @@ export class TurnsService {
     return { matchedEvent, routingResult };
   }
 
+  // [arch/77 P3.14] 턴 상태 전이 조율 묶음 — Narrative Marks 판정 →
+  // advanceTime/HubSafety → Deferred → Agenda → Arc commitment/route →
+  // cooldown → 플레이어 자기 정보 축적(순회 검증 ②) → 행동 이력(최대 10).
+  private applyTurnStateTransitions(params: {
+    ws: WorldState;
+    agenda: NonNullable<RunState['agenda']>;
+    arcState: NonNullable<RunState['arcState']>;
+    cooldowns: NonNullable<RunState['eventCooldowns']>;
+    npcStates: Record<string, NPCState>;
+    actionHistory: NonNullable<RunState['actionHistory']>;
+    resolveResult: ReturnType<ResolveService['resolve']>;
+    event: import('../db/types/event-def.js').EventDefV2;
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    rawInput: string;
+    inputType: SubmitTurnBody['input']['type'];
+    choiceId: string | undefined;
+    dialogueAct: DialogueAct | null;
+    updatedRunState: RunState;
+    turnNo: number;
+  }) {
+    const {
+      arcState,
+      cooldowns,
+      npcStates,
+      actionHistory,
+      resolveResult,
+      event,
+      intent,
+      rawInput,
+      inputType,
+      choiceId,
+      dialogueAct,
+      updatedRunState,
+      turnNo,
+    } = params;
+    let ws = params.ws;
+    let agenda = params.agenda;
+    // === Narrative Engine v1: Narrative Marks 체크 ===
+    const markConditions = this.content.getNarrativeMarkConditions();
+    const npcEmotionals: Record<string, NpcEmotionalState> = {};
+    for (const [npcId, npc] of Object.entries(npcStates)) {
+      npcEmotionals[npcId] = npc.emotional;
+    }
+    const npcNames: Record<string, string> = {};
+    for (const [npcId] of Object.entries(npcStates)) {
+      const npcDef = this.content.getNpc(npcId);
+      npcNames[npcId] = getNpcDisplayName(npcStates[npcId], npcDef, turnNo);
+    }
+    // resolve outcome 횟수 집계
+    const resolveOutcomeCounts: Record<string, number> = {};
+    for (const h of actionHistory) {
+      if (h.resolveOutcome) {
+        resolveOutcomeCounts[h.resolveOutcome] =
+          (resolveOutcomeCounts[h.resolveOutcome] ?? 0) + 1;
+      }
+    }
+    // 현재 턴의 결과도 추가
+    resolveOutcomeCounts[resolveResult.outcome] =
+      (resolveOutcomeCounts[resolveResult.outcome] ?? 0) + 1;
+
+    const newMarks = this.narrativeMarkService.checkAndApply(
+      ws.narrativeMarks ?? [],
+      markConditions as NarrativeMarkCondition[],
+      {
+        ws,
+        npcEmotionals,
+        npcNames,
+        resolveOutcomes: resolveOutcomeCounts,
+        clock: ws.globalClock,
+      },
+    );
+    if (newMarks.length > 0) {
+      ws = {
+        ...ws,
+        narrativeMarks: [...(ws.narrativeMarks ?? []), ...newMarks],
+      };
+    }
+
+    ws = this.worldStateService.advanceTime(ws);
+    ws = this.worldStateService.updateHubSafety(ws);
+
+    // Deferred 체크
+    const { ws: wsAfterDeferred } =
+      this.worldStateService.processDeferredEffects(ws, turnNo);
+    ws = wsAfterDeferred;
+
+    // Agenda 업데이트
+    agenda = this.agendaService.updateFromResolve(agenda, resolveResult, event);
+
+    // Arc commitment 업데이트
+    let newArcState = arcState;
+    if (resolveResult.commitmentDelta > 0 && newArcState.currentRoute) {
+      newArcState = this.arcService.progressCommitment(
+        newArcState,
+        resolveResult.commitmentDelta,
+      );
+    }
+    // Arc route tag로 route 설정
+    if (event.arcRouteTag && !newArcState.currentRoute) {
+      const route = event.arcRouteTag as any;
+      if (this.arcService.canSwitchRoute(newArcState)) {
+        newArcState = this.arcService.switchRoute(newArcState, route);
+      }
+    }
+
+    // cooldown 업데이트
+    const newCooldowns = { ...cooldowns, [event.eventId]: turnNo };
+
+    // 순회 검증 ② (2026-07-12): 플레이어가 밝힌 자기 정보 축적 — "나는 떠돌이
+    // 용병이오", "이 시장은 처음이오" 류를 runState에 쌓아 프롬프트로 주입,
+    // NPC가 이미 들은 정보와 모순되는 질문("그대도 오래 계셨다면")을 방지.
+    if (inputType === 'ACTION') {
+      const DISCLOSURE_RES = [
+        /(?:나는|난|저는|내가)\s+([^,.!?"]{2,28}(?:이오|이요|요|이다|일세|하오|소|용병|사람))/,
+        /((?:이\s*(?:도시|시장|동네|곳|거리)|여기|이곳)(?:은|는|엔|에는)?\s*처음[^,.!?"]{0,10})/,
+        /((?:일거리|일감|의뢰)[^,.!?"]{0,12}(?:찾|구하)[^,.!?"]{0,8})/,
+      ];
+      for (const re of DISCLOSURE_RES) {
+        const m = rawInput.match(re);
+        if (m?.[1]) {
+          const text = m[1].trim().slice(0, 40);
+          const list = updatedRunState.playerDisclosures ?? [];
+          if (!list.some((d) => d.text === text)) {
+            updatedRunState.playerDisclosures = [
+              ...list,
+              { text, turnNo },
+            ].slice(-5);
+          }
+          break;
+        }
+      }
+    }
+
+    // 행동 이력 업데이트 (고집 시스템 + FALLBACK 페널티 + 선택지 중복 방지)
+    const eventPrimaryNpcId = (event.payload as Record<string, unknown>)
+      ?.primaryNpcId as string | undefined;
+    const newHistory = [
+      ...actionHistory,
+      {
+        turnNo,
+        actionType: intent.actionType,
+        secondaryActionType: intent.secondaryActionType,
+        suppressedActionType: intent.suppressedActionType,
+        inputText: rawInput,
+        eventId: event.eventId,
+        choiceId: inputType === 'CHOICE' ? choiceId : undefined,
+        primaryNpcId: eventPrimaryNpcId ?? undefined,
+        resolveOutcome: resolveResult.outcome,
+        dialogueAct: dialogueAct ?? undefined,
+      },
+    ].slice(-10); // 최대 10개 유지
+
+    return {
+      ws,
+      agenda,
+      newArcState,
+      newCooldowns,
+      newHistory,
+      newMarks,
+      npcNames,
+    };
+  }
+
+  // [arch/77 P3.15] Structured Memory v2: 턴 단위 실시간 수집 —
+  // 행동/판정/사건 영향/감정 delta/마크를 memoryCollector에 적재. 실패 non-fatal.
+  private async collectTurnMemory(params: {
+    run: any;
+    currentNode: any;
+    locationId: string;
+    turnNo: number;
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    rawInput: string;
+    resolveResult: ReturnType<ResolveService['resolve']>;
+    event: import('../db/types/event-def.js').EventDefV2;
+    resolvedSceneFrame: string;
+    effectiveNpcId: string | null;
+    intentV3: ReturnType<IntentV3BuilderService['build']>;
+    summaryText: string | null;
+    totalGoldDelta: number;
+    questGoldReward: number;
+    relevantIncident: ReturnType<
+      IncidentManagementService['findRelevantIncident']
+    >;
+    priorWsSnapshot: WorldState;
+    npcStates: Record<string, NPCState>;
+    newMarks: ReturnType<NarrativeMarkService['checkAndApply']>;
+  }): Promise<void> {
+    const {
+      run,
+      currentNode,
+      locationId,
+      turnNo,
+      intent,
+      rawInput,
+      resolveResult,
+      event,
+      resolvedSceneFrame,
+      effectiveNpcId,
+      intentV3,
+      summaryText,
+      totalGoldDelta,
+      questGoldReward,
+      relevantIncident,
+      priorWsSnapshot,
+      npcStates,
+      newMarks,
+    } = params;
+    // === Structured Memory v2: 실시간 수집 ===
+    try {
+      // NPC 감정 변화 delta 계산 (이번 턴에서 변경된 축만)
+      let npcEmoDelta:
+        | { npcId: string; delta: Record<string, number> }
+        | undefined;
+      if (effectiveNpcId) {
+        const npc = npcStates[effectiveNpcId];
+        if (npc?.emotional) {
+          // 대략적인 delta — applyActionImpact에서 변경된 값 (정확한 before 없으므로 간략화)
+          npcEmoDelta = { npcId: effectiveNpcId, delta: {} };
+        }
+      }
+      await this.memoryCollector.collectFromTurn(
+        run.id,
+        currentNode.id,
+        locationId,
+        turnNo,
+        {
+          actionType: intent.actionType,
+          secondaryActionType: intent.secondaryActionType,
+          rawInput: rawInput.slice(0, 30),
+          outcome: resolveResult.outcome,
+          eventId: event.eventId,
+          sceneFrame: resolvedSceneFrame,
+          primaryNpcId: effectiveNpcId ?? undefined,
+          intentTargetNpcId: intentV3.targetNpcId ?? undefined,
+          eventTags: event.payload.tags ?? [],
+          summaryShort: summaryText ?? undefined,
+          reputationChanges: resolveResult.reputationChanges,
+          goldDelta: totalGoldDelta + questGoldReward,
+          incidentImpact: relevantIncident
+            ? {
+                incidentId: relevantIncident.incident.incidentId,
+                controlDelta:
+                  relevantIncident.incident.control -
+                  (priorWsSnapshot.activeIncidents?.find(
+                    (i) =>
+                      i.incidentId === relevantIncident.incident.incidentId,
+                  )?.control ?? 0),
+                pressureDelta:
+                  relevantIncident.incident.pressure -
+                  (priorWsSnapshot.activeIncidents?.find(
+                    (i) =>
+                      i.incidentId === relevantIncident.incident.incidentId,
+                  )?.pressure ?? 0),
+              }
+            : undefined,
+          npcEmotionalDelta: npcEmoDelta as any,
+          newMarks: newMarks.map((m) => m.type),
+        },
+      );
+    } catch (err) {
+      // 수집 실패는 게임 진행에 영향 없음
+      this.logger.warn(
+        `[MemoryCollector] collectFromTurn failed: ${(err as Error).message}`,
+      );
+    }
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -5040,121 +5307,33 @@ export class TurnsService {
       );
     }
 
-    // === Narrative Engine v1: Narrative Marks 체크 ===
-    const markConditions = this.content.getNarrativeMarkConditions();
-    const npcEmotionals: Record<string, NpcEmotionalState> = {};
-    for (const [npcId, npc] of Object.entries(npcStates)) {
-      npcEmotionals[npcId] = npc.emotional;
-    }
-    const npcNames: Record<string, string> = {};
-    for (const [npcId] of Object.entries(npcStates)) {
-      const npcDef = this.content.getNpc(npcId);
-      npcNames[npcId] = getNpcDisplayName(npcStates[npcId], npcDef, turnNo);
-    }
-    // resolve outcome 횟수 집계
-    const resolveOutcomeCounts: Record<string, number> = {};
-    for (const h of actionHistory) {
-      if (h.resolveOutcome) {
-        resolveOutcomeCounts[h.resolveOutcome] =
-          (resolveOutcomeCounts[h.resolveOutcome] ?? 0) + 1;
-      }
-    }
-    // 현재 턴의 결과도 추가
-    resolveOutcomeCounts[resolveResult.outcome] =
-      (resolveOutcomeCounts[resolveResult.outcome] ?? 0) + 1;
-
-    const newMarks = this.narrativeMarkService.checkAndApply(
-      ws.narrativeMarks ?? [],
-      markConditions as NarrativeMarkCondition[],
-      {
-        ws,
-        npcEmotionals,
-        npcNames,
-        resolveOutcomes: resolveOutcomeCounts,
-        clock: ws.globalClock,
-      },
-    );
-    if (newMarks.length > 0) {
-      ws = {
-        ...ws,
-        narrativeMarks: [...(ws.narrativeMarks ?? []), ...newMarks],
-      };
-    }
-
-    ws = this.worldStateService.advanceTime(ws);
-    ws = this.worldStateService.updateHubSafety(ws);
-
-    // Deferred 체크
-    const { ws: wsAfterDeferred } =
-      this.worldStateService.processDeferredEffects(ws, turnNo);
-    ws = wsAfterDeferred;
-
-    // Agenda 업데이트
-    agenda = this.agendaService.updateFromResolve(agenda, resolveResult, event);
-
-    // Arc commitment 업데이트
-    let newArcState = arcState;
-    if (resolveResult.commitmentDelta > 0 && newArcState.currentRoute) {
-      newArcState = this.arcService.progressCommitment(
-        newArcState,
-        resolveResult.commitmentDelta,
-      );
-    }
-    // Arc route tag로 route 설정
-    if (event.arcRouteTag && !newArcState.currentRoute) {
-      const route = event.arcRouteTag as any;
-      if (this.arcService.canSwitchRoute(newArcState)) {
-        newArcState = this.arcService.switchRoute(newArcState, route);
-      }
-    }
-
-    // cooldown 업데이트
-    const newCooldowns = { ...cooldowns, [event.eventId]: turnNo };
-
-    // 순회 검증 ② (2026-07-12): 플레이어가 밝힌 자기 정보 축적 — "나는 떠돌이
-    // 용병이오", "이 시장은 처음이오" 류를 runState에 쌓아 프롬프트로 주입,
-    // NPC가 이미 들은 정보와 모순되는 질문("그대도 오래 계셨다면")을 방지.
-    if (body.input.type === 'ACTION') {
-      const DISCLOSURE_RES = [
-        /(?:나는|난|저는|내가)\s+([^,.!?"]{2,28}(?:이오|이요|요|이다|일세|하오|소|용병|사람))/,
-        /((?:이\s*(?:도시|시장|동네|곳|거리)|여기|이곳)(?:은|는|엔|에는)?\s*처음[^,.!?"]{0,10})/,
-        /((?:일거리|일감|의뢰)[^,.!?"]{0,12}(?:찾|구하)[^,.!?"]{0,8})/,
-      ];
-      for (const re of DISCLOSURE_RES) {
-        const m = rawInput.match(re);
-        if (m?.[1]) {
-          const text = m[1].trim().slice(0, 40);
-          const list = updatedRunState.playerDisclosures ?? [];
-          if (!list.some((d) => d.text === text)) {
-            updatedRunState.playerDisclosures = [
-              ...list,
-              { text, turnNo },
-            ].slice(-5);
-          }
-          break;
-        }
-      }
-    }
-
-    // 행동 이력 업데이트 (고집 시스템 + FALLBACK 페널티 + 선택지 중복 방지)
-    const eventPrimaryNpcId = (event.payload as Record<string, unknown>)
-      ?.primaryNpcId as string | undefined;
-    const newHistory = [
-      ...actionHistory,
-      {
-        turnNo,
-        actionType: intent.actionType,
-        secondaryActionType: intent.secondaryActionType,
-        suppressedActionType: intent.suppressedActionType,
-        inputText: rawInput,
-        eventId: event.eventId,
-        choiceId:
-          body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
-        primaryNpcId: eventPrimaryNpcId ?? undefined,
-        resolveOutcome: resolveResult.outcome,
-        dialogueAct: dialogueAct ?? undefined,
-      },
-    ].slice(-10); // 최대 10개 유지
+    // [arch/77 P3.14] 턴 상태 전이 조율 묶음 — applyTurnStateTransitions.
+    // Marks 판정 → 시간/안전도 → Deferred → Agenda → Arc → cooldown →
+    // 자기 정보 축적(순회 검증 ②) → 행동 이력. updatedRunState 제자리 변조.
+    const transitionOutcome = this.applyTurnStateTransitions({
+      ws,
+      agenda,
+      arcState,
+      cooldowns,
+      npcStates,
+      actionHistory,
+      resolveResult,
+      event,
+      intent,
+      rawInput,
+      inputType: body.input.type,
+      choiceId: body.input.choiceId,
+      dialogueAct,
+      updatedRunState,
+      turnNo,
+    });
+    ws = transitionOutcome.ws;
+    agenda = transitionOutcome.agenda;
+    const newArcState = transitionOutcome.newArcState;
+    const newCooldowns = transitionOutcome.newCooldowns;
+    const newHistory = transitionOutcome.newHistory;
+    const newMarks = transitionOutcome.newMarks;
+    const npcNames = transitionOutcome.npcNames;
 
     // [arch/77 P3.8] 보상 지급 묶음 — applyLocationRewards로 추출.
     // updatedRunState(gold/inventory/equipmentBag)·allEquipmentAdded 제자리 변조.
@@ -5866,64 +6045,28 @@ export class TurnsService {
       }
     }
 
-    // === Structured Memory v2: 실시간 수집 ===
-    try {
-      // NPC 감정 변화 delta 계산 (이번 턴에서 변경된 축만)
-      let npcEmoDelta:
-        | { npcId: string; delta: Record<string, number> }
-        | undefined;
-      if (effectiveNpcId) {
-        const npc = npcStates[effectiveNpcId];
-        if (npc?.emotional) {
-          // 대략적인 delta — applyActionImpact에서 변경된 값 (정확한 before 없으므로 간략화)
-          npcEmoDelta = { npcId: effectiveNpcId, delta: {} };
-        }
-      }
-      await this.memoryCollector.collectFromTurn(
-        run.id,
-        currentNode.id,
-        locationId,
-        turnNo,
-        {
-          actionType: intent.actionType,
-          secondaryActionType: intent.secondaryActionType,
-          rawInput: rawInput.slice(0, 30),
-          outcome: resolveResult.outcome,
-          eventId: event.eventId,
-          sceneFrame: resolvedSceneFrame,
-          primaryNpcId: effectiveNpcId ?? undefined,
-          intentTargetNpcId: intentV3.targetNpcId ?? undefined,
-          eventTags: event.payload.tags ?? [],
-          summaryShort: summaryText ?? undefined,
-          reputationChanges: resolveResult.reputationChanges,
-          goldDelta: totalGoldDelta + questGoldReward,
-          incidentImpact: relevantIncident
-            ? {
-                incidentId: relevantIncident.incident.incidentId,
-                controlDelta:
-                  relevantIncident.incident.control -
-                  (priorWsSnapshot.activeIncidents?.find(
-                    (i) =>
-                      i.incidentId === relevantIncident.incident.incidentId,
-                  )?.control ?? 0),
-                pressureDelta:
-                  relevantIncident.incident.pressure -
-                  (priorWsSnapshot.activeIncidents?.find(
-                    (i) =>
-                      i.incidentId === relevantIncident.incident.incidentId,
-                  )?.pressure ?? 0),
-              }
-            : undefined,
-          npcEmotionalDelta: npcEmoDelta as any,
-          newMarks: newMarks.map((m) => m.type),
-        },
-      );
-    } catch (err) {
-      // 수집 실패는 게임 진행에 영향 없음
-      this.logger.warn(
-        `[MemoryCollector] collectFromTurn failed: ${(err as Error).message}`,
-      );
-    }
+    // [arch/77 P3.15] Structured Memory v2 실시간 수집 — collectTurnMemory.
+    // 수집 실패는 non-fatal (게임 진행 무영향).
+    await this.collectTurnMemory({
+      run,
+      currentNode,
+      locationId,
+      turnNo,
+      intent,
+      rawInput,
+      resolveResult,
+      event,
+      resolvedSceneFrame,
+      effectiveNpcId,
+      intentV3,
+      summaryText,
+      totalGoldDelta,
+      questGoldReward,
+      relevantIncident,
+      priorWsSnapshot,
+      npcStates,
+      newMarks,
+    });
 
     // 파이프라인 로그를 serverResult에 포함 (commitTurnRecord 전에 추가해야 DB에 저장됨)
     (result as any)._pipelineLog = {
