@@ -584,6 +584,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     // 확인하지 않아, wake() 즉시 트리거와 1초 interval 폴링이 같은 PENDING 턴을
     // 동시에 select하면 둘 다 진입해 이중 LLM 호출·서술 2벌 생성 (실측 7/650턴).
     // 0행 갱신 = 다른 사이클이 선점 → 즉시 반환.
+    // [arch/77 P4.0 금지선] 이중처리 락 — 조건부 UPDATE+returning의 원자성이
+    // 이중 LLM 호출을 막는 유일한 방벽. 리팩토링에서 분리·재배치 금지.
     const locked = await this.db
       .update(turns)
       .set({
@@ -1120,6 +1122,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       };
 
       let callResult: import('./types/index.js').LlmCallResult;
+      // [arch/77 P4.0 금지선] 스트림 emit 순서(segment→token→done)와 문장 단위
+      // sanitize 타이밍이 클라 타이핑 연출·R7 실명 차단과 결합 — 추출·재배치 금지.
       if (this.streamBroker && !isCombat) {
         // 스트리밍 모드: 서술 턴에서만 (COMBAT 제외)
         this.logger.log(
@@ -3742,6 +3746,8 @@ ${npcList}`,
       // llmChoices 는 Track 2 (서술 기반 nano 선택지 재생성) 완료 후
       // 최종 finalChoices 로 한 번만 저장한다. 여기서 미리 저장하면
       // DB 는 Track 1 결과, stream emit 은 Track 2 결과로 desync 가 발생함.
+      // [arch/77 P4.0 금지선] DONE 커밋 + finalChoices 단일 저장(SSoT) 구간 —
+      // UPDATE 분할·순서 변경 시 DB↔stream desync 재발(봉합 이력). 추출 금지.
       await this.db
         .update(turns)
         .set({
@@ -4708,6 +4714,8 @@ ${npcList}`,
    * 통째로 소실된다 — 점검 런 cede95d3에서 실측(t6·t7 발견 소실 → t8·t10 재발견).
    * 쓰기 직전 fresh runState를 재조회하고 워커 소유 필드만 그 위에 반영한다.
    */
+  // [arch/77 P4.0 금지선] fire-and-forget CAS 패치 — fresh 재조회 + 워커 소유
+  // 필드만 반영하는 lost-update 방벽(cede95d3). 호출 지점·패치 단위 변경 금지.
   private async applyRunStatePatch(
     runId: string,
     label: string,
