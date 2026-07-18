@@ -1292,6 +1292,240 @@ export class TurnsService {
     };
   }
 
+  // [arch/77 P3.3] Narrative Engine 틱·사건 반영·전설 보상 묶음 —
+  // preStepTick → 팩 게이지 → Incident impact → IncidentResolutionBridge →
+  // IncidentMemory 축적 → postStepTick → Legendary 보상.
+  // updatedRunState는 제자리 변조(incidentMemories/equipmentBag/legendaryRewards).
+  private applyNarrativeTicksAndRewards(params: {
+    ws: WorldState;
+    rng: ReturnType<RngService['create']>;
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    resolveResult: ReturnType<ResolveService['resolve']>;
+    routingResult: ReturnType<IncidentRouterService['route']>;
+    prevIncidents: WorldState['activeIncidents'];
+    updatedRunState: RunState;
+    event: import('../db/types/event-def.js').EventDefV2 | null;
+    turnNo: number;
+    locationId: string;
+  }) {
+    const {
+      rng,
+      intent,
+      resolveResult,
+      routingResult,
+      prevIncidents,
+      updatedRunState,
+      event,
+      turnNo,
+      locationId,
+    } = params;
+    let ws = params.ws;
+
+    // === Narrative Engine v1: preStepTick (시간 사이클 + Incident tick + signal) ===
+    const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
+    ws = this.worldStateService.migrateWorldState(ws);
+    const { ws: wsAfterTick, resolvedPatches } = this.worldTick.preStepTick(
+      ws,
+      incidentDefs,
+      rng,
+      1,
+    );
+    ws = wsAfterTick;
+
+    // === [P2 — 73 B1] 팩 세계축 게이지 틱 (Heat와 병존, 미선언 팩은 no-op) ===
+    const packMeterDefs = this.content.getScenarioMeta()?.meters;
+    if (packMeterDefs && packMeterDefs.length > 0) {
+      const { next: meterNext, crossed } = tickPackMeters(
+        ws.packMeters,
+        packMeterDefs,
+        1,
+      );
+      ws.packMeters = meterNext;
+      for (const c of crossed) {
+        if (c.threshold.signal) {
+          ws.signalFeed.push({
+            id: `meter-${c.id}-${c.threshold.at}-${ws.globalClock}`,
+            channel: 'VISUAL',
+            severity: c.threshold.at >= 90 ? 5 : 3,
+            text: c.threshold.signal,
+            createdAtClock: ws.globalClock,
+          });
+        }
+      }
+    }
+
+    // === Narrative Engine v1: Incident impact 적용 ===
+    const relevantIncident = this.incidentMgmt.findRelevantIncident(
+      ws,
+      locationId,
+      intent.actionType,
+      incidentDefs,
+      intent.secondaryActionType,
+    );
+    if (relevantIncident) {
+      const updatedIncident = this.incidentMgmt.applyImpact(
+        relevantIncident.incident,
+        relevantIncident.def,
+        resolveResult.outcome,
+        ws.globalClock,
+      );
+      ws = {
+        ...ws,
+        activeIncidents: ws.activeIncidents.map((i) =>
+          i.incidentId === updatedIncident.incidentId ? updatedIncident : i,
+        ),
+      };
+    }
+
+    // === User-Driven System v3: IncidentResolutionBridge (확장 필드 세밀 조정) ===
+    ws = this.incidentBridge.apply(ws, resolveResult.outcome, routingResult);
+
+    // === Phase 2: IncidentMemory 축적 (사건별 개인 기록) ===
+    if (
+      routingResult.routeMode !== 'FALLBACK_SCENE' &&
+      routingResult.incident
+    ) {
+      const incId = routingResult.incident.incidentId;
+      const incidentMemories = { ...(updatedRunState.incidentMemories ?? {}) };
+      const existing = incidentMemories[incId] ?? {
+        discoveredTurn: turnNo,
+        playerInvolvements: [],
+        knownClues: [],
+        relatedNpcIds: [],
+        playerStance: '방관',
+      };
+
+      // control/pressure 변동 계산
+      const prevInc = prevIncidents.find((i) => i.incidentId === incId);
+      const currInc = (ws.activeIncidents ?? []).find(
+        (i) => i.incidentId === incId,
+      );
+      const controlDelta = (currInc?.control ?? 0) - (prevInc?.control ?? 0);
+      const pressureDelta = (currInc?.pressure ?? 0) - (prevInc?.pressure ?? 0);
+
+      // 행동 요약
+      const actionLabel = `${this.actionTypeToKorean(intent.actionType)} (${resolveResult.outcome})`;
+      const impactParts: string[] = [];
+      if (controlDelta !== 0)
+        impactParts.push(
+          `control${controlDelta > 0 ? '+' : ''}${controlDelta}`,
+        );
+      if (pressureDelta !== 0)
+        impactParts.push(
+          `pressure${pressureDelta > 0 ? '+' : ''}${pressureDelta}`,
+        );
+      const impactStr =
+        impactParts.length > 0 ? impactParts.join(', ') : 'no change';
+
+      // playerInvolvements 추가 (최대 8개, 오래된 것 trim)
+      const involvements = [
+        ...existing.playerInvolvements,
+        { turnNo, locationId, action: actionLabel, impact: impactStr },
+      ].slice(-8);
+
+      // knownClues: 이벤트 sceneFrame 앞 40자를 단서로 추가 (중복 제거, 최대 5개)
+      const sceneFrame = event?.payload?.sceneFrame;
+      const clueFromEvent = sceneFrame
+        ? sceneFrame.slice(0, 40)
+        : (event?.eventId ?? null);
+      const clues = [...existing.knownClues];
+      if (clueFromEvent && !clues.includes(clueFromEvent)) {
+        clues.push(clueFromEvent);
+      }
+      const trimmedClues = clues.slice(-5);
+
+      // relatedNpcIds: 이벤트의 primaryNpcId + incident def의 relatedNpcIds
+      const relatedNpcs = new Set(existing.relatedNpcIds);
+      const eventNpc = event?.payload?.primaryNpcId;
+      if (eventNpc) relatedNpcs.add(eventNpc);
+      if (routingResult.def?.relatedNpcIds) {
+        for (const nid of routingResult.def.relatedNpcIds) relatedNpcs.add(nid);
+      }
+
+      // playerStance: control 변동 기반 자동 판정
+      const totalControlDelta = involvements.reduce((sum, inv) => {
+        const match = inv.impact.match(/control([+-]\d+)/);
+        return sum + (match ? parseInt(match[1], 10) : 0);
+      }, 0);
+      const totalPressureDelta = involvements.reduce((sum, inv) => {
+        const match = inv.impact.match(/pressure([+-]\d+)/);
+        return sum + (match ? parseInt(match[1], 10) : 0);
+      }, 0);
+      let playerStance = '방관';
+      if (totalControlDelta > 0) playerStance = '적극 개입';
+      else if (totalPressureDelta > 0) playerStance = '상황 악화';
+
+      incidentMemories[incId] = {
+        discoveredTurn: existing.discoveredTurn,
+        playerInvolvements: involvements,
+        knownClues: trimmedClues,
+        relatedNpcIds: [...relatedNpcs],
+        playerStance,
+      };
+      updatedRunState.incidentMemories = incidentMemories;
+    }
+
+    // === Narrative Engine v1: postStepTick (impact patches, safety, signal expire) ===
+    // phaseV2가 없는 기존 런 방어 (NpcSchedule DAWN 크래시 방지)
+    if (!ws.phaseV2) {
+      ws.phaseV2 = (
+        ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY'
+      ) as import('../db/types/world-state.js').TimePhaseV2;
+    }
+    ws = this.worldTick.postStepTick(ws, resolvedPatches);
+
+    // diff용 장비 추가 수집기 (클라이언트 즉시 반영)
+    const allEquipmentAdded: import('../db/types/equipment.js').ItemInstance[] =
+      [];
+
+    // === Phase 4d: Legendary Quest Rewards (Incident CONTAINED + commitment 조건) ===
+    const prevContainedSet = new Set(
+      prevIncidents
+        .filter((i) => i.resolved && i.outcome === 'CONTAINED')
+        .map((i) => i.incidentId),
+    );
+    const newlyContainedIds = (ws.activeIncidents ?? [])
+      .filter(
+        (i) =>
+          i.resolved &&
+          i.outcome === 'CONTAINED' &&
+          !prevContainedSet.has(i.incidentId),
+      )
+      .map((i) => i.incidentId);
+    const legendaryResult = this.legendaryRewardService.check(
+      updatedRunState,
+      ws.activeIncidents ?? [],
+      newlyContainedIds,
+    );
+    if (legendaryResult.awarded.length > 0) {
+      if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+      for (const inst of legendaryResult.awarded) {
+        updatedRunState.equipmentBag.push(inst);
+        allEquipmentAdded.push(inst);
+        // Phase 3: ItemMemory — 전설 보상 기록
+        this.recordItemMemory(
+          updatedRunState,
+          inst,
+          turnNo,
+          '전설 보상',
+          locationId,
+        );
+      }
+      updatedRunState.legendaryRewards = [
+        ...(updatedRunState.legendaryRewards ?? []),
+        ...legendaryResult.awarded.map((i) => i.baseItemId),
+      ];
+    }
+
+    return {
+      ws,
+      incidentDefs,
+      relevantIncident,
+      legendaryResult,
+      allEquipmentAdded,
+    };
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -2784,201 +3018,26 @@ export class TurnsService {
 
     // (architecture/43 돌발행동 처리는 전투 트리거 분기보다 앞에서 이미 실행됨)
 
-    // === Narrative Engine v1: preStepTick (시간 사이클 + Incident tick + signal) ===
-    const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
-    ws = this.worldStateService.migrateWorldState(ws);
-    const { ws: wsAfterTick, resolvedPatches } = this.worldTick.preStepTick(
+    // [arch/77 P3.3] Narrative 틱·사건 반영·전설 보상 묶음 — 추출.
+    // updatedRunState는 내부에서 제자리 변조(incidentMemories/equipmentBag 등).
+    const tickOutcome = this.applyNarrativeTicksAndRewards({
       ws,
-      incidentDefs,
       rng,
-      1,
-    );
-    ws = wsAfterTick;
-
-    // === [P2 — 73 B1] 팩 세계축 게이지 틱 (Heat와 병존, 미선언 팩은 no-op) ===
-    const packMeterDefs = this.content.getScenarioMeta()?.meters;
-    if (packMeterDefs && packMeterDefs.length > 0) {
-      const { next: meterNext, crossed } = tickPackMeters(
-        ws.packMeters,
-        packMeterDefs,
-        1,
-      );
-      ws.packMeters = meterNext;
-      for (const c of crossed) {
-        if (c.threshold.signal) {
-          ws.signalFeed.push({
-            id: `meter-${c.id}-${c.threshold.at}-${ws.globalClock}`,
-            channel: 'VISUAL',
-            severity: c.threshold.at >= 90 ? 5 : 3,
-            text: c.threshold.signal,
-            createdAtClock: ws.globalClock,
-          });
-        }
-      }
-    }
-
-    // === Narrative Engine v1: Incident impact 적용 ===
-    const relevantIncident = this.incidentMgmt.findRelevantIncident(
-      ws,
-      locationId,
-      intent.actionType,
-      incidentDefs,
-      intent.secondaryActionType,
-    );
-    if (relevantIncident) {
-      const updatedIncident = this.incidentMgmt.applyImpact(
-        relevantIncident.incident,
-        relevantIncident.def,
-        resolveResult.outcome,
-        ws.globalClock,
-      );
-      ws = {
-        ...ws,
-        activeIncidents: ws.activeIncidents.map((i) =>
-          i.incidentId === updatedIncident.incidentId ? updatedIncident : i,
-        ),
-      };
-    }
-
-    // === User-Driven System v3: IncidentResolutionBridge (확장 필드 세밀 조정) ===
-    ws = this.incidentBridge.apply(ws, resolveResult.outcome, routingResult);
-
-    // === Phase 2: IncidentMemory 축적 (사건별 개인 기록) ===
-    if (
-      routingResult.routeMode !== 'FALLBACK_SCENE' &&
-      routingResult.incident
-    ) {
-      const incId = routingResult.incident.incidentId;
-      const incidentMemories = { ...(updatedRunState.incidentMemories ?? {}) };
-      const existing = incidentMemories[incId] ?? {
-        discoveredTurn: turnNo,
-        playerInvolvements: [],
-        knownClues: [],
-        relatedNpcIds: [],
-        playerStance: '방관',
-      };
-
-      // control/pressure 변동 계산
-      const prevInc = prevIncidents.find((i) => i.incidentId === incId);
-      const currInc = (ws.activeIncidents ?? []).find(
-        (i) => i.incidentId === incId,
-      );
-      const controlDelta = (currInc?.control ?? 0) - (prevInc?.control ?? 0);
-      const pressureDelta = (currInc?.pressure ?? 0) - (prevInc?.pressure ?? 0);
-
-      // 행동 요약
-      const actionLabel = `${this.actionTypeToKorean(intent.actionType)} (${resolveResult.outcome})`;
-      const impactParts: string[] = [];
-      if (controlDelta !== 0)
-        impactParts.push(
-          `control${controlDelta > 0 ? '+' : ''}${controlDelta}`,
-        );
-      if (pressureDelta !== 0)
-        impactParts.push(
-          `pressure${pressureDelta > 0 ? '+' : ''}${pressureDelta}`,
-        );
-      const impactStr =
-        impactParts.length > 0 ? impactParts.join(', ') : 'no change';
-
-      // playerInvolvements 추가 (최대 8개, 오래된 것 trim)
-      const involvements = [
-        ...existing.playerInvolvements,
-        { turnNo, locationId, action: actionLabel, impact: impactStr },
-      ].slice(-8);
-
-      // knownClues: 이벤트 sceneFrame 앞 40자를 단서로 추가 (중복 제거, 최대 5개)
-      const sceneFrame = event?.payload?.sceneFrame;
-      const clueFromEvent = sceneFrame
-        ? sceneFrame.slice(0, 40)
-        : (event?.eventId ?? null);
-      const clues = [...existing.knownClues];
-      if (clueFromEvent && !clues.includes(clueFromEvent)) {
-        clues.push(clueFromEvent);
-      }
-      const trimmedClues = clues.slice(-5);
-
-      // relatedNpcIds: 이벤트의 primaryNpcId + incident def의 relatedNpcIds
-      const relatedNpcs = new Set(existing.relatedNpcIds);
-      const eventNpc = event?.payload?.primaryNpcId;
-      if (eventNpc) relatedNpcs.add(eventNpc);
-      if (routingResult.def?.relatedNpcIds) {
-        for (const nid of routingResult.def.relatedNpcIds) relatedNpcs.add(nid);
-      }
-
-      // playerStance: control 변동 기반 자동 판정
-      const totalControlDelta = involvements.reduce((sum, inv) => {
-        const match = inv.impact.match(/control([+-]\d+)/);
-        return sum + (match ? parseInt(match[1], 10) : 0);
-      }, 0);
-      const totalPressureDelta = involvements.reduce((sum, inv) => {
-        const match = inv.impact.match(/pressure([+-]\d+)/);
-        return sum + (match ? parseInt(match[1], 10) : 0);
-      }, 0);
-      let playerStance = '방관';
-      if (totalControlDelta > 0) playerStance = '적극 개입';
-      else if (totalPressureDelta > 0) playerStance = '상황 악화';
-
-      incidentMemories[incId] = {
-        discoveredTurn: existing.discoveredTurn,
-        playerInvolvements: involvements,
-        knownClues: trimmedClues,
-        relatedNpcIds: [...relatedNpcs],
-        playerStance,
-      };
-      updatedRunState.incidentMemories = incidentMemories;
-    }
-
-    // === Narrative Engine v1: postStepTick (impact patches, safety, signal expire) ===
-    // phaseV2가 없는 기존 런 방어 (NpcSchedule DAWN 크래시 방지)
-    if (!ws.phaseV2) {
-      ws.phaseV2 = (
-        ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY'
-      ) as import('../db/types/world-state.js').TimePhaseV2;
-    }
-    ws = this.worldTick.postStepTick(ws, resolvedPatches);
-
-    // diff용 장비 추가 수집기 (클라이언트 즉시 반영)
-    const allEquipmentAdded: import('../db/types/equipment.js').ItemInstance[] =
-      [];
-
-    // === Phase 4d: Legendary Quest Rewards (Incident CONTAINED + commitment 조건) ===
-    const prevContainedSet = new Set(
-      prevIncidents
-        .filter((i) => i.resolved && i.outcome === 'CONTAINED')
-        .map((i) => i.incidentId),
-    );
-    const newlyContainedIds = (ws.activeIncidents ?? [])
-      .filter(
-        (i) =>
-          i.resolved &&
-          i.outcome === 'CONTAINED' &&
-          !prevContainedSet.has(i.incidentId),
-      )
-      .map((i) => i.incidentId);
-    const legendaryResult = this.legendaryRewardService.check(
+      intent,
+      resolveResult,
+      routingResult,
+      prevIncidents,
       updatedRunState,
-      ws.activeIncidents ?? [],
-      newlyContainedIds,
-    );
-    if (legendaryResult.awarded.length > 0) {
-      if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
-      for (const inst of legendaryResult.awarded) {
-        updatedRunState.equipmentBag.push(inst);
-        allEquipmentAdded.push(inst);
-        // Phase 3: ItemMemory — 전설 보상 기록
-        this.recordItemMemory(
-          updatedRunState,
-          inst,
-          turnNo,
-          '전설 보상',
-          locationId,
-        );
-      }
-      updatedRunState.legendaryRewards = [
-        ...(updatedRunState.legendaryRewards ?? []),
-        ...legendaryResult.awarded.map((i) => i.baseItemId),
-      ];
-    }
+      event,
+      turnNo,
+      locationId,
+    });
+    ws = tickOutcome.ws;
+    const incidentDefs = tickOutcome.incidentDefs;
+    const relevantIncident = tickOutcome.relevantIncident;
+    const legendaryResult = tickOutcome.legendaryResult;
+    // diff용 장비 추가 수집기 (클라이언트 즉시 반영)
+    const allEquipmentAdded = tickOutcome.allEquipmentAdded;
 
     // === Narrative Engine v1: NPC Emotional 업데이트 ===
     const npcStates = { ...(runState.npcStates ?? {}) } as Record<
