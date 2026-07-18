@@ -1,6 +1,6 @@
 // 정본: specs/llm_context_memory_v1_1.md §7 — 프롬프트 조립 순서
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { LlmContext } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
 import type { NpcEmotionalState, NPCState } from '../../db/types/npc-state.js';
@@ -26,7 +26,10 @@ import {
   NARRATIVE_JSON_FORMAT_INSTRUCTION_SPLIT,
 } from './system-prompts.js';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
-import { TokenBudgetService } from '../token-budget.service.js';
+import {
+  TokenBudgetService,
+  GRAND_TOTAL_CHAR_BUDGET,
+} from '../token-budget.service.js';
 import { collectRecentNpcUtterances } from '../npc-utterance.util.js';
 import { buildRegisterLines } from './speech-register.js';
 import { isQuestionInput } from '../../common/dialogue-act.js';
@@ -1136,8 +1139,74 @@ export class PromptBuilderService {
       }
     }
 
+    // [arch/79 P3-C] 총량 백스톱 — 상한 초과 예외 턴만 발화 (주 수단은 P3-A/B 정적 압축)
+    this.enforceGrandTotal(messages);
+
     return messages;
   }
+
+  /**
+   * [arch/79 P3-C] 프롬프트 총량 백스톱 — 전 메시지 합산이 상한(문자 기준)을
+   * 초과하면 스냅샷성 블록부터 제거하고, 그래도 초과하면 기억성 블록을 뒤에서
+   * 부분 절삭한다 (arch/79 §8.1 안전장치: 트리밍은 매 턴 재생성 블록 먼저,
+   * 플레이어 이력은 최후순위 부분 절삭만, L0 테마·시스템·행동·판정·단서·
+   * 직전 발언·P0 반응·장면 연속 블록은 절대 보호 — 목록에 없으면 안 잘림).
+   */
+  private enforceGrandTotal(messages: LlmMessage[]): void {
+    let total = messages.reduce((s, m) => s + (m.content?.length ?? 0), 0);
+    if (total <= GRAND_TOTAL_CHAR_BUDGET) return;
+
+    // 1순위: 스냅샷성 블록 통째 제거 (매 턴 서버가 재생성 — 기억 삭제 아님)
+    const TIER_REMOVE = ['[NPC 일상', '[세계 상태]'];
+    for (const header of TIER_REMOVE) {
+      if (total <= GRAND_TOTAL_CHAR_BUDGET) break;
+      for (const m of messages) {
+        if (m.role === 'system' || !m.content) continue;
+        const blocks = m.content.split('\n\n');
+        const idx = blocks.findIndex((b) => b.startsWith(header));
+        if (idx < 0) continue;
+        total -= blocks[idx].length + 2;
+        blocks.splice(idx, 1);
+        m.content = blocks.join('\n\n');
+        PromptBuilderService.grandBudgetLogger.warn(
+          `[GrandBudget] ${header} 블록 제거 — 총 ${total}자`,
+        );
+        break;
+      }
+    }
+
+    // 2순위(최후): 기억성 블록 뒤에서 부분 절삭 — 완전 삭제 금지 (헤더+앞부분 보존)
+    const TIER_PARTIAL = ['[관련 사건 기록]', '[관련 NPC 기록]'];
+    for (const header of TIER_PARTIAL) {
+      if (total <= GRAND_TOTAL_CHAR_BUDGET) break;
+      for (const m of messages) {
+        if (m.role === 'system' || !m.content) continue;
+        const blocks = m.content.split('\n\n');
+        const idx = blocks.findIndex((b) => b.startsWith(header));
+        if (idx < 0) continue;
+        const excess = total - GRAND_TOTAL_CHAR_BUDGET;
+        const minKeep = header.length + 80;
+        const keep = Math.max(minKeep, blocks[idx].length - excess);
+        if (keep < blocks[idx].length) {
+          total -= blocks[idx].length - keep;
+          blocks[idx] = blocks[idx].slice(0, keep) + '…';
+          m.content = blocks.join('\n\n');
+          PromptBuilderService.grandBudgetLogger.warn(
+            `[GrandBudget] ${header} 부분 절삭 — 총 ${total}자`,
+          );
+        }
+        break;
+      }
+    }
+
+    if (total > GRAND_TOTAL_CHAR_BUDGET) {
+      PromptBuilderService.grandBudgetLogger.warn(
+        `[GrandBudget] 상한 초과 잔존 ${total}자 (상한 ${GRAND_TOTAL_CHAR_BUDGET}) — 보호 블록 유지`,
+      );
+    }
+  }
+
+  private static readonly grandBudgetLogger = new Logger('PromptBuilder');
 
   /**
    * NPC 대화 자세 블록 (Step 7) — posture+personality 기반 개인화 가이드,

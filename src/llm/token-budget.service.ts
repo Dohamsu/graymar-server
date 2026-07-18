@@ -17,6 +17,14 @@ export const TOKEN_BUDGET = {
   PARTY_TOTAL: 4000,
 } as const;
 
+/**
+ * [arch/79 P3-C] 프롬프트 총량 백스톱 — 전 메시지 합산 문자 상한.
+ * 실측 보정: 한국어 프롬프트 ≈1.64자/tok → 16,000자 ≈ 9.7k tok (예산 10k).
+ * 11k tok부터 soft 문체 지시 준수 절벽 (arch/79 §6 — 1,556턴 회고).
+ * 예산 달성의 주 수단은 P3-A/B(정적 압축)이며 이 상한은 예외 턴 안전판.
+ */
+export const GRAND_TOTAL_CHAR_BUDGET = 16000;
+
 export type BudgetBlock = keyof Omit<
   typeof TOKEN_BUDGET,
   'TOTAL' | 'PARTY_TOTAL'
