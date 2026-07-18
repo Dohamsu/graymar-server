@@ -1195,6 +1195,103 @@ export class TurnsService {
     };
   }
 
+  // [arch/77 P3.2] LOCATION → HUB 복귀 서브플로우 — go_hub CHOICE와
+  // MOVE_LOCATION fallback(목표 장소 불명확)에 동일 코드가 2벌 존재하던 것을
+  // 단일화. 방문 종료 통합 → HUB 전환 → 다음 턴 HUB 진입 레코드까지 한 흐름.
+  private async returnToHubFlow(
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    body: SubmitTurnBody,
+    rawInput: string,
+    runState: RunState,
+    ws: NonNullable<RunState['worldState']>,
+    arcState: NonNullable<RunState['arcState']>,
+    systemText: string,
+  ) {
+    // Structured Memory v2: 방문 종료 통합 (기존 saveLocationVisitSummary 역할 포함)
+    const locMemUpdate = await this.memoryIntegration.finalizeVisit(
+      run.id,
+      currentNode.id,
+      runState,
+      turnNo,
+    );
+    const hubWs = this.worldStateService.returnToHub(ws);
+    const hubRunState: RunState = {
+      ...runState,
+      worldState: hubWs,
+      actionHistory: [], // HUB 복귀 시 고집 이력 초기화
+      ...(locMemUpdate ? { locationMemories: locMemUpdate } : {}),
+    };
+
+    await this.db
+      .update(nodeInstances)
+      .set({ status: 'NODE_ENDED', updatedAt: new Date() })
+      .where(eq(nodeInstances.id, currentNode.id));
+
+    const result = this.buildSystemResult(turnNo, currentNode, systemText);
+    await this.commitTurnRecord(
+      run,
+      currentNode,
+      turnNo,
+      body,
+      rawInput,
+      result,
+      hubRunState,
+      body.options?.skipLlm,
+    );
+
+    const transition = await this.nodeTransition.transitionToHub(
+      run.id,
+      currentNode.nodeIndex,
+      turnNo + 1,
+      hubWs,
+      arcState,
+      hubRunState.questState,
+    );
+    transition.enterResult.turnNo = turnNo + 1;
+    await this.db.insert(turns).values({
+      runId: run.id,
+      turnNo: turnNo + 1,
+      nodeInstanceId: transition.enterResult.node.id,
+      nodeType: 'HUB',
+      inputType: 'SYSTEM',
+      rawInput: '',
+      idempotencyKey: `${run.id}_hub_${turnNo + 1}`,
+      parsedBy: null,
+      confidence: null,
+      parsedIntent: null,
+      policyResult: 'ALLOW',
+      transformedIntent: null,
+      actionPlan: null,
+      serverResult: transition.enterResult,
+      llmStatus: 'PENDING',
+    });
+    await this.db
+      .update(runSessions)
+      .set({
+        currentTurnNo: turnNo + 1,
+        runState: hubRunState,
+        updatedAt: new Date(),
+      })
+      .where(eq(runSessions.id, run.id));
+
+    return {
+      accepted: true,
+      turnNo,
+      serverResult: result,
+      llm: { status: 'PENDING' as LlmStatus, narrative: null },
+      meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
+      transition: {
+        nextNodeIndex: transition.nextNodeIndex,
+        nextNodeType: 'HUB' as const,
+        enterResult: transition.enterResult,
+        battleState: null,
+        enterTurnNo: turnNo + 1,
+      },
+    };
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -1205,7 +1302,13 @@ export class TurnsService {
   ) {
     // HP≤0 방어: 전투 패배 등으로 HP가 0 이하인 상태에서 행동 방지
     if (runState.hp <= 0) {
-      return this.handleDefeatByHpZero(run, currentNode, turnNo, body, runState);
+      return this.handleDefeatByHpZero(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        runState,
+      );
     }
 
     let ws = runState.worldState ?? this.worldStateService.initWorldState();
@@ -1220,89 +1323,17 @@ export class TurnsService {
 
     // go_hub 선택 시 → HUB 복귀
     if (body.input.type === 'CHOICE' && body.input.choiceId === 'go_hub') {
-      // Structured Memory v2: 방문 종료 통합 (기존 saveLocationVisitSummary 역할 포함)
-      const locMemUpdate = await this.memoryIntegration.finalizeVisit(
-        run.id,
-        currentNode.id,
-        runState,
-        turnNo,
-      );
-      if (locMemUpdate) updatedRunState.locationMemories = locMemUpdate;
-
-      ws = this.worldStateService.returnToHub(ws);
-      updatedRunState.worldState = ws;
-      updatedRunState.actionHistory = []; // HUB 복귀 시 고집 이력 초기화
-
-      await this.db
-        .update(nodeInstances)
-        .set({ status: 'NODE_ENDED', updatedAt: new Date() })
-        .where(eq(nodeInstances.id, currentNode.id));
-
-      const result = this.buildSystemResult(
-        turnNo,
-        currentNode,
-        `${this.content.getHubMeta().name}${korParticle(this.content.getHubMeta().name, '으로', '로')} 발걸음을 돌린다.`,
-      );
-      await this.commitTurnRecord(
+      return this.returnToHubFlow(
         run,
         currentNode,
         turnNo,
         body,
         body.input.choiceId,
-        result,
-        updatedRunState,
-        body.options?.skipLlm,
-      );
-
-      const transition = await this.nodeTransition.transitionToHub(
-        run.id,
-        currentNode.nodeIndex,
-        turnNo + 1,
+        runState,
         ws,
         arcState,
-        updatedRunState.questState,
+        `${this.content.getHubMeta().name}${korParticle(this.content.getHubMeta().name, '으로', '로')} 발걸음을 돌린다.`,
       );
-      transition.enterResult.turnNo = turnNo + 1;
-      await this.db.insert(turns).values({
-        runId: run.id,
-        turnNo: turnNo + 1,
-        nodeInstanceId: transition.enterResult.node.id,
-        nodeType: 'HUB',
-        inputType: 'SYSTEM',
-        rawInput: '',
-        idempotencyKey: `${run.id}_hub_${turnNo + 1}`,
-        parsedBy: null,
-        confidence: null,
-        parsedIntent: null,
-        policyResult: 'ALLOW',
-        transformedIntent: null,
-        actionPlan: null,
-        serverResult: transition.enterResult,
-        llmStatus: 'PENDING',
-      });
-      await this.db
-        .update(runSessions)
-        .set({
-          currentTurnNo: turnNo + 1,
-          runState: updatedRunState,
-          updatedAt: new Date(),
-        })
-        .where(eq(runSessions.id, run.id));
-
-      return {
-        accepted: true,
-        turnNo,
-        serverResult: result,
-        llm: { status: 'PENDING' as LlmStatus, narrative: null },
-        meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
-        transition: {
-          nextNodeIndex: transition.nextNodeIndex,
-          nextNodeType: 'HUB',
-          enterResult: transition.enterResult,
-          battleState: null,
-          enterTurnNo: turnNo + 1,
-        },
-      };
     }
 
     // ACTION/CHOICE → IntentParserV2 파싱
@@ -1439,90 +1470,17 @@ export class TurnsService {
         );
       }
       // Fixplan3-P4: 목표 장소 불명확 시 HUB 복귀 (go_hub와 동일 처리)
-      const locMemFallback = await this.memoryIntegration.finalizeVisit(
-        run.id,
-        currentNode.id,
-        runState,
-        turnNo,
-      );
-      const hubWs = this.worldStateService.returnToHub(ws);
-      const hubRunState: RunState = {
-        ...runState,
-        worldState: hubWs,
-        actionHistory: [],
-        ...(locMemFallback ? { locationMemories: locMemFallback } : {}),
-      };
-
-      await this.db
-        .update(nodeInstances)
-        .set({ status: 'NODE_ENDED', updatedAt: new Date() })
-        .where(eq(nodeInstances.id, currentNode.id));
-
-      const moveResult = this.buildSystemResult(
-        turnNo,
-        currentNode,
-        `${this.content.getHubMeta().name}${korParticle(this.content.getHubMeta().name, '으로', '로')} 돌아가기로 한다.`,
-      );
-      await this.commitTurnRecord(
+      return this.returnToHubFlow(
         run,
         currentNode,
         turnNo,
         body,
         rawInput,
-        moveResult,
-        hubRunState,
-        body.options?.skipLlm,
-      );
-
-      const transition = await this.nodeTransition.transitionToHub(
-        run.id,
-        currentNode.nodeIndex,
-        turnNo + 1,
-        hubWs,
+        runState,
+        ws,
         arcState,
-        updatedRunState.questState,
+        `${this.content.getHubMeta().name}${korParticle(this.content.getHubMeta().name, '으로', '로')} 돌아가기로 한다.`,
       );
-      transition.enterResult.turnNo = turnNo + 1;
-      await this.db.insert(turns).values({
-        runId: run.id,
-        turnNo: turnNo + 1,
-        nodeInstanceId: transition.enterResult.node.id,
-        nodeType: 'HUB',
-        inputType: 'SYSTEM',
-        rawInput: '',
-        idempotencyKey: `${run.id}_hub_${turnNo + 1}`,
-        parsedBy: null,
-        confidence: null,
-        parsedIntent: null,
-        policyResult: 'ALLOW',
-        transformedIntent: null,
-        actionPlan: null,
-        serverResult: transition.enterResult,
-        llmStatus: 'PENDING',
-      });
-      await this.db
-        .update(runSessions)
-        .set({
-          currentTurnNo: turnNo + 1,
-          runState: hubRunState,
-          updatedAt: new Date(),
-        })
-        .where(eq(runSessions.id, run.id));
-
-      return {
-        accepted: true,
-        turnNo,
-        serverResult: moveResult,
-        llm: { status: 'PENDING' as LlmStatus, narrative: null },
-        meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
-        transition: {
-          nextNodeIndex: transition.nextNodeIndex,
-          nextNodeType: 'HUB',
-          enterResult: transition.enterResult,
-          battleState: null,
-          enterTurnNo: turnNo + 1,
-        },
-      };
     }
 
     // 레이턴시 #2 — Challenge 분류(회색지대 nano ~0.5s)를 이벤트 매칭·orchestration과
