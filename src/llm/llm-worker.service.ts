@@ -576,6 +576,281 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  // [arch/77 P4.3] 5.11 — NPC 소개 롤백/사전 확정 자기소개 삽입/IntroFallback +
+  // appearanceCount·pendingIntroduction 승격·제스처 이력 축적.
+  // CAS 패치(applyRunStatePatch) 호출 구조를 그대로 보존한 통째 이동 —
+  // 패치 단위·시맨틱 불변(P4.0 금지선 준수). 변조된 narrative를 반환.
+  private async rollbackOrConfirmIntroductions(params: {
+    narrative: string;
+    serverResult: ServerResultV1;
+    runSession: { runState?: unknown } | null | undefined;
+    appearedNpcIds: Set<string>;
+    introDialogue: { npcId: string; text: string } | null;
+    isEndingTurn: boolean;
+    pending: typeof turns.$inferSelect;
+  }): Promise<string> {
+    const {
+      serverResult,
+      runSession,
+      appearedNpcIds,
+      introDialogue,
+      isEndingTurn,
+      pending,
+    } = params;
+    let narrative = params.narrative;
+    // 5.11. NPC 소개 롤백 + appearanceCount 증가
+    //   - 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
+    //   - appearanceCount: LLM 서술에 @마커로 등장한 NPC 카운터 +1 (반복 호칭 고착 방지)
+    {
+      const uiData = serverResult.ui as Record<string, unknown>;
+      const newlyIntroduced = (uiData?.newlyIntroducedNpcIds as string[]) ?? [];
+      const hasNarrative = !!narrative && !!runSession?.runState;
+      const hasRollbackCandidates = newlyIntroduced.length > 0 && hasNarrative;
+      const hasAppearances = appearedNpcIds.size > 0 && hasNarrative;
+
+      if (hasRollbackCandidates || hasAppearances) {
+        // architecture/60 — stale 스냅샷(rs) 전체 되쓰기 금지: fresh 재조회 후 워커 소유 필드만 패치
+        const { shouldIntroduce } = await import('../db/types/npc-state.js');
+        await this.applyRunStatePatch(pending.runId, 'NpcAppearance', (rs) => {
+          const npcStatesRef = rs.npcStates as
+            | Record<
+                string,
+                {
+                  introduced?: boolean;
+                  introducedAtTurn?: number;
+                  pendingIntroduction?: boolean;
+                  introAttempts?: number;
+                  appearanceCount?: number;
+                }
+              >
+            | undefined;
+          let changed = false;
+
+          // 이름 공개 정밀 분석(2026-07-10) A: 이번 턴 롤백된 NPC 집합 —
+          // 같은 패치의 AppearanceIntro가 즉시 재소개하면 롤백이 항상 무효화
+          // (임계 1회 FRIENDLY/FEARFUL NPC는 연출 실패가 그대로 확정되던 버그).
+          // "한 턴에 소개 시도는 1회" — 다음 기회에 다시 소개 연출과 함께 판정.
+          const rolledBackThisTurn = new Set<string>();
+
+          if (hasRollbackCandidates && npcStatesRef) {
+            for (const npcId of newlyIntroduced) {
+              const npcDef = this.content.getNpc(npcId);
+              if (!npcDef?.name) continue;
+              // 이름 공개 기획: 소개 성사는 "실명이 대사(따옴표) 안에 등장"
+              // 해야 인정 — 자기소개("나는 오웬이오")·제3자 호명("오웬!")은
+              // 대사 안 실명이지만, 마커 표시명(T20)이나 서술자 평서문 실명
+              // ("오웬은 술잔을…")은 소개 연출이 아니다.
+              // arch/69 버그 a6290942 수정: 기존엔 introDialogue 없을 때(nano
+              // 자기소개 생성 실패) narrative.includes(name)로 판정해, 서술자
+              // 실명 누출을 소개 성공으로 오판 → IntroFallback/Rollback이 스킵
+              // 되어 자기소개 없이 이름만 새던 버그(오웬 강제소개 실측). 이제
+              // introDialogue 유무 무관하게 "대사 안 실명" 기준으로 통일한다.
+              const escName = npcDef.name.replace(
+                /[.*+?^${}()|[\]\\]/g,
+                '\\$&',
+              );
+              const introSucceeded = new RegExp(
+                `["\u201C][^"\u201D]*${escName}[^"\u201D]*["\u201D]`,
+              ).test(narrative);
+              if (!introSucceeded) {
+                // 이름 공개 기획 (2026-07-11, arch/65) — 첫 만남 소개는
+                // 사전 확정 대사로 즉시 마감: 롤백-재시도 사이클 없이
+                // 그 턴에 본인 자기소개를 서버가 삽입 (3단 사다리 [3]층).
+                if (
+                  introDialogue?.npcId === npcId &&
+                  !isEndingTurn &&
+                  npcStatesRef[npcId]
+                ) {
+                  const alias = npcDef.unknownAlias ?? '그 인물';
+                  // LLM이 이름 자리에 별칭을 넣은 자기소개가 이미 있으면
+                  // (실측 T6: "내 이름은 날카로운 눈매의 회계사이라 하오")
+                  // 그 대사의 별칭만 실명으로 교정하고 삽입은 생략 — 이중 소개 방지.
+                  const escAliasFix = alias.replace(
+                    /[.*+?^${}()|[\]\\]/g,
+                    '\\$&',
+                  );
+                  const aliasIntroRe = new RegExp(
+                    `(["\u201C][^"\u201D]*(?:내\\s*이름은|나는|저는)[^"\u201D]*)${escAliasFix}([^"\u201D]*["\u201D])`,
+                  );
+                  if (aliasIntroRe.test(narrative)) {
+                    narrative = narrative.replace(
+                      aliasIntroRe,
+                      `$1${npcDef.name}$2`,
+                    );
+                    npcStatesRef[npcId].pendingIntroduction = false;
+                    changed = true;
+                    this.logger.log(
+                      `[IntroDialogueFix] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — 별칭 자기소개를 실명으로 교정 (삽입 생략)`,
+                    );
+                    continue;
+                  }
+                  const portrait = NPC_PORTRAITS[npcId] ?? '';
+                  const marker = portrait
+                    ? `@[${alias}|${portrait}]`
+                    : `@[${alias}]`;
+                  narrative = `${narrative.trimEnd()}\n\n${alias}${korParticle(alias, '이', '가')} 잠시 뜸을 들이더니 입을 연다.\n\n${marker} "${introDialogue.text}"`;
+                  npcStatesRef[npcId].pendingIntroduction = false;
+                  changed = true;
+                  this.logger.log(
+                    `[IntroDialogueInsert] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — 서술 미반영, 사전 확정 자기소개 대사 삽입으로 소개 확정`,
+                  );
+                  continue; // introduced/introducedAtTurn 유지
+                }
+                if (npcStatesRef[npcId]) {
+                  const attempts = npcStatesRef[npcId].introAttempts ?? 0;
+                  // architecture/64 튜닝: 결정론적 마감 — LLM이 2회 연속
+                  // 연출에 실패하면 서버가 제3자 호명 문장을 말미에 덧붙여
+                  // 소개를 확정한다 (LLM 원칙 6: 서버 로직 우선. 실측: Gemma가
+                  // avoid 경로 지시에도 5연속 미준수 — 프롬프트만으론 종결 불가).
+                  // 엔딩 확정 턴은 IntroFallback 문장 삽입 금지 — 피날레
+                  // 여운 뒤에 제3자 호명 문장이 붙어 종결을 파괴한다
+                  if (attempts >= 2 && !isEndingTurn) {
+                    const alias = npcDef.unknownAlias ?? '그 인물';
+                    narrative = `${narrative.trimEnd()}\n\n그때 근처를 지나던 누군가가 ${alias}${korParticle(alias, '을', '를')} 향해 "${npcDef.name}!" 하고 짧게 부르고는 제 갈 길을 갔다.`;
+                    npcStatesRef[npcId].pendingIntroduction = false;
+                    changed = true;
+                    this.logger.log(
+                      `[IntroFallback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — 연출 ${attempts}회 실패, 서버 제3자 호명 문장으로 소개 확정`,
+                    );
+                    continue; // introduced/introducedAtTurn 유지 (소개 확정)
+                  }
+                  npcStatesRef[npcId].introduced = false;
+                  npcStatesRef[npcId].introducedAtTurn = undefined;
+                  // architecture/64 B: 연출 실패 NPC는 다음 관련 턴 재시도 후보
+                  npcStatesRef[npcId].pendingIntroduction = true;
+                  // 튜닝: 실패 누적 — 다음 시도는 제3자 호명/단서 경로로 전환
+                  npcStatesRef[npcId].introAttempts = attempts + 1;
+                  rolledBackThisTurn.add(npcId);
+                  changed = true;
+                  this.logger.debug(
+                    `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백 → pending (attempts=${attempts + 1})`,
+                  );
+                }
+              }
+            }
+          }
+
+          if (hasAppearances && npcStatesRef) {
+            // 제스처 추출 regex (bug 4671, CLAUDE.md LLM 원칙 1)
+            const GESTURE_PATTERNS = [
+              /안경테를\s+\S+\s*(?:\S+)?/g,
+              /서류\s*뭉치를\s+\S+/g,
+              /손을\s+\S+\s+\S+/g,
+              /손끝을?\s+\S+/g,
+              /손가락을?\s+\S+/g,
+              /시선을\s+\S+/g,
+              /눈을\s+\S+/g,
+              /고개를\s+\S+/g,
+              /입술을\s+\S+/g,
+              /어깨를\s+\S+/g,
+              /미간을\s+\S+/g,
+              /턱을\s+\S+/g,
+            ];
+            for (const npcId of appearedNpcIds) {
+              const npcDef = this.content.getNpc(npcId) as
+                | Record<string, unknown>
+                | undefined;
+              if (!npcStatesRef[npcId]) continue;
+
+              // BACKGROUND 티어는 appearanceCount 증가 스킵
+              if (npcDef?.tier !== 'BACKGROUND') {
+                const prev = npcStatesRef[npcId].appearanceCount ?? 0;
+                npcStatesRef[npcId].appearanceCount = prev + 1;
+                changed = true;
+
+                const npcStateFull = npcStatesRef[
+                  npcId
+                ] as unknown as import('../db/types/npc-state.js').NPCState;
+                // architecture/64 B: 조용한 공개 제거 — 임계 충족 시 즉시
+                // introduced를 찍는 대신 "다음 턴 소개 후보"로만 마킹.
+                // 승격은 turns.service가 해당 NPC를 primary/injected로
+                // 장면에 등장시키는 턴에 정식 소개 연출 지시와 함께 수행.
+                // (A의 rolledBackThisTurn 가드는 introduced를 더 이상 여기서
+                //  찍지 않으므로 불필요 — 롤백 NPC도 pending으로 재시도)
+                if (
+                  !npcStateFull.introduced &&
+                  !npcStateFull.pendingIntroduction &&
+                  shouldIntroduce(
+                    npcStateFull,
+                    npcStateFull.posture,
+                    (npcDef?.tier as string | undefined) ?? undefined,
+                  )
+                ) {
+                  npcStatesRef[npcId].pendingIntroduction = true;
+                  this.logger.log(
+                    `[AppearanceIntro] turn=${pending.turnNo} ${npcId} appearanceCount=${prev + 1} → pendingIntroduction (다음 관련 턴 소개 후보)`,
+                  );
+                }
+              }
+
+              // 제스처 이력 축적 (CORE/SUB NPC만 — 캐릭터 다양화 대상)
+              if (npcDef?.tier === 'CORE' || npcDef?.tier === 'SUB') {
+                const aliasSet = new Set<string>();
+                const npcDefTyped = npcDef as {
+                  name?: string;
+                  unknownAlias?: string;
+                  shortAlias?: string;
+                };
+                if (npcDefTyped.name) aliasSet.add(npcDefTyped.name);
+                if (npcDefTyped.unknownAlias)
+                  aliasSet.add(npcDefTyped.unknownAlias);
+                if (npcDefTyped.shortAlias)
+                  aliasSet.add(npcDefTyped.shortAlias);
+
+                // NPC 마커 주변 서술 윈도우 (마커 앞 200자 + 뒤 100자)
+                let npcWindow = '';
+                for (const alias of aliasSet) {
+                  const marker = `@[${alias}`;
+                  let searchFrom = 0;
+                  while (searchFrom < narrative.length) {
+                    const idx = narrative.indexOf(marker, searchFrom);
+                    if (idx < 0) break;
+                    const start = Math.max(0, idx - 200);
+                    const end = Math.min(narrative.length, idx + 100);
+                    npcWindow += narrative.slice(start, end) + '\n';
+                    searchFrom = idx + marker.length;
+                  }
+                }
+
+                if (npcWindow) {
+                  const foundGestures: string[] = [];
+                  for (const pat of GESTURE_PATTERNS) {
+                    const matches = npcWindow.match(pat) ?? [];
+                    for (const m of matches) {
+                      foundGestures.push(m.trim());
+                    }
+                  }
+                  if (foundGestures.length > 0) {
+                    type GestureEntry = { text: string; turnNo: number };
+                    const existing: GestureEntry[] =
+                      (
+                        npcStatesRef[npcId] as unknown as {
+                          recentGestures?: GestureEntry[];
+                        }
+                      ).recentGestures ?? [];
+                    const newEntries = foundGestures.map((g) => ({
+                      text: g,
+                      turnNo: pending.turnNo,
+                    }));
+                    (
+                      npcStatesRef[npcId] as unknown as {
+                        recentGestures: GestureEntry[];
+                      }
+                    ).recentGestures = [...existing, ...newEntries].slice(-5);
+                    changed = true;
+                  }
+                }
+              }
+            }
+          }
+
+          return changed;
+        });
+      }
+    }
+    return narrative;
+  }
+
   private async processTurnInner(
     pending: typeof turns.$inferSelect,
   ): Promise<void> {
@@ -2712,264 +2987,19 @@ ${npcList}`,
         }
       }
 
-      // 5.11. NPC 소개 롤백 + appearanceCount 증가
-      //   - 롤백: LLM이 실제로 이름을 언급하지 않았으면 introduced 취소
-      //   - appearanceCount: LLM 서술에 @마커로 등장한 NPC 카운터 +1 (반복 호칭 고착 방지)
-      {
-        const uiData = serverResult.ui as Record<string, unknown>;
-        const newlyIntroduced =
-          (uiData?.newlyIntroducedNpcIds as string[]) ?? [];
-        const hasNarrative = !!narrative && !!runSession?.runState;
-        const hasRollbackCandidates =
-          newlyIntroduced.length > 0 && hasNarrative;
-        const hasAppearances = _appearedNpcIds.size > 0 && hasNarrative;
-
-        if (hasRollbackCandidates || hasAppearances) {
-          // architecture/60 — stale 스냅샷(rs) 전체 되쓰기 금지: fresh 재조회 후 워커 소유 필드만 패치
-          const { shouldIntroduce } = await import('../db/types/npc-state.js');
-          await this.applyRunStatePatch(
-            pending.runId,
-            'NpcAppearance',
-            (rs) => {
-              const npcStatesRef = rs.npcStates as
-                | Record<
-                    string,
-                    {
-                      introduced?: boolean;
-                      introducedAtTurn?: number;
-                      pendingIntroduction?: boolean;
-                      introAttempts?: number;
-                      appearanceCount?: number;
-                    }
-                  >
-                | undefined;
-              let changed = false;
-
-              // 이름 공개 정밀 분석(2026-07-10) A: 이번 턴 롤백된 NPC 집합 —
-              // 같은 패치의 AppearanceIntro가 즉시 재소개하면 롤백이 항상 무효화
-              // (임계 1회 FRIENDLY/FEARFUL NPC는 연출 실패가 그대로 확정되던 버그).
-              // "한 턴에 소개 시도는 1회" — 다음 기회에 다시 소개 연출과 함께 판정.
-              const rolledBackThisTurn = new Set<string>();
-
-              if (hasRollbackCandidates && npcStatesRef) {
-                for (const npcId of newlyIntroduced) {
-                  const npcDef = this.content.getNpc(npcId);
-                  if (!npcDef?.name) continue;
-                  // 이름 공개 기획: 소개 성사는 "실명이 대사(따옴표) 안에 등장"
-                  // 해야 인정 — 자기소개("나는 오웬이오")·제3자 호명("오웬!")은
-                  // 대사 안 실명이지만, 마커 표시명(T20)이나 서술자 평서문 실명
-                  // ("오웬은 술잔을…")은 소개 연출이 아니다.
-                  // arch/69 버그 a6290942 수정: 기존엔 introDialogue 없을 때(nano
-                  // 자기소개 생성 실패) narrative.includes(name)로 판정해, 서술자
-                  // 실명 누출을 소개 성공으로 오판 → IntroFallback/Rollback이 스킵
-                  // 되어 자기소개 없이 이름만 새던 버그(오웬 강제소개 실측). 이제
-                  // introDialogue 유무 무관하게 "대사 안 실명" 기준으로 통일한다.
-                  const escName = npcDef.name.replace(
-                    /[.*+?^${}()|[\]\\]/g,
-                    '\\$&',
-                  );
-                  const introSucceeded = new RegExp(
-                    `["\u201C][^"\u201D]*${escName}[^"\u201D]*["\u201D]`,
-                  ).test(narrative);
-                  if (!introSucceeded) {
-                    // 이름 공개 기획 (2026-07-11, arch/65) — 첫 만남 소개는
-                    // 사전 확정 대사로 즉시 마감: 롤백-재시도 사이클 없이
-                    // 그 턴에 본인 자기소개를 서버가 삽입 (3단 사다리 [3]층).
-                    if (
-                      introDialogue?.npcId === npcId &&
-                      !isEndingTurn &&
-                      npcStatesRef[npcId]
-                    ) {
-                      const alias = npcDef.unknownAlias ?? '그 인물';
-                      // LLM이 이름 자리에 별칭을 넣은 자기소개가 이미 있으면
-                      // (실측 T6: "내 이름은 날카로운 눈매의 회계사이라 하오")
-                      // 그 대사의 별칭만 실명으로 교정하고 삽입은 생략 — 이중 소개 방지.
-                      const escAliasFix = alias.replace(
-                        /[.*+?^${}()|[\]\\]/g,
-                        '\\$&',
-                      );
-                      const aliasIntroRe = new RegExp(
-                        `(["\u201C][^"\u201D]*(?:내\\s*이름은|나는|저는)[^"\u201D]*)${escAliasFix}([^"\u201D]*["\u201D])`,
-                      );
-                      if (aliasIntroRe.test(narrative)) {
-                        narrative = narrative.replace(
-                          aliasIntroRe,
-                          `$1${npcDef.name}$2`,
-                        );
-                        npcStatesRef[npcId].pendingIntroduction = false;
-                        changed = true;
-                        this.logger.log(
-                          `[IntroDialogueFix] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — 별칭 자기소개를 실명으로 교정 (삽입 생략)`,
-                        );
-                        continue;
-                      }
-                      const portrait = NPC_PORTRAITS[npcId] ?? '';
-                      const marker = portrait
-                        ? `@[${alias}|${portrait}]`
-                        : `@[${alias}]`;
-                      narrative = `${narrative.trimEnd()}\n\n${alias}${korParticle(alias, '이', '가')} 잠시 뜸을 들이더니 입을 연다.\n\n${marker} "${introDialogue.text}"`;
-                      npcStatesRef[npcId].pendingIntroduction = false;
-                      changed = true;
-                      this.logger.log(
-                        `[IntroDialogueInsert] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — 서술 미반영, 사전 확정 자기소개 대사 삽입으로 소개 확정`,
-                      );
-                      continue; // introduced/introducedAtTurn 유지
-                    }
-                    if (npcStatesRef[npcId]) {
-                      const attempts = npcStatesRef[npcId].introAttempts ?? 0;
-                      // architecture/64 튜닝: 결정론적 마감 — LLM이 2회 연속
-                      // 연출에 실패하면 서버가 제3자 호명 문장을 말미에 덧붙여
-                      // 소개를 확정한다 (LLM 원칙 6: 서버 로직 우선. 실측: Gemma가
-                      // avoid 경로 지시에도 5연속 미준수 — 프롬프트만으론 종결 불가).
-                      // 엔딩 확정 턴은 IntroFallback 문장 삽입 금지 — 피날레
-                      // 여운 뒤에 제3자 호명 문장이 붙어 종결을 파괴한다
-                      if (attempts >= 2 && !isEndingTurn) {
-                        const alias = npcDef.unknownAlias ?? '그 인물';
-                        narrative = `${narrative.trimEnd()}\n\n그때 근처를 지나던 누군가가 ${alias}${korParticle(alias, '을', '를')} 향해 "${npcDef.name}!" 하고 짧게 부르고는 제 갈 길을 갔다.`;
-                        npcStatesRef[npcId].pendingIntroduction = false;
-                        changed = true;
-                        this.logger.log(
-                          `[IntroFallback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — 연출 ${attempts}회 실패, 서버 제3자 호명 문장으로 소개 확정`,
-                        );
-                        continue; // introduced/introducedAtTurn 유지 (소개 확정)
-                      }
-                      npcStatesRef[npcId].introduced = false;
-                      npcStatesRef[npcId].introducedAtTurn = undefined;
-                      // architecture/64 B: 연출 실패 NPC는 다음 관련 턴 재시도 후보
-                      npcStatesRef[npcId].pendingIntroduction = true;
-                      // 튜닝: 실패 누적 — 다음 시도는 제3자 호명/단서 경로로 전환
-                      npcStatesRef[npcId].introAttempts = attempts + 1;
-                      rolledBackThisTurn.add(npcId);
-                      changed = true;
-                      this.logger.debug(
-                        `[IntroRollback] turn=${pending.turnNo} ${npcId}(${npcDef.name}) — LLM이 이름 미언급, introduced 롤백 → pending (attempts=${attempts + 1})`,
-                      );
-                    }
-                  }
-                }
-              }
-
-              if (hasAppearances && npcStatesRef) {
-                // 제스처 추출 regex (bug 4671, CLAUDE.md LLM 원칙 1)
-                const GESTURE_PATTERNS = [
-                  /안경테를\s+\S+\s*(?:\S+)?/g,
-                  /서류\s*뭉치를\s+\S+/g,
-                  /손을\s+\S+\s+\S+/g,
-                  /손끝을?\s+\S+/g,
-                  /손가락을?\s+\S+/g,
-                  /시선을\s+\S+/g,
-                  /눈을\s+\S+/g,
-                  /고개를\s+\S+/g,
-                  /입술을\s+\S+/g,
-                  /어깨를\s+\S+/g,
-                  /미간을\s+\S+/g,
-                  /턱을\s+\S+/g,
-                ];
-                for (const npcId of _appearedNpcIds) {
-                  const npcDef = this.content.getNpc(npcId) as
-                    | Record<string, unknown>
-                    | undefined;
-                  if (!npcStatesRef[npcId]) continue;
-
-                  // BACKGROUND 티어는 appearanceCount 증가 스킵
-                  if (npcDef?.tier !== 'BACKGROUND') {
-                    const prev = npcStatesRef[npcId].appearanceCount ?? 0;
-                    npcStatesRef[npcId].appearanceCount = prev + 1;
-                    changed = true;
-
-                    const npcStateFull = npcStatesRef[
-                      npcId
-                    ] as unknown as import('../db/types/npc-state.js').NPCState;
-                    // architecture/64 B: 조용한 공개 제거 — 임계 충족 시 즉시
-                    // introduced를 찍는 대신 "다음 턴 소개 후보"로만 마킹.
-                    // 승격은 turns.service가 해당 NPC를 primary/injected로
-                    // 장면에 등장시키는 턴에 정식 소개 연출 지시와 함께 수행.
-                    // (A의 rolledBackThisTurn 가드는 introduced를 더 이상 여기서
-                    //  찍지 않으므로 불필요 — 롤백 NPC도 pending으로 재시도)
-                    if (
-                      !npcStateFull.introduced &&
-                      !npcStateFull.pendingIntroduction &&
-                      shouldIntroduce(
-                        npcStateFull,
-                        npcStateFull.posture,
-                        (npcDef?.tier as string | undefined) ?? undefined,
-                      )
-                    ) {
-                      npcStatesRef[npcId].pendingIntroduction = true;
-                      this.logger.log(
-                        `[AppearanceIntro] turn=${pending.turnNo} ${npcId} appearanceCount=${prev + 1} → pendingIntroduction (다음 관련 턴 소개 후보)`,
-                      );
-                    }
-                  }
-
-                  // 제스처 이력 축적 (CORE/SUB NPC만 — 캐릭터 다양화 대상)
-                  if (npcDef?.tier === 'CORE' || npcDef?.tier === 'SUB') {
-                    const aliasSet = new Set<string>();
-                    const npcDefTyped = npcDef as {
-                      name?: string;
-                      unknownAlias?: string;
-                      shortAlias?: string;
-                    };
-                    if (npcDefTyped.name) aliasSet.add(npcDefTyped.name);
-                    if (npcDefTyped.unknownAlias)
-                      aliasSet.add(npcDefTyped.unknownAlias);
-                    if (npcDefTyped.shortAlias)
-                      aliasSet.add(npcDefTyped.shortAlias);
-
-                    // NPC 마커 주변 서술 윈도우 (마커 앞 200자 + 뒤 100자)
-                    let npcWindow = '';
-                    for (const alias of aliasSet) {
-                      const marker = `@[${alias}`;
-                      let searchFrom = 0;
-                      while (searchFrom < narrative.length) {
-                        const idx = narrative.indexOf(marker, searchFrom);
-                        if (idx < 0) break;
-                        const start = Math.max(0, idx - 200);
-                        const end = Math.min(narrative.length, idx + 100);
-                        npcWindow += narrative.slice(start, end) + '\n';
-                        searchFrom = idx + marker.length;
-                      }
-                    }
-
-                    if (npcWindow) {
-                      const foundGestures: string[] = [];
-                      for (const pat of GESTURE_PATTERNS) {
-                        const matches = npcWindow.match(pat) ?? [];
-                        for (const m of matches) {
-                          foundGestures.push(m.trim());
-                        }
-                      }
-                      if (foundGestures.length > 0) {
-                        type GestureEntry = { text: string; turnNo: number };
-                        const existing: GestureEntry[] =
-                          (
-                            npcStatesRef[npcId] as unknown as {
-                              recentGestures?: GestureEntry[];
-                            }
-                          ).recentGestures ?? [];
-                        const newEntries = foundGestures.map((g) => ({
-                          text: g,
-                          turnNo: pending.turnNo,
-                        }));
-                        (
-                          npcStatesRef[npcId] as unknown as {
-                            recentGestures: GestureEntry[];
-                          }
-                        ).recentGestures = [...existing, ...newEntries].slice(
-                          -5,
-                        );
-                        changed = true;
-                      }
-                    }
-                  }
-                }
-              }
-
-              return changed;
-            },
-          );
-        }
-      }
+      // [arch/77 P4.3] 5.11 NPC 소개 롤백·확정 + appearanceCount·제스처 축적 —
+      // rollbackOrConfirmIntroductions로 추출. CAS 패치 호출 구조(단일 패치 단위)는
+      // 금지선 그대로 내부에 보존, narrative는 자기소개 삽입/IntroFallback으로
+      // 변조될 수 있어 반환값으로 회수.
+      narrative = await this.rollbackOrConfirmIntroductions({
+        narrative,
+        serverResult,
+        runSession,
+        appearedNpcIds: _appearedNpcIds,
+        introDialogue,
+        isEndingTurn,
+        pending,
+      });
 
       // 5.12. NPC 작별 발화 → 대화 잠금 해제 마킹 (P2 2026-07-11)
       //   NPC가 대사로 대화를 닫으면("이만 가봐야겠소") 다음 턴부터 잠금을 잇지
