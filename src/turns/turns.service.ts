@@ -6606,6 +6606,102 @@ export class TurnsService {
     }
   }
 
+  // [arch/77 C5] 전투 패배 → RUN_ENDED: 메모리 통합 + 엔딩 생성 + Journey
+  // summary + 캠페인 결과 저장. response(serverResult ui/events/meta) 제자리 변조.
+  private async handleCombatDefeatEnding(
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    updatedRunState: RunState,
+    ws: WorldState,
+    response: unknown,
+  ): Promise<void> {
+    // structuredMemory 통합
+    try {
+      const locMemDefeat = await this.memoryIntegration.finalizeVisit(
+        run.id,
+        currentNode.id,
+        updatedRunState,
+        turnNo,
+      );
+      if (locMemDefeat) updatedRunState.locationMemories = locMemDefeat;
+    } catch {
+      /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */
+    }
+
+    // 패배 엔딩 생성
+    let endingSummaryCombat: ReturnType<
+      SummaryBuilderService['buildEndingSummary']
+    > | null = null;
+    try {
+      const endingThreads = (ws.playerThreads ?? []).map((t) => ({
+        approachVector: t.approachVector,
+        goalCategory: t.goalCategory,
+        actionCount: t.actionCount,
+        successCount: t.successCount,
+        status: t.status,
+      }));
+      const endingInput = this.endingGenerator.gatherEndingInputs(
+        ws.activeIncidents ?? [],
+        updatedRunState.npcStates ?? {},
+        ws.narrativeMarks ?? [],
+        ws as unknown as Record<string, unknown>,
+        updatedRunState.arcState ?? null,
+        updatedRunState.actionHistory ?? [],
+        endingThreads,
+      );
+      const endingResult = this.endingGenerator.generateEnding(
+        endingInput,
+        'DEFEAT',
+        turnNo,
+      );
+      const sr = (response as any).serverResult;
+      sr.ui = sr.ui ?? {};
+      sr.ui.endingResult = endingResult;
+      sr.events.push({
+        id: `ending_${turnNo}`,
+        kind: 'SYSTEM',
+        text: `[엔딩] ${endingResult.closingLine}`,
+        tags: ['RUN_ENDED'],
+        data: { endingResult },
+      });
+      // Journey Archive: summary 조립
+      try {
+        endingSummaryCombat = this.summaryBuilder.buildEndingSummary(
+          {
+            id: run.id,
+            presetId: run.presetId ?? null,
+            gender: (run.gender as 'male' | 'female' | null) ?? null,
+            updatedAt: new Date(),
+            currentTurnNo: turnNo,
+          },
+          updatedRunState,
+          endingResult,
+        );
+      } catch (se) {
+        this.logger.warn(
+          `EndingSummary build failed (COMBAT DEFEAT) runId=${run.id}: ${String(se)}`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(`DEFEAT ending generation failed: ${e}`);
+    }
+
+    await this.db
+      .update(runSessions)
+      .set({
+        status: 'RUN_ENDED',
+        updatedAt: new Date(),
+        ...(endingSummaryCombat ? { endingSummary: endingSummaryCombat } : {}),
+      })
+      .where(eq(runSessions.id, run.id));
+
+    // Campaign: 시나리오 결과 저장
+    await this.saveCampaignResultIfNeeded(run.id);
+
+    (response as any).meta.nodeOutcome = 'RUN_ENDED';
+  }
+
   private async handleCombatTurn(
     run: any,
     currentNode: any,
@@ -6760,94 +6856,17 @@ export class TurnsService {
       const _arcState =
         updatedRunState.arcState ?? this.arcService.initArcState();
 
-      // 패배 시 RUN_ENDED + 엔딩 내러티브 생성
+      // [arch/77 C5] 패배 → RUN_ENDED + 엔딩 생성 — handleCombatDefeatEnding.
+      // response(serverResult ui/events/meta) 제자리 변조 + DB 커밋 포함.
       if (resolveResult.combatOutcome === 'DEFEAT') {
-        // structuredMemory 통합
-        try {
-          const locMemDefeat = await this.memoryIntegration.finalizeVisit(
-            run.id,
-            currentNode.id,
-            updatedRunState,
-            turnNo,
-          );
-          if (locMemDefeat) updatedRunState.locationMemories = locMemDefeat;
-        } catch {
-          /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */
-        }
-
-        // 패배 엔딩 생성
-        let endingSummaryCombat: ReturnType<
-          SummaryBuilderService['buildEndingSummary']
-        > | null = null;
-        try {
-          const endingThreads = (ws.playerThreads ?? []).map((t) => ({
-            approachVector: t.approachVector,
-            goalCategory: t.goalCategory,
-            actionCount: t.actionCount,
-            successCount: t.successCount,
-            status: t.status,
-          }));
-          const endingInput = this.endingGenerator.gatherEndingInputs(
-            ws.activeIncidents ?? [],
-            updatedRunState.npcStates ?? {},
-            ws.narrativeMarks ?? [],
-            ws as unknown as Record<string, unknown>,
-            updatedRunState.arcState ?? null,
-            updatedRunState.actionHistory ?? [],
-            endingThreads,
-          );
-          const endingResult = this.endingGenerator.generateEnding(
-            endingInput,
-            'DEFEAT',
-            turnNo,
-          );
-          const sr = (response as any).serverResult;
-          sr.ui = sr.ui ?? {};
-          sr.ui.endingResult = endingResult;
-          sr.events.push({
-            id: `ending_${turnNo}`,
-            kind: 'SYSTEM',
-            text: `[엔딩] ${endingResult.closingLine}`,
-            tags: ['RUN_ENDED'],
-            data: { endingResult },
-          });
-          // Journey Archive: summary 조립
-          try {
-            endingSummaryCombat = this.summaryBuilder.buildEndingSummary(
-              {
-                id: run.id,
-                presetId: run.presetId ?? null,
-                gender: (run.gender as 'male' | 'female' | null) ?? null,
-                updatedAt: new Date(),
-                currentTurnNo: turnNo,
-              },
-              updatedRunState,
-              endingResult,
-            );
-          } catch (se) {
-            this.logger.warn(
-              `EndingSummary build failed (COMBAT DEFEAT) runId=${run.id}: ${String(se)}`,
-            );
-          }
-        } catch (e) {
-          this.logger.warn(`DEFEAT ending generation failed: ${e}`);
-        }
-
-        await this.db
-          .update(runSessions)
-          .set({
-            status: 'RUN_ENDED',
-            updatedAt: new Date(),
-            ...(endingSummaryCombat
-              ? { endingSummary: endingSummaryCombat }
-              : {}),
-          })
-          .where(eq(runSessions.id, run.id));
-
-        // Campaign: 시나리오 결과 저장
-        await this.saveCampaignResultIfNeeded(run.id);
-
-        (response as any).meta.nodeOutcome = 'RUN_ENDED';
+        await this.handleCombatDefeatEnding(
+          run,
+          currentNode,
+          turnNo,
+          updatedRunState,
+          ws,
+          response,
+        );
         return response;
       }
 
