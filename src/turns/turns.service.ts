@@ -6375,41 +6375,27 @@ export class TurnsService {
   }
 
   // --- COMBAT 턴 (기존 전투 엔진 재사용) ---
-  private async handleCombatTurn(
-    run: any,
-    currentNode: any,
-    turnNo: number,
-    body: SubmitTurnBody,
-    runState: RunState,
-    playerStats: PermanentStats,
-  ) {
-    // BattleState 조회
-    const bs = await this.db.query.battleStates.findFirst({
-      where: and(
-        eq(battleStates.runId, run.id),
-        eq(battleStates.nodeInstanceId, currentNode.id),
-      ),
-    });
-    const battleState = bs?.state ?? null;
-    if (!battleState)
-      throw new InternalError('BattleState not found for COMBAT node');
-
-    // 입력 파이프라인 (기존 로직 재사용)
-    let rawInput = body.input.text ?? body.input.choiceId ?? '';
-    if (body.input.type === 'CHOICE' && body.input.choiceId) {
-      const prevTurn = await this.db.query.turns.findFirst({
-        where: and(
-          eq(turns.runId, run.id),
-          eq(turns.turnNo, run.currentTurnNo),
-        ),
-        columns: { serverResult: true },
-      });
-      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)
-        ?.choices;
-      const matched = prevChoices?.find((c) => c.id === body.input.choiceId);
-      if (matched) rawInput = matched.label;
-    }
-
+  // [arch/77 C2] 전투 입력 파이프라인 — RuleParser→Policy(DENY 조기 커밋)→
+  // ActionPlan→PropMatch Tier(arch/41)→기만 전술 nano(arch/76 D3-b\u2032-combat).
+  // battleState.usedTactics 제자리 변조, DENY면 커밋된 응답을 denyResponse로 반환.
+  private async buildCombatActionPlan(params: {
+    run: any;
+    currentNode: any;
+    turnNo: number;
+    body: SubmitTurnBody;
+    rawInput: string;
+    battleState: BattleStateV1;
+    playerStats: PermanentStats;
+  }) {
+    const {
+      run,
+      currentNode,
+      turnNo,
+      body,
+      rawInput,
+      battleState,
+      playerStats,
+    } = params;
     let parsedIntent: ParsedIntent | undefined;
     let actionPlan: ActionPlan | undefined;
     let policyResult: 'ALLOW' | 'TRANSFORM' | 'PARTIAL' | 'DENY' = 'ALLOW';
@@ -6435,7 +6421,7 @@ export class TurnsService {
           currentNode,
           policyCheck.reason ?? 'Policy denied',
         );
-        return this.commitCombatTurn(
+        const denyResponse = await this.commitCombatTurn(
           run,
           currentNode,
           turnNo,
@@ -6449,6 +6435,7 @@ export class TurnsService {
           battleState,
           body.options?.skipLlm,
         );
+        return { denyResponse } as const;
       }
 
       const effectiveIntent = transformedIntent ?? parsedIntent;
@@ -6515,6 +6502,72 @@ export class TurnsService {
     if (body.input.type === 'CHOICE' && body.input.choiceId) {
       actionPlan = this.mapCombatChoiceToActionPlan(body.input.choiceId);
     }
+
+    return {
+      denyResponse: null,
+      parsedIntent,
+      actionPlan,
+      policyResult,
+      transformedIntent,
+      combatAppraisalNote,
+    };
+  }
+
+  private async handleCombatTurn(
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    body: SubmitTurnBody,
+    runState: RunState,
+    playerStats: PermanentStats,
+  ) {
+    // BattleState 조회
+    const bs = await this.db.query.battleStates.findFirst({
+      where: and(
+        eq(battleStates.runId, run.id),
+        eq(battleStates.nodeInstanceId, currentNode.id),
+      ),
+    });
+    const battleState = bs?.state ?? null;
+    if (!battleState)
+      throw new InternalError('BattleState not found for COMBAT node');
+
+    // 입력 파이프라인 (기존 로직 재사용)
+    let rawInput = body.input.text ?? body.input.choiceId ?? '';
+    if (body.input.type === 'CHOICE' && body.input.choiceId) {
+      const prevTurn = await this.db.query.turns.findFirst({
+        where: and(
+          eq(turns.runId, run.id),
+          eq(turns.turnNo, run.currentTurnNo),
+        ),
+        columns: { serverResult: true },
+      });
+      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)
+        ?.choices;
+      const matched = prevChoices?.find((c) => c.id === body.input.choiceId);
+      if (matched) rawInput = matched.label;
+    }
+
+    // [arch/77 C2] 전투 입력 파이프라인 — buildCombatActionPlan으로 추출.
+    // 파싱→정책(DENY 조기 커밋 포함)→플랜→PropMatch Tier→기만 전술 nano.
+    // battleState.usedTactics는 제자리 변조 유지.
+    const inputOutcome = await this.buildCombatActionPlan({
+      run,
+      currentNode,
+      turnNo,
+      body,
+      rawInput,
+      battleState,
+      playerStats,
+    });
+    if (inputOutcome.denyResponse) return inputOutcome.denyResponse;
+    const {
+      parsedIntent,
+      policyResult,
+      transformedIntent,
+      combatAppraisalNote,
+    } = inputOutcome;
+    const actionPlan = inputOutcome.actionPlan;
 
     // 적 스탯 로드
     const enemyStats: Record<string, PermanentStats> = {};
