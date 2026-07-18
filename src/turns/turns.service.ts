@@ -1526,6 +1526,212 @@ export class TurnsService {
     };
   }
 
+  // [arch/77 P3.4] NanoEventDirector nanoCtx 빌드 — 비동기 분리(nanoCtx만 조립,
+  // generate()는 LLM Worker). 실패는 non-fatal null (기존 EventDirector fallback).
+  private buildNanoEventContext(params: {
+    ws: WorldState;
+    locationId: string;
+    runState: RunState;
+    actionHistory: NonNullable<RunState['actionHistory']>;
+    choicePayload: Record<string, unknown> | undefined;
+    intentV3: ReturnType<IntentV3BuilderService['build']>;
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    rawInput: string;
+    event: import('../db/types/event-def.js').EventDefV2;
+    resolveResult: ReturnType<ResolveService['resolve']>;
+    dialogueAct: DialogueAct | null;
+    turnNo: number;
+  }): NanoEventContext | null {
+    const {
+      ws,
+      locationId,
+      runState,
+      actionHistory,
+      choicePayload,
+      intentV3,
+      intent,
+      rawInput,
+      event,
+      resolveResult,
+      dialogueAct,
+      turnNo,
+    } = params;
+    if (!this.nanoEventDirector) return null;
+    try {
+      // 장소에 있는 NPC 목록
+      const locDynamic = ws.locationDynamicStates as
+        | Record<string, { presentNpcs?: string[] }>
+        | undefined;
+      const presentNpcIds = locDynamic?.[locationId]?.presentNpcs ?? [];
+      const existingNpcStates = runState.npcStates ?? {};
+      // NPC별 연속 대화 턴 수 계산
+      const npcConsecutiveMap: Record<string, number> = {};
+      for (let i = actionHistory.length - 1; i >= 0; i--) {
+        const hNpc = (actionHistory[i] as Record<string, unknown>)
+          .primaryNpcId as string | undefined;
+        if (!hNpc) break;
+        npcConsecutiveMap[hNpc] = (npcConsecutiveMap[hNpc] ?? 0) + 1;
+        if (
+          i > 0 &&
+          (actionHistory[i - 1] as Record<string, unknown>).primaryNpcId !==
+            hNpc
+        )
+          break;
+      }
+      const presentNpcs = presentNpcIds.map((id: string) => {
+        const npcDef = this.content.getNpc(id);
+        const npcState = existingNpcStates[id];
+        const met = actionHistory.some(
+          (h) => (h as Record<string, unknown>).primaryNpcId === id,
+        );
+        return {
+          npcId: id,
+          displayName: getNpcDisplayName(npcState, npcDef),
+          posture: npcState?.posture ?? npcDef?.basePosture ?? 'CAUTIOUS',
+          trust: npcState?.emotional?.trust ?? 0,
+          consecutiveTurns: npcConsecutiveMap[id] ?? 0,
+          met,
+        };
+      });
+
+      // 발견 가능 fact 목록
+      const discoveredFactsSet = new Set(runState.discoveredQuestFacts ?? []);
+      const availableFacts = this.questProgression
+        ? this.content
+            .getAllEventsV2()
+            .filter(
+              (e: any) =>
+                e.locationId === locationId &&
+                e.discoverableFact &&
+                !discoveredFactsSet.has(e.discoverableFact),
+            )
+            .map((e: any) => {
+              const factDetail = this.questProgression!.getFactDetail(
+                e.discoverableFact,
+              );
+              return {
+                factId: e.discoverableFact as string,
+                description: factDetail ?? e.discoverableFact,
+                rate:
+                  resolveResult.outcome === 'SUCCESS'
+                    ? 1.0
+                    : resolveResult.outcome === 'PARTIAL'
+                      ? 0.5
+                      : 0,
+              };
+            })
+        : [];
+
+      // 직전 2턴 요약
+      const recentSummaryParts = actionHistory.slice(-2).map((h, i) => {
+        const ah = h as Record<string, unknown>;
+        return `T${turnNo - (actionHistory.length - (actionHistory.length - 2 + i))}: ${ah.eventId ?? '자유행동'} (${ah.actionType})`;
+      });
+
+      // 직전 NPC
+      const lastEntry = actionHistory[actionHistory.length - 1] as
+        | Record<string, unknown>
+        | undefined;
+      const lastNpcId = (lastEntry?.primaryNpcId as string) ?? null;
+
+      // sourceNpcId from choice payload (NPC 연속성)
+      const choiceSourceNpcId = (choicePayload?.sourceNpcId as string) ?? null;
+      const effectiveLastNpcId = choiceSourceNpcId ?? lastNpcId;
+
+      // targetNpcId: IntentV3에서 감지된 대상 NPC
+      const nanoTargetNpcId = intentV3.targetNpcId ?? null;
+
+      // wantNewNpc: "다른/아무나/새로운" 키워드 감지
+      const WANT_NEW_KEYWORDS = [
+        '다른 사람',
+        '아무나',
+        '아무한테',
+        '새로운',
+        '다른 누구',
+        '다른사람',
+      ];
+      const wantNewNpc = WANT_NEW_KEYWORDS.some((kw) => rawInput.includes(kw));
+
+      // 같은 NPC 연속 턴 수
+      let npcConsecutiveTurns = 0;
+      if (effectiveLastNpcId) {
+        for (let i = actionHistory.length - 1; i >= 0; i--) {
+          if (
+            (actionHistory[i] as Record<string, unknown>).primaryNpcId ===
+            effectiveLastNpcId
+          ) {
+            npcConsecutiveTurns++;
+          } else {
+            break;
+          }
+        }
+      }
+
+      // Player-First + architecture/49: npcLocked 판정 강화
+      // FREE_PLAYER_/FREE_CONV_ 이벤트 외에도 conversationLock(직전 SOCIAL NPC)이
+      // 활성이면 NanoEventDirector가 새 NPC 끼워넣지 않도록 강제.
+      const lockNpcFromHistory =
+        this.npcResolver?.findLockFromHistory(
+          actionHistory,
+          intent.actionType,
+        ) ?? null;
+      const isFreeEvent =
+        event.eventId.startsWith('FREE_PLAYER_') ||
+        event.eventId.startsWith('FREE_CONV_');
+      const isNpcLocked = !!lockNpcFromHistory || isFreeEvent;
+      const lockedNpcId =
+        lockNpcFromHistory ??
+        (isFreeEvent
+          ? ((event.payload as Record<string, unknown>).primaryNpcId as
+              | string
+              | null)
+          : null);
+
+      const nanoCtx: NanoEventContext = {
+        locationId,
+        locationName: this.content.getLocation(locationId)?.name ?? locationId,
+        timePhase: (ws.phaseV2 ?? ws.timePhase) as string,
+        hubHeat: ws.hubHeat,
+        hubSafety: ws.hubSafety as string,
+        rawInput,
+        actionType: intent.actionType,
+        resolveOutcome: resolveResult.outcome,
+        lastNpcId: effectiveLastNpcId,
+        lastNpcName: effectiveLastNpcId
+          ? getNpcDisplayName(
+              existingNpcStates[effectiveLastNpcId],
+              this.content.getNpc(effectiveLastNpcId),
+            )
+          : null,
+        targetNpcId: nanoTargetNpcId,
+        wantNewNpc,
+        npcConsecutiveTurns,
+        presentNpcs,
+        recentSummary: recentSummaryParts.join('\n'),
+        availableFacts,
+        questState: runState.questState ?? 'S0_ARRIVE',
+        previousOpening: null,
+        activeConditions:
+          (locDynamic?.[locationId] as any)?.activeConditions ?? [],
+        npcReactions: [], // 이번 턴 반응은 nano 호출 후 계산됨 — LLM 프롬프트에서 직접 주입
+        npcLocked: isNpcLocked,
+        lockedNpcId,
+        dialogueAct: dialogueAct ?? null, // P2 — 작별 턴 대화 계속 선택지 방지
+      };
+
+      // 비동기 분리: nanoCtx만 저장, LLM Worker에서 generate() 호출
+      this.logger.debug(
+        `[NanoEventDirector] nanoCtx 빌드 완료 → LLM Worker에서 비동기 호출 예정`,
+      );
+      return nanoCtx;
+    } catch (err) {
+      this.logger.warn(
+        `[NanoEventDirector] nanoCtx 빌드 실패 (non-fatal): ${err}`,
+      );
+      return null;
+    }
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -2436,186 +2642,21 @@ export class TurnsService {
       this.logger.log(`[DialogueAct] ${dialogueAct} — "${rawInput}"`);
     }
 
-    let nanoEventCtx: NanoEventContext | null = null;
-    if (this.nanoEventDirector) {
-      try {
-        // 장소에 있는 NPC 목록
-        const locDynamic = ws.locationDynamicStates as
-          | Record<string, { presentNpcs?: string[] }>
-          | undefined;
-        const presentNpcIds = locDynamic?.[locationId]?.presentNpcs ?? [];
-        const existingNpcStates = runState.npcStates ?? {};
-        // NPC별 연속 대화 턴 수 계산
-        const npcConsecutiveMap: Record<string, number> = {};
-        for (let i = actionHistory.length - 1; i >= 0; i--) {
-          const hNpc = (actionHistory[i] as Record<string, unknown>)
-            .primaryNpcId as string | undefined;
-          if (!hNpc) break;
-          npcConsecutiveMap[hNpc] = (npcConsecutiveMap[hNpc] ?? 0) + 1;
-          if (
-            i > 0 &&
-            (actionHistory[i - 1] as Record<string, unknown>).primaryNpcId !==
-              hNpc
-          )
-            break;
-        }
-        const presentNpcs = presentNpcIds.map((id: string) => {
-          const npcDef = this.content.getNpc(id);
-          const npcState = existingNpcStates[id];
-          const met = actionHistory.some(
-            (h) => (h as Record<string, unknown>).primaryNpcId === id,
-          );
-          return {
-            npcId: id,
-            displayName: getNpcDisplayName(npcState, npcDef),
-            posture: npcState?.posture ?? npcDef?.basePosture ?? 'CAUTIOUS',
-            trust: npcState?.emotional?.trust ?? 0,
-            consecutiveTurns: npcConsecutiveMap[id] ?? 0,
-            met,
-          };
-        });
-
-        // 발견 가능 fact 목록
-        const discoveredFactsSet = new Set(runState.discoveredQuestFacts ?? []);
-        const availableFacts = this.questProgression
-          ? this.content
-              .getAllEventsV2()
-              .filter(
-                (e: any) =>
-                  e.locationId === locationId &&
-                  e.discoverableFact &&
-                  !discoveredFactsSet.has(e.discoverableFact),
-              )
-              .map((e: any) => {
-                const factDetail = this.questProgression!.getFactDetail(
-                  e.discoverableFact,
-                );
-                return {
-                  factId: e.discoverableFact as string,
-                  description: factDetail ?? e.discoverableFact,
-                  rate:
-                    resolveResult.outcome === 'SUCCESS'
-                      ? 1.0
-                      : resolveResult.outcome === 'PARTIAL'
-                        ? 0.5
-                        : 0,
-                };
-              })
-          : [];
-
-        // 직전 2턴 요약
-        const recentSummaryParts = actionHistory.slice(-2).map((h, i) => {
-          const ah = h as Record<string, unknown>;
-          return `T${turnNo - (actionHistory.length - (actionHistory.length - 2 + i))}: ${ah.eventId ?? '자유행동'} (${ah.actionType})`;
-        });
-
-        // 직전 NPC
-        const lastEntry = actionHistory[actionHistory.length - 1] as
-          | Record<string, unknown>
-          | undefined;
-        const lastNpcId = (lastEntry?.primaryNpcId as string) ?? null;
-
-        // sourceNpcId from choice payload (NPC 연속성)
-        const choiceSourceNpcId =
-          (choicePayload?.sourceNpcId as string) ?? null;
-        const effectiveLastNpcId = choiceSourceNpcId ?? lastNpcId;
-
-        // targetNpcId: IntentV3에서 감지된 대상 NPC
-        const nanoTargetNpcId = intentV3.targetNpcId ?? null;
-
-        // wantNewNpc: "다른/아무나/새로운" 키워드 감지
-        const WANT_NEW_KEYWORDS = [
-          '다른 사람',
-          '아무나',
-          '아무한테',
-          '새로운',
-          '다른 누구',
-          '다른사람',
-        ];
-        const wantNewNpc = WANT_NEW_KEYWORDS.some((kw) =>
-          rawInput.includes(kw),
-        );
-
-        // 같은 NPC 연속 턴 수
-        let npcConsecutiveTurns = 0;
-        if (effectiveLastNpcId) {
-          for (let i = actionHistory.length - 1; i >= 0; i--) {
-            if (
-              (actionHistory[i] as Record<string, unknown>).primaryNpcId ===
-              effectiveLastNpcId
-            ) {
-              npcConsecutiveTurns++;
-            } else {
-              break;
-            }
-          }
-        }
-
-        // Player-First + architecture/49: npcLocked 판정 강화
-        // FREE_PLAYER_/FREE_CONV_ 이벤트 외에도 conversationLock(직전 SOCIAL NPC)이
-        // 활성이면 NanoEventDirector가 새 NPC 끼워넣지 않도록 강제.
-        const lockNpcFromHistory =
-          this.npcResolver?.findLockFromHistory(
-            actionHistory,
-            intent.actionType,
-          ) ?? null;
-        const isFreeEvent =
-          event.eventId.startsWith('FREE_PLAYER_') ||
-          event.eventId.startsWith('FREE_CONV_');
-        const isNpcLocked = !!lockNpcFromHistory || isFreeEvent;
-        const lockedNpcId =
-          lockNpcFromHistory ??
-          (isFreeEvent
-            ? ((event.payload as Record<string, unknown>).primaryNpcId as
-                | string
-                | null)
-            : null);
-
-        const nanoCtx: NanoEventContext = {
-          locationId,
-          locationName:
-            this.content.getLocation(locationId)?.name ?? locationId,
-          timePhase: (ws.phaseV2 ?? ws.timePhase) as string,
-          hubHeat: ws.hubHeat,
-          hubSafety: ws.hubSafety as string,
-          rawInput,
-          actionType: intent.actionType,
-          resolveOutcome: resolveResult.outcome,
-          lastNpcId: effectiveLastNpcId,
-          lastNpcName: effectiveLastNpcId
-            ? getNpcDisplayName(
-                existingNpcStates[effectiveLastNpcId],
-                this.content.getNpc(effectiveLastNpcId),
-              )
-            : null,
-          targetNpcId: nanoTargetNpcId,
-          wantNewNpc,
-          npcConsecutiveTurns,
-          presentNpcs,
-          recentSummary: recentSummaryParts.join('\n'),
-          availableFacts,
-          questState: runState.questState ?? 'S0_ARRIVE',
-          previousOpening: null,
-          activeConditions:
-            (locDynamic?.[locationId] as any)?.activeConditions ?? [],
-          npcReactions: [], // 이번 턴 반응은 nano 호출 후 계산됨 — LLM 프롬프트에서 직접 주입
-          npcLocked: isNpcLocked,
-          lockedNpcId,
-          dialogueAct: dialogueAct ?? null, // P2 — 작별 턴 대화 계속 선택지 방지
-        };
-
-        // 비동기 분리: nanoCtx만 저장, LLM Worker에서 generate() 호출
-        nanoEventCtx = nanoCtx;
-        this.logger.debug(
-          `[NanoEventDirector] nanoCtx 빌드 완료 → LLM Worker에서 비동기 호출 예정`,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `[NanoEventDirector] nanoCtx 빌드 실패 (non-fatal): ${err}`,
-        );
-        nanoEventCtx = null;
-      }
-    }
+    // [arch/77 P3.4] nanoCtx 빌드 — buildNanoEventContext로 추출.
+    const nanoEventCtx: NanoEventContext | null = this.buildNanoEventContext({
+      ws,
+      locationId,
+      runState,
+      actionHistory,
+      choicePayload,
+      intentV3,
+      intent,
+      rawInput,
+      event,
+      resolveResult,
+      dialogueAct,
+      turnNo,
+    });
 
     // Living World v2: 판정 결과 → WorldFact 생성 + LocationState 변경 + NPC 목격
     if (this.consequenceProcessor) {
