@@ -2754,10 +2754,20 @@ ${npcList}`,
       }
 
       // 4.5. 응답 너무 짧으면 메인 모델로 재시도 (Flash Lite 긴 프롬프트 실패 방어)
+      // [arch/79 P3-D] alternate가 메인과 동일 모델이면 스킵 — 같은 모델·같은
+      // 프롬프트 재호출은 무의미 (실측: 재시도 평균 출력 192tok로 대부분 또 짧아
+      // 폐기, 소형 턴 26~31% 이중 지불). 단순 장면의 짧은 서술은 정상 응답이다.
+      const mainNarrativeModel =
+        config.provider === 'claude'
+          ? config.claudeModel
+          : config.provider === 'gemini'
+            ? config.geminiModel
+            : config.openaiModel;
       if (
         callResult.success &&
         callResult.response &&
         alternateModel &&
+        alternateModel !== mainNarrativeModel &&
         (callResult.response.completionTokens ?? 0) < 200
       ) {
         this.logger.warn(
