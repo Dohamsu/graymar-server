@@ -3427,6 +3427,115 @@ export class TurnsService {
     (result.ui as any).day = ws.day ?? 1;
   }
 
+  // [arch/77 P3.12] PR-A: orchestration 주입 NPC 보충 처리 — eventPrimaryNpc가
+  // null일 때 주입 NPC의 초기화/조우/소개(2턴 분리)/개인 기록/LLM Summary/대화 주제.
+  private applyInjectedNpcRecords(params: {
+    injectedNpcId: string | null;
+    eventPrimaryNpc: string | null;
+    npcStates: Record<string, NPCState>;
+    updatedRunState: RunState;
+    relations: Record<string, number>;
+    actionHistory: NonNullable<RunState['actionHistory']>;
+    event: import('../db/types/event-def.js').EventDefV2;
+    rawInput: string;
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    resolveResult: ReturnType<ResolveService['resolve']>;
+    locationId: string;
+    turnNo: number;
+    newlyIntroducedNpcIds: string[];
+    newlyEncounteredNpcIds: string[];
+  }): void {
+    const {
+      injectedNpcId,
+      eventPrimaryNpc,
+      npcStates,
+      updatedRunState,
+      relations,
+      actionHistory,
+      event,
+      rawInput,
+      intent,
+      resolveResult,
+      locationId,
+      turnNo,
+      newlyIntroducedNpcIds,
+      newlyEncounteredNpcIds,
+    } = params;
+    if (injectedNpcId && !eventPrimaryNpc) {
+      // orchestration에서 주입된 NPC도 emotional/encounter 처리
+      if (!npcStates[injectedNpcId]) {
+        const npcDef = this.content.getNpc(injectedNpcId);
+        npcStates[injectedNpcId] = initNPCState({
+          npcId: injectedNpcId,
+          basePosture: npcDef?.basePosture,
+          initialTrust: npcDef?.initialTrust ?? relations[injectedNpcId] ?? 0,
+          agenda: npcDef?.agenda,
+        });
+        newlyEncounteredNpcIds.push(injectedNpcId);
+      }
+      // 방문 단위 encounterCount 증가
+      const alreadyMetInjected = actionHistory.some(
+        (h) => h.primaryNpcId === injectedNpcId,
+      );
+      if (!alreadyMetInjected) {
+        npcStates[injectedNpcId].encounterCount =
+          (npcStates[injectedNpcId].encounterCount ?? 0) + 1;
+      }
+      // 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
+      const introPosture = npcStates[injectedNpcId].posture;
+      if (
+        !npcStates[injectedNpcId].introduced &&
+        (npcStates[injectedNpcId].pendingIntroduction === true ||
+          shouldIntroduce(npcStates[injectedNpcId], introPosture))
+      ) {
+        // architecture/64 B: pending 승격 포함 (primary 경로와 동일 규칙)
+        npcStates[injectedNpcId].introduced = true;
+        // 이름 공개 정밀 분석(2026-07-10) D: 2턴 분리 — primary 경로와 동일하게
+        // 소개 턴엔 별칭 유지, 다음 턴부터 실명 (기존엔 이 경로만 미설정)
+        npcStates[injectedNpcId].introducedAtTurn = turnNo;
+        npcStates[injectedNpcId].pendingIntroduction = false;
+        newlyIntroducedNpcIds.push(injectedNpcId);
+      }
+      updatedRunState.npcStates = npcStates;
+
+      // === 주입된 NPC 개인 기록 축적 ===
+      const injBriefNote = (event.payload.sceneFrame ?? rawInput).slice(0, 50);
+      npcStates[injectedNpcId] = recordNpcEncounter(
+        npcStates[injectedNpcId],
+        turnNo,
+        locationId,
+        intent.actionType,
+        resolveResult.outcome,
+        injBriefNote,
+      );
+
+      // === 주입된 NPC LLM Summary 업데이트 ===
+      npcStates[injectedNpcId].llmSummary = buildNpcLlmSummary(
+        npcStates[injectedNpcId],
+        this.content.getNpc(injectedNpcId),
+        turnNo,
+        (event.payload.sceneFrame ?? '').slice(0, 40),
+        '',
+      );
+
+      // === 주입된 NPC 대화 주제 추적 ===
+      {
+        const topicEntry = buildTopicEntry(
+          turnNo,
+          null,
+          null,
+          event.payload.sceneFrame ?? null,
+          intent.actionType,
+          rawInput,
+        );
+        npcStates[injectedNpcId] = addRecentTopic(
+          npcStates[injectedNpcId],
+          topicEntry,
+        );
+      }
+    }
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -5139,79 +5248,24 @@ export class TurnsService {
     // PR-A: npcInjection의 NPC도 보충 처리 (eventPrimaryNpc가 null이었을 때)
     const injectedNpcId = orchestrationResult.npcInjection?.npcId ?? null;
     const effectiveNpcId = eventPrimaryNpc ?? injectedNpcId;
-    if (injectedNpcId && !eventPrimaryNpc) {
-      // orchestration에서 주입된 NPC도 emotional/encounter 처리
-      if (!npcStates[injectedNpcId]) {
-        const npcDef = this.content.getNpc(injectedNpcId);
-        npcStates[injectedNpcId] = initNPCState({
-          npcId: injectedNpcId,
-          basePosture: npcDef?.basePosture,
-          initialTrust: npcDef?.initialTrust ?? relations[injectedNpcId] ?? 0,
-          agenda: npcDef?.agenda,
-        });
-        newlyEncounteredNpcIds.push(injectedNpcId);
-      }
-      // 방문 단위 encounterCount 증가
-      const alreadyMetInjected = actionHistory.some(
-        (h) => h.primaryNpcId === injectedNpcId,
-      );
-      if (!alreadyMetInjected) {
-        npcStates[injectedNpcId].encounterCount =
-          (npcStates[injectedNpcId].encounterCount ?? 0) + 1;
-      }
-      // 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
-      const introPosture = npcStates[injectedNpcId].posture;
-      if (
-        !npcStates[injectedNpcId].introduced &&
-        (npcStates[injectedNpcId].pendingIntroduction === true ||
-          shouldIntroduce(npcStates[injectedNpcId], introPosture))
-      ) {
-        // architecture/64 B: pending 승격 포함 (primary 경로와 동일 규칙)
-        npcStates[injectedNpcId].introduced = true;
-        // 이름 공개 정밀 분석(2026-07-10) D: 2턴 분리 — primary 경로와 동일하게
-        // 소개 턴엔 별칭 유지, 다음 턴부터 실명 (기존엔 이 경로만 미설정)
-        npcStates[injectedNpcId].introducedAtTurn = turnNo;
-        npcStates[injectedNpcId].pendingIntroduction = false;
-        newlyIntroducedNpcIds.push(injectedNpcId);
-      }
-      updatedRunState.npcStates = npcStates;
-
-      // === 주입된 NPC 개인 기록 축적 ===
-      const injBriefNote = (event.payload.sceneFrame ?? rawInput).slice(0, 50);
-      npcStates[injectedNpcId] = recordNpcEncounter(
-        npcStates[injectedNpcId],
-        turnNo,
-        locationId,
-        intent.actionType,
-        resolveResult.outcome,
-        injBriefNote,
-      );
-
-      // === 주입된 NPC LLM Summary 업데이트 ===
-      npcStates[injectedNpcId].llmSummary = buildNpcLlmSummary(
-        npcStates[injectedNpcId],
-        this.content.getNpc(injectedNpcId),
-        turnNo,
-        (event.payload.sceneFrame ?? '').slice(0, 40),
-        '',
-      );
-
-      // === 주입된 NPC 대화 주제 추적 ===
-      {
-        const topicEntry = buildTopicEntry(
-          turnNo,
-          null,
-          null,
-          event.payload.sceneFrame ?? null,
-          intent.actionType,
-          rawInput,
-        );
-        npcStates[injectedNpcId] = addRecentTopic(
-          npcStates[injectedNpcId],
-          topicEntry,
-        );
-      }
-    }
+    // [arch/77 P3.12] 주입 NPC 보충 처리 — applyInjectedNpcRecords.
+    // npcStates·updatedRunState·newly* 배열 제자리 변조.
+    this.applyInjectedNpcRecords({
+      injectedNpcId,
+      eventPrimaryNpc,
+      npcStates,
+      updatedRunState,
+      relations,
+      actionHistory,
+      event,
+      rawInput,
+      intent,
+      resolveResult,
+      locationId,
+      turnNo,
+      newlyIntroducedNpcIds,
+      newlyEncounteredNpcIds,
+    });
 
     // 비도전 행위 여부 (MOVE_LOCATION, REST, SHOP, TALK → 주사위 UI 숨김)
     const isNonChallenge = ['MOVE_LOCATION', 'REST', 'SHOP'].includes(
