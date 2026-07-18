@@ -2468,6 +2468,173 @@ export class TurnsService {
     };
   }
 
+  // [arch/77 P3.8] LOCATION 보상 지급 묶음 — 보상 자격 게이트(GOLD_ACTIONS+비FREE) →
+  // 골드/아이템 보상 → 금전 증여 감지 → payload.itemRewards → 장비 드랍.
+  // updatedRunState(gold/inventory/equipmentBag)·allEquipmentAdded 제자리 변조.
+  private applyLocationRewards(params: {
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    challengeDecision: ChallengeDecision;
+    resolveResult: ReturnType<ResolveService['resolve']>;
+    event: import('../db/types/event-def.js').EventDefV2;
+    rawInput: string;
+    inputType: SubmitTurnBody['input']['type'];
+    eventPrimaryNpc: string | null;
+    intentV3: ReturnType<IntentV3BuilderService['build']>;
+    updatedRunState: RunState;
+    rng: ReturnType<RngService['create']>;
+    locationId: string;
+    turnNo: number;
+    allEquipmentAdded: import('../db/types/equipment.js').ItemInstance[];
+  }) {
+    const {
+      intent,
+      challengeDecision,
+      resolveResult,
+      event,
+      rawInput,
+      inputType,
+      eventPrimaryNpc,
+      intentV3,
+      updatedRunState,
+      rng,
+      locationId,
+      turnNo,
+      allEquipmentAdded,
+    } = params;
+    // LOCATION 보상 계산 (resolve 주사위 이후 같은 RNG로 수행)
+    // 보상 자격 (점검 2026-07-09, arch/40 부록): ① 서사적 금품 행동(GOLD_ACTIONS)만
+    // — 잡담·인사 턴에 장비가 떨어지던 게이트 누락 복원. ② FREE(자동 SUCCESS) 턴
+    // 제외 — 주사위 없는 자유 행동으로 무위험 파밍 방지.
+    const rewardsEligible =
+      GOLD_ACTIONS.has(intent.actionType) &&
+      challengeDecision.result !== 'FREE';
+    const locationReward = rewardsEligible
+      ? this.rewardsService.calculateLocationRewards({
+          outcome: resolveResult.outcome,
+          eventType: event.eventType,
+          actionType: intent.actionType,
+          rng,
+        })
+      : { gold: 0, items: [], exp: 0 };
+
+    // 순회 검증 ③ (2026-07-12): 플레이어→NPC 금전 증여 감지 — "이걸로 빵
+    // 사 먹으렴", "은화를 쥐여준다" 류 증여 서술이 골드 미차감으로 수용되던
+    // 회색지대. 대화계 턴 + NPC 존재 + 증여 표현일 때 명시 금액(specifiedGold)
+    // 또는 기본 소액(config)을 차감한다. BRIBE/TRADE는 기존 경로가 담당.
+    let giftGoldCost = 0;
+    {
+      const GIFT_RE =
+        /(골드|은화|동전|돈|잔돈|몇\s*닢|이걸로|이거라도).{0,14}(주마|줄게|주겠|건네|건넨|쥐여|먹으렴|먹게|사\s*(?:먹|드시|마시)|드시게|드세요|마시게|한잔\s*(?:사|하)|사거라|사라|가지(?:게|거라|렴)|보태)/;
+      const isGiftEligible =
+        intent.actionType !== 'BRIBE' &&
+        intent.actionType !== 'TRADE' &&
+        inputType === 'ACTION' &&
+        !!(eventPrimaryNpc ?? intentV3.targetNpcId) &&
+        GIFT_RE.test(rawInput);
+      if (isGiftEligible) {
+        const amount = intent.specifiedGold ?? QUEST_BALANCE.GIFT_DEFAULT_GOLD;
+        giftGoldCost = -Math.min(amount, Math.max(0, updatedRunState.gold));
+        if (giftGoldCost < 0) {
+          this.logger.log(
+            `[Gift] 금전 증여 감지: ${giftGoldCost}G (input="${rawInput.slice(0, 30)}")`,
+          );
+        }
+      }
+    }
+
+    // 골드: BRIBE/TRADE 비용(음수) + 증여(음수) + 보상(양수) 합산
+    const totalGoldDelta =
+      resolveResult.goldDelta + giftGoldCost + locationReward.gold;
+    if (totalGoldDelta !== 0) {
+      updatedRunState.gold = Math.max(0, updatedRunState.gold + totalGoldDelta);
+    }
+
+    // 아이템 보상 반영 (인벤토리에 추가)
+    for (const added of locationReward.items) {
+      mergeInventoryItem(updatedRunState.inventory, added.itemId, added.qty);
+    }
+
+    // 이벤트 payload.itemRewards 지급 (대화·상호작용 계열 NPC 선물 등)
+    // DropTable은 GOLD_ACTIONS(STEAL/FIGHT/SEARCH/…)만 대상이라 대화에선 아이템이 안 나옴 →
+    // 콘텐츠가 명시적으로 선언한 itemRewards만 여기서 처리.
+    // 실제 지급은 locationReward.items에 병합해서 buildLocationResult가 diff를 만들도록 위임.
+    const payloadItemRewards: import('../db/types/event-def.js').EventItemReward[] =
+      (
+        event.payload as unknown as {
+          itemRewards?: import('../db/types/event-def.js').EventItemReward[];
+        }
+      ).itemRewards ?? [];
+    // payload.itemRewards 지급 — 인벤토리 반영 + locationReward.items 병합.
+    // 연출 이벤트는 아래 통합 loot 루프가 단일 스타일([아이템] … 획득)로 생성한다
+    // (기존엔 item_reward 이벤트 + loot 이벤트가 이중 표기됐다 — 점검 2026-07-09).
+    for (const reward of payloadItemRewards) {
+      const pass =
+        reward.condition === 'SUCCESS'
+          ? resolveResult.outcome === 'SUCCESS'
+          : resolveResult.outcome === 'SUCCESS' ||
+            resolveResult.outcome === 'PARTIAL';
+      if (!pass) continue;
+      const qty = reward.qty ?? 1;
+      mergeInventoryItem(updatedRunState.inventory, reward.itemId, qty);
+      // locationReward.items에 병합 → buildLocationResult가 diff.inventory.itemsAdded로 반영
+      locationReward.items.push({ itemId: reward.itemId, qty });
+    }
+
+    // Phase 4a: LOCATION 장비 드랍 (GOLD_ACTIONS + SUCCESS/PARTIAL)
+    const locationEquipDropEvents: Array<{
+      id: string;
+      kind: 'LOOT';
+      text: string;
+      tags: string[];
+      data?: Record<string, unknown>;
+    }> = [];
+    // 게이트 복원 (점검 2026-07-09): 기존엔 outcome !== FAIL만 검사해 잡담·작별
+    // 턴에도 장비가 드랍됐다 (실측: "안녕하시오" 턴에 부두 만도). 주석의 원설계
+    // (GOLD_ACTIONS + SUCCESS/PARTIAL)대로 rewardsEligible 게이트 적용.
+    if (rewardsEligible && resolveResult.outcome !== 'FAIL') {
+      // P4 — 보유 중복 감쇠용 baseItemId 집합 (가방 + 장착)
+      const ownedBaseIds = new Set<string>([
+        ...(updatedRunState.equipmentBag ?? []).map((e) => e.baseItemId),
+        ...Object.values(updatedRunState.equipped ?? {})
+          .filter((e): e is NonNullable<typeof e> => !!e)
+          .map((e) => e.baseItemId),
+      ]);
+      const equipDrop = this.rewardsService.rollLocationEquipmentDrop(
+        locationId,
+        rng,
+        ownedBaseIds,
+      );
+      if (equipDrop.droppedInstances.length > 0) {
+        if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+        for (const inst of equipDrop.droppedInstances) {
+          updatedRunState.equipmentBag.push(inst);
+          allEquipmentAdded.push(inst);
+          // Phase 3: ItemMemory — LOCATION 드랍 기록
+          this.recordItemMemory(
+            updatedRunState,
+            inst,
+            turnNo,
+            `${locationId} 탐색 드랍`,
+            locationId,
+          );
+          locationEquipDropEvents.push({
+            id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
+            kind: 'LOOT' as const,
+            text: `[장비] ${inst.displayName} 획득`,
+            tags: ['LOOT', 'EQUIPMENT_DROP'],
+            data: {
+              baseItemId: inst.baseItemId,
+              instanceId: inst.instanceId,
+              displayName: inst.displayName,
+            } as Record<string, unknown>,
+          });
+        }
+      }
+    }
+
+    return { locationReward, totalGoldDelta, locationEquipDropEvents };
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -4292,136 +4459,26 @@ export class TurnsService {
       },
     ].slice(-10); // 최대 10개 유지
 
-    // LOCATION 보상 계산 (resolve 주사위 이후 같은 RNG로 수행)
-    // 보상 자격 (점검 2026-07-09, arch/40 부록): ① 서사적 금품 행동(GOLD_ACTIONS)만
-    // — 잡담·인사 턴에 장비가 떨어지던 게이트 누락 복원. ② FREE(자동 SUCCESS) 턴
-    // 제외 — 주사위 없는 자유 행동으로 무위험 파밍 방지.
-    const rewardsEligible =
-      GOLD_ACTIONS.has(intent.actionType) &&
-      challengeDecision.result !== 'FREE';
-    const locationReward = rewardsEligible
-      ? this.rewardsService.calculateLocationRewards({
-          outcome: resolveResult.outcome,
-          eventType: event.eventType,
-          actionType: intent.actionType,
-          rng,
-        })
-      : { gold: 0, items: [], exp: 0 };
-
-    // 순회 검증 ③ (2026-07-12): 플레이어→NPC 금전 증여 감지 — "이걸로 빵
-    // 사 먹으렴", "은화를 쥐여준다" 류 증여 서술이 골드 미차감으로 수용되던
-    // 회색지대. 대화계 턴 + NPC 존재 + 증여 표현일 때 명시 금액(specifiedGold)
-    // 또는 기본 소액(config)을 차감한다. BRIBE/TRADE는 기존 경로가 담당.
-    let giftGoldCost = 0;
-    {
-      const GIFT_RE =
-        /(골드|은화|동전|돈|잔돈|몇\s*닢|이걸로|이거라도).{0,14}(주마|줄게|주겠|건네|건넨|쥐여|먹으렴|먹게|사\s*(?:먹|드시|마시)|드시게|드세요|마시게|한잔\s*(?:사|하)|사거라|사라|가지(?:게|거라|렴)|보태)/;
-      const isGiftEligible =
-        intent.actionType !== 'BRIBE' &&
-        intent.actionType !== 'TRADE' &&
-        body.input.type === 'ACTION' &&
-        !!(eventPrimaryNpc ?? intentV3.targetNpcId) &&
-        GIFT_RE.test(rawInput);
-      if (isGiftEligible) {
-        const amount = intent.specifiedGold ?? QUEST_BALANCE.GIFT_DEFAULT_GOLD;
-        giftGoldCost = -Math.min(amount, Math.max(0, updatedRunState.gold));
-        if (giftGoldCost < 0) {
-          this.logger.log(
-            `[Gift] 금전 증여 감지: ${giftGoldCost}G (input="${rawInput.slice(0, 30)}")`,
-          );
-        }
-      }
-    }
-
-    // 골드: BRIBE/TRADE 비용(음수) + 증여(음수) + 보상(양수) 합산
-    const totalGoldDelta =
-      resolveResult.goldDelta + giftGoldCost + locationReward.gold;
-    if (totalGoldDelta !== 0) {
-      updatedRunState.gold = Math.max(0, updatedRunState.gold + totalGoldDelta);
-    }
-
-    // 아이템 보상 반영 (인벤토리에 추가)
-    for (const added of locationReward.items) {
-      mergeInventoryItem(updatedRunState.inventory, added.itemId, added.qty);
-    }
-
-    // 이벤트 payload.itemRewards 지급 (대화·상호작용 계열 NPC 선물 등)
-    // DropTable은 GOLD_ACTIONS(STEAL/FIGHT/SEARCH/…)만 대상이라 대화에선 아이템이 안 나옴 →
-    // 콘텐츠가 명시적으로 선언한 itemRewards만 여기서 처리.
-    // 실제 지급은 locationReward.items에 병합해서 buildLocationResult가 diff를 만들도록 위임.
-    const payloadItemRewards: import('../db/types/event-def.js').EventItemReward[] =
-      (
-        event.payload as unknown as {
-          itemRewards?: import('../db/types/event-def.js').EventItemReward[];
-        }
-      ).itemRewards ?? [];
-    // payload.itemRewards 지급 — 인벤토리 반영 + locationReward.items 병합.
-    // 연출 이벤트는 아래 통합 loot 루프가 단일 스타일([아이템] … 획득)로 생성한다
-    // (기존엔 item_reward 이벤트 + loot 이벤트가 이중 표기됐다 — 점검 2026-07-09).
-    for (const reward of payloadItemRewards) {
-      const pass =
-        reward.condition === 'SUCCESS'
-          ? resolveResult.outcome === 'SUCCESS'
-          : resolveResult.outcome === 'SUCCESS' ||
-            resolveResult.outcome === 'PARTIAL';
-      if (!pass) continue;
-      const qty = reward.qty ?? 1;
-      mergeInventoryItem(updatedRunState.inventory, reward.itemId, qty);
-      // locationReward.items에 병합 → buildLocationResult가 diff.inventory.itemsAdded로 반영
-      locationReward.items.push({ itemId: reward.itemId, qty });
-    }
-
-    // Phase 4a: LOCATION 장비 드랍 (GOLD_ACTIONS + SUCCESS/PARTIAL)
-    const locationEquipDropEvents: Array<{
-      id: string;
-      kind: 'LOOT';
-      text: string;
-      tags: string[];
-      data?: Record<string, unknown>;
-    }> = [];
-    // 게이트 복원 (점검 2026-07-09): 기존엔 outcome !== FAIL만 검사해 잡담·작별
-    // 턴에도 장비가 드랍됐다 (실측: "안녕하시오" 턴에 부두 만도). 주석의 원설계
-    // (GOLD_ACTIONS + SUCCESS/PARTIAL)대로 rewardsEligible 게이트 적용.
-    if (rewardsEligible && resolveResult.outcome !== 'FAIL') {
-      // P4 — 보유 중복 감쇠용 baseItemId 집합 (가방 + 장착)
-      const ownedBaseIds = new Set<string>([
-        ...(updatedRunState.equipmentBag ?? []).map((e) => e.baseItemId),
-        ...Object.values(updatedRunState.equipped ?? {})
-          .filter((e): e is NonNullable<typeof e> => !!e)
-          .map((e) => e.baseItemId),
-      ]);
-      const equipDrop = this.rewardsService.rollLocationEquipmentDrop(
-        locationId,
-        rng,
-        ownedBaseIds,
-      );
-      if (equipDrop.droppedInstances.length > 0) {
-        if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
-        for (const inst of equipDrop.droppedInstances) {
-          updatedRunState.equipmentBag.push(inst);
-          allEquipmentAdded.push(inst);
-          // Phase 3: ItemMemory — LOCATION 드랍 기록
-          this.recordItemMemory(
-            updatedRunState,
-            inst,
-            turnNo,
-            `${locationId} 탐색 드랍`,
-            locationId,
-          );
-          locationEquipDropEvents.push({
-            id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
-            kind: 'LOOT' as const,
-            text: `[장비] ${inst.displayName} 획득`,
-            tags: ['LOOT', 'EQUIPMENT_DROP'],
-            data: {
-              baseItemId: inst.baseItemId,
-              instanceId: inst.instanceId,
-              displayName: inst.displayName,
-            } as Record<string, unknown>,
-          });
-        }
-      }
-    }
+    // [arch/77 P3.8] 보상 지급 묶음 — applyLocationRewards로 추출.
+    // updatedRunState(gold/inventory/equipmentBag)·allEquipmentAdded 제자리 변조.
+    const rewardOutcome = this.applyLocationRewards({
+      intent,
+      challengeDecision,
+      resolveResult,
+      event,
+      rawInput,
+      inputType: body.input.type,
+      eventPrimaryNpc,
+      intentV3,
+      updatedRunState,
+      rng,
+      locationId,
+      turnNo,
+      allEquipmentAdded,
+    });
+    const locationReward = rewardOutcome.locationReward;
+    const totalGoldDelta = rewardOutcome.totalGoldDelta;
+    const locationEquipDropEvents = rewardOutcome.locationEquipDropEvents;
 
     // === Phase 4b: RegionEconomy — SHOP 액션 + priceIndex + 재고 갱신 ===
     const shopActionEvents: Array<{
