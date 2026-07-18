@@ -3185,6 +3185,248 @@ export class TurnsService {
     return { ws, npcAgitationUi };
   }
 
+  // [arch/77 P3.11] 결과 UI 조립 — Speaking NPC / Signal Feed / 호외 헤드라인(nano) /
+  // Active Incidents / NPC 도감 / Notification / 상점 / PlayerThread / Quest 번들.
+  // result.ui 제자리 변조.
+  private async assembleResultUi(params: {
+    result: ServerResultV1;
+    event: import('../db/types/event-def.js').EventDefV2;
+    eventPrimaryNpc: string | null;
+    npcStates: Record<string, NPCState>;
+    npcNames: Record<string, string>;
+    updatedRunState: RunState;
+    incidentDefs: IncidentDef[];
+    locationId: string;
+    resolveResult: ReturnType<ResolveService['resolve']>;
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    intentV3: ReturnType<IntentV3BuilderService['build']>;
+    routingResult: ReturnType<IncidentRouterService['route']>;
+    prevIncidents: WorldState['activeIncidents'];
+    prevHeat: number;
+    prevSafety: string;
+    ws: WorldState;
+    turnNo: number;
+  }): Promise<void> {
+    const {
+      result,
+      event,
+      eventPrimaryNpc,
+      npcStates,
+      npcNames,
+      updatedRunState,
+      incidentDefs,
+      locationId,
+      resolveResult,
+      intent,
+      intentV3,
+      routingResult,
+      prevIncidents,
+      prevHeat,
+      prevSafety,
+      ws,
+      turnNo,
+    } = params;
+    // === Speaking NPC: 대사 주체 정보 (클라이언트 DialogueBubble용) ===
+    // PROCEDURAL/SIT_ 이벤트에서 injectedNpc가 override한 경우 → 원래 이벤트의 primaryNpcId 사용
+    // injectedNpc는 프롬프트 컨텍스트용이지 대사 주체가 아님
+    const eventOriginalPrimaryNpc = (event.payload as Record<string, unknown>)
+      ?.primaryNpcId as string | undefined;
+    const isProcedural =
+      event.eventId.startsWith('PROC_') || event.eventId.startsWith('SIT_');
+    const primaryNpcIdForSpeaking = isProcedural
+      ? (eventOriginalPrimaryNpc ?? null) // PROC/SIT: 원래 이벤트의 NPC만 (injected 무시)
+      : (eventPrimaryNpc ?? eventOriginalPrimaryNpc ?? null); // 고정 이벤트: 기존 로직
+
+    if (primaryNpcIdForSpeaking) {
+      // NPC 지정 이벤트 — displayName/imageUrl 결정
+      const npcStateForSpeaking = npcStates[primaryNpcIdForSpeaking];
+      // 초상화 표시 조건: 첫 만남(enc>=1) 또는 소개완료(introduced) → 무조건 표시
+      const showPortrait = npcStateForSpeaking
+        ? (npcStateForSpeaking.encounterCount ?? 0) >= 1 ||
+          !!npcStateForSpeaking.introduced
+        : true;
+      // npcNames에 없으면 content에서 직접 조회 (fallback)
+      let displayName = npcNames[primaryNpcIdForSpeaking];
+      if (!displayName) {
+        const npcDef = this.content.getNpc(primaryNpcIdForSpeaking);
+        displayName = npcDef
+          ? npcDef.unknownAlias || npcDef.name || '낯선 인물'
+          : '낯선 인물';
+      }
+      (result.ui as any).speakingNpc = {
+        npcId: primaryNpcIdForSpeaking,
+        displayName,
+        imageUrl: showPortrait
+          ? (NPC_PORTRAITS[primaryNpcIdForSpeaking] ?? undefined)
+          : undefined,
+      };
+    } else {
+      // NPC 미지정 이벤트 (일반 경비병, 행인 등) → 무명 인물 (실루엣 아이콘)
+      (result.ui as any).speakingNpc = {
+        npcId: null,
+        displayName: '무명 인물',
+        imageUrl: undefined,
+      };
+    }
+
+    // === Narrative Engine v1: UI data 추가 ===
+    // 호출 시점 불변: 상류에서 updatedRunState.worldState = ws 대입 직후라 항상 존재.
+    const finalWs = updatedRunState.worldState!;
+    // Signal Feed
+    const signalFeedUI = (finalWs.signalFeed ?? []).map((s: any) => ({
+      id: s.id,
+      channel: s.channel,
+      severity: s.severity,
+      locationId: s.locationId,
+      text: s.text,
+    })) as SignalFeedItemUI[];
+    (result.ui as any).signalFeed = signalFeedUI;
+
+    // 호외 헤드라인: severity 3+ 시그널을 nano로 신문 기사 변환 (비동기, 실패 무시)
+    const rawSignals = (finalWs.signalFeed ?? []) as Array<{
+      id: string;
+      channel: string;
+      severity: number;
+      text: string;
+      sourceIncidentId?: string;
+    }>;
+    const importantRaw = rawSignals.filter((s) => s.severity >= 3);
+    if (importantRaw.length > 0) {
+      try {
+        const incDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
+        const locName =
+          this.content.getLocation(locationId)?.name ?? locationId;
+        const timePhase =
+          (finalWs as any).timePhaseV2 ?? finalWs.timePhase ?? 'DAY';
+        const newsContext = importantRaw.map((s) => ({
+          text: s.text,
+          channel: s.channel,
+          severity: s.severity,
+          location: locName,
+          incidentTitle: s.sourceIncidentId
+            ? incDefMap.get(s.sourceIncidentId)?.title
+            : undefined,
+          timePhase,
+        }));
+        const headlines = await this.generateNewsHeadlines(newsContext);
+        if (headlines.length > 0) {
+          (result.ui as any).newsHeadlines = headlines;
+        }
+      } catch {
+        // nano 실패 시 원본 텍스트 사용
+      }
+    }
+
+    // Active Incidents
+    const incidentDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
+    (result.ui as any).activeIncidents = (finalWs.activeIncidents ?? []).map(
+      (i: IncidentRuntime) => ({
+        incidentId: i.incidentId,
+        title: incidentDefMap.get(i.incidentId)?.title ?? i.incidentId,
+        kind: i.kind,
+        stage: i.stage,
+        control: i.control,
+        pressure: i.pressure,
+        deadlineClock: i.deadlineClock,
+        resolved: i.resolved,
+        outcome: i.outcome,
+      }),
+    ) as IncidentSummaryUI[];
+
+    // NPC Emotional — 도감은 실제로 조우한 인물만 (직접 대면 encounterCount
+    // 또는 서술 @마커 등장 appearanceCount). 미조우 NPC 전원 노출은 스포일러
+    // + 점진 발견(encounterCount 관계 깊이) 무력화.
+    const npcEmotionalUIs: NpcEmotionalUI[] = Object.entries(npcStates)
+      .filter(
+        ([, npc]) =>
+          (npc.encounterCount ?? 0) >= 1 || (npc.appearanceCount ?? 0) >= 1,
+      )
+      .map(([npcId, npc]) => ({
+        npcId,
+        npcName: npcNames[npcId] ?? npcId,
+        trust: npc.emotional.trust,
+        fear: npc.emotional.fear,
+        respect: npc.emotional.respect,
+        suspicion: npc.emotional.suspicion,
+        attachment: npc.emotional.attachment,
+        posture: npc.posture,
+        marks: (finalWs.narrativeMarks ?? [])
+          .filter((m: any) => m.npcId === npcId)
+          .map((m: any) => m.type),
+      }));
+    if (npcEmotionalUIs.length > 0) {
+      (result.ui as any).npcEmotional = npcEmotionalUIs;
+    }
+
+    // === Notification System: 알림 조립 ===
+    const notifResult = this.notificationAssembler.build({
+      turnNo,
+      locationId,
+      resolveOutcome: resolveResult.outcome,
+      actionType: intent.actionType,
+      goalText: intentV3.goalText,
+      targetNpcId:
+        intentV3.targetNpcId ??
+        (event?.payload as any)?.primaryNpcId ??
+        intent.target ??
+        null,
+      relatedIncidentId: routingResult?.incident?.incidentId ?? null,
+      prevIncidents,
+      currentIncidents: finalWs.activeIncidents ?? [],
+      ws: finalWs,
+      prevHeat,
+      prevSafety,
+    });
+    if (notifResult.notifications.length > 0) {
+      (result.ui as any).notifications = notifResult.notifications;
+    }
+    if (notifResult.pinnedAlerts.length > 0) {
+      (result.ui as any).pinnedAlerts = notifResult.pinnedAlerts;
+    }
+    if (notifResult.worldDeltaSummary) {
+      (result.ui as any).worldDeltaSummary = notifResult.worldDeltaSummary;
+    }
+
+    // Phase 4b: 상점 정보 UI에 포함 (현재 장소에 상점이 있을 때)
+    if (this.shopService && updatedRunState.regionEconomy) {
+      const locShops = this.content.getShopsByLocation(locationId);
+      if (locShops.length > 0) {
+        const shopDisplays = locShops
+          .map((shopDef) => {
+            const stock =
+              updatedRunState.regionEconomy!.shopStocks[shopDef.shopId];
+            return {
+              shopId: shopDef.shopId,
+              name: shopDef.name,
+              items: stock
+                ? this.shopService.getDisplayItems(
+                    stock,
+                    updatedRunState.regionEconomy!.priceIndex,
+                  )
+                : [],
+            };
+          })
+          .filter((s) => s.items.length > 0);
+        if (shopDisplays.length > 0) {
+          (result.ui as any).shops = shopDisplays;
+          (result.ui as any).priceIndex =
+            updatedRunState.regionEconomy.priceIndex;
+        }
+      }
+    }
+
+    // PlayerThread UI 번들에 포함
+    if (ws.playerThreads && ws.playerThreads.length > 0) {
+      (result.ui as any).playerThreads = ws.playerThreads;
+    }
+
+    // Quest UI 번들: arcState, narrativeMarks, mainArcClock, day
+    (result.ui as any).arcState = updatedRunState.arcState ?? null;
+    (result.ui as any).narrativeMarks = ws.narrativeMarks ?? [];
+    (result.ui as any).mainArcClock = ws.mainArcClock ?? null;
+    (result.ui as any).day = ws.day ?? 1;
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -5410,204 +5652,26 @@ export class TurnsService {
       }
     }
 
-    // === Speaking NPC: 대사 주체 정보 (클라이언트 DialogueBubble용) ===
-    // PROCEDURAL/SIT_ 이벤트에서 injectedNpc가 override한 경우 → 원래 이벤트의 primaryNpcId 사용
-    // injectedNpc는 프롬프트 컨텍스트용이지 대사 주체가 아님
-    const eventOriginalPrimaryNpc = (event.payload as Record<string, unknown>)
-      ?.primaryNpcId as string | undefined;
-    const isProcedural =
-      event.eventId.startsWith('PROC_') || event.eventId.startsWith('SIT_');
-    const primaryNpcIdForSpeaking = isProcedural
-      ? (eventOriginalPrimaryNpc ?? null) // PROC/SIT: 원래 이벤트의 NPC만 (injected 무시)
-      : (eventPrimaryNpc ?? eventOriginalPrimaryNpc ?? null); // 고정 이벤트: 기존 로직
-
-    if (primaryNpcIdForSpeaking) {
-      // NPC 지정 이벤트 — displayName/imageUrl 결정
-      const npcStateForSpeaking = npcStates[primaryNpcIdForSpeaking];
-      // 초상화 표시 조건: 첫 만남(enc>=1) 또는 소개완료(introduced) → 무조건 표시
-      const showPortrait = npcStateForSpeaking
-        ? (npcStateForSpeaking.encounterCount ?? 0) >= 1 ||
-          !!npcStateForSpeaking.introduced
-        : true;
-      // npcNames에 없으면 content에서 직접 조회 (fallback)
-      let displayName = npcNames[primaryNpcIdForSpeaking];
-      if (!displayName) {
-        const npcDef = this.content.getNpc(primaryNpcIdForSpeaking);
-        displayName = npcDef
-          ? npcDef.unknownAlias || npcDef.name || '낯선 인물'
-          : '낯선 인물';
-      }
-      (result.ui as any).speakingNpc = {
-        npcId: primaryNpcIdForSpeaking,
-        displayName,
-        imageUrl: showPortrait
-          ? (NPC_PORTRAITS[primaryNpcIdForSpeaking] ?? undefined)
-          : undefined,
-      };
-    } else {
-      // NPC 미지정 이벤트 (일반 경비병, 행인 등) → 무명 인물 (실루엣 아이콘)
-      (result.ui as any).speakingNpc = {
-        npcId: null,
-        displayName: '무명 인물',
-        imageUrl: undefined,
-      };
-    }
-
-    // === Narrative Engine v1: UI data 추가 ===
-    const finalWs = updatedRunState.worldState;
-    // Signal Feed
-    const signalFeedUI = (finalWs.signalFeed ?? []).map((s: any) => ({
-      id: s.id,
-      channel: s.channel,
-      severity: s.severity,
-      locationId: s.locationId,
-      text: s.text,
-    })) as SignalFeedItemUI[];
-    (result.ui as any).signalFeed = signalFeedUI;
-
-    // 호외 헤드라인: severity 3+ 시그널을 nano로 신문 기사 변환 (비동기, 실패 무시)
-    const rawSignals = (finalWs.signalFeed ?? []) as Array<{
-      id: string;
-      channel: string;
-      severity: number;
-      text: string;
-      sourceIncidentId?: string;
-    }>;
-    const importantRaw = rawSignals.filter((s) => s.severity >= 3);
-    if (importantRaw.length > 0) {
-      try {
-        const incDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
-        const locName =
-          this.content.getLocation(locationId)?.name ?? locationId;
-        const timePhase =
-          (finalWs as any).timePhaseV2 ?? finalWs.timePhase ?? 'DAY';
-        const newsContext = importantRaw.map((s) => ({
-          text: s.text,
-          channel: s.channel,
-          severity: s.severity,
-          location: locName,
-          incidentTitle: s.sourceIncidentId
-            ? incDefMap.get(s.sourceIncidentId)?.title
-            : undefined,
-          timePhase,
-        }));
-        const headlines = await this.generateNewsHeadlines(newsContext);
-        if (headlines.length > 0) {
-          (result.ui as any).newsHeadlines = headlines;
-        }
-      } catch {
-        // nano 실패 시 원본 텍스트 사용
-      }
-    }
-
-    // Active Incidents
-    const incidentDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
-    (result.ui as any).activeIncidents = (finalWs.activeIncidents ?? []).map(
-      (i: IncidentRuntime) => ({
-        incidentId: i.incidentId,
-        title: incidentDefMap.get(i.incidentId)?.title ?? i.incidentId,
-        kind: i.kind,
-        stage: i.stage,
-        control: i.control,
-        pressure: i.pressure,
-        deadlineClock: i.deadlineClock,
-        resolved: i.resolved,
-        outcome: i.outcome,
-      }),
-    ) as IncidentSummaryUI[];
-
-    // NPC Emotional — 도감은 실제로 조우한 인물만 (직접 대면 encounterCount
-    // 또는 서술 @마커 등장 appearanceCount). 미조우 NPC 전원 노출은 스포일러
-    // + 점진 발견(encounterCount 관계 깊이) 무력화.
-    const npcEmotionalUIs: NpcEmotionalUI[] = Object.entries(npcStates)
-      .filter(
-        ([, npc]) =>
-          (npc.encounterCount ?? 0) >= 1 || (npc.appearanceCount ?? 0) >= 1,
-      )
-      .map(([npcId, npc]) => ({
-        npcId,
-        npcName: npcNames[npcId] ?? npcId,
-        trust: npc.emotional.trust,
-        fear: npc.emotional.fear,
-        respect: npc.emotional.respect,
-        suspicion: npc.emotional.suspicion,
-        attachment: npc.emotional.attachment,
-        posture: npc.posture,
-        marks: (finalWs.narrativeMarks ?? [])
-          .filter((m: any) => m.npcId === npcId)
-          .map((m: any) => m.type),
-      }));
-    if (npcEmotionalUIs.length > 0) {
-      (result.ui as any).npcEmotional = npcEmotionalUIs;
-    }
-
-    // === Notification System: 알림 조립 ===
-    const notifResult = this.notificationAssembler.build({
-      turnNo,
+    // [arch/77 P3.11] 결과 UI 조립 — assembleResultUi (result.ui 제자리 변조).
+    await this.assembleResultUi({
+      result,
+      event,
+      eventPrimaryNpc,
+      npcStates,
+      npcNames,
+      updatedRunState,
+      incidentDefs,
       locationId,
-      resolveOutcome: resolveResult.outcome,
-      actionType: intent.actionType,
-      goalText: intentV3.goalText,
-      targetNpcId:
-        intentV3.targetNpcId ??
-        (event?.payload as any)?.primaryNpcId ??
-        intent.target ??
-        null,
-      relatedIncidentId: routingResult?.incident?.incidentId ?? null,
+      resolveResult,
+      intent,
+      intentV3,
+      routingResult,
       prevIncidents,
-      currentIncidents: finalWs.activeIncidents ?? [],
-      ws: finalWs,
       prevHeat,
       prevSafety,
+      ws,
+      turnNo,
     });
-    if (notifResult.notifications.length > 0) {
-      (result.ui as any).notifications = notifResult.notifications;
-    }
-    if (notifResult.pinnedAlerts.length > 0) {
-      (result.ui as any).pinnedAlerts = notifResult.pinnedAlerts;
-    }
-    if (notifResult.worldDeltaSummary) {
-      (result.ui as any).worldDeltaSummary = notifResult.worldDeltaSummary;
-    }
-
-    // Phase 4b: 상점 정보 UI에 포함 (현재 장소에 상점이 있을 때)
-    if (this.shopService && updatedRunState.regionEconomy) {
-      const locShops = this.content.getShopsByLocation(locationId);
-      if (locShops.length > 0) {
-        const shopDisplays = locShops
-          .map((shopDef) => {
-            const stock =
-              updatedRunState.regionEconomy!.shopStocks[shopDef.shopId];
-            return {
-              shopId: shopDef.shopId,
-              name: shopDef.name,
-              items: stock
-                ? this.shopService.getDisplayItems(
-                    stock,
-                    updatedRunState.regionEconomy!.priceIndex,
-                  )
-                : [],
-            };
-          })
-          .filter((s) => s.items.length > 0);
-        if (shopDisplays.length > 0) {
-          (result.ui as any).shops = shopDisplays;
-          (result.ui as any).priceIndex =
-            updatedRunState.regionEconomy.priceIndex;
-        }
-      }
-    }
-
-    // PlayerThread UI 번들에 포함
-    if (ws.playerThreads && ws.playerThreads.length > 0) {
-      (result.ui as any).playerThreads = ws.playerThreads;
-    }
-
-    // Quest UI 번들: arcState, narrativeMarks, mainArcClock, day
-    (result.ui as any).arcState = updatedRunState.arcState ?? null;
-    (result.ui as any).narrativeMarks = ws.narrativeMarks ?? [];
-    (result.ui as any).mainArcClock = ws.mainArcClock ?? null;
-    (result.ui as any).day = ws.day ?? 1;
 
     // 이벤트 추가 (sceneFrame은 actionContext에서 전달, 여기서는 행동 요약만)
     result.events.push({
