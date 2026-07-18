@@ -6156,8 +6156,14 @@ export class TurnsService {
     });
 
     // RunState 반영 (gold, hp, stamina 변동)
+    // [arch/77 P3.X 기록 결함 수정] 골드 0-바닥 — LOCATION/COMBAT 경로는 모두
+    // Math.max(0,…)인데 DAG만 무바닥 += 라 이론상 음수 골드 가능했다 (SHOP
+    // 리졸버의 잔액 검증은 있으나 타 노드 goldDelta 방어선 부재). 경로 통일.
     if (resolveResult.goldDelta)
-      updatedRunState.gold += resolveResult.goldDelta;
+      updatedRunState.gold = Math.max(
+        0,
+        updatedRunState.gold + resolveResult.goldDelta,
+      );
     if (resolveResult.hpDelta) {
       updatedRunState.hp = Math.max(
         0,
