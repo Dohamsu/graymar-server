@@ -6513,6 +6513,99 @@ export class TurnsService {
     };
   }
 
+  // [arch/77 C3] 적 정의(콘텐츠)에서 전투용 PermanentStats·표시명 로드.
+  private loadEnemyStatsForBattle(battleState: BattleStateV1): {
+    enemyStats: Record<string, PermanentStats>;
+    enemyNames: Record<string, string>;
+  } {
+    const enemyStats: Record<string, PermanentStats> = {};
+    const enemyNames: Record<string, string> = {};
+    for (const e of battleState.enemies) {
+      const enemyRef = e.id.replace(/_\d+$/, '');
+      const def = this.content.getEnemy(enemyRef);
+      if (def) {
+        const es = def.stats as Record<string, number>;
+        enemyStats[e.id] = {
+          maxHP: def.hp,
+          maxStamina: 5,
+          str: es.str ?? es.ATK ?? 10,
+          dex: es.dex ?? es.EVA ?? 8,
+          wit: es.wit ?? es.ACC ?? 6,
+          con: es.con ?? es.DEF ?? 10,
+          per: es.per ?? 6,
+          cha: es.cha ?? es.SPEED ?? 5,
+        };
+        enemyNames[e.id] = def.name;
+      }
+    }
+    return { enemyStats, enemyNames };
+  }
+
+  // [arch/77 C4] Phase 4a: 전투 승리 시 장비 드랍 — 시드 결정론(run.seed+_eqdrop)
+  // 유지, updatedRunState.equipmentBag·serverResult events/diff 제자리 변조.
+  private applyCombatVictoryDrops(
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    resolveResult: ReturnType<NodeResolverService['resolve']>,
+    updatedRunState: RunState,
+  ): void {
+    // Phase 4a: 전투 승리 시 장비 드랍
+    if (resolveResult.combatOutcome === 'VICTORY') {
+      const locationId =
+        updatedRunState.worldState?.currentLocationId ??
+        this.content.getHubMeta().defaultLocationId;
+      const encounterEnc = currentNode.nodeMeta?.encounterId as
+        | string
+        | undefined;
+      const isBoss = !!currentNode.nodeMeta?.isBoss;
+      const enemyIds = Object.keys(
+        resolveResult.nextBattleState?.enemies ?? {},
+      );
+      const combatDropRng = this.rngService.create(
+        run.seed + '_eqdrop',
+        turnNo,
+      );
+      const equipDrop = this.rewardsService.rollCombatEquipmentDrops(
+        enemyIds,
+        encounterEnc,
+        isBoss,
+        locationId,
+        combatDropRng,
+      );
+      if (equipDrop.droppedInstances.length > 0) {
+        if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
+        const combatEquipAdded: import('../db/types/equipment.js').ItemInstance[] =
+          [];
+        const acquiredFrom = isBoss ? '보스전 드랍' : '전투 보상';
+        for (const inst of equipDrop.droppedInstances) {
+          updatedRunState.equipmentBag.push(inst);
+          combatEquipAdded.push(inst);
+          // Phase 3: ItemMemory — 전투 장비 드랍 기록
+          this.recordItemMemory(
+            updatedRunState,
+            inst,
+            turnNo,
+            acquiredFrom,
+            locationId,
+          );
+          resolveResult.serverResult.events.push({
+            id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
+            kind: 'LOOT',
+            text: `[장비] ${inst.displayName} 획득`,
+            tags: ['LOOT', 'EQUIPMENT_DROP'],
+            data: {
+              baseItemId: inst.baseItemId,
+              instanceId: inst.instanceId,
+              displayName: inst.displayName,
+            },
+          });
+        }
+        resolveResult.serverResult.diff.equipmentAdded = combatEquipAdded;
+      }
+    }
+  }
+
   private async handleCombatTurn(
     run: any,
     currentNode: any,
@@ -6569,27 +6662,9 @@ export class TurnsService {
     } = inputOutcome;
     const actionPlan = inputOutcome.actionPlan;
 
-    // 적 스탯 로드
-    const enemyStats: Record<string, PermanentStats> = {};
-    const enemyNames: Record<string, string> = {};
-    for (const e of battleState.enemies) {
-      const enemyRef = e.id.replace(/_\d+$/, '');
-      const def = this.content.getEnemy(enemyRef);
-      if (def) {
-        const es = def.stats as Record<string, number>;
-        enemyStats[e.id] = {
-          maxHP: def.hp,
-          maxStamina: 5,
-          str: es.str ?? es.ATK ?? 10,
-          dex: es.dex ?? es.EVA ?? 8,
-          wit: es.wit ?? es.ACC ?? 6,
-          con: es.con ?? es.DEF ?? 10,
-          per: es.per ?? 6,
-          cha: es.cha ?? es.SPEED ?? 5,
-        };
-        enemyNames[e.id] = def.name;
-      }
-    }
+    // [arch/77 C3] 적 스탯 로드 — loadEnemyStatsForBattle로 추출.
+    const { enemyStats, enemyNames } =
+      this.loadEnemyStatsForBattle(battleState);
 
     // ⚠️ [COMBAT 경로] — 위 DAG 노드 경로(handleDagNodeTurn)에 유사 블록이
     // 하나 더 있다. 편집 전 어느 경로인지 확인할 것 (arch/77 P3.X 오배치 방지).
@@ -6650,60 +6725,15 @@ export class TurnsService {
       mergeInventoryItem(updatedRunState.inventory, added.itemId, added.qty);
     }
 
-    // Phase 4a: 전투 승리 시 장비 드랍
-    if (resolveResult.combatOutcome === 'VICTORY') {
-      const locationId =
-        updatedRunState.worldState?.currentLocationId ??
-        this.content.getHubMeta().defaultLocationId;
-      const encounterEnc = currentNode.nodeMeta?.encounterId as
-        | string
-        | undefined;
-      const isBoss = !!currentNode.nodeMeta?.isBoss;
-      const enemyIds = Object.keys(
-        resolveResult.nextBattleState?.enemies ?? {},
-      );
-      const combatDropRng = this.rngService.create(
-        run.seed + '_eqdrop',
-        turnNo,
-      );
-      const equipDrop = this.rewardsService.rollCombatEquipmentDrops(
-        enemyIds,
-        encounterEnc,
-        isBoss,
-        locationId,
-        combatDropRng,
-      );
-      if (equipDrop.droppedInstances.length > 0) {
-        if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
-        const combatEquipAdded: import('../db/types/equipment.js').ItemInstance[] =
-          [];
-        const acquiredFrom = isBoss ? '보스전 드랍' : '전투 보상';
-        for (const inst of equipDrop.droppedInstances) {
-          updatedRunState.equipmentBag.push(inst);
-          combatEquipAdded.push(inst);
-          // Phase 3: ItemMemory — 전투 장비 드랍 기록
-          this.recordItemMemory(
-            updatedRunState,
-            inst,
-            turnNo,
-            acquiredFrom,
-            locationId,
-          );
-          resolveResult.serverResult.events.push({
-            id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
-            kind: 'LOOT',
-            text: `[장비] ${inst.displayName} 획득`,
-            tags: ['LOOT', 'EQUIPMENT_DROP'],
-            data: {
-              baseItemId: inst.baseItemId,
-              instanceId: inst.instanceId,
-              displayName: inst.displayName,
-            },
-          });
-        }
-        resolveResult.serverResult.diff.equipmentAdded = combatEquipAdded;
-      }
-    }
+    // [arch/77 C4] 전투 승리 장비 드랍 — applyCombatVictoryDrops로 추출.
+    // updatedRunState(equipmentBag)·resolveResult.serverResult(events/diff) 제자리 변조.
+    this.applyCombatVictoryDrops(
+      run,
+      currentNode,
+      turnNo,
+      resolveResult,
+      updatedRunState,
+    );
 
     const response = await this.commitCombatTurn(
       run,
