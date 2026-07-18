@@ -2830,6 +2830,361 @@ export class TurnsService {
     return shopActionEvents;
   }
 
+  // [arch/77 P3.10] primary NPC 감정 영향 + 소개/조우 + agitation 행동화(D3-c\u2032) +
+  // 개인 기록·LLM Summary·대화 주제·signature — 그리고 태그 기반 NPC 초기화(Fixplan3-P2).
+  // npcStates·runState.lastNpcDelta·pendingPostureEvents·newly* 배열은 제자리 변조,
+  // ws(heat/도주/시그널)와 npcAgitationUi는 반환.
+  private updatePrimaryNpcEmotionAndRecords(params: {
+    eventPrimaryNpc: string | null;
+    npcStates: Record<string, NPCState>;
+    ws: WorldState;
+    runState: RunState;
+    actionHistory: NonNullable<RunState['actionHistory']>;
+    relations: Record<string, number>;
+    challengeDecision: ChallengeDecision;
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    resolveResult: ReturnType<ResolveService['resolve']>;
+    npcReactions: Array<{ npcId: string }>;
+    event: import('../db/types/event-def.js').EventDefV2;
+    rawInput: string;
+    locationId: string;
+    turnNo: number;
+    inputType: SubmitTurnBody['input']['type'];
+    pendingPostureEvents: Array<{
+      id: string;
+      kind: 'NPC';
+      text: string;
+      tags: string[];
+      data: Record<string, unknown>;
+    }>;
+    newlyIntroducedNpcIds: string[];
+    newlyEncounteredNpcIds: string[];
+  }): {
+    ws: WorldState;
+    npcAgitationUi: {
+      npcId: string;
+      npcName: string;
+      type: string;
+      text: string;
+    } | null;
+  } {
+    const {
+      eventPrimaryNpc,
+      npcStates,
+      runState,
+      actionHistory,
+      relations,
+      challengeDecision,
+      intent,
+      resolveResult,
+      npcReactions,
+      event,
+      rawInput,
+      locationId,
+      turnNo,
+      inputType,
+      pendingPostureEvents,
+      newlyIntroducedNpcIds,
+      newlyEncounteredNpcIds,
+    } = params;
+    let ws = params.ws;
+    let npcAgitationUi: {
+      npcId: string;
+      npcName: string;
+      type: string;
+      text: string;
+    } | null = null;
+    // 현재 location의 관련 NPC에게 감정 영향 적용
+    if (eventPrimaryNpc) {
+      const npcId = eventPrimaryNpc;
+      const wasNewlyCreated = !npcStates[npcId];
+      const prevEncounterCount = npcStates[npcId]?.encounterCount ?? 0;
+      if (wasNewlyCreated) {
+        const npcDef = this.content.getNpc(npcId);
+        npcStates[npcId] = initNPCState({
+          npcId,
+          basePosture: npcDef?.basePosture,
+          initialTrust: npcDef?.initialTrust ?? relations[npcId] ?? 0,
+          agenda: npcDef?.agenda,
+        });
+      }
+
+      // encounterCount 증가 — 이번 방문 내 첫 만남인 경우에만 (방문 단위 1회)
+      const alreadyMetThisVisit = actionHistory.some(
+        (h) => h.primaryNpcId === npcId,
+      );
+      if (!alreadyMetThisVisit) {
+        npcStates[npcId].encounterCount =
+          (npcStates[npcId].encounterCount ?? 0) + 1;
+      }
+
+      // 첫 실제 만남 감지: 새로 생성되었거나, encounterCount가 0→1로 변한 경우
+      if (
+        wasNewlyCreated ||
+        (prevEncounterCount === 0 && (npcStates[npcId].encounterCount ?? 0) > 0)
+      ) {
+        newlyEncounteredNpcIds.push(npcId);
+      }
+
+      // 성격 기반 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
+      const introPosture = npcStates[npcId].posture;
+      const npcDefForIntro = this.content.getNpc(npcId);
+      const npcTier = (npcDefForIntro as Record<string, unknown>)?.tier as
+        | string
+        | undefined;
+      if (
+        !npcStates[npcId].introduced &&
+        (npcStates[npcId].pendingIntroduction === true ||
+          shouldIntroduce(npcStates[npcId], introPosture, npcTier))
+      ) {
+        // architecture/64 B: pendingIntroduction(등장 누적/연출 실패 이월) 승격 포함 —
+        // 이 NPC가 이번 턴 장면에 등장하므로 정식 소개 연출 지시와 함께 공개.
+        npcStates[npcId].introduced = true;
+        npcStates[npcId].introducedAtTurn = turnNo; // 2턴 분리: 이번 턴은 alias, 다음 턴부터 실명
+        npcStates[npcId].pendingIntroduction = false;
+        newlyIntroducedNpcIds.push(npcId);
+      }
+
+      const npc = npcStates[npcId];
+      // 감정 변화 delta 계산을 위해 before 저장
+      const emoBefore = npc.emotional ? { ...npc.emotional } : undefined;
+      const postureBefore = npc.posture;
+      // [arch/76 D3-b′] nano socialImpact — 행동 내용 기반 감정 보정 (ACTION
+      // 자유 입력만; CHOICE는 라벨 텍스트라 nano 인상 판단이 무의미).
+      const nanoSocialImpact =
+        inputType === 'ACTION'
+          ? (challengeDecision.socialImpact ?? null)
+          : null;
+      npc.emotional = this.npcEmotional.applyActionImpact(
+        npc.emotional,
+        intent.actionType,
+        resolveResult.outcome,
+        true,
+        nanoSocialImpact,
+      );
+      npcStates[npcId] = this.npcEmotional.syncLegacyFields(npc);
+
+      // Posture 변화 감지 (result 선언 후 이벤트에 추가)
+      const postureAfter = npcStates[npcId].posture;
+      if (postureBefore && postureAfter && postureBefore !== postureAfter) {
+        const displayName = getNpcDisplayName(
+          npcStates[npcId],
+          this.content.getNpc(npcId),
+        );
+        const POSTURE_LABEL: Record<string, string> = {
+          FRIENDLY: '우호',
+          CAUTIOUS: '경계',
+          HOSTILE: '적대',
+          FEARFUL: '두려움',
+          CALCULATING: '계산적',
+        };
+        const fromLabel = POSTURE_LABEL[postureBefore] ?? postureBefore;
+        const toLabel = POSTURE_LABEL[postureAfter] ?? postureAfter;
+        pendingPostureEvents.push({
+          id: `posture_${npcId}_${turnNo}`,
+          kind: 'NPC' as const,
+          text: `${displayName}의 태도가 변했다 — ${fromLabel} → ${toLabel}`,
+          tags: ['POSTURE_CHANGE'],
+          data: { npcId, from: postureBefore, to: postureAfter },
+        });
+      }
+      // delta 계산 및 runState에 저장 (LLM 컨텍스트 전달용)
+      if (emoBefore && npc.emotional) {
+        const delta: Record<string, number> = {};
+        for (const axis of [
+          'trust',
+          'fear',
+          'respect',
+          'suspicion',
+          'attachment',
+        ] as const) {
+          const d = Math.round(
+            ((npc.emotional as any)[axis] ?? 0) -
+              ((emoBefore as any)[axis] ?? 0),
+          );
+          if (d !== 0) delta[axis] = d;
+        }
+        if (Object.keys(delta).length > 0) {
+          (runState as any).lastNpcDelta = {
+            npcId,
+            delta,
+            actionType: intent.actionType,
+            outcome: resolveResult.outcome,
+          };
+        }
+      }
+
+      // [arch/76 D3-c′] 감정→세계 행동화 — 누적 감정이 임계를 넘으면 NPC가
+      // 먼저 세계를 움직인다 (신고→Heat / 도주→장소 이탈 / 회피·접근→디렉티브).
+      // 당턴 witness 반응 NPC 제외(급성=witness, 만성=agitation — arch/72 경계),
+      // NPC당 쿨다운. 발화·태도 문장은 여전히 NpcReactionDirector 권한.
+      {
+        const witnessedThisTurn = npcReactions.some((r) => r.npcId === npcId);
+        if (
+          !witnessedThisTurn &&
+          !agitationCooldownActive(npcStates[npcId].lastAgitationTurn, turnNo)
+        ) {
+          const agitationName = getNpcDisplayName(
+            npcStates[npcId],
+            this.content.getNpc(npcId),
+          );
+          const agitation = decideAgitatedBehavior(
+            agitationName,
+            npc.emotional,
+            npcStates[npcId].posture,
+          );
+          if (agitation) {
+            npcStates[npcId].lastAgitationTurn = turnNo;
+            pendingPostureEvents.push({
+              id: `agitation_${npcId}_${turnNo}`,
+              kind: 'NPC' as const,
+              text: agitation.text,
+              tags: ['NPC_AGITATION', agitation.type],
+              data: { npcId, type: agitation.type },
+            });
+            if (agitation.heatDelta > 0) {
+              ws = {
+                ...ws,
+                hubHeat: Math.min(100, ws.hubHeat + agitation.heatDelta),
+              };
+            }
+            if (agitation.type === 'REPORT') {
+              // 신고 가시화 (2026-07-17 실측 공백) — 디렉티브("낌새로 드러나게")를
+              // 메인 LLM이 무시해 플레이어가 신고를 알 수 없던 문제. 이벤트 라인
+              // (당턴 소멸)에 더해 시그널 피드(SECURITY, 지속)로 기계적 노출.
+              // 밀고자 실명은 밝히지 않는다 — 누가 알렸는지는 추리 소재.
+              const reportSignalFeed = (ws.signalFeed ?? []) as Array<
+                Record<string, unknown>
+              >;
+              reportSignalFeed.push({
+                id: `agitation_report_${npcId}_${turnNo}`,
+                channel: 'SECURITY',
+                severity: 2,
+                locationId,
+                text: '🚨 경비대가 당신의 행적을 주시하기 시작했다 — 누군가 밀고한 듯하다',
+                sourceIncidentId: null,
+                createdAtClock: ws.globalClock ?? turnNo,
+                expiresAtClock: (ws.globalClock ?? turnNo) + 12,
+              });
+              ws = { ...ws, signalFeed: reportSignalFeed } as WorldState;
+            }
+            if (agitation.type === 'FLEE_LOCATION') {
+              // 도주 — npcLocations 즉시 반영 + npcFleeOverrides 기록.
+              // 스케줄(updateAllNpcLocations)이 npcLocations를 매 갱신마다
+              // 재구축하므로, 오버라이드가 없으면 다음 턴에 복귀해버린다 (실측).
+              // 다음 날(untilDay)까지 부재 후 일상 복귀.
+              const fleeTarget = this.content
+                .getAllLocations()
+                .find((l) => l.locationId !== locationId);
+              if (fleeTarget) {
+                ws = {
+                  ...ws,
+                  npcLocations: {
+                    ...(ws.npcLocations ?? {}),
+                    [npcId]: fleeTarget.locationId,
+                  },
+                  npcFleeOverrides: {
+                    ...(ws.npcFleeOverrides ?? {}),
+                    [npcId]: {
+                      locationId: fleeTarget.locationId,
+                      untilDay: ws.day + 1,
+                    },
+                  },
+                };
+              }
+            }
+            npcAgitationUi = {
+              npcId,
+              npcName: agitationName,
+              type: agitation.type,
+              text: agitation.text,
+            };
+            this.logger.log(
+              `[NpcAgitation] ${agitationName}(${npcId}) ${agitation.type} — fear=${npc.emotional.fear} susp=${npc.emotional.suspicion} trust=${npc.emotional.trust}${agitation.heatDelta > 0 ? ` heat+${agitation.heatDelta}` : ''}`,
+            );
+          }
+        }
+      }
+
+      // === NPC 개인 기록 축적 ===
+      const briefNote = (event.payload.sceneFrame ?? rawInput).slice(0, 50);
+      npcStates[npcId] = recordNpcEncounter(
+        npcStates[npcId],
+        turnNo,
+        locationId,
+        intent.actionType,
+        resolveResult.outcome,
+        briefNote,
+      );
+      // knownFacts: 이벤트 결과에서 중요 발견사항 추출 (SUCCESS 판정 + 정보성 행동)
+      if (
+        resolveResult.outcome === 'SUCCESS' &&
+        ['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE'].includes(
+          intent.actionType,
+        )
+      ) {
+        const factNote = event.payload.sceneFrame
+          ? event.payload.sceneFrame.slice(0, 60)
+          : undefined;
+        if (factNote) {
+          npcStates[npcId] = addNpcKnownFact(npcStates[npcId], factNote);
+        }
+      }
+
+      // === NPC LLM Summary 업데이트 (재등장 시 간소 프롬프트 블록용) ===
+      npcStates[npcId].llmSummary = buildNpcLlmSummary(
+        npcStates[npcId],
+        this.content.getNpc(npcId),
+        turnNo,
+        (event.payload.sceneFrame ?? '').slice(0, 40),
+        '', // LLM 출력은 비동기이므로 다음 턴에서 snippet 반영
+      );
+
+      // === 대화 주제 추적: recentTopics에 이번 턴 주제 기록 ===
+      {
+        const topicEntry = buildTopicEntry(
+          turnNo,
+          null, // factId는 quest 처리 후 결정되므로 여기서는 null
+          null,
+          event.payload.sceneFrame ?? null,
+          intent.actionType,
+          rawInput,
+        );
+        npcStates[npcId] = addRecentTopic(npcStates[npcId], topicEntry);
+      }
+
+      // === signature 카운터 업데이트: 3턴 간격이 지났으면 이번 턴을 기록 ===
+      const lastSig = npcStates[npcId].lastSignatureTurn ?? 0;
+      if (turnNo - lastSig >= 3) {
+        npcStates[npcId].lastSignatureTurn = turnNo;
+      }
+    }
+
+    // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC 상태 초기화
+    // 태그는 간접 참조이므로 encounterCount는 증가하지 않음 (직접 대면=primaryNpcId만 카운트)
+    if (!eventPrimaryNpc && event.payload.tags) {
+      for (const tag of event.payload.tags) {
+        // architecture/63: npcs.json entityAliases 파생 (구 TAG_TO_NPC)
+        const tagNpcId = this.content.resolveEntityAlias(tag);
+        if (!tagNpcId) continue;
+        if (!npcStates[tagNpcId]) {
+          const npcDef = this.content.getNpc(tagNpcId);
+          if (!npcDef) continue;
+          npcStates[tagNpcId] = initNPCState({
+            npcId: tagNpcId,
+            basePosture: npcDef.basePosture,
+            initialTrust: npcDef.initialTrust ?? relations[tagNpcId] ?? 0,
+            agenda: npcDef.agenda,
+          });
+          newlyEncounteredNpcIds.push(tagNpcId);
+        }
+        // encounterCount는 증가하지 않음 — 태그는 간접 참조, 이름 공개는 직접 대면(primaryNpcId)에서만
+      }
+    }
+
+    return { ws, npcAgitationUi };
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -4216,301 +4571,30 @@ export class TurnsService {
       tags: string[];
       data: Record<string, unknown>;
     }> = [];
-    // [arch/76 D3-c′] 감정 행동화 결과 — result 조립 시 ui.npcAgitation으로 전달
-    let npcAgitationUi: {
-      npcId: string;
-      npcName: string;
-      type: string;
-      text: string;
-    } | null = null;
-
-    // 현재 location의 관련 NPC에게 감정 영향 적용
-    if (eventPrimaryNpc) {
-      const npcId = eventPrimaryNpc;
-      const wasNewlyCreated = !npcStates[npcId];
-      const prevEncounterCount = npcStates[npcId]?.encounterCount ?? 0;
-      if (wasNewlyCreated) {
-        const npcDef = this.content.getNpc(npcId);
-        npcStates[npcId] = initNPCState({
-          npcId,
-          basePosture: npcDef?.basePosture,
-          initialTrust: npcDef?.initialTrust ?? relations[npcId] ?? 0,
-          agenda: npcDef?.agenda,
-        });
-      }
-
-      // encounterCount 증가 — 이번 방문 내 첫 만남인 경우에만 (방문 단위 1회)
-      const alreadyMetThisVisit = actionHistory.some(
-        (h) => h.primaryNpcId === npcId,
-      );
-      if (!alreadyMetThisVisit) {
-        npcStates[npcId].encounterCount =
-          (npcStates[npcId].encounterCount ?? 0) + 1;
-      }
-
-      // 첫 실제 만남 감지: 새로 생성되었거나, encounterCount가 0→1로 변한 경우
-      if (
-        wasNewlyCreated ||
-        (prevEncounterCount === 0 && (npcStates[npcId].encounterCount ?? 0) > 0)
-      ) {
-        newlyEncounteredNpcIds.push(npcId);
-      }
-
-      // 성격 기반 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
-      const introPosture = npcStates[npcId].posture;
-      const npcDefForIntro = this.content.getNpc(npcId);
-      const npcTier = (npcDefForIntro as Record<string, unknown>)?.tier as
-        | string
-        | undefined;
-      if (
-        !npcStates[npcId].introduced &&
-        (npcStates[npcId].pendingIntroduction === true ||
-          shouldIntroduce(npcStates[npcId], introPosture, npcTier))
-      ) {
-        // architecture/64 B: pendingIntroduction(등장 누적/연출 실패 이월) 승격 포함 —
-        // 이 NPC가 이번 턴 장면에 등장하므로 정식 소개 연출 지시와 함께 공개.
-        npcStates[npcId].introduced = true;
-        npcStates[npcId].introducedAtTurn = turnNo; // 2턴 분리: 이번 턴은 alias, 다음 턴부터 실명
-        npcStates[npcId].pendingIntroduction = false;
-        newlyIntroducedNpcIds.push(npcId);
-      }
-
-      const npc = npcStates[npcId];
-      // 감정 변화 delta 계산을 위해 before 저장
-      const emoBefore = npc.emotional ? { ...npc.emotional } : undefined;
-      const postureBefore = npc.posture;
-      // [arch/76 D3-b′] nano socialImpact — 행동 내용 기반 감정 보정 (ACTION
-      // 자유 입력만; CHOICE는 라벨 텍스트라 nano 인상 판단이 무의미).
-      const nanoSocialImpact =
-        body.input.type === 'ACTION'
-          ? (challengeDecision.socialImpact ?? null)
-          : null;
-      npc.emotional = this.npcEmotional.applyActionImpact(
-        npc.emotional,
-        intent.actionType,
-        resolveResult.outcome,
-        true,
-        nanoSocialImpact,
-      );
-      npcStates[npcId] = this.npcEmotional.syncLegacyFields(npc);
-
-      // Posture 변화 감지 (result 선언 후 이벤트에 추가)
-      const postureAfter = npcStates[npcId].posture;
-      if (postureBefore && postureAfter && postureBefore !== postureAfter) {
-        const displayName = getNpcDisplayName(
-          npcStates[npcId],
-          this.content.getNpc(npcId),
-        );
-        const POSTURE_LABEL: Record<string, string> = {
-          FRIENDLY: '우호',
-          CAUTIOUS: '경계',
-          HOSTILE: '적대',
-          FEARFUL: '두려움',
-          CALCULATING: '계산적',
-        };
-        const fromLabel = POSTURE_LABEL[postureBefore] ?? postureBefore;
-        const toLabel = POSTURE_LABEL[postureAfter] ?? postureAfter;
-        pendingPostureEvents.push({
-          id: `posture_${npcId}_${turnNo}`,
-          kind: 'NPC' as const,
-          text: `${displayName}의 태도가 변했다 — ${fromLabel} → ${toLabel}`,
-          tags: ['POSTURE_CHANGE'],
-          data: { npcId, from: postureBefore, to: postureAfter },
-        });
-      }
-      // delta 계산 및 runState에 저장 (LLM 컨텍스트 전달용)
-      if (emoBefore && npc.emotional) {
-        const delta: Record<string, number> = {};
-        for (const axis of [
-          'trust',
-          'fear',
-          'respect',
-          'suspicion',
-          'attachment',
-        ] as const) {
-          const d = Math.round(
-            ((npc.emotional as any)[axis] ?? 0) -
-              ((emoBefore as any)[axis] ?? 0),
-          );
-          if (d !== 0) delta[axis] = d;
-        }
-        if (Object.keys(delta).length > 0) {
-          (runState as any).lastNpcDelta = {
-            npcId,
-            delta,
-            actionType: intent.actionType,
-            outcome: resolveResult.outcome,
-          };
-        }
-      }
-
-      // [arch/76 D3-c′] 감정→세계 행동화 — 누적 감정이 임계를 넘으면 NPC가
-      // 먼저 세계를 움직인다 (신고→Heat / 도주→장소 이탈 / 회피·접근→디렉티브).
-      // 당턴 witness 반응 NPC 제외(급성=witness, 만성=agitation — arch/72 경계),
-      // NPC당 쿨다운. 발화·태도 문장은 여전히 NpcReactionDirector 권한.
-      {
-        const witnessedThisTurn = npcReactions.some((r) => r.npcId === npcId);
-        if (
-          !witnessedThisTurn &&
-          !agitationCooldownActive(npcStates[npcId].lastAgitationTurn, turnNo)
-        ) {
-          const agitationName = getNpcDisplayName(
-            npcStates[npcId],
-            this.content.getNpc(npcId),
-          );
-          const agitation = decideAgitatedBehavior(
-            agitationName,
-            npc.emotional,
-            npcStates[npcId].posture,
-          );
-          if (agitation) {
-            npcStates[npcId].lastAgitationTurn = turnNo;
-            pendingPostureEvents.push({
-              id: `agitation_${npcId}_${turnNo}`,
-              kind: 'NPC' as const,
-              text: agitation.text,
-              tags: ['NPC_AGITATION', agitation.type],
-              data: { npcId, type: agitation.type },
-            });
-            if (agitation.heatDelta > 0) {
-              ws = {
-                ...ws,
-                hubHeat: Math.min(100, ws.hubHeat + agitation.heatDelta),
-              };
-            }
-            if (agitation.type === 'REPORT') {
-              // 신고 가시화 (2026-07-17 실측 공백) — 디렉티브("낌새로 드러나게")를
-              // 메인 LLM이 무시해 플레이어가 신고를 알 수 없던 문제. 이벤트 라인
-              // (당턴 소멸)에 더해 시그널 피드(SECURITY, 지속)로 기계적 노출.
-              // 밀고자 실명은 밝히지 않는다 — 누가 알렸는지는 추리 소재.
-              const reportSignalFeed = (ws.signalFeed ?? []) as Array<
-                Record<string, unknown>
-              >;
-              reportSignalFeed.push({
-                id: `agitation_report_${npcId}_${turnNo}`,
-                channel: 'SECURITY',
-                severity: 2,
-                locationId,
-                text: '🚨 경비대가 당신의 행적을 주시하기 시작했다 — 누군가 밀고한 듯하다',
-                sourceIncidentId: null,
-                createdAtClock: ws.globalClock ?? turnNo,
-                expiresAtClock: (ws.globalClock ?? turnNo) + 12,
-              });
-              ws = { ...ws, signalFeed: reportSignalFeed } as WorldState;
-            }
-            if (agitation.type === 'FLEE_LOCATION') {
-              // 도주 — npcLocations 즉시 반영 + npcFleeOverrides 기록.
-              // 스케줄(updateAllNpcLocations)이 npcLocations를 매 갱신마다
-              // 재구축하므로, 오버라이드가 없으면 다음 턴에 복귀해버린다 (실측).
-              // 다음 날(untilDay)까지 부재 후 일상 복귀.
-              const fleeTarget = this.content
-                .getAllLocations()
-                .find((l) => l.locationId !== locationId);
-              if (fleeTarget) {
-                ws = {
-                  ...ws,
-                  npcLocations: {
-                    ...(ws.npcLocations ?? {}),
-                    [npcId]: fleeTarget.locationId,
-                  },
-                  npcFleeOverrides: {
-                    ...(ws.npcFleeOverrides ?? {}),
-                    [npcId]: {
-                      locationId: fleeTarget.locationId,
-                      untilDay: ws.day + 1,
-                    },
-                  },
-                };
-              }
-            }
-            npcAgitationUi = {
-              npcId,
-              npcName: agitationName,
-              type: agitation.type,
-              text: agitation.text,
-            };
-            this.logger.log(
-              `[NpcAgitation] ${agitationName}(${npcId}) ${agitation.type} — fear=${npc.emotional.fear} susp=${npc.emotional.suspicion} trust=${npc.emotional.trust}${agitation.heatDelta > 0 ? ` heat+${agitation.heatDelta}` : ''}`,
-            );
-          }
-        }
-      }
-
-      // === NPC 개인 기록 축적 ===
-      const briefNote = (event.payload.sceneFrame ?? rawInput).slice(0, 50);
-      npcStates[npcId] = recordNpcEncounter(
-        npcStates[npcId],
-        turnNo,
-        locationId,
-        intent.actionType,
-        resolveResult.outcome,
-        briefNote,
-      );
-      // knownFacts: 이벤트 결과에서 중요 발견사항 추출 (SUCCESS 판정 + 정보성 행동)
-      if (
-        resolveResult.outcome === 'SUCCESS' &&
-        ['INVESTIGATE', 'PERSUADE', 'TALK', 'TRADE', 'OBSERVE'].includes(
-          intent.actionType,
-        )
-      ) {
-        const factNote = event.payload.sceneFrame
-          ? event.payload.sceneFrame.slice(0, 60)
-          : undefined;
-        if (factNote) {
-          npcStates[npcId] = addNpcKnownFact(npcStates[npcId], factNote);
-        }
-      }
-
-      // === NPC LLM Summary 업데이트 (재등장 시 간소 프롬프트 블록용) ===
-      npcStates[npcId].llmSummary = buildNpcLlmSummary(
-        npcStates[npcId],
-        this.content.getNpc(npcId),
-        turnNo,
-        (event.payload.sceneFrame ?? '').slice(0, 40),
-        '', // LLM 출력은 비동기이므로 다음 턴에서 snippet 반영
-      );
-
-      // === 대화 주제 추적: recentTopics에 이번 턴 주제 기록 ===
-      {
-        const topicEntry = buildTopicEntry(
-          turnNo,
-          null, // factId는 quest 처리 후 결정되므로 여기서는 null
-          null,
-          event.payload.sceneFrame ?? null,
-          intent.actionType,
-          rawInput,
-        );
-        npcStates[npcId] = addRecentTopic(npcStates[npcId], topicEntry);
-      }
-
-      // === signature 카운터 업데이트: 3턴 간격이 지났으면 이번 턴을 기록 ===
-      const lastSig = npcStates[npcId].lastSignatureTurn ?? 0;
-      if (turnNo - lastSig >= 3) {
-        npcStates[npcId].lastSignatureTurn = turnNo;
-      }
-    }
-
-    // Fixplan3-P2: eventPrimaryNpc가 null일 때 이벤트 태그에서 NPC 상태 초기화
-    // 태그는 간접 참조이므로 encounterCount는 증가하지 않음 (직접 대면=primaryNpcId만 카운트)
-    if (!eventPrimaryNpc && event.payload.tags) {
-      for (const tag of event.payload.tags) {
-        // architecture/63: npcs.json entityAliases 파생 (구 TAG_TO_NPC)
-        const tagNpcId = this.content.resolveEntityAlias(tag);
-        if (!tagNpcId) continue;
-        if (!npcStates[tagNpcId]) {
-          const npcDef = this.content.getNpc(tagNpcId);
-          if (!npcDef) continue;
-          npcStates[tagNpcId] = initNPCState({
-            npcId: tagNpcId,
-            basePosture: npcDef.basePosture,
-            initialTrust: npcDef.initialTrust ?? relations[tagNpcId] ?? 0,
-            agenda: npcDef.agenda,
-          });
-          newlyEncounteredNpcIds.push(tagNpcId);
-        }
-        // encounterCount는 증가하지 않음 — 태그는 간접 참조, 이름 공개는 직접 대면(primaryNpcId)에서만
-      }
-    }
+    // [arch/77 P3.10] primary NPC 감정·행동화·기록 — updatePrimaryNpcEmotionAndRecords.
+    // npcStates·runState.lastNpcDelta·pendingPostureEvents·newly* 배열 제자리 변조.
+    const npcEmotionOutcome = this.updatePrimaryNpcEmotionAndRecords({
+      eventPrimaryNpc,
+      npcStates,
+      ws,
+      runState,
+      actionHistory,
+      relations,
+      challengeDecision,
+      intent,
+      resolveResult,
+      npcReactions,
+      event,
+      rawInput,
+      locationId,
+      turnNo,
+      inputType: body.input.type,
+      pendingPostureEvents,
+      newlyIntroducedNpcIds,
+      newlyEncounteredNpcIds,
+    });
+    ws = npcEmotionOutcome.ws;
+    const npcAgitationUi = npcEmotionOutcome.npcAgitationUi;
 
     // === NPC 플레이스홀더 치환 (introduced 상태 반영) ===
     const npcResolve = (text: string) =>
