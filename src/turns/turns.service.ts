@@ -1895,6 +1895,579 @@ export class TurnsService {
     );
   }
 
+  // [arch/77 P3.7] Quest Progression: 3경로 FACT 발견 + 단계 전환 + 사례금 +
+  // stale 힌트/자동 발견 + Incident 연동(Part A/B) + 소문 전파.
+  // updatedRunState 제자리 변조, 발견·보상·보류 신호는 반환값.
+  private processQuestProgression(params: {
+    updatedRunState: RunState;
+    resolveResult: ReturnType<ResolveService['resolve']>;
+    event: import('../db/types/event-def.js').EventDefV2;
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    rawInput: string;
+    inputType: SubmitTurnBody['input']['type'];
+    dialogueAct: DialogueAct | null;
+    npcStates: Record<string, NPCState>;
+    eventPrimaryNpc: string | null;
+    rng: ReturnType<RngService['create']>;
+    turnNo: number;
+  }): {
+    discoveredFactIdsThisTurn: string[];
+    questGoldReward: number;
+    questEquipmentRewards: string[];
+    bribeOpportunityNpcId: string | null;
+    questRevealThisTurn: QuestRevealUI | null;
+  } {
+    const {
+      updatedRunState,
+      resolveResult,
+      event,
+      intent,
+      rawInput,
+      inputType,
+      dialogueAct,
+      npcStates,
+      eventPrimaryNpc,
+      rng,
+      turnNo,
+    } = params;
+    const { NON_TOPIC_FALLBACK_REVEAL_CHANCE } = QUEST_BALANCE;
+    // === Quest Progression: 3경로 FACT 발견 + 단계 전환 ===
+    const discoveredFactIdsThisTurn: string[] = []; // 대화 주제 추적용
+    // 경제 루프 — 단서·진전 사례금 누적 (quest.json rewards, 팩별 밸런싱). 실플레이의
+    // 86%가 대화·조사 턴이라 GOLD_ACTIONS 게이트만으로는 골드 소스가 사실상 없다
+    // (2026-07-11 실측: 30일 441턴 중 골드 이벤트 4건). 핵심 루프에 소스를 연결한다.
+    let questGoldReward = 0;
+    // P4 — 단계 전환 장비 보상 (quest.json rewards.transitionEquipment, 의뢰 경비 지원)
+    const questEquipmentRewards: string[] = [];
+    // 정보 보류 시그널 — NPC가 미공개 fact를 보류/거부한 턴. nano 선택지에 BRIBE 유도 (싱크).
+    let bribeOpportunityNpcId: string | null = null;
+    // architecture/58 — NPC 경로 발견 fact를 serverResult.ui.questReveal로 전달 (기록·서술 단일화)
+    let questRevealThisTurn: QuestRevealUI | null = null;
+    if (this.questProgression) {
+      try {
+        const existing = updatedRunState.discoveredQuestFacts ?? [];
+        const addFact = (factId: string, source: string) => {
+          if (factId && !existing.includes(factId)) {
+            updatedRunState.discoveredQuestFacts = [
+              ...(updatedRunState.discoveredQuestFacts ?? []),
+              factId,
+            ];
+            // arcState에도 동기화 (checkTransition + API 응답에서 arcState.discoveredQuestFacts 참조)
+            if (updatedRunState.arcState) {
+              updatedRunState.arcState.discoveredQuestFacts =
+                updatedRunState.discoveredQuestFacts;
+            }
+            existing.push(factId); // 같은 턴 중복 방지
+            discoveredFactIdsThisTurn.push(factId);
+            questGoldReward += this.questProgression!.getFactGoldReward();
+            // [P4-5 — arch/75 §6] AUTONOMOUS: plotSeed keyFact면 규명율
+            // 분자(plotProgress.discoveredKeyFactIds)에도 기록.
+            const seedFacts = updatedRunState.plotSeed?.keyFacts;
+            if (seedFacts?.some((kf) => kf.factId === factId)) {
+              const pp = updatedRunState.plotProgress ?? {
+                discoveredKeyFactIds: [],
+              };
+              if (!pp.discoveredKeyFactIds.includes(factId)) {
+                pp.discoveredKeyFactIds.push(factId);
+              }
+              updatedRunState.plotProgress = pp;
+              this.logger.log(
+                `[PlotSeed] keyFact 규명 ${factId} (${pp.discoveredKeyFactIds.length}/${seedFacts.length})`,
+              );
+            }
+            this.logger.log(
+              `[Quest] Fact discovered: ${factId} (source: ${source})`,
+            );
+          }
+        };
+
+        // 경로 1: 이벤트 discoverableFact — SUCCESS 시 자동 발견
+        if (resolveResult.outcome === 'SUCCESS' && event) {
+          const eventFact =
+            ((event.payload as Record<string, unknown>)?.discoverableFact as
+              | string
+              | undefined) ??
+            ((event as Record<string, unknown>).discoverableFact as
+              | string
+              | undefined);
+          if (eventFact) {
+            addFact(eventFact, `event:${event.eventId}`);
+          }
+        }
+
+        // 경로 2: NPC knownFacts — SUCCESS/PARTIAL + 정보성 행동 + 2단계 NPC 반응 판정
+        // effectiveNpcId: 텍스트 매칭 → IntentParser → 대화 잠금 → 이벤트 NPC 순으로 결정됨
+        const INFO_ACTIONS = new Set([
+          'INVESTIGATE',
+          'PERSUADE',
+          'TALK',
+          'TRADE',
+          'OBSERVE',
+          'SEARCH',
+          'HELP',
+          'BRIBE',
+          'THREATEN',
+          'STEAL',
+        ]);
+        // 대화 행위 게이트 — 인사/안부/감사/작별은 자동 SUCCESS(자유 행동)와 결합해
+        // 매 잡담 턴 단서가 새는 통로였다. 사교 발화 턴은 NPC 경로 공개 자체를 건너뛴다.
+        if (dialogueAct) {
+          this.logger.debug(
+            `[Quest] 사교 발화(${dialogueAct}) — NPC fact 공개 스킵`,
+          );
+        }
+        if (
+          !dialogueAct &&
+          (resolveResult.outcome === 'SUCCESS' ||
+            resolveResult.outcome === 'PARTIAL') &&
+          INFO_ACTIONS.has(intent.actionType)
+        ) {
+          // architecture/59 이슈 1 — 판정 NPC를 서술 NPC(actionContext.primaryNpcId)와
+          // 동일 우선순위로 계산: 텍스트 매칭 → 리졸버 최종(eventPrimaryNpc) → 이벤트 payload.
+          // 두 매처가 갈릴 때 "A에게 물었는데 B가 판정" 분열 방지 (questReveal.npcId = 서술 NPC).
+          const npcId =
+            this.extractTargetNpcFromInput(rawInput, inputType) ??
+            eventPrimaryNpc ??
+            ((event?.payload as Record<string, unknown>)?.primaryNpcId as
+              | string
+              | undefined) ??
+            null;
+          if (npcId) {
+            // 2단계: NPC trust 기반 반응 판정
+            const npcState = npcStates[npcId];
+            const npcTrust = npcState?.emotional?.trust ?? 0;
+            // BRIBE/THREATEN은 특수: trust 무관하게 작동 (금전/공포 기반)
+            const bypassTrust =
+              intent.actionType === 'BRIBE' || intent.actionType === 'THREATEN';
+
+            // trust 단계별 반응:
+            //   trust > 20: 직접 전달 (SUCCESS/PARTIAL 모두)
+            //   trust 0~20: 간접 전달 (SUCCESS만, PARTIAL은 힌트만)
+            //   trust -20~0: 관찰 힌트 (SUCCESS만 — fact 발견되지만 전달 방식만 다름)
+            //   trust < -20: 거부 (fact 미발견 — 다른 NPC나 이벤트로 우회 필요)
+            let npcWillReveal = false;
+            let npcRevealMode: 'direct' | 'indirect' | 'observe' | 'refuse' =
+              'refuse';
+
+            if (bypassTrust) {
+              // BRIBE/THREATEN: trust 무관, 판정 결과만으로 결정
+              npcWillReveal = true;
+              npcRevealMode =
+                resolveResult.outcome === 'SUCCESS' ? 'indirect' : 'observe';
+            } else if (npcTrust > 20) {
+              npcWillReveal = true;
+              npcRevealMode = 'direct';
+            } else if (npcTrust >= 0) {
+              npcWillReveal = resolveResult.outcome === 'SUCCESS';
+              npcRevealMode = 'indirect';
+            } else if (npcTrust >= -20) {
+              npcWillReveal = resolveResult.outcome === 'SUCCESS';
+              npcRevealMode = 'observe';
+            } else {
+              // trust < -20: 거부
+              npcWillReveal = false;
+              npcRevealMode = 'refuse';
+            }
+
+            this.logger.log(
+              `[Quest:NpcReaction] npc=${npcId} trust=${npcTrust} action=${intent.actionType} outcome=${resolveResult.outcome} → willReveal=${npcWillReveal} mode=${npcRevealMode}`,
+            );
+
+            if (npcWillReveal) {
+              // architecture/58 — 주제 우선 선택: 입력 키워드 매칭 fact 우선, 없으면 순서 fallback
+              const selected = this.questProgression.selectRevealableFact(
+                npcId,
+                rawInput,
+                updatedRunState,
+              );
+              // arch/60 P2 — 비주제(fallback) 공개는 확률 게이트: 잡담·안부에도
+              // 매턴 단서가 술술 나오는 것 방지. BRIBE/THREATEN은 대가를 치른
+              // 정보 요구라 면제 (bypassTrust).
+              // 개선 3 — 질문 턴은 확률 무관 완전 차단: 구체적으로 물었는데
+              // 무관한 단서로 답하는 문답 불일치가 확률로 새는 것 방지.
+              // 대화 계열 — 명시 주제로 물어야 단서가 나온다 (조사·탐색과 구분)
+              const CONVERSATIONAL_ACTIONS = new Set([
+                'TALK',
+                'PERSUADE',
+                'TRADE',
+                'HELP',
+              ]);
+              let fallbackGateBlocked = false;
+              if (selected && !selected.matchedByTopic && !bypassTrust) {
+                if (CONVERSATIONAL_ACTIONS.has(intent.actionType)) {
+                  // A안 (arch/68 부록 M) — 대화 계열은 주제 매칭 없으면 fact 공개
+                  // 완전 차단. NPC가 인사·잡담에 먼저 단서를 흘리는 부자연스러움
+                  // 방지: 플레이어가 그 화제를 명시적으로 물어야(matchedByTopic)
+                  // 공개된다. 조사·탐색(INVESTIGATE/SEARCH/OBSERVE)은 능동 탐색이라
+                  // 아래 확률 fallback을 유지한다. 보류된 fact는 뇌물 기회로 이월.
+                  fallbackGateBlocked = true;
+                  this.logger.debug(
+                    `[Quest] 대화 계열(${intent.actionType}) 비주제 — fact 공개 차단 (선제 단서 방지)`,
+                  );
+                } else if (
+                  inputType === 'ACTION' &&
+                  isQuestionInput(rawInput)
+                ) {
+                  fallbackGateBlocked = true;
+                  this.logger.debug(
+                    `[Quest] 질문 턴 — 비주제 fallback 공개 차단 (문답 불일치 방지)`,
+                  );
+                } else {
+                  const fallbackRoll = rng.range(0, 99);
+                  if (fallbackRoll >= NON_TOPIC_FALLBACK_REVEAL_CHANCE) {
+                    fallbackGateBlocked = true;
+                    this.logger.debug(
+                      `[Quest] non-topic fallback 공개 보류 (roll=${fallbackRoll} ≥ ${NON_TOPIC_FALLBACK_REVEAL_CHANCE})`,
+                    );
+                  }
+                }
+              }
+              if (
+                selected &&
+                !fallbackGateBlocked &&
+                npcRevealMode !== 'refuse'
+              ) {
+                addFact(selected.factId, `npc:${npcId}:${npcRevealMode}`);
+                // 기록된 fact와 동일한 fact를 LLM이 서술하도록 serverResult로 전달
+                questRevealThisTurn = {
+                  factId: selected.factId,
+                  npcId,
+                  revealMode: npcRevealMode,
+                  matchedByTopic: selected.matchedByTopic,
+                };
+              } else if (selected && !bypassTrust) {
+                // 보류(fallback 게이트/질문 차단)된 미공개 fact 보유 → 뇌물 기회
+                bribeOpportunityNpcId = npcId;
+              }
+            } else if (!bypassTrust) {
+              // 거부(trust<-20)/FAIL — 미공개 fact를 보유하고 있으면 뇌물로 우회 가능.
+              // selectRevealableFact는 조회 전용(부작용 없음)이라 보유 확인에 재사용.
+              const withheld = this.questProgression.selectRevealableFact(
+                npcId,
+                rawInput,
+                updatedRunState,
+              );
+              if (withheld) bribeOpportunityNpcId = npcId;
+            }
+          }
+        }
+
+        // 경로 3: PARTIAL + 이벤트 discoverableFact — P2/P4: 확률은 config에서 관리
+
+        const { PARTIAL_FACT_DISCOVERY_CHANCE } = QUEST_BALANCE;
+        if (resolveResult.outcome === 'PARTIAL' && event) {
+          const eventFact =
+            ((event.payload as Record<string, unknown>)?.discoverableFact as
+              | string
+              | undefined) ??
+            ((event as Record<string, unknown>).discoverableFact as
+              | string
+              | undefined);
+          if (eventFact && !existing.includes(eventFact)) {
+            const roll = rng.range(0, 100);
+            if (roll < PARTIAL_FACT_DISCOVERY_CHANCE) {
+              addFact(eventFact, `event_partial:${event.eventId}`);
+            }
+          }
+        }
+
+        // 경로 4: NanoEventDirector 추천 fact — LLM Worker에서 비동기 처리 (비동기 분리)
+        // nanoEventResult는 비동기 분리 후 항상 null — fact 발견은 경로 1~3으로 충분
+
+        // 전체 발견 팩트 수집 + 단계 전환 체크
+        const discoveredFacts =
+          this.questProgression.collectDiscoveredFacts(updatedRunState);
+        const currentQuestState = updatedRunState.questState ?? 'S0_ARRIVE';
+        const transition = this.questProgression.checkTransition(
+          currentQuestState,
+          discoveredFacts,
+        );
+        if (transition.newState) {
+          updatedRunState.questState = transition.newState;
+          if (updatedRunState.arcState) {
+            updatedRunState.arcState.questState = transition.newState;
+          }
+          // 퀘스트 단계 변경 → 체류 턴 리셋
+          (
+            updatedRunState as unknown as Record<string, unknown>
+          ).questStateSinceTurn = turnNo;
+          questGoldReward += this.questProgression.getTransitionGoldReward(
+            currentQuestState,
+            transition.newState,
+          );
+          const transitionEq =
+            this.questProgression.getTransitionEquipmentReward(
+              currentQuestState,
+              transition.newState,
+            );
+          if (transitionEq) questEquipmentRewards.push(transitionEq);
+          this.logger.log(
+            `[Quest] ${currentQuestState} -> ${transition.newState}`,
+          );
+
+          // 퀘스트 전환 시그널 → 호외 발행 대상
+          if (updatedRunState.worldState) {
+            const QUEST_LABEL: Record<string, string> = {
+              S1_GET_ANGLE: '사건의 실마리가 포착되었다.',
+              S2_PROVE_TAMPER: '조작의 흔적이 드러나기 시작했다.',
+              S3_TRACE_ROUTE: '배후의 경로가 윤곽을 드러내고 있다.',
+              S4_CONFRONT: '진실에 한 걸음 더 다가섰다.',
+              S5_RESOLVE: '모든 것이 끝을 향해 치닫고 있다.',
+            };
+            const questText =
+              QUEST_LABEL[transition.newState] ??
+              `사건이 새로운 국면에 접어들었다.`;
+            const sf = (updatedRunState.worldState.signalFeed ?? []) as Array<
+              Record<string, unknown>
+            >;
+            sf.push({
+              id: `sig_quest_${transition.newState}_${turnNo}`,
+              channel: 'RUMOR',
+              severity: 4,
+              text: questText,
+              createdAtClock:
+                (updatedRunState.worldState as any).globalClock ?? 0,
+            });
+            updatedRunState.worldState = {
+              ...updatedRunState.worldState,
+              signalFeed: sf,
+            } as any;
+          }
+        } else {
+          // 단계 미변경 → 체류 턴 체크 (진행도 힌트)
+          const STALE_THRESHOLD = 5;
+          const sinceTurn = (
+            updatedRunState as unknown as Record<string, unknown>
+          ).questStateSinceTurn as number | undefined;
+          const staleTurns = sinceTurn ? turnNo - sinceTurn : turnNo;
+
+          if (
+            staleTurns >= STALE_THRESHOLD &&
+            discoveredFactIdsThisTurn.length === 0
+          ) {
+            const staleHint = this.questProgression.getStaleHint(
+              currentQuestState,
+              discoveredFacts,
+            );
+            if (staleHint) {
+              const AUTO_DISCOVER_THRESHOLD = 3; // 힌트 3회 반복 → fact 자동 발견
+              const hintCount = staleTurns - STALE_THRESHOLD + 1;
+
+              if (hintCount >= AUTO_DISCOVER_THRESHOLD) {
+                // 힌트 3회 이상 → fact 자동 발견 (플레이어가 소문을 충분히 인지)
+                if (!updatedRunState.discoveredQuestFacts)
+                  updatedRunState.discoveredQuestFacts = [];
+                if (
+                  !updatedRunState.discoveredQuestFacts.includes(
+                    staleHint.factId,
+                  )
+                ) {
+                  updatedRunState.discoveredQuestFacts.push(staleHint.factId);
+                  discoveredFacts.add(staleHint.factId);
+                  discoveredFactIdsThisTurn.push(staleHint.factId);
+                  if (updatedRunState.arcState?.discoveredQuestFacts) {
+                    updatedRunState.arcState.discoveredQuestFacts = [
+                      ...updatedRunState.discoveredQuestFacts,
+                    ];
+                  }
+                  this.logger.log(
+                    `[Quest] Auto-discovered fact: ${staleHint.factId} (${hintCount} hints on ${currentQuestState})`,
+                  );
+
+                  // 자동 발견 후 전환 재체크
+                  const recheck = this.questProgression.checkTransition(
+                    currentQuestState,
+                    discoveredFacts,
+                  );
+                  if (recheck.newState) {
+                    updatedRunState.questState = recheck.newState;
+                    if (updatedRunState.arcState) {
+                      updatedRunState.arcState.questState = recheck.newState;
+                    }
+                    (
+                      updatedRunState as unknown as Record<string, unknown>
+                    ).questStateSinceTurn = turnNo;
+                    questGoldReward +=
+                      this.questProgression.getTransitionGoldReward(
+                        currentQuestState,
+                        recheck.newState,
+                      );
+                    const recheckEq =
+                      this.questProgression.getTransitionEquipmentReward(
+                        currentQuestState,
+                        recheck.newState,
+                      );
+                    if (recheckEq) questEquipmentRewards.push(recheckEq);
+                    this.logger.log(
+                      `[Quest] Auto-transition: ${currentQuestState} -> ${recheck.newState}`,
+                    );
+                  }
+                }
+              } else {
+                // 힌트만 제공 (아직 자동 발견 안 함)
+                const HINT_MODES = [
+                  'OVERHEARD',
+                  'RUMOR_ECHO',
+                  'SCENE_CLUE',
+                ] as const;
+                const hintMode =
+                  HINT_MODES[rng.range(0, HINT_MODES.length - 1)];
+                updatedRunState.pendingQuestHint = {
+                  hint: staleHint.hint,
+                  setAtTurn: turnNo,
+                  mode: hintMode,
+                };
+                this.logger.log(
+                  `[Quest] Stale hint ${hintCount}/${AUTO_DISCOVER_THRESHOLD}: ${staleHint.factId} (${staleTurns} turns on ${currentQuestState}) mode=${hintMode}`,
+                );
+              }
+            }
+          }
+        }
+
+        // Part A: fact 발견 → 관련 Incident control 증가 (퀘스트-Incident 연동)
+        if (
+          discoveredFactIdsThisTurn.length > 0 &&
+          updatedRunState.worldState
+        ) {
+          const questData = this.content.getQuestData() as {
+            factToIncident?: Record<
+              string,
+              { incidents: string[]; controlBonus: number }
+            >;
+          } | null;
+          const mapping = questData?.factToIncident;
+          if (mapping) {
+            const activeIncidents = (updatedRunState.worldState
+              .activeIncidents ?? []) as Array<{
+              incidentId: string;
+              control: number;
+              resolved?: boolean;
+            }>;
+            for (const factId of discoveredFactIdsThisTurn) {
+              const entry = mapping[factId];
+              if (!entry) continue;
+              for (const incId of entry.incidents) {
+                const incident = activeIncidents.find(
+                  (i) => i.incidentId === incId && !i.resolved,
+                );
+                if (incident) {
+                  incident.control = Math.min(
+                    100,
+                    (incident.control ?? 0) + entry.controlBonus,
+                  );
+                  this.logger.log(
+                    `[Quest→Incident] ${factId} → ${incId} control +${entry.controlBonus} (now ${incident.control})`,
+                  );
+                }
+              }
+            }
+          }
+        }
+
+        // Part B: S5_RESOLVE + 5턴 + 최소 턴 수 충족 → 미해결 Incident resolved (엔딩 마킹)
+        // MIN_TURNS_FOR_NATURAL 가드를 Part B에도 적용: 15턴 미만에 마킹되면
+        // checkEndingConditions가 조기 엔딩을 막아 영구 누락된다.
+        {
+          const qs = updatedRunState.questState ?? '';
+          if (qs === 'S5_RESOLVE') {
+            const sinceTurn = (
+              updatedRunState as unknown as Record<string, unknown>
+            ).questStateSinceTurn as number | undefined;
+            const s5Turns = sinceTurn ? turnNo - sinceTurn : 0;
+            if (
+              s5Turns >= 5 &&
+              turnNo >= MIN_TURNS_FOR_NATURAL &&
+              updatedRunState.worldState
+            ) {
+              const activeIncidents = (updatedRunState.worldState
+                .activeIncidents ?? []) as Array<{
+                incidentId: string;
+                control: number;
+                resolved?: boolean;
+                outcome?: string;
+              }>;
+              for (const inc of activeIncidents) {
+                if (!inc.resolved) {
+                  inc.control = 100;
+                  inc.resolved = true;
+                  inc.outcome = 'CONTAINED';
+                  this.logger.log(
+                    `[Quest→Ending] S5+${s5Turns}턴: ${inc.incidentId} resolved=CONTAINED (엔딩 트리거)`,
+                  );
+                }
+              }
+            }
+          }
+        }
+
+        // pendingQuestHint: 이번 턴에 발견된 fact의 nextHint를 저장 → 다음 턴 LLM 프롬프트에서 사용
+        if (discoveredFactIdsThisTurn.length > 0) {
+          // 마지막 발견 fact의 nextHint 사용 (여러 fact 동시 발견 시 가장 최근 것)
+          const lastFactId =
+            discoveredFactIdsThisTurn[discoveredFactIdsThisTurn.length - 1];
+          const nextHint = this.questProgression.getFactNextHint(lastFactId);
+          if (nextHint) {
+            const HINT_MODES = [
+              'OVERHEARD',
+              'DOCUMENT',
+              'SCENE_CLUE',
+              'NPC_BEHAVIOR',
+              'RUMOR_ECHO',
+            ] as const;
+            const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length - 1)];
+            updatedRunState.pendingQuestHint = {
+              hint: nextHint,
+              setAtTurn: turnNo,
+              mode: hintMode,
+            };
+            this.logger.log(
+              `[Quest] pendingQuestHint set for fact=${lastFactId} mode=${hintMode} at turn=${turnNo}`,
+            );
+          }
+        }
+        // Phase 2: 소문 전파 — fact 발견 시 worldFacts에 소문 추가
+        if (
+          discoveredFactIdsThisTurn.length > 0 &&
+          updatedRunState.worldState
+        ) {
+          const ws = updatedRunState.worldState;
+          if (!ws.worldFacts) ws.worldFacts = [];
+          for (const factId of discoveredFactIdsThisTurn) {
+            const detail = this.questProgression.getFactDetail(factId);
+            if (detail) {
+              ws.worldFacts.push({
+                id: `rumor_${factId}_t${turnNo}`,
+                category: 'DISCOVERY',
+                text: `소문: ${detail}`,
+                locationId: ws.currentLocationId ?? '',
+                involvedNpcs: eventPrimaryNpc ? [eventPrimaryNpc] : [],
+                turnCreated: turnNo,
+                dayCreated: ws.day ?? 1,
+                tags: [factId, 'RUMOR'],
+                impact: 'minor',
+                permanent: false,
+                expiresAtTurn: turnNo + 20,
+              } as any);
+              this.logger.debug(
+                `[Quest] Rumor propagated: ${factId} → worldFacts`,
+              );
+            }
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`[QuestProgression] error (non-fatal): ${err}`);
+      }
+    }
+    return {
+      discoveredFactIdsThisTurn,
+      questGoldReward,
+      questEquipmentRewards,
+      bribeOpportunityNpcId,
+      questRevealThisTurn,
+    };
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -4061,8 +4634,7 @@ export class TurnsService {
     // 60 P2: 같은 턴에 questReveal(새 단서 공개)이 있으면 연출 과밀 방지를 위해
     // 부착하지 않고 다음 턴으로 이월 (최대 DIRECTION_HINT_CARRY_MAX_TURNS턴, 초과 시 만료).
     // 소비(정리)는 실제 부착 시점(buildLocationResult 이후)에 확정한다.
-    const { NON_TOPIC_FALLBACK_REVEAL_CHANCE, DIRECTION_HINT_CARRY_MAX_TURNS } =
-      QUEST_BALANCE;
+    const { DIRECTION_HINT_CARRY_MAX_TURNS } = QUEST_BALANCE;
     let questDirectionHintForUi: { hint: string; mode: string } | null = null;
     if (updatedRunState.pendingQuestHint) {
       const pending = updatedRunState.pendingQuestHint;
@@ -4081,534 +4653,26 @@ export class TurnsService {
       }
     }
 
-    // === Quest Progression: 3경로 FACT 발견 + 단계 전환 ===
-    const discoveredFactIdsThisTurn: string[] = []; // 대화 주제 추적용
-    // 경제 루프 — 단서·진전 사례금 누적 (quest.json rewards, 팩별 밸런싱). 실플레이의
-    // 86%가 대화·조사 턴이라 GOLD_ACTIONS 게이트만으로는 골드 소스가 사실상 없다
-    // (2026-07-11 실측: 30일 441턴 중 골드 이벤트 4건). 핵심 루프에 소스를 연결한다.
-    let questGoldReward = 0;
-    // P4 — 단계 전환 장비 보상 (quest.json rewards.transitionEquipment, 의뢰 경비 지원)
-    const questEquipmentRewards: string[] = [];
-    // 정보 보류 시그널 — NPC가 미공개 fact를 보류/거부한 턴. nano 선택지에 BRIBE 유도 (싱크).
-    let bribeOpportunityNpcId: string | null = null;
-    // architecture/58 — NPC 경로 발견 fact를 serverResult.ui.questReveal로 전달 (기록·서술 단일화)
-    let questRevealThisTurn: QuestRevealUI | null = null;
-    if (this.questProgression) {
-      try {
-        const existing = updatedRunState.discoveredQuestFacts ?? [];
-        const addFact = (factId: string, source: string) => {
-          if (factId && !existing.includes(factId)) {
-            updatedRunState.discoveredQuestFacts = [
-              ...(updatedRunState.discoveredQuestFacts ?? []),
-              factId,
-            ];
-            // arcState에도 동기화 (checkTransition + API 응답에서 arcState.discoveredQuestFacts 참조)
-            if (updatedRunState.arcState) {
-              updatedRunState.arcState.discoveredQuestFacts =
-                updatedRunState.discoveredQuestFacts;
-            }
-            existing.push(factId); // 같은 턴 중복 방지
-            discoveredFactIdsThisTurn.push(factId);
-            questGoldReward += this.questProgression!.getFactGoldReward();
-            // [P4-5 — arch/75 §6] AUTONOMOUS: plotSeed keyFact면 규명율
-            // 분자(plotProgress.discoveredKeyFactIds)에도 기록.
-            const seedFacts = updatedRunState.plotSeed?.keyFacts;
-            if (seedFacts?.some((kf) => kf.factId === factId)) {
-              const pp = updatedRunState.plotProgress ?? {
-                discoveredKeyFactIds: [],
-              };
-              if (!pp.discoveredKeyFactIds.includes(factId)) {
-                pp.discoveredKeyFactIds.push(factId);
-              }
-              updatedRunState.plotProgress = pp;
-              this.logger.log(
-                `[PlotSeed] keyFact 규명 ${factId} (${pp.discoveredKeyFactIds.length}/${seedFacts.length})`,
-              );
-            }
-            this.logger.log(
-              `[Quest] Fact discovered: ${factId} (source: ${source})`,
-            );
-          }
-        };
-
-        // 경로 1: 이벤트 discoverableFact — SUCCESS 시 자동 발견
-        if (resolveResult.outcome === 'SUCCESS' && event) {
-          const eventFact =
-            ((event.payload as Record<string, unknown>)?.discoverableFact as
-              | string
-              | undefined) ??
-            ((event as Record<string, unknown>).discoverableFact as
-              | string
-              | undefined);
-          if (eventFact) {
-            addFact(eventFact, `event:${event.eventId}`);
-          }
-        }
-
-        // 경로 2: NPC knownFacts — SUCCESS/PARTIAL + 정보성 행동 + 2단계 NPC 반응 판정
-        // effectiveNpcId: 텍스트 매칭 → IntentParser → 대화 잠금 → 이벤트 NPC 순으로 결정됨
-        const INFO_ACTIONS = new Set([
-          'INVESTIGATE',
-          'PERSUADE',
-          'TALK',
-          'TRADE',
-          'OBSERVE',
-          'SEARCH',
-          'HELP',
-          'BRIBE',
-          'THREATEN',
-          'STEAL',
-        ]);
-        // 대화 행위 게이트 — 인사/안부/감사/작별은 자동 SUCCESS(자유 행동)와 결합해
-        // 매 잡담 턴 단서가 새는 통로였다. 사교 발화 턴은 NPC 경로 공개 자체를 건너뛴다.
-        if (dialogueAct) {
-          this.logger.debug(
-            `[Quest] 사교 발화(${dialogueAct}) — NPC fact 공개 스킵`,
-          );
-        }
-        if (
-          !dialogueAct &&
-          (resolveResult.outcome === 'SUCCESS' ||
-            resolveResult.outcome === 'PARTIAL') &&
-          INFO_ACTIONS.has(intent.actionType)
-        ) {
-          // architecture/59 이슈 1 — 판정 NPC를 서술 NPC(actionContext.primaryNpcId)와
-          // 동일 우선순위로 계산: 텍스트 매칭 → 리졸버 최종(eventPrimaryNpc) → 이벤트 payload.
-          // 두 매처가 갈릴 때 "A에게 물었는데 B가 판정" 분열 방지 (questReveal.npcId = 서술 NPC).
-          const npcId =
-            this.extractTargetNpcFromInput(rawInput, body.input.type) ??
-            eventPrimaryNpc ??
-            ((event?.payload as Record<string, unknown>)?.primaryNpcId as
-              | string
-              | undefined) ??
-            null;
-          if (npcId) {
-            // 2단계: NPC trust 기반 반응 판정
-            const npcState = npcStates[npcId];
-            const npcTrust = npcState?.emotional?.trust ?? 0;
-            // BRIBE/THREATEN은 특수: trust 무관하게 작동 (금전/공포 기반)
-            const bypassTrust =
-              intent.actionType === 'BRIBE' || intent.actionType === 'THREATEN';
-
-            // trust 단계별 반응:
-            //   trust > 20: 직접 전달 (SUCCESS/PARTIAL 모두)
-            //   trust 0~20: 간접 전달 (SUCCESS만, PARTIAL은 힌트만)
-            //   trust -20~0: 관찰 힌트 (SUCCESS만 — fact 발견되지만 전달 방식만 다름)
-            //   trust < -20: 거부 (fact 미발견 — 다른 NPC나 이벤트로 우회 필요)
-            let npcWillReveal = false;
-            let npcRevealMode: 'direct' | 'indirect' | 'observe' | 'refuse' =
-              'refuse';
-
-            if (bypassTrust) {
-              // BRIBE/THREATEN: trust 무관, 판정 결과만으로 결정
-              npcWillReveal = true;
-              npcRevealMode =
-                resolveResult.outcome === 'SUCCESS' ? 'indirect' : 'observe';
-            } else if (npcTrust > 20) {
-              npcWillReveal = true;
-              npcRevealMode = 'direct';
-            } else if (npcTrust >= 0) {
-              npcWillReveal = resolveResult.outcome === 'SUCCESS';
-              npcRevealMode = 'indirect';
-            } else if (npcTrust >= -20) {
-              npcWillReveal = resolveResult.outcome === 'SUCCESS';
-              npcRevealMode = 'observe';
-            } else {
-              // trust < -20: 거부
-              npcWillReveal = false;
-              npcRevealMode = 'refuse';
-            }
-
-            this.logger.log(
-              `[Quest:NpcReaction] npc=${npcId} trust=${npcTrust} action=${intent.actionType} outcome=${resolveResult.outcome} → willReveal=${npcWillReveal} mode=${npcRevealMode}`,
-            );
-
-            if (npcWillReveal) {
-              // architecture/58 — 주제 우선 선택: 입력 키워드 매칭 fact 우선, 없으면 순서 fallback
-              const selected = this.questProgression.selectRevealableFact(
-                npcId,
-                rawInput,
-                updatedRunState,
-              );
-              // arch/60 P2 — 비주제(fallback) 공개는 확률 게이트: 잡담·안부에도
-              // 매턴 단서가 술술 나오는 것 방지. BRIBE/THREATEN은 대가를 치른
-              // 정보 요구라 면제 (bypassTrust).
-              // 개선 3 — 질문 턴은 확률 무관 완전 차단: 구체적으로 물었는데
-              // 무관한 단서로 답하는 문답 불일치가 확률로 새는 것 방지.
-              // 대화 계열 — 명시 주제로 물어야 단서가 나온다 (조사·탐색과 구분)
-              const CONVERSATIONAL_ACTIONS = new Set([
-                'TALK',
-                'PERSUADE',
-                'TRADE',
-                'HELP',
-              ]);
-              let fallbackGateBlocked = false;
-              if (selected && !selected.matchedByTopic && !bypassTrust) {
-                if (CONVERSATIONAL_ACTIONS.has(intent.actionType)) {
-                  // A안 (arch/68 부록 M) — 대화 계열은 주제 매칭 없으면 fact 공개
-                  // 완전 차단. NPC가 인사·잡담에 먼저 단서를 흘리는 부자연스러움
-                  // 방지: 플레이어가 그 화제를 명시적으로 물어야(matchedByTopic)
-                  // 공개된다. 조사·탐색(INVESTIGATE/SEARCH/OBSERVE)은 능동 탐색이라
-                  // 아래 확률 fallback을 유지한다. 보류된 fact는 뇌물 기회로 이월.
-                  fallbackGateBlocked = true;
-                  this.logger.debug(
-                    `[Quest] 대화 계열(${intent.actionType}) 비주제 — fact 공개 차단 (선제 단서 방지)`,
-                  );
-                } else if (
-                  body.input.type === 'ACTION' &&
-                  isQuestionInput(rawInput)
-                ) {
-                  fallbackGateBlocked = true;
-                  this.logger.debug(
-                    `[Quest] 질문 턴 — 비주제 fallback 공개 차단 (문답 불일치 방지)`,
-                  );
-                } else {
-                  const fallbackRoll = rng.range(0, 99);
-                  if (fallbackRoll >= NON_TOPIC_FALLBACK_REVEAL_CHANCE) {
-                    fallbackGateBlocked = true;
-                    this.logger.debug(
-                      `[Quest] non-topic fallback 공개 보류 (roll=${fallbackRoll} ≥ ${NON_TOPIC_FALLBACK_REVEAL_CHANCE})`,
-                    );
-                  }
-                }
-              }
-              if (
-                selected &&
-                !fallbackGateBlocked &&
-                npcRevealMode !== 'refuse'
-              ) {
-                addFact(selected.factId, `npc:${npcId}:${npcRevealMode}`);
-                // 기록된 fact와 동일한 fact를 LLM이 서술하도록 serverResult로 전달
-                questRevealThisTurn = {
-                  factId: selected.factId,
-                  npcId,
-                  revealMode: npcRevealMode,
-                  matchedByTopic: selected.matchedByTopic,
-                };
-              } else if (selected && !bypassTrust) {
-                // 보류(fallback 게이트/질문 차단)된 미공개 fact 보유 → 뇌물 기회
-                bribeOpportunityNpcId = npcId;
-              }
-            } else if (!bypassTrust) {
-              // 거부(trust<-20)/FAIL — 미공개 fact를 보유하고 있으면 뇌물로 우회 가능.
-              // selectRevealableFact는 조회 전용(부작용 없음)이라 보유 확인에 재사용.
-              const withheld = this.questProgression.selectRevealableFact(
-                npcId,
-                rawInput,
-                updatedRunState,
-              );
-              if (withheld) bribeOpportunityNpcId = npcId;
-            }
-          }
-        }
-
-        // 경로 3: PARTIAL + 이벤트 discoverableFact — P2/P4: 확률은 config에서 관리
-
-        const { PARTIAL_FACT_DISCOVERY_CHANCE } = QUEST_BALANCE;
-        if (resolveResult.outcome === 'PARTIAL' && event) {
-          const eventFact =
-            ((event.payload as Record<string, unknown>)?.discoverableFact as
-              | string
-              | undefined) ??
-            ((event as Record<string, unknown>).discoverableFact as
-              | string
-              | undefined);
-          if (eventFact && !existing.includes(eventFact)) {
-            const roll = rng.range(0, 100);
-            if (roll < PARTIAL_FACT_DISCOVERY_CHANCE) {
-              addFact(eventFact, `event_partial:${event.eventId}`);
-            }
-          }
-        }
-
-        // 경로 4: NanoEventDirector 추천 fact — LLM Worker에서 비동기 처리 (비동기 분리)
-        // nanoEventResult는 비동기 분리 후 항상 null — fact 발견은 경로 1~3으로 충분
-
-        // 전체 발견 팩트 수집 + 단계 전환 체크
-        const discoveredFacts =
-          this.questProgression.collectDiscoveredFacts(updatedRunState);
-        const currentQuestState = updatedRunState.questState ?? 'S0_ARRIVE';
-        const transition = this.questProgression.checkTransition(
-          currentQuestState,
-          discoveredFacts,
-        );
-        if (transition.newState) {
-          updatedRunState.questState = transition.newState;
-          if (updatedRunState.arcState) {
-            updatedRunState.arcState.questState = transition.newState;
-          }
-          // 퀘스트 단계 변경 → 체류 턴 리셋
-          (
-            updatedRunState as unknown as Record<string, unknown>
-          ).questStateSinceTurn = turnNo;
-          questGoldReward += this.questProgression.getTransitionGoldReward(
-            currentQuestState,
-            transition.newState,
-          );
-          const transitionEq =
-            this.questProgression.getTransitionEquipmentReward(
-              currentQuestState,
-              transition.newState,
-            );
-          if (transitionEq) questEquipmentRewards.push(transitionEq);
-          this.logger.log(
-            `[Quest] ${currentQuestState} -> ${transition.newState}`,
-          );
-
-          // 퀘스트 전환 시그널 → 호외 발행 대상
-          if (updatedRunState.worldState) {
-            const QUEST_LABEL: Record<string, string> = {
-              S1_GET_ANGLE: '사건의 실마리가 포착되었다.',
-              S2_PROVE_TAMPER: '조작의 흔적이 드러나기 시작했다.',
-              S3_TRACE_ROUTE: '배후의 경로가 윤곽을 드러내고 있다.',
-              S4_CONFRONT: '진실에 한 걸음 더 다가섰다.',
-              S5_RESOLVE: '모든 것이 끝을 향해 치닫고 있다.',
-            };
-            const questText =
-              QUEST_LABEL[transition.newState] ??
-              `사건이 새로운 국면에 접어들었다.`;
-            const sf = (updatedRunState.worldState.signalFeed ?? []) as Array<
-              Record<string, unknown>
-            >;
-            sf.push({
-              id: `sig_quest_${transition.newState}_${turnNo}`,
-              channel: 'RUMOR',
-              severity: 4,
-              text: questText,
-              createdAtClock:
-                (updatedRunState.worldState as any).globalClock ?? 0,
-            });
-            updatedRunState.worldState = {
-              ...updatedRunState.worldState,
-              signalFeed: sf,
-            } as any;
-          }
-        } else {
-          // 단계 미변경 → 체류 턴 체크 (진행도 힌트)
-          const STALE_THRESHOLD = 5;
-          const sinceTurn = (
-            updatedRunState as unknown as Record<string, unknown>
-          ).questStateSinceTurn as number | undefined;
-          const staleTurns = sinceTurn ? turnNo - sinceTurn : turnNo;
-
-          if (
-            staleTurns >= STALE_THRESHOLD &&
-            discoveredFactIdsThisTurn.length === 0
-          ) {
-            const staleHint = this.questProgression.getStaleHint(
-              currentQuestState,
-              discoveredFacts,
-            );
-            if (staleHint) {
-              const AUTO_DISCOVER_THRESHOLD = 3; // 힌트 3회 반복 → fact 자동 발견
-              const hintCount = staleTurns - STALE_THRESHOLD + 1;
-
-              if (hintCount >= AUTO_DISCOVER_THRESHOLD) {
-                // 힌트 3회 이상 → fact 자동 발견 (플레이어가 소문을 충분히 인지)
-                if (!updatedRunState.discoveredQuestFacts)
-                  updatedRunState.discoveredQuestFacts = [];
-                if (
-                  !updatedRunState.discoveredQuestFacts.includes(
-                    staleHint.factId,
-                  )
-                ) {
-                  updatedRunState.discoveredQuestFacts.push(staleHint.factId);
-                  discoveredFacts.add(staleHint.factId);
-                  discoveredFactIdsThisTurn.push(staleHint.factId);
-                  if (updatedRunState.arcState?.discoveredQuestFacts) {
-                    updatedRunState.arcState.discoveredQuestFacts = [
-                      ...updatedRunState.discoveredQuestFacts,
-                    ];
-                  }
-                  this.logger.log(
-                    `[Quest] Auto-discovered fact: ${staleHint.factId} (${hintCount} hints on ${currentQuestState})`,
-                  );
-
-                  // 자동 발견 후 전환 재체크
-                  const recheck = this.questProgression.checkTransition(
-                    currentQuestState,
-                    discoveredFacts,
-                  );
-                  if (recheck.newState) {
-                    updatedRunState.questState = recheck.newState;
-                    if (updatedRunState.arcState) {
-                      updatedRunState.arcState.questState = recheck.newState;
-                    }
-                    (
-                      updatedRunState as unknown as Record<string, unknown>
-                    ).questStateSinceTurn = turnNo;
-                    questGoldReward +=
-                      this.questProgression.getTransitionGoldReward(
-                        currentQuestState,
-                        recheck.newState,
-                      );
-                    const recheckEq =
-                      this.questProgression.getTransitionEquipmentReward(
-                        currentQuestState,
-                        recheck.newState,
-                      );
-                    if (recheckEq) questEquipmentRewards.push(recheckEq);
-                    this.logger.log(
-                      `[Quest] Auto-transition: ${currentQuestState} -> ${recheck.newState}`,
-                    );
-                  }
-                }
-              } else {
-                // 힌트만 제공 (아직 자동 발견 안 함)
-                const HINT_MODES = [
-                  'OVERHEARD',
-                  'RUMOR_ECHO',
-                  'SCENE_CLUE',
-                ] as const;
-                const hintMode =
-                  HINT_MODES[rng.range(0, HINT_MODES.length - 1)];
-                updatedRunState.pendingQuestHint = {
-                  hint: staleHint.hint,
-                  setAtTurn: turnNo,
-                  mode: hintMode,
-                };
-                this.logger.log(
-                  `[Quest] Stale hint ${hintCount}/${AUTO_DISCOVER_THRESHOLD}: ${staleHint.factId} (${staleTurns} turns on ${currentQuestState}) mode=${hintMode}`,
-                );
-              }
-            }
-          }
-        }
-
-        // Part A: fact 발견 → 관련 Incident control 증가 (퀘스트-Incident 연동)
-        if (
-          discoveredFactIdsThisTurn.length > 0 &&
-          updatedRunState.worldState
-        ) {
-          const questData = this.content.getQuestData() as {
-            factToIncident?: Record<
-              string,
-              { incidents: string[]; controlBonus: number }
-            >;
-          } | null;
-          const mapping = questData?.factToIncident;
-          if (mapping) {
-            const activeIncidents = (updatedRunState.worldState
-              .activeIncidents ?? []) as Array<{
-              incidentId: string;
-              control: number;
-              resolved?: boolean;
-            }>;
-            for (const factId of discoveredFactIdsThisTurn) {
-              const entry = mapping[factId];
-              if (!entry) continue;
-              for (const incId of entry.incidents) {
-                const incident = activeIncidents.find(
-                  (i) => i.incidentId === incId && !i.resolved,
-                );
-                if (incident) {
-                  incident.control = Math.min(
-                    100,
-                    (incident.control ?? 0) + entry.controlBonus,
-                  );
-                  this.logger.log(
-                    `[Quest→Incident] ${factId} → ${incId} control +${entry.controlBonus} (now ${incident.control})`,
-                  );
-                }
-              }
-            }
-          }
-        }
-
-        // Part B: S5_RESOLVE + 5턴 + 최소 턴 수 충족 → 미해결 Incident resolved (엔딩 마킹)
-        // MIN_TURNS_FOR_NATURAL 가드를 Part B에도 적용: 15턴 미만에 마킹되면
-        // checkEndingConditions가 조기 엔딩을 막아 영구 누락된다.
-        {
-          const qs = updatedRunState.questState ?? '';
-          if (qs === 'S5_RESOLVE') {
-            const sinceTurn = (
-              updatedRunState as unknown as Record<string, unknown>
-            ).questStateSinceTurn as number | undefined;
-            const s5Turns = sinceTurn ? turnNo - sinceTurn : 0;
-            if (
-              s5Turns >= 5 &&
-              turnNo >= MIN_TURNS_FOR_NATURAL &&
-              updatedRunState.worldState
-            ) {
-              const activeIncidents = (updatedRunState.worldState
-                .activeIncidents ?? []) as Array<{
-                incidentId: string;
-                control: number;
-                resolved?: boolean;
-                outcome?: string;
-              }>;
-              for (const inc of activeIncidents) {
-                if (!inc.resolved) {
-                  inc.control = 100;
-                  inc.resolved = true;
-                  inc.outcome = 'CONTAINED';
-                  this.logger.log(
-                    `[Quest→Ending] S5+${s5Turns}턴: ${inc.incidentId} resolved=CONTAINED (엔딩 트리거)`,
-                  );
-                }
-              }
-            }
-          }
-        }
-
-        // pendingQuestHint: 이번 턴에 발견된 fact의 nextHint를 저장 → 다음 턴 LLM 프롬프트에서 사용
-        if (discoveredFactIdsThisTurn.length > 0) {
-          // 마지막 발견 fact의 nextHint 사용 (여러 fact 동시 발견 시 가장 최근 것)
-          const lastFactId =
-            discoveredFactIdsThisTurn[discoveredFactIdsThisTurn.length - 1];
-          const nextHint = this.questProgression.getFactNextHint(lastFactId);
-          if (nextHint) {
-            const HINT_MODES = [
-              'OVERHEARD',
-              'DOCUMENT',
-              'SCENE_CLUE',
-              'NPC_BEHAVIOR',
-              'RUMOR_ECHO',
-            ] as const;
-            const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length - 1)];
-            updatedRunState.pendingQuestHint = {
-              hint: nextHint,
-              setAtTurn: turnNo,
-              mode: hintMode,
-            };
-            this.logger.log(
-              `[Quest] pendingQuestHint set for fact=${lastFactId} mode=${hintMode} at turn=${turnNo}`,
-            );
-          }
-        }
-        // Phase 2: 소문 전파 — fact 발견 시 worldFacts에 소문 추가
-        if (
-          discoveredFactIdsThisTurn.length > 0 &&
-          updatedRunState.worldState
-        ) {
-          const ws = updatedRunState.worldState;
-          if (!ws.worldFacts) ws.worldFacts = [];
-          for (const factId of discoveredFactIdsThisTurn) {
-            const detail = this.questProgression.getFactDetail(factId);
-            if (detail) {
-              ws.worldFacts.push({
-                id: `rumor_${factId}_t${turnNo}`,
-                category: 'DISCOVERY',
-                text: `소문: ${detail}`,
-                locationId: ws.currentLocationId ?? '',
-                involvedNpcs: eventPrimaryNpc ? [eventPrimaryNpc] : [],
-                turnCreated: turnNo,
-                dayCreated: ws.day ?? 1,
-                tags: [factId, 'RUMOR'],
-                impact: 'minor',
-                permanent: false,
-                expiresAtTurn: turnNo + 20,
-              } as any);
-              this.logger.debug(
-                `[Quest] Rumor propagated: ${factId} → worldFacts`,
-              );
-            }
-          }
-        }
-      } catch (err) {
-        this.logger.warn(`[QuestProgression] error (non-fatal): ${err}`);
-      }
-    }
+    // [arch/77 P3.7] Quest Progression — processQuestProgression으로 추출.
+    // updatedRunState는 내부에서 제자리 변조(discoveredQuestFacts/questState 등).
+    const questOutcome = this.processQuestProgression({
+      updatedRunState,
+      resolveResult,
+      event,
+      intent,
+      rawInput,
+      inputType: body.input.type,
+      dialogueAct,
+      npcStates,
+      eventPrimaryNpc,
+      rng,
+      turnNo,
+    });
+    const discoveredFactIdsThisTurn = questOutcome.discoveredFactIdsThisTurn;
+    const questGoldReward = questOutcome.questGoldReward;
+    const questEquipmentRewards = questOutcome.questEquipmentRewards;
+    const bribeOpportunityNpcId = questOutcome.bribeOpportunityNpcId;
+    const questRevealThisTurn = questOutcome.questRevealThisTurn;
 
     // === 대화 주제에 factId 역보충: quest 발견 후 해당 NPC의 recentTopics에 factId 기록 ===
     if (
@@ -5204,7 +5268,7 @@ export class TurnsService {
     }
 
     // === Narrative Engine v1: UI data 추가 ===
-    const finalWs = updatedRunState.worldState!;
+    const finalWs = updatedRunState.worldState;
     // Signal Feed
     const signalFeedUI = (finalWs.signalFeed ?? []).map((s: any) => ({
       id: s.id,
