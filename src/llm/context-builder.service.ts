@@ -31,6 +31,7 @@ import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { NpcDefinition } from '../content/content.types.js';
 import type { NpcKnowledgeLedger } from '../db/types/npc-knowledge.js';
 import { getNpcSchedulePhaseEntry } from '../db/types/npc-schedule.js';
+import type { StructuredMemory } from '../db/types/structured-memory.js';
 import { MemoryRendererService } from './memory-renderer.service.js';
 import { MidSummaryService } from './mid-summary.service.js';
 import { IntentMemoryService } from '../engine/hub/intent-memory.service.js';
@@ -729,29 +730,9 @@ export class ContextBuilderService {
       deadlineContext = ContextBuilderService.buildDeadlineContext(mac, day);
     }
 
-    // NPC 소개 시스템: 소개 상태 수집
-    // ⚠️ newlyIntroducedNpcIds(이번 턴에 처음 소개되는 NPC)는 제외해야 함.
-    // turns.service에서 introduced=true를 먼저 설정한 후 DB에 커밋하므로,
-    // 비동기 LLM Worker가 읽는 runState에는 이미 introduced=true가 반영되어 있다.
-    // 이들을 introducedNpcIds에 포함하면 sanitizeNpcNames()가 실명을 통과시키고,
-    // prompt-builder가 실명을 사용해서 "이름 공개 전에 실명이 노출"되는 버그가 발생한다.
-    const newlyIntroducedNpcIds =
-      (uiAny?.newlyIntroducedNpcIds as string[]) ?? [];
-    const newlyEncounteredNpcIds =
-      (uiAny?.newlyEncounteredNpcIds as string[]) ?? [];
-    const introducedNpcIds: string[] = [];
-    if (runState) {
-      const allNpcStates = runState.npcStates as
-        | Record<string, NPCState>
-        | undefined;
-      if (allNpcStates) {
-        for (const [npcId, npc] of Object.entries(allNpcStates)) {
-          if (npc.introduced && !newlyIntroducedNpcIds.includes(npcId)) {
-            introducedNpcIds.push(npcId);
-          }
-        }
-      }
-    }
+    // NPC 소개 시스템: 소개 상태 수집 (P2.10 추출)
+    const { newlyIntroducedNpcIds, newlyEncounteredNpcIds, introducedNpcIds } =
+      this.collectIntroductionState(uiAny, runState);
 
     // Structured Memory v2: 렌더링
     let structuredSummary: string | null = null;
@@ -943,148 +924,18 @@ export class ContextBuilderService {
         ) || null;
     }
 
-    // Fixplan v1: 직전 장소 이탈 요약 — currentLocationId와 다른 장소에서 온 경우
-    let previousVisitContext: string | null = null;
-    if (structured?.lastExitSummary) {
-      const currentLocationId = (
-        runState?.worldState as Record<string, unknown> | undefined
-      )?.currentLocationId as string | undefined;
-      const exit = structured.lastExitSummary;
-      if (currentLocationId && exit.locationId !== currentLocationId) {
-        const parts: string[] = [];
-        parts.push(
-          `직전 장소: ${exit.locationName} (${exit.turnCount}턴 체류)`,
-        );
-        if (exit.keyActions.length > 0) {
-          parts.push(`주요 행동: ${exit.keyActions.join('; ')}`);
-        }
-        if (exit.keyDialogues.length > 0) {
-          parts.push(`주요 대화: ${exit.keyDialogues.join('; ')}`);
-        }
-        if (exit.unresolvedLeads.length > 0) {
-          parts.push(`미해결 단서: ${exit.unresolvedLeads.join('; ')}`);
-        }
-        previousVisitContext = parts.join('\n');
-      }
-    }
+    // Fixplan v1: 직전 장소 이탈 요약 (P2.9 추출)
+    const previousVisitContext = this.buildPreviousVisitContext(
+      structured,
+      runState,
+    );
 
-    // 프리셋 배경 강화: 주인공 배경 리마인드 블록 구축
-    let protagonistBackground: string | null = null;
-    if (presetId) {
-      const presetDef = this.content.getPreset(presetId);
-      if (presetDef) {
-        const bgParts: string[] = [];
-        bgParts.push(`직업: ${presetDef.name} (${presetDef.subtitle})`);
-        bgParts.push(`배경: ${presetDef.protagonistTheme}`);
-        // runState.actionBonuses 우선 (프리셋+특성 합산), 없으면 프리셋 fallback
-        const effectiveBonuses =
-          runState?.actionBonuses ?? presetDef.actionBonuses;
-        if (effectiveBonuses) {
-          const bonusDesc = Object.entries(effectiveBonuses)
-            .map(([action, bonus]) => `${action} +${bonus}`)
-            .join(', ');
-          bgParts.push(`특기: ${bonusDesc}`);
-        }
-        // 프리셋별 행동 묘사 키워드 — LLM이 행동 서술에 자연스럽게 반영
-        const PRESET_MANNERISMS: Record<
-          string,
-          { base: string; actions: Record<string, string> }
-        > = {
-          DOCKWORKER: {
-            base: '행동 특징: 거친 손, 무거운 것에 익숙한 어깨, 투박하지만 믿음직한 몸짓, 부두 노동자 특유의 직선적 화법',
-            actions: {
-              SNEAK:
-                '부두에서 야간 하역할 때 익힌 은밀한 발놀림, 어둠 속 짐 나르기에 익숙한 몸',
-              TALK: '투박하고 직설적인 말투, 허세를 싫어하는 솔직함, 노동자끼리 통하는 의리',
-              FIGHT:
-                '무거운 화물을 다루며 단련된 완력, 즉흥적이지만 파괴적인 근접 격투',
-              OBSERVE:
-                '항구에서 수상한 화물을 골라내던 경험, 물건의 무게와 크기를 눈대중으로 파악',
-            },
-          },
-          DESERTER: {
-            base: '행동 특징: 군인 특유의 절도 있는 움직임, 본능적으로 퇴로를 확인하는 습관, 전장의 긴장감이 배어있는 자세',
-            actions: {
-              SNEAK:
-                '군대 정찰 훈련으로 익힌 은밀 이동, 보초 교대 시간을 본능적으로 파악, 그림자와 벽을 이용한 침투',
-              TALK: '군인다운 간결한 말투, 상관에게 보고하듯 핵심만 전달, 불필요한 말을 아끼는 습관',
-              FIGHT:
-                '수비대에서 단련된 정석 검술, 방패와 대열 전투 경험, 상대의 빈틈을 찌르는 훈련된 눈',
-              OBSERVE:
-                '초소 근무에서 길러진 경계심, 인원 배치와 순찰 패턴을 읽는 군사적 시선',
-              STEAL:
-                '보급품 관리 경험으로 물건의 가치를 빠르게 판단, 군 시절 필요한 것을 확보하던 요령',
-            },
-          },
-          SMUGGLER: {
-            base: '행동 특징: 어둠에 익숙한 눈, 은밀하고 재빠른 손놀림, 상대를 살피는 날카로운 시선, 뒷골목을 잘 아는 발걸음',
-            actions: {
-              SNEAK:
-                '밀수 루트를 오가며 체득한 은신술, 감시의 사각지대를 본능적으로 찾아내는 능력',
-              TALK: '거래에 능숙한 화술, 상대의 약점을 파고드는 달변, 필요하면 거짓도 자연스럽게',
-              FIGHT:
-                '뒷골목 난투에서 익힌 비정규 전투, 칼보다 기습과 속임수를 선호',
-              OBSERVE:
-                '밀수품 거래에서 길러진 관찰력, 위조품과 진품을 구별하는 눈, 미행 감지 본능',
-            },
-          },
-          HERBALIST: {
-            base: '행동 특징: 풀과 약초 냄새가 배어있는 손, 식물을 다루듯 섬세한 손길, 관찰력 있는 시선, 차분하고 신중한 태도',
-            actions: {
-              SNEAK:
-                '숲에서 약초를 채집하며 익힌 조용한 발걸음, 동물을 놀라게 하지 않는 느린 움직임',
-              TALK: '환자를 대하듯 차분하고 다정한 말투, 상대의 상태를 살피며 대화하는 습관',
-              OBSERVE:
-                '약초의 미세한 차이를 구별하는 섬세한 관찰력, 냄새와 색으로 상황을 파악',
-              INVESTIGATE:
-                '약리학적 지식으로 독이나 약물 흔적을 간파, 상처와 질병에서 원인을 추론',
-            },
-          },
-          FALLEN_NOBLE: {
-            base: '행동 특징: 무의식적인 귀족 예법, 교양이 묻어나는 말투, 격식 있는 자세, 과거의 품격이 남아있는 행동거지',
-            actions: {
-              SNEAK:
-                '궁정 암투에서 배운 정치적 은신, 존재감을 지우기보다 자연스럽게 녹아드는 기술',
-              TALK: '사교계에서 연마된 화술, 상대의 지위에 맞춘 적절한 격식, 은유와 암시를 활용한 설득',
-              OBSERVE:
-                '궁정에서 길러진 정치적 통찰, 권력 관계와 파벌을 읽는 눈, 예절 뒤에 숨겨진 의도 간파',
-              BRIBE:
-                '귀족 사회의 뒷거래에 익숙, 돈과 인맥의 가치를 정확히 파악, 품위를 유지한 제안',
-            },
-          },
-          GLADIATOR: {
-            base: '행동 특징: 투기장에서 단련된 본능, 위험을 두려워하지 않는 당당한 자세, 전투적 시선, 거칠고 직접적인 행동',
-            actions: {
-              SNEAK:
-                '투기장의 지하 통로에서 익힌 어둠 속 이동, 덩치에 비해 의외로 민첩한 몸놀림',
-              TALK: '관중 앞에서 단련된 배짱, 허세와 위압으로 상대를 제압하는 직선적 화법',
-              FIGHT:
-                '다양한 무기와 맨손 격투에 통달, 관중을 사로잡는 과감한 전투 스타일, 고통에 익숙한 몸',
-              THREATEN:
-                '투기장에서 갈고닦은 위압감, 눈빛만으로 상대를 압도하는 존재감',
-            },
-          },
-        };
-        const presetData = PRESET_MANNERISMS[presetId];
-        if (presetData) {
-          bgParts.push(presetData.base);
-          // 이번 턴 행동에 맞는 세부 묘사 추가
-          const actionType = (serverResult.ui as Record<string, unknown>)
-            ?.actionContext
-            ? ((
-                (serverResult.ui as Record<string, unknown>)
-                  .actionContext as Record<string, unknown>
-              )?.parsedType as string | undefined)
-            : undefined;
-          if (actionType && presetData.actions[actionType]) {
-            bgParts.push(
-              `이번 행동(${actionType}) 묘사: ${presetData.actions[actionType]}`,
-            );
-          }
-        }
-        protagonistBackground = bgParts.join('\n');
-      }
-    }
+    // 프리셋 배경 강화: 주인공 배경 리마인드 (P2.8 추출)
+    const protagonistBackground = this.buildProtagonistBackground(
+      serverResult,
+      runState,
+      presetId,
+    );
 
     // === NPC 개인 기록: 현재 턴 관련 NPC만 선별 (P2.3 추출) ===
     const relevantNpcMemoryText = this.buildRelevantNpcMemoryText(
@@ -1997,6 +1848,206 @@ export class ContextBuilderService {
       allLocationTurnRows,
       locationSessionTurns,
     };
+  }
+
+  /**
+   * 프리셋 배경 리마인드 — 직업/배경/특기 + PRESET_MANNERISMS 행동 묘사.
+   * P2.8 추출 (동작 보존 컷-페이스트).
+   */
+  private buildProtagonistBackground(
+    serverResult: ServerResultV1,
+    runState: Record<string, unknown> | null | undefined,
+    presetId: string | null | undefined,
+  ): string | null {
+    let protagonistBackground: string | null = null;
+    if (presetId) {
+      const presetDef = this.content.getPreset(presetId);
+      if (presetDef) {
+        const bgParts: string[] = [];
+        bgParts.push(`직업: ${presetDef.name} (${presetDef.subtitle})`);
+        bgParts.push(`배경: ${presetDef.protagonistTheme}`);
+        // runState.actionBonuses 우선 (프리셋+특성 합산), 없으면 프리셋 fallback
+        const effectiveBonuses =
+          runState?.actionBonuses ?? presetDef.actionBonuses;
+        if (effectiveBonuses) {
+          const bonusDesc = Object.entries(effectiveBonuses)
+            .map(([action, bonus]) => `${action} +${bonus}`)
+            .join(', ');
+          bgParts.push(`특기: ${bonusDesc}`);
+        }
+        // 프리셋별 행동 묘사 키워드 — LLM이 행동 서술에 자연스럽게 반영
+        const PRESET_MANNERISMS: Record<
+          string,
+          { base: string; actions: Record<string, string> }
+        > = {
+          DOCKWORKER: {
+            base: '행동 특징: 거친 손, 무거운 것에 익숙한 어깨, 투박하지만 믿음직한 몸짓, 부두 노동자 특유의 직선적 화법',
+            actions: {
+              SNEAK:
+                '부두에서 야간 하역할 때 익힌 은밀한 발놀림, 어둠 속 짐 나르기에 익숙한 몸',
+              TALK: '투박하고 직설적인 말투, 허세를 싫어하는 솔직함, 노동자끼리 통하는 의리',
+              FIGHT:
+                '무거운 화물을 다루며 단련된 완력, 즉흥적이지만 파괴적인 근접 격투',
+              OBSERVE:
+                '항구에서 수상한 화물을 골라내던 경험, 물건의 무게와 크기를 눈대중으로 파악',
+            },
+          },
+          DESERTER: {
+            base: '행동 특징: 군인 특유의 절도 있는 움직임, 본능적으로 퇴로를 확인하는 습관, 전장의 긴장감이 배어있는 자세',
+            actions: {
+              SNEAK:
+                '군대 정찰 훈련으로 익힌 은밀 이동, 보초 교대 시간을 본능적으로 파악, 그림자와 벽을 이용한 침투',
+              TALK: '군인다운 간결한 말투, 상관에게 보고하듯 핵심만 전달, 불필요한 말을 아끼는 습관',
+              FIGHT:
+                '수비대에서 단련된 정석 검술, 방패와 대열 전투 경험, 상대의 빈틈을 찌르는 훈련된 눈',
+              OBSERVE:
+                '초소 근무에서 길러진 경계심, 인원 배치와 순찰 패턴을 읽는 군사적 시선',
+              STEAL:
+                '보급품 관리 경험으로 물건의 가치를 빠르게 판단, 군 시절 필요한 것을 확보하던 요령',
+            },
+          },
+          SMUGGLER: {
+            base: '행동 특징: 어둠에 익숙한 눈, 은밀하고 재빠른 손놀림, 상대를 살피는 날카로운 시선, 뒷골목을 잘 아는 발걸음',
+            actions: {
+              SNEAK:
+                '밀수 루트를 오가며 체득한 은신술, 감시의 사각지대를 본능적으로 찾아내는 능력',
+              TALK: '거래에 능숙한 화술, 상대의 약점을 파고드는 달변, 필요하면 거짓도 자연스럽게',
+              FIGHT:
+                '뒷골목 난투에서 익힌 비정규 전투, 칼보다 기습과 속임수를 선호',
+              OBSERVE:
+                '밀수품 거래에서 길러진 관찰력, 위조품과 진품을 구별하는 눈, 미행 감지 본능',
+            },
+          },
+          HERBALIST: {
+            base: '행동 특징: 풀과 약초 냄새가 배어있는 손, 식물을 다루듯 섬세한 손길, 관찰력 있는 시선, 차분하고 신중한 태도',
+            actions: {
+              SNEAK:
+                '숲에서 약초를 채집하며 익힌 조용한 발걸음, 동물을 놀라게 하지 않는 느린 움직임',
+              TALK: '환자를 대하듯 차분하고 다정한 말투, 상대의 상태를 살피며 대화하는 습관',
+              OBSERVE:
+                '약초의 미세한 차이를 구별하는 섬세한 관찰력, 냄새와 색으로 상황을 파악',
+              INVESTIGATE:
+                '약리학적 지식으로 독이나 약물 흔적을 간파, 상처와 질병에서 원인을 추론',
+            },
+          },
+          FALLEN_NOBLE: {
+            base: '행동 특징: 무의식적인 귀족 예법, 교양이 묻어나는 말투, 격식 있는 자세, 과거의 품격이 남아있는 행동거지',
+            actions: {
+              SNEAK:
+                '궁정 암투에서 배운 정치적 은신, 존재감을 지우기보다 자연스럽게 녹아드는 기술',
+              TALK: '사교계에서 연마된 화술, 상대의 지위에 맞춘 적절한 격식, 은유와 암시를 활용한 설득',
+              OBSERVE:
+                '궁정에서 길러진 정치적 통찰, 권력 관계와 파벌을 읽는 눈, 예절 뒤에 숨겨진 의도 간파',
+              BRIBE:
+                '귀족 사회의 뒷거래에 익숙, 돈과 인맥의 가치를 정확히 파악, 품위를 유지한 제안',
+            },
+          },
+          GLADIATOR: {
+            base: '행동 특징: 투기장에서 단련된 본능, 위험을 두려워하지 않는 당당한 자세, 전투적 시선, 거칠고 직접적인 행동',
+            actions: {
+              SNEAK:
+                '투기장의 지하 통로에서 익힌 어둠 속 이동, 덩치에 비해 의외로 민첩한 몸놀림',
+              TALK: '관중 앞에서 단련된 배짱, 허세와 위압으로 상대를 제압하는 직선적 화법',
+              FIGHT:
+                '다양한 무기와 맨손 격투에 통달, 관중을 사로잡는 과감한 전투 스타일, 고통에 익숙한 몸',
+              THREATEN:
+                '투기장에서 갈고닦은 위압감, 눈빛만으로 상대를 압도하는 존재감',
+            },
+          },
+        };
+        const presetData = PRESET_MANNERISMS[presetId];
+        if (presetData) {
+          bgParts.push(presetData.base);
+          // 이번 턴 행동에 맞는 세부 묘사 추가
+          const actionType = (serverResult.ui as Record<string, unknown>)
+            ?.actionContext
+            ? ((
+                (serverResult.ui as Record<string, unknown>)
+                  .actionContext as Record<string, unknown>
+              )?.parsedType as string | undefined)
+            : undefined;
+          if (actionType && presetData.actions[actionType]) {
+            bgParts.push(
+              `이번 행동(${actionType}) 묘사: ${presetData.actions[actionType]}`,
+            );
+          }
+        }
+        protagonistBackground = bgParts.join('\n');
+      }
+    }
+    return protagonistBackground;
+  }
+
+  /**
+   * 직전 장소 이탈 요약 (Fixplan v1) — 다른 장소에서 온 경우 체류 기록 요약.
+   * P2.9 추출 (동작 보존 컷-페이스트).
+   */
+  private buildPreviousVisitContext(
+    structured: StructuredMemory | null | undefined,
+    runState: Record<string, unknown> | null | undefined,
+  ): string | null {
+    let previousVisitContext: string | null = null;
+    if (structured?.lastExitSummary) {
+      const currentLocationId = (
+        runState?.worldState as Record<string, unknown> | undefined
+      )?.currentLocationId as string | undefined;
+      const exit = structured.lastExitSummary;
+      if (currentLocationId && exit.locationId !== currentLocationId) {
+        const parts: string[] = [];
+        parts.push(
+          `직전 장소: ${exit.locationName} (${exit.turnCount}턴 체류)`,
+        );
+        if (exit.keyActions.length > 0) {
+          parts.push(`주요 행동: ${exit.keyActions.join('; ')}`);
+        }
+        if (exit.keyDialogues.length > 0) {
+          parts.push(`주요 대화: ${exit.keyDialogues.join('; ')}`);
+        }
+        if (exit.unresolvedLeads.length > 0) {
+          parts.push(`미해결 단서: ${exit.unresolvedLeads.join('; ')}`);
+        }
+        previousVisitContext = parts.join('\n');
+      }
+    }
+    return previousVisitContext;
+  }
+
+  /**
+   * NPC 소개 상태 수집 — 이번 턴 신규 소개는 introducedNpcIds에서 제외
+   * (2턴 분리 — 소개 턴 실명 노출 버그 방지). P2.10 추출 (동작 보존).
+   */
+  private collectIntroductionState(
+    uiAny: Record<string, unknown> | undefined,
+    runState: Record<string, unknown> | null | undefined,
+  ): {
+    newlyIntroducedNpcIds: string[];
+    newlyEncounteredNpcIds: string[];
+    introducedNpcIds: string[];
+  } {
+    // NPC 소개 시스템: 소개 상태 수집
+    // ⚠️ newlyIntroducedNpcIds(이번 턴에 처음 소개되는 NPC)는 제외해야 함.
+    // turns.service에서 introduced=true를 먼저 설정한 후 DB에 커밋하므로,
+    // 비동기 LLM Worker가 읽는 runState에는 이미 introduced=true가 반영되어 있다.
+    // 이들을 introducedNpcIds에 포함하면 sanitizeNpcNames()가 실명을 통과시키고,
+    // prompt-builder가 실명을 사용해서 "이름 공개 전에 실명이 노출"되는 버그가 발생한다.
+    const newlyIntroducedNpcIds =
+      (uiAny?.newlyIntroducedNpcIds as string[]) ?? [];
+    const newlyEncounteredNpcIds =
+      (uiAny?.newlyEncounteredNpcIds as string[]) ?? [];
+    const introducedNpcIds: string[] = [];
+    if (runState) {
+      const allNpcStates = runState.npcStates as
+        | Record<string, NPCState>
+        | undefined;
+      if (allNpcStates) {
+        for (const [npcId, npc] of Object.entries(allNpcStates)) {
+          if (npc.introduced && !newlyIntroducedNpcIds.includes(npcId)) {
+            introducedNpcIds.push(npcId);
+          }
+        }
+      }
+    }
+    return { newlyIntroducedNpcIds, newlyEncounteredNpcIds, introducedNpcIds };
   }
 
   /**
