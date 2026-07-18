@@ -3536,239 +3536,51 @@ export class TurnsService {
     }
   }
 
-  private async handleLocationTurnInner(
-    run: any,
-    currentNode: any,
-    turnNo: number,
-    body: SubmitTurnBody,
-    runState: RunState,
-    playerStats: PermanentStats,
-  ) {
-    // HP≤0 방어: 전투 패배 등으로 HP가 0 이하인 상태에서 행동 방지
-    if (runState.hp <= 0) {
-      return this.handleDefeatByHpZero(
-        run,
-        currentNode,
-        turnNo,
-        body,
-        runState,
-      );
-    }
-
-    let ws = runState.worldState ?? this.worldStateService.initWorldState();
-    const arcState = runState.arcState ?? this.arcService.initArcState();
-    let agenda = runState.agenda ?? this.agendaService.initAgenda();
-    const cooldowns = runState.eventCooldowns ?? {};
-    const locationId =
-      ws.currentLocationId ??
-      currentNode.nodeMeta?.locationId ??
-      this.content.getHubMeta().defaultLocationId;
-    const updatedRunState: RunState = { ...runState };
-
-    // go_hub 선택 시 → HUB 복귀
-    if (body.input.type === 'CHOICE' && body.input.choiceId === 'go_hub') {
-      return this.returnToHubFlow(
-        run,
-        currentNode,
-        turnNo,
-        body,
-        body.input.choiceId,
-        runState,
-        ws,
-        arcState,
-        `${this.content.getHubMeta().name}${korParticle(this.content.getHubMeta().name, '으로', '로')} 발걸음을 돌린다.`,
-      );
-    }
-
-    // ACTION/CHOICE → IntentParserV2 파싱
-    let rawInput = body.input.text ?? body.input.choiceId ?? '';
-    const source =
-      body.input.type === 'CHOICE' ? ('CHOICE' as const) : ('RULE' as const);
-    let choicePayload: Record<string, unknown> | undefined;
-
-    if (body.input.type === 'CHOICE' && body.input.choiceId) {
-      const prevTurn = await this.db.query.turns.findFirst({
-        where: and(
-          eq(turns.runId, run.id),
-          eq(turns.turnNo, run.currentTurnNo),
-        ),
-        columns: { serverResult: true, llmChoices: true },
-      });
-      // 서버 생성 선택지에서 먼저 탐색
-      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)
-        ?.choices;
-      let matched = prevChoices?.find((c) => c.id === body.input.choiceId);
-      // 못 찾으면 LLM 생성 선택지에서 탐색
-      if (!matched && prevTurn?.llmChoices) {
-        const llmChoices = prevTurn.llmChoices;
-        matched = llmChoices.find((c) => c.id === body.input.choiceId);
-      }
-      if (matched) {
-        rawInput = matched.label;
-        choicePayload = matched.action.payload;
-      }
-    }
-
-    // 고집(insistence) 카운트 계산: 같은 actionType 연속 반복 횟수
-    const actionHistory = runState.actionHistory ?? [];
-    const { count: insistenceCount, repeatedType } =
-      this.calculateInsistenceCount(actionHistory);
-    // NPC 목록을 NpcForIntent로 변환하여 IntentParser에 전달 (targetNpc 파싱용)
-    const npcsForIntent = this.content.getAllNpcs().map((n) => ({
-      npcId: n.npcId,
-      name: n.name,
-      unknownAlias: n.unknownAlias,
-      title: n.title,
-    }));
-    let intent = await this.llmIntentParser.parseWithInsistence(
-      rawInput,
-      source,
+  // [arch/77 P3 트랜치 2] Step 1~3: 씬 연속성(CHOICE sourceEventId) →
+  // IncidentRouter → Player-First 턴 모드 결정(불변식 33·47) + 모드별 이벤트
+  // 매칭(비트 채택/SitGen/EventDirector/Procedural) + FREE 이벤트 셸 보장.
+  // 반환 matchedEvent는 캐시 참조일 수 있음 — 소비 전 딥카피 필수(불변식 48).
+  // updatedRunState는 비트 채택 시 제자리 변조(nextBeatCandidates 소비·
+  // plotProgress 계측·dynamicNpcs 등록).
+  private determineTurnEventAndRouting(params: {
+    choicePayload: Record<string, unknown> | undefined;
+    actionHistory: NonNullable<RunState['actionHistory']>;
+    ws: WorldState;
+    locationId: string;
+    intentV3: ReturnType<IntentV3BuilderService['build']>;
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    rawInput: string;
+    inputType: SubmitTurnBody['input']['type'];
+    runState: RunState;
+    updatedRunState: RunState;
+    arcState: NonNullable<RunState['arcState']>;
+    agenda: NonNullable<RunState['agenda']>;
+    cooldowns: NonNullable<RunState['eventCooldowns']>;
+    turnNo: number;
+    rng: ReturnType<RngService['create']>;
+  }): {
+    matchedEvent: import('../db/types/event-def.js').EventDefV2 | null;
+    routingResult: ReturnType<IncidentRouterService['route']>;
+  } {
+    const {
       choicePayload,
-      insistenceCount,
-      repeatedType,
+      actionHistory,
+      ws,
       locationId,
-      npcsForIntent,
-    );
-    const _sec = intent.secondaryActionType
-      ? `+${intent.secondaryActionType}`
-      : '';
-    this.logger.log(
-      `[Intent] "${rawInput.slice(0, 30)}" → ${intent.actionType}${_sec} (source=${intent.source}, tone=${intent.tone}, conf=${intent.confidence})`,
-    );
-
-    // V3 Intent 확장 (유저 주도형 시스템)
-    const intentV3 = this.intentV3Builder.build(
+      intentV3,
       intent,
       rawInput,
-      locationId,
-      choicePayload,
-    );
-    this.logger.debug(
-      `[IntentV3] goal=${intentV3.goalCategory}, vector=${intentV3.approachVector}, goalText="${intentV3.goalText}"`,
-    );
-
-    // Phase 4a: EQUIP/UNEQUIP — 장비 착용/해제 (주사위 판정 없음, 즉시 처리)
-    if (
-      (intent.actionType === 'EQUIP' || intent.actionType === 'UNEQUIP') &&
-      (body.input.type === 'ACTION' || body.input.type === 'CHOICE')
-    ) {
-      return this.handleEquipAction(
-        run,
-        currentNode,
-        turnNo,
-        body,
-        rawInput,
-        updatedRunState,
-        intent,
-      );
-    }
-
-    // architecture/46 §4.2 + 48 — 대화 잠금 중 비SOCIAL 행동 차단 (NPA 검출 NPC_JUMP 회귀 방지)
-    // 직전 턴이 SOCIAL NPC 대화였고 현재 입력이 명시적 이동/공격/도둑 의도가 아니라면
-    // INVESTIGATE로 다운그레이드해 같은 NPC와의 대화 흐름을 유지한다.
-    // 예시:
-    //   - "장부 사건, 부두 쪽 사람들 의심하시오?" — "부두" → MOVE_LOCATION 차단
-    //   - "가장 기억에 남는 싸움이 있소?" — "싸움" → FIGHT 차단 (회상 질문)
-    if (
-      body.input.type === 'ACTION' &&
-      ((intent.actionType === 'MOVE_LOCATION' &&
-        !this.hasExplicitMoveIntent(rawInput)) ||
-        (intent.actionType === 'FIGHT' &&
-          !this.hasExplicitFightIntent(rawInput)) ||
-        (intent.actionType === 'STEAL' &&
-          !this.hasExplicitStealIntent(rawInput)))
-    ) {
-      // 정본: findDowngradeLockNpcCore (작별로 닫힌 대화는 잇지 않음)
-      const prevSocialNpc = findDowngradeLockNpcCore(
-        actionHistory as Array<Record<string, unknown>>,
-      );
-      if (prevSocialNpc) {
-        this.logger.log(
-          `[대화잠금] ${intent.actionType} 차단: 직전 SOCIAL NPC ${prevSocialNpc} 잠금 우선 → INVESTIGATE 다운그레이드 (input="${rawInput.slice(0, 40)}")`,
-        );
-        intent = {
-          ...intent,
-          actionType: 'INVESTIGATE',
-        };
-      }
-    }
-
-    // MOVE_LOCATION: 자유 텍스트로 다른 LOCATION 이동 요청 시 실제 전환
-    if (
-      intent.actionType === 'MOVE_LOCATION' &&
-      (body.input.type === 'ACTION' || body.input.type === 'CHOICE')
-    ) {
-      const targetLocationId = this.extractTargetLocation(rawInput, locationId);
-      if (targetLocationId && targetLocationId !== locationId) {
-        return this.performLocationTransition(
-          run,
-          currentNode,
-          turnNo,
-          body,
-          rawInput,
-          runState,
-          ws,
-          arcState,
-          locationId,
-          targetLocationId,
-        );
-      }
-      // Fixplan3-P4: 목표 장소 불명확 시 HUB 복귀 (go_hub와 동일 처리)
-      return this.returnToHubFlow(
-        run,
-        currentNode,
-        turnNo,
-        body,
-        rawInput,
-        runState,
-        ws,
-        arcState,
-        `${this.content.getHubMeta().name}${korParticle(this.content.getHubMeta().name, '으로', '로')} 돌아가기로 한다.`,
-      );
-    }
-
-    // 레이턴시 #2 — Challenge 분류(회색지대 nano ~0.5s)를 이벤트 매칭·orchestration과
-    // 병렬 실행. FREE/CHECK 판단은 rawInput+actionType이 지배 요소이고, 이벤트 제목·
-    // 판정 NPC posture는 보조 힌트라 조기 발화의 판정 영향은 미미 (대상 NPC는
-    // 텍스트 매칭으로 조기 확보). 룰 게이트(RULE_FREE/CHECK)는 classify 내부 즉시 반환.
-    // 발화 지점: 조기 return(EQUIP/MOVE)·intent 다운그레이드가 모두 끝난 직후.
-    const earlyChallengeNpcId = this.extractTargetNpcFromInput(
-      rawInput,
-      body.input.type,
-    );
-    const earlyChallengeNpcDef = earlyChallengeNpcId
-      ? this.content.getNpc(earlyChallengeNpcId)
-      : null;
-    const challengePromise = this.challengeClassifier
-      ? this.challengeClassifier
-          .classify({
-            rawInput,
-            actionType: intent.actionType,
-            targetNpcId: earlyChallengeNpcId ?? null,
-            targetNpcName:
-              earlyChallengeNpcDef?.name ??
-              earlyChallengeNpcDef?.unknownAlias ??
-              null,
-            targetNpcPosture: null,
-            locationName: this.content.getLocation(locationId)?.name ?? null,
-            eventTitle: null, // 병렬화로 이벤트 미확정 — 보조 힌트라 생략
-          })
-          .catch(
-            (): ChallengeDecision => ({
-              result: 'CHECK',
-              reason: 'classifier error',
-              source: 'fallback',
-            }),
-          )
-      : Promise.resolve<ChallengeDecision>({
-          result: 'CHECK',
-          reason: 'classifier unavailable',
-          source: 'rule',
-        });
-
+      inputType,
+      runState,
+      updatedRunState,
+      arcState,
+      agenda,
+      cooldowns,
+      turnNo,
+      rng,
+    } = params;
     // 이벤트 연속성: 의도 기반 씬 연속성 판단 (3단계)
     const sourceEventId = choicePayload?.sourceEventId as string | undefined;
-    const rng = this.rngService.create(run.seed, turnNo);
     let matchedEvent: import('../db/types/event-def.js').EventDefV2 | null =
       null;
 
@@ -3831,7 +3643,7 @@ export class TurnsService {
       // 플레이어 텍스트에서 NPC 매칭 (사전 판별 — turnMode 결정용)
       const earlyTargetNpcId = this.extractTargetNpcFromInput(
         rawInput,
-        body.input.type,
+        inputType,
       );
 
       // 사건 압력 계산 (pressure ≥ 70으로 상향 — Player-First)
@@ -3879,7 +3691,7 @@ export class TurnsService {
       // REST 의도 턴은 디렉터 비트 채택 금지, 대화 잠금 활성 턴은 강제창 발동 제외
       // (의도 존중). dialogueAct 정본은 아래(nano 블록)에서 재계산되어 로그·전달에 쓰임.
       const earlyDialogueAct: DialogueAct | null =
-        body.input.type === 'ACTION' ? detectDialogueAct(rawInput) : null;
+        inputType === 'ACTION' ? detectDialogueAct(rawInput) : null;
       // 대화 잠금 활성 = 직전 대화 NPC 존재 + 이번 행동이 대화 계열(불변식 26).
       const conversationLockActive =
         !!lastPrimaryNpcId && SOCIAL_ACTIONS.has(intent.actionType);
@@ -4239,6 +4051,261 @@ export class TurnsService {
         `[FreeAction] No event matched — player-driven turn (action=${intent.actionType})`,
       );
     }
+
+    return { matchedEvent, routingResult };
+  }
+
+  private async handleLocationTurnInner(
+    run: any,
+    currentNode: any,
+    turnNo: number,
+    body: SubmitTurnBody,
+    runState: RunState,
+    playerStats: PermanentStats,
+  ) {
+    // HP≤0 방어: 전투 패배 등으로 HP가 0 이하인 상태에서 행동 방지
+    if (runState.hp <= 0) {
+      return this.handleDefeatByHpZero(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        runState,
+      );
+    }
+
+    let ws = runState.worldState ?? this.worldStateService.initWorldState();
+    const arcState = runState.arcState ?? this.arcService.initArcState();
+    let agenda = runState.agenda ?? this.agendaService.initAgenda();
+    const cooldowns = runState.eventCooldowns ?? {};
+    const locationId =
+      ws.currentLocationId ??
+      currentNode.nodeMeta?.locationId ??
+      this.content.getHubMeta().defaultLocationId;
+    const updatedRunState: RunState = { ...runState };
+
+    // go_hub 선택 시 → HUB 복귀
+    if (body.input.type === 'CHOICE' && body.input.choiceId === 'go_hub') {
+      return this.returnToHubFlow(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        body.input.choiceId,
+        runState,
+        ws,
+        arcState,
+        `${this.content.getHubMeta().name}${korParticle(this.content.getHubMeta().name, '으로', '로')} 발걸음을 돌린다.`,
+      );
+    }
+
+    // ACTION/CHOICE → IntentParserV2 파싱
+    let rawInput = body.input.text ?? body.input.choiceId ?? '';
+    const source =
+      body.input.type === 'CHOICE' ? ('CHOICE' as const) : ('RULE' as const);
+    let choicePayload: Record<string, unknown> | undefined;
+
+    if (body.input.type === 'CHOICE' && body.input.choiceId) {
+      const prevTurn = await this.db.query.turns.findFirst({
+        where: and(
+          eq(turns.runId, run.id),
+          eq(turns.turnNo, run.currentTurnNo),
+        ),
+        columns: { serverResult: true, llmChoices: true },
+      });
+      // 서버 생성 선택지에서 먼저 탐색
+      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)
+        ?.choices;
+      let matched = prevChoices?.find((c) => c.id === body.input.choiceId);
+      // 못 찾으면 LLM 생성 선택지에서 탐색
+      if (!matched && prevTurn?.llmChoices) {
+        const llmChoices = prevTurn.llmChoices;
+        matched = llmChoices.find((c) => c.id === body.input.choiceId);
+      }
+      if (matched) {
+        rawInput = matched.label;
+        choicePayload = matched.action.payload;
+      }
+    }
+
+    // 고집(insistence) 카운트 계산: 같은 actionType 연속 반복 횟수
+    const actionHistory = runState.actionHistory ?? [];
+    const { count: insistenceCount, repeatedType } =
+      this.calculateInsistenceCount(actionHistory);
+    // NPC 목록을 NpcForIntent로 변환하여 IntentParser에 전달 (targetNpc 파싱용)
+    const npcsForIntent = this.content.getAllNpcs().map((n) => ({
+      npcId: n.npcId,
+      name: n.name,
+      unknownAlias: n.unknownAlias,
+      title: n.title,
+    }));
+    let intent = await this.llmIntentParser.parseWithInsistence(
+      rawInput,
+      source,
+      choicePayload,
+      insistenceCount,
+      repeatedType,
+      locationId,
+      npcsForIntent,
+    );
+    const _sec = intent.secondaryActionType
+      ? `+${intent.secondaryActionType}`
+      : '';
+    this.logger.log(
+      `[Intent] "${rawInput.slice(0, 30)}" → ${intent.actionType}${_sec} (source=${intent.source}, tone=${intent.tone}, conf=${intent.confidence})`,
+    );
+
+    // V3 Intent 확장 (유저 주도형 시스템)
+    const intentV3 = this.intentV3Builder.build(
+      intent,
+      rawInput,
+      locationId,
+      choicePayload,
+    );
+    this.logger.debug(
+      `[IntentV3] goal=${intentV3.goalCategory}, vector=${intentV3.approachVector}, goalText="${intentV3.goalText}"`,
+    );
+
+    // Phase 4a: EQUIP/UNEQUIP — 장비 착용/해제 (주사위 판정 없음, 즉시 처리)
+    if (
+      (intent.actionType === 'EQUIP' || intent.actionType === 'UNEQUIP') &&
+      (body.input.type === 'ACTION' || body.input.type === 'CHOICE')
+    ) {
+      return this.handleEquipAction(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        rawInput,
+        updatedRunState,
+        intent,
+      );
+    }
+
+    // architecture/46 §4.2 + 48 — 대화 잠금 중 비SOCIAL 행동 차단 (NPA 검출 NPC_JUMP 회귀 방지)
+    // 직전 턴이 SOCIAL NPC 대화였고 현재 입력이 명시적 이동/공격/도둑 의도가 아니라면
+    // INVESTIGATE로 다운그레이드해 같은 NPC와의 대화 흐름을 유지한다.
+    // 예시:
+    //   - "장부 사건, 부두 쪽 사람들 의심하시오?" — "부두" → MOVE_LOCATION 차단
+    //   - "가장 기억에 남는 싸움이 있소?" — "싸움" → FIGHT 차단 (회상 질문)
+    if (
+      body.input.type === 'ACTION' &&
+      ((intent.actionType === 'MOVE_LOCATION' &&
+        !this.hasExplicitMoveIntent(rawInput)) ||
+        (intent.actionType === 'FIGHT' &&
+          !this.hasExplicitFightIntent(rawInput)) ||
+        (intent.actionType === 'STEAL' &&
+          !this.hasExplicitStealIntent(rawInput)))
+    ) {
+      // 정본: findDowngradeLockNpcCore (작별로 닫힌 대화는 잇지 않음)
+      const prevSocialNpc = findDowngradeLockNpcCore(
+        actionHistory as Array<Record<string, unknown>>,
+      );
+      if (prevSocialNpc) {
+        this.logger.log(
+          `[대화잠금] ${intent.actionType} 차단: 직전 SOCIAL NPC ${prevSocialNpc} 잠금 우선 → INVESTIGATE 다운그레이드 (input="${rawInput.slice(0, 40)}")`,
+        );
+        intent = {
+          ...intent,
+          actionType: 'INVESTIGATE',
+        };
+      }
+    }
+
+    // MOVE_LOCATION: 자유 텍스트로 다른 LOCATION 이동 요청 시 실제 전환
+    if (
+      intent.actionType === 'MOVE_LOCATION' &&
+      (body.input.type === 'ACTION' || body.input.type === 'CHOICE')
+    ) {
+      const targetLocationId = this.extractTargetLocation(rawInput, locationId);
+      if (targetLocationId && targetLocationId !== locationId) {
+        return this.performLocationTransition(
+          run,
+          currentNode,
+          turnNo,
+          body,
+          rawInput,
+          runState,
+          ws,
+          arcState,
+          locationId,
+          targetLocationId,
+        );
+      }
+      // Fixplan3-P4: 목표 장소 불명확 시 HUB 복귀 (go_hub와 동일 처리)
+      return this.returnToHubFlow(
+        run,
+        currentNode,
+        turnNo,
+        body,
+        rawInput,
+        runState,
+        ws,
+        arcState,
+        `${this.content.getHubMeta().name}${korParticle(this.content.getHubMeta().name, '으로', '로')} 돌아가기로 한다.`,
+      );
+    }
+
+    // 레이턴시 #2 — Challenge 분류(회색지대 nano ~0.5s)를 이벤트 매칭·orchestration과
+    // 병렬 실행. FREE/CHECK 판단은 rawInput+actionType이 지배 요소이고, 이벤트 제목·
+    // 판정 NPC posture는 보조 힌트라 조기 발화의 판정 영향은 미미 (대상 NPC는
+    // 텍스트 매칭으로 조기 확보). 룰 게이트(RULE_FREE/CHECK)는 classify 내부 즉시 반환.
+    // 발화 지점: 조기 return(EQUIP/MOVE)·intent 다운그레이드가 모두 끝난 직후.
+    const earlyChallengeNpcId = this.extractTargetNpcFromInput(
+      rawInput,
+      body.input.type,
+    );
+    const earlyChallengeNpcDef = earlyChallengeNpcId
+      ? this.content.getNpc(earlyChallengeNpcId)
+      : null;
+    const challengePromise = this.challengeClassifier
+      ? this.challengeClassifier
+          .classify({
+            rawInput,
+            actionType: intent.actionType,
+            targetNpcId: earlyChallengeNpcId ?? null,
+            targetNpcName:
+              earlyChallengeNpcDef?.name ??
+              earlyChallengeNpcDef?.unknownAlias ??
+              null,
+            targetNpcPosture: null,
+            locationName: this.content.getLocation(locationId)?.name ?? null,
+            eventTitle: null, // 병렬화로 이벤트 미확정 — 보조 힌트라 생략
+          })
+          .catch(
+            (): ChallengeDecision => ({
+              result: 'CHECK',
+              reason: 'classifier error',
+              source: 'fallback',
+            }),
+          )
+      : Promise.resolve<ChallengeDecision>({
+          result: 'CHECK',
+          reason: 'classifier unavailable',
+          source: 'rule',
+        });
+
+    const rng = this.rngService.create(run.seed, turnNo);
+    // [arch/77 P3 트랜치 2] Step 1~3 턴 모드 결정 + 이벤트 매칭 + FREE 셸 보장 —
+    // determineTurnEventAndRouting으로 추출. updatedRunState는 비트 채택 시
+    // 제자리 변조(nextBeatCandidates 소비·plotProgress·dynamicNpcs).
+    const { matchedEvent, routingResult } = this.determineTurnEventAndRouting({
+      choicePayload,
+      actionHistory,
+      ws,
+      locationId,
+      intentV3,
+      intent,
+      rawInput,
+      inputType: body.input.type,
+      runState,
+      updatedRunState,
+      arcState,
+      agenda,
+      cooldowns,
+      turnNo,
+      rng,
+    });
 
     // matchedEvent는 이 시점에서 항상 non-null (FREE 이벤트 셸이 보장)
     //
