@@ -23,6 +23,7 @@ import { korParticle } from '../common/korean.js';
 import { sanitizeNpcNamesForTurn } from '../db/types/npc-state.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { stripLeakedPromptBlocks } from './prompts/injected-block-headers.js';
+import { applyNarrativeQualityFilters } from './narrative-filter.core.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
@@ -1666,270 +1667,28 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           narrative = stripLeakedPromptBlocks(narrative);
         } // end if (!jsonModeParsed) — 산문 태그 파싱
 
-        // 4-a-2b. 플레이어 대사 큰따옴표 방어 — LLM이 플레이어 대사를 큰따옴표로 쓰면 홑따옴표로 치환
-        // 패턴: "당신은/당신이 + ~라/~고/~며 + 물/말/외/중얼 + 큰따옴표 대사"
-        narrative = narrative.replace(
-          /당신[은이가]\s[^"]*?(?:라고|라며|라|고)\s*(?:물었|말했|외쳤|중얼|되물|답했|내뱉)\S{0,5}\s*"([^"]+)"/g,
-          (match, dialogue) => match.replace(`"${dialogue}"`, `'${dialogue}'`),
-        );
-        // 패턴2: "당신은 "대사"" (직접 큰따옴표)
-        narrative = narrative.replace(
-          /당신[은이가]\s*"([^"]{3,30})"/g,
-          (match, dialogue) => match.replace(`"${dialogue}"`, `'${dialogue}'`),
-        );
-
-        // 4-a-3. 서술 품질 후처리 필터: 위반 패턴 감지 및 자동 수정
-        const violations: string[] = [];
-
-        // P1. NPC 다가오기 패턴 자동 치환 (bug 4655: JSON 외부화)
-        //   규칙은 content/graymar_v1/text_replacements.json 에서 로드.
-        let approachFixCount = 0;
-        const approachRules = this.content.getTextReplacements().npcApproach;
-        for (const rule of approachRules) {
-          const before = narrative;
-          narrative = narrative.replace(
-            new RegExp(rule.pattern, 'g'),
-            rule.replacement,
-          );
-          if (narrative !== before) approachFixCount++;
-        }
-        if (approachFixCount > 0) {
-          violations.push(`AUTO_FIX: NPC_APPROACH(${approachFixCount}건 치환)`);
-        }
-
-        // P1b. 메타 서술 제거 — 턴 번호 노출, "플레이어가" 3인칭 호칭
+        // [arch/77 P4.1] 서술 품질 후처리 체인 — narrative-filter.core 정본 호출.
+        // 순서·시맨틱 동일(플레이어 대사 방어→P1→P1b→R1→P4→P5→P6→중복 제거),
+        // llmChoices label은 제자리 변조.
         {
-          // "턴 N에서" / "턴 N에" / "턴N에서" → 문장 단위 삭제는 위험하므로 해당 구절만 제거
-          const beforeMeta = narrative;
-          narrative = narrative
-            .replace(/턴\s?\d+에서\s?/g, '')
-            .replace(/턴\s?\d+에\s/g, '')
-            .replace(/플레이어가\s/g, '당신이 ')
-            .replace(/플레이어의\s/g, '당신의 ')
-            .replace(/플레이어는\s/g, '당신은 ')
-            .replace(/플레이어를\s/g, '당신을 ')
-            // "방금 전 NPC에게 X를 시도하여 성공/실패한 직후였다" 패턴 제거
-            .replace(
-              /당신이\s?방금\s?전\s?[^.]*?시도하여\s?(?:성공|실패)[^.]*?직후였다\.\s?/g,
-              '',
-            )
-            .replace(
-              /[^.]*?를\s시도하여\s(?:성공|실패)\s?(?:한|했던)\s?직후[^.]*?\.\s?/g,
-              '',
-            )
-            // "(활성 단서: ...)" 시스템 메모 노출 제거
-            .replace(/\(활성 단서:[^)]*\)\s?/g, '');
-          if (narrative !== beforeMeta) {
-            violations.push('AUTO_FIX: META_NARRATION');
-          }
-        }
-
-        // arch/69 C1 — 하오체 강제 레거시 제거 (어미 다양화 후속).
-        //   P2 SPEECH_VIOLATION 정규식(자네/해요/합니다/~야 등을 하오체 기준으로
-        //   전부 위반 검출)과 P3 전역 치환(자네→그대, 이보게→듣고 계시오)은
-        //   전 NPC 하오체이던 시절 산물이다. 재배정으로 해체 17명이 된 지금 P3
-        //   전역 치환은 해체의 정상 호칭("자네"·"이보게")을 하오체로 오염시켰다
-        //   (실측: 토브렌 "그대"×6). P2는 검출만 하고 미교정이라 제거해도 기능
-        //   손실이 없다. 화자 인지 어체 검증은 C2(화자별 register 계측)가 대체.
-
-        // architecture/51 §B (R1) — 회피 어휘 ≤1회/턴 강제.
-        // 2회+ 등장 시 첫 occurrence만 유지 + 나머지는 약한 표현으로 치환.
-        // LLM이 모든 NPC를 동일한 "위험/조심/곤란" 회피 톤으로 수렴시키는 현상 차단.
-        {
-          const AVOID_REPLACEMENTS: Array<{
-            from: RegExp;
-            to: string | ((m: string) => string);
-          }> = [
-            {
-              from: /위험(한|하니|할지|할까|할\s|성|성을|함을|함이)/g,
-              to: (m) => '험'.concat(m.slice(2)),
-            },
-            { from: /위험\b/g, to: '험한 일' },
-            {
-              from: /조심하(시오|시게|십시오|소|게)/g,
-              to: (m) => '신중하' + m.slice(3),
-            },
-            { from: /조심하/g, to: '신중하' },
-            { from: /조심해/g, to: '신중해' },
-            { from: /곤란/g, to: '거북' },
-            { from: /위태/g, to: '아슬한' },
-            { from: /함부로/g, to: '가벼이' },
-            { from: /입을 다물/g, to: '말을 아끼' },
-            { from: /입을 닫/g, to: '말을 아끼' },
-          ];
-          // 1차: 카운트
-          let totalAvoid = 0;
-          for (const r of AVOID_REPLACEMENTS) {
-            const m = narrative.match(r.from);
-            if (m) totalAvoid += m.length;
-          }
-          if (totalAvoid >= 2) {
-            // 첫 번째 occurrence 위치 식별
-            const occurrences: { index: number; rule: number }[] = [];
-            for (let i = 0; i < AVOID_REPLACEMENTS.length; i++) {
-              const r = AVOID_REPLACEMENTS[i];
-              r.from.lastIndex = 0;
-              let m: RegExpExecArray | null;
-              const re = new RegExp(r.from.source, r.from.flags);
-              while ((m = re.exec(narrative)) !== null) {
-                occurrences.push({ index: m.index, rule: i });
-                if (m.index === re.lastIndex) re.lastIndex++;
-              }
-            }
-            occurrences.sort((a, b) => a.index - b.index);
-            const keepIdx = occurrences[0]?.index ?? -1;
-            // 2차: 첫 occurrence 외 나머지 치환 (역순 처리로 인덱스 안정)
-            const sorted = [...occurrences]
-              .filter((o) => o.index !== keepIdx)
-              .sort((a, b) => b.index - a.index);
-            for (const o of sorted) {
-              const r = AVOID_REPLACEMENTS[o.rule];
-              const re = new RegExp(r.from.source, r.from.flags);
-              re.lastIndex = o.index;
-              const m = re.exec(narrative);
-              if (!m || m.index !== o.index) continue;
-              const replaced = typeof r.to === 'function' ? r.to(m[0]) : r.to;
-              narrative =
-                narrative.slice(0, o.index) +
-                replaced +
-                narrative.slice(o.index + m[0].length);
-            }
-            violations.push(
-              `R1(architecture/51): 회피어휘 ${totalAvoid}회 → 1회 유지 + ${totalAvoid - 1}회 약한 표현으로 치환`,
-            );
-          }
-        }
-
-        // R5v2 — 화자 인지 어체 정규화는 5.14 이후(마커 확정 뒤) 일괄 수행.
-        // 구 R5(primary HAOCHE 시 모든 따옴표 일괄 하오체 치환)는 같은 턴의
-        // 합쇼체 보조 화자 대사를 파괴하는 오폭이 실측되어 제거됨
-        // (문세아 "곤란합니다"→"곤란하오" — llm_speech_audit 자가 계측).
-
-        // P4. 미소개 NPC 실명 sanitize (서술 + 선택지 label)
-        const rs = runSession?.runState as Record<string, unknown> | undefined;
-        if (rs) {
-          const npcStates = rs.npcStates as
-            | Record<string, { introduced?: boolean }>
+          const rs = runSession?.runState as
+            | Record<string, unknown>
             | undefined;
-          if (npcStates) {
-            for (const [npcId, state] of Object.entries(npcStates)) {
-              if (state.introduced) continue;
-              const npcDef = this.content.getNpc(npcId);
-              if (!npcDef?.name) continue;
-              const alias = npcDef.unknownAlias || '누군가';
-              // 서술 sanitize — 2글자 미만 NPC 이름은 일반 단어 오탐 방지 (예: "벅"→"허벅지" 매칭)
-              if (npcDef.name.length >= 2 && narrative.includes(npcDef.name)) {
-                narrative = narrative.replaceAll(npcDef.name, alias);
-                violations.push(`AUTO_FIX: NPC_NAME(${npcDef.name}→${alias})`);
-              }
-              for (const a of npcDef.aliases ?? []) {
-                // 1글자 alias는 동사/조사에 오탐 (예: "쥐"→"쥐었다") → 2글자 이상만 치환
-                if (a.length < 2) continue;
-                if (narrative.includes(a)) {
-                  narrative = narrative.replaceAll(a, alias);
-                }
-              }
-              // 선택지 label sanitize
-              if (llmChoices) {
-                for (const choice of llmChoices) {
-                  if (choice.label.includes(npcDef.name)) {
-                    choice.label = choice.label.replaceAll(npcDef.name, alias);
-                  }
-                  for (const a of npcDef.aliases ?? []) {
-                    if (a.length < 2) continue;
-                    if (choice.label.includes(a)) {
-                      choice.label = choice.label.replaceAll(a, alias);
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // P5. 서술(큰따옴표 바깥)에서 경어체 어미를 해라체로 자동 치환
-        {
-          // 큰따옴표 안(NPC 대사)과 바깥(서술)을 분리
-          const parts = narrative.split(/(["\u201c][^\u201d"]*["\u201d])/g);
-          let fixCount = 0;
-          const honorificToPlain: [RegExp, string][] = [
-            [/하였소\b/g, '하였다'],
-            [/였소\b/g, '였다'],
-            [/었소\b/g, '었다'],
-            [/했소\b/g, '했다'],
-            [/됐소\b/g, '됐다'],
-            [/겠소\b/g, '겠다'],
-            [/이오\b/g, '이다'],
-            [/이었소\b/g, '이었다'],
-            [/건넸소\b/g, '건넸다'],
-            [/보였소\b/g, '보였다'],
-            [/들렸소\b/g, '들렸다'],
-          ];
-          for (let i = 0; i < parts.length; i++) {
-            // 홀수 인덱스 = 큰따옴표 안(대사) → 건너뜀
-            if (i % 2 === 1) continue;
-            const before = parts[i];
-            let segment = parts[i];
-            for (const [pattern, replacement] of honorificToPlain) {
-              segment = segment.replace(pattern, replacement);
-            }
-            if (segment !== before) {
-              parts[i] = segment;
-              fixCount++;
-            }
-          }
-          if (fixCount > 0) {
-            narrative = parts.join('');
-            violations.push(`AUTO_FIX: NARR_HONORIFIC(${fixCount}건 치환)`);
-          }
-        }
-
-        // P6. "당신은/당신이" 시작 보정 — NanoDirector opening으로 교체
-        // JSON 모드에서는 스킵 (JSON 조립 결과의 첫 segment를 임의 재편집 방지)
-        if (!jsonModeParsed) {
-          const trimmedStart = narrative.trimStart();
-          if (
-            trimmedStart.startsWith('당신은 ') ||
-            trimmedStart.startsWith('당신이 ')
-          ) {
-            if (directorHint?.opening) {
-              // NanoDirector opening으로 첫 문장 교체
-              const firstSentenceEnd = trimmedStart.search(/[.!?。]\s/);
-              if (firstSentenceEnd > 0) {
-                narrative =
-                  directorHint.opening +
-                  ' ' +
-                  trimmedStart.slice(firstSentenceEnd + 2).trimStart();
-                violations.push('AUTO_FIX: OPENING_REPLACE(director)');
-              }
-            } else {
-              // Fallback: "당신은 " / "당신이 " 접두사만 제거
-              narrative = trimmedStart
-                .replace(/^당신은\s+/, '')
-                .replace(/^당신이\s+/, '');
-              violations.push('AUTO_FIX: OPENING_STRIP(당신은/당신이)');
-            }
-          }
-        }
-
-        if (violations.length > 0) {
-          this.logger.warn(
-            `[NarrativeFilter] turn=${pending.turnNo} violations: ${violations.join(' | ')}`,
-          );
-        }
-
-        // P6. 첫 문장 중복 제거 (NanoDirector opening이 2번 삽입된 경우)
-        {
-          const sentences = narrative.split(/(?<=[.!?。])\s+/);
-          if (sentences.length >= 3 && sentences[0] === sentences[1]) {
-            narrative = sentences.slice(1).join(' ');
-          } else if (sentences.length >= 3) {
-            // 부분 중복: 첫 문장이 두 번째 문장에 포함
-            const first = sentences[0].trim();
-            const second = sentences[1].trim();
-            if (first.length > 10 && second.includes(first)) {
-              narrative = sentences.slice(1).join(' ');
-            }
+          const filterOut = applyNarrativeQualityFilters(narrative, {
+            approachRules: this.content.getTextReplacements().npcApproach,
+            npcStates: rs?.npcStates as
+              | Record<string, { introduced?: boolean }>
+              | undefined,
+            getNpc: (id) => this.content.getNpc(id),
+            llmChoices,
+            directorOpening: directorHint?.opening ?? null,
+            jsonModeParsed,
+          });
+          narrative = filterOut.narrative;
+          if (filterOut.violations.length > 0) {
+            this.logger.warn(
+              `[NarrativeFilter] turn=${pending.turnNo} violations: ${filterOut.violations.join(' | ')}`,
+            );
           }
         }
       } else {
