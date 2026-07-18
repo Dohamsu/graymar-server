@@ -2635,6 +2635,201 @@ export class TurnsService {
     return { locationReward, totalGoldDelta, locationEquipDropEvents };
   }
 
+  // [arch/77 P3.9] Phase 4b: RegionEconomy — SHOP 액션 + priceIndex + 재고 갱신 +
+  // 구매 처리(arch/68 부록 E TRADE+구매 표현 진입 확장).
+  // updatedRunState·allEquipmentAdded·intent.target 제자리 변조, 이벤트 목록 반환.
+  private processShopAction(params: {
+    updatedRunState: RunState;
+    ws: WorldState;
+    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
+    rawInput: string;
+    locationId: string;
+    turnNo: number;
+    runSeed: string;
+    allEquipmentAdded: import('../db/types/equipment.js').ItemInstance[];
+  }): Array<{
+    id: string;
+    kind: 'GOLD' | 'LOOT' | 'SYSTEM';
+    text: string;
+    tags: string[];
+  }> {
+    const {
+      updatedRunState,
+      ws,
+      intent,
+      rawInput,
+      locationId,
+      turnNo,
+      runSeed,
+      allEquipmentAdded,
+    } = params;
+    // === Phase 4b: RegionEconomy — SHOP 액션 + priceIndex + 재고 갱신 ===
+    const shopActionEvents: Array<{
+      id: string;
+      kind: 'GOLD' | 'LOOT' | 'SYSTEM';
+      text: string;
+      tags: string[];
+    }> = [];
+    if (this.shopService) {
+      let economy: RegionEconomy = updatedRunState.regionEconomy ?? {
+        priceIndex: 1.0,
+        shopStocks: {},
+      };
+
+      // priceIndex 재계산: heat 기반 (heat 50 기준, ±25% 변동)
+      const locState = ws.locationStates?.[locationId];
+      const avgCrime = locState?.crime ?? 30;
+      economy = {
+        ...economy,
+        priceIndex: this.shopService.calculatePriceIndex(ws.tension, avgCrime),
+      };
+
+      // 재고 갱신: 각 상점별 refreshInterval 체크
+      const allShopDefs = this.content.getShopsByLocation(locationId);
+      for (const shopDef of allShopDefs) {
+        const currentStock = economy.shopStocks[shopDef.shopId];
+        const refreshed = this.shopService.refreshStock(
+          shopDef,
+          currentStock,
+          turnNo,
+          runSeed,
+        );
+        if (refreshed !== currentStock) {
+          economy = {
+            ...economy,
+            shopStocks: { ...economy.shopStocks, [shopDef.shopId]: refreshed },
+          };
+        }
+      }
+
+      // SHOP 액션 시 구매/판매 처리
+      // arch/68 부록 E — 구매 경로 부활: KW·LLM 파서 모두 구매 입력을
+      // TRADE로 정규화(normalizeActionType)해 SHOP 분기가 도달 불능이었다
+      // (전 DB SHOP 인텐트 0건·[상점] 이벤트 0건 실측). TRADE라도 원문에
+      // 구매 표현이 있으면 상점 구매를 시도한다.
+      const isBuyIntent =
+        intent.actionType === 'SHOP' ||
+        (intent.actionType === 'TRADE' &&
+          /구매|구입|매입|사겠|사고 싶|사줘|산다|[을를] 사/.test(rawInput));
+      // 파서가 target을 못 뽑은 구매 입력("체력 강장제를 구매한다" →
+      // TRADE, target 없음 실측) — 현 장소 재고 이름을 원문과 직접 대조해 보충
+      if (isBuyIntent && !intent.target) {
+        const matched = this.content
+          .getShopsByLocation(locationId)
+          .flatMap((sd) => economy.shopStocks[sd.shopId]?.items ?? [])
+          .map((si) => this.content.getItem(si.itemId)?.name)
+          .find((nm): nm is string => !!nm && rawInput.includes(nm));
+        if (matched) intent.target = matched;
+      }
+      if (isBuyIntent && intent.target) {
+        const targetItemId = intent.target.toUpperCase().replace(/\s+/g, '_');
+        // 현재 장소의 상점에서 아이템 찾기
+        const locationShops = this.content.getShopsByLocation(locationId);
+        let purchased = false;
+
+        for (const shopDef of locationShops) {
+          const stock = economy.shopStocks[shopDef.shopId];
+          if (!stock) continue;
+
+          // 아이템 ID 직접 매칭 또는 부분 매칭
+          const matchedItem = stock.items.find(
+            (si) =>
+              si.itemId === targetItemId ||
+              si.itemId.includes(targetItemId) ||
+              (this.content.getItem(si.itemId)?.name ?? '').includes(
+                intent.target!,
+              ),
+          );
+
+          if (matchedItem && matchedItem.qty > 0) {
+            const { result: purchaseResult, updatedStock } =
+              this.shopService.purchase(
+                stock,
+                matchedItem.itemId,
+                updatedRunState.gold,
+                economy.priceIndex,
+              );
+
+            if (purchaseResult.success) {
+              // 골드 감소
+              updatedRunState.gold = Math.max(
+                0,
+                updatedRunState.gold - purchaseResult.goldSpent,
+              );
+
+              // 아이템 추가 (장비 vs 소비)
+              const itemDef = this.content.getItem(matchedItem.itemId);
+              if (itemDef?.type === 'EQUIPMENT') {
+                if (!updatedRunState.equipmentBag)
+                  updatedRunState.equipmentBag = [];
+                const instance = {
+                  instanceId: `${matchedItem.itemId}_${turnNo}`,
+                  baseItemId: matchedItem.itemId,
+                  displayName: itemDef.name,
+                  affixes: [],
+                };
+                updatedRunState.equipmentBag.push(instance);
+                allEquipmentAdded.push(instance);
+                // Phase 3: ItemMemory — 상점 구매 기록
+                this.recordItemMemory(
+                  updatedRunState,
+                  instance,
+                  turnNo,
+                  '상점 구매',
+                  locationId,
+                );
+                shopActionEvents.push({
+                  id: `shop_buy_eq_${turnNo}`,
+                  kind: 'LOOT',
+                  text: `[상점] ${itemDef.name}${korParticle(itemDef.name, '을', '를')} ${purchaseResult.goldSpent}G에 구매했다.`,
+                  tags: ['SHOP', 'BUY', 'EQUIPMENT'],
+                });
+              } else {
+                mergeInventoryItem(
+                  updatedRunState.inventory,
+                  matchedItem.itemId,
+                  1,
+                );
+                shopActionEvents.push({
+                  id: `shop_buy_${turnNo}`,
+                  kind: 'GOLD',
+                  text: `[상점] ${itemDef?.name ?? matchedItem.itemId}${korParticle(itemDef?.name ?? '', '을', '를')} ${purchaseResult.goldSpent}G에 구매했다.`,
+                  tags: ['SHOP', 'BUY'],
+                });
+              }
+
+              // 재고 업데이트
+              economy = {
+                ...economy,
+                shopStocks: {
+                  ...economy.shopStocks,
+                  [shopDef.shopId]: updatedStock,
+                },
+              };
+              purchased = true;
+              break;
+            }
+          }
+        }
+
+        if (!purchased && locationShops.length > 0) {
+          // 상점 없는 장소의 은유 표현("정보를 산다")에는 침묵 — 일반
+          // TRADE 서사가 담당. 상점 앞에서의 실구매 실패만 안내.
+          shopActionEvents.push({
+            id: `shop_fail_${turnNo}`,
+            kind: 'SYSTEM',
+            text: `[상점] 해당 물건을 구매할 수 없다.`,
+            tags: ['SHOP', 'FAIL'],
+          });
+        }
+      }
+
+      updatedRunState.regionEconomy = economy;
+    }
+
+    return shopActionEvents;
+  }
+
   private async handleLocationTurnInner(
     run: any,
     currentNode: any,
@@ -4480,169 +4675,19 @@ export class TurnsService {
     const totalGoldDelta = rewardOutcome.totalGoldDelta;
     const locationEquipDropEvents = rewardOutcome.locationEquipDropEvents;
 
-    // === Phase 4b: RegionEconomy — SHOP 액션 + priceIndex + 재고 갱신 ===
-    const shopActionEvents: Array<{
-      id: string;
-      kind: 'GOLD' | 'LOOT' | 'SYSTEM';
-      text: string;
-      tags: string[];
-    }> = [];
-    if (this.shopService) {
-      let economy: RegionEconomy = updatedRunState.regionEconomy ?? {
-        priceIndex: 1.0,
-        shopStocks: {},
-      };
-
-      // priceIndex 재계산: heat 기반 (heat 50 기준, ±25% 변동)
-      const locState = ws.locationStates?.[locationId];
-      const avgCrime = locState?.crime ?? 30;
-      economy = {
-        ...economy,
-        priceIndex: this.shopService.calculatePriceIndex(ws.tension, avgCrime),
-      };
-
-      // 재고 갱신: 각 상점별 refreshInterval 체크
-      const allShopDefs = this.content.getShopsByLocation(locationId);
-      for (const shopDef of allShopDefs) {
-        const currentStock = economy.shopStocks[shopDef.shopId];
-        const refreshed = this.shopService.refreshStock(
-          shopDef,
-          currentStock,
-          turnNo,
-          run.seed,
-        );
-        if (refreshed !== currentStock) {
-          economy = {
-            ...economy,
-            shopStocks: { ...economy.shopStocks, [shopDef.shopId]: refreshed },
-          };
-        }
-      }
-
-      // SHOP 액션 시 구매/판매 처리
-      // arch/68 부록 E — 구매 경로 부활: KW·LLM 파서 모두 구매 입력을
-      // TRADE로 정규화(normalizeActionType)해 SHOP 분기가 도달 불능이었다
-      // (전 DB SHOP 인텐트 0건·[상점] 이벤트 0건 실측). TRADE라도 원문에
-      // 구매 표현이 있으면 상점 구매를 시도한다.
-      const isBuyIntent =
-        intent.actionType === 'SHOP' ||
-        (intent.actionType === 'TRADE' &&
-          /구매|구입|매입|사겠|사고 싶|사줘|산다|[을를] 사/.test(rawInput));
-      // 파서가 target을 못 뽑은 구매 입력("체력 강장제를 구매한다" →
-      // TRADE, target 없음 실측) — 현 장소 재고 이름을 원문과 직접 대조해 보충
-      if (isBuyIntent && !intent.target) {
-        const matched = this.content
-          .getShopsByLocation(locationId)
-          .flatMap((sd) => economy.shopStocks[sd.shopId]?.items ?? [])
-          .map((si) => this.content.getItem(si.itemId)?.name)
-          .find((nm): nm is string => !!nm && rawInput.includes(nm));
-        if (matched) intent.target = matched;
-      }
-      if (isBuyIntent && intent.target) {
-        const targetItemId = intent.target.toUpperCase().replace(/\s+/g, '_');
-        // 현재 장소의 상점에서 아이템 찾기
-        const locationShops = this.content.getShopsByLocation(locationId);
-        let purchased = false;
-
-        for (const shopDef of locationShops) {
-          const stock = economy.shopStocks[shopDef.shopId];
-          if (!stock) continue;
-
-          // 아이템 ID 직접 매칭 또는 부분 매칭
-          const matchedItem = stock.items.find(
-            (si) =>
-              si.itemId === targetItemId ||
-              si.itemId.includes(targetItemId) ||
-              (this.content.getItem(si.itemId)?.name ?? '').includes(
-                intent.target!,
-              ),
-          );
-
-          if (matchedItem && matchedItem.qty > 0) {
-            const { result: purchaseResult, updatedStock } =
-              this.shopService.purchase(
-                stock,
-                matchedItem.itemId,
-                updatedRunState.gold,
-                economy.priceIndex,
-              );
-
-            if (purchaseResult.success) {
-              // 골드 감소
-              updatedRunState.gold = Math.max(
-                0,
-                updatedRunState.gold - purchaseResult.goldSpent,
-              );
-
-              // 아이템 추가 (장비 vs 소비)
-              const itemDef = this.content.getItem(matchedItem.itemId);
-              if (itemDef?.type === 'EQUIPMENT') {
-                if (!updatedRunState.equipmentBag)
-                  updatedRunState.equipmentBag = [];
-                const instance = {
-                  instanceId: `${matchedItem.itemId}_${turnNo}`,
-                  baseItemId: matchedItem.itemId,
-                  displayName: itemDef.name,
-                  affixes: [],
-                };
-                updatedRunState.equipmentBag.push(instance);
-                allEquipmentAdded.push(instance);
-                // Phase 3: ItemMemory — 상점 구매 기록
-                this.recordItemMemory(
-                  updatedRunState,
-                  instance,
-                  turnNo,
-                  '상점 구매',
-                  locationId,
-                );
-                shopActionEvents.push({
-                  id: `shop_buy_eq_${turnNo}`,
-                  kind: 'LOOT',
-                  text: `[상점] ${itemDef.name}${korParticle(itemDef.name, '을', '를')} ${purchaseResult.goldSpent}G에 구매했다.`,
-                  tags: ['SHOP', 'BUY', 'EQUIPMENT'],
-                });
-              } else {
-                mergeInventoryItem(
-                  updatedRunState.inventory,
-                  matchedItem.itemId,
-                  1,
-                );
-                shopActionEvents.push({
-                  id: `shop_buy_${turnNo}`,
-                  kind: 'GOLD',
-                  text: `[상점] ${itemDef?.name ?? matchedItem.itemId}${korParticle(itemDef?.name ?? '', '을', '를')} ${purchaseResult.goldSpent}G에 구매했다.`,
-                  tags: ['SHOP', 'BUY'],
-                });
-              }
-
-              // 재고 업데이트
-              economy = {
-                ...economy,
-                shopStocks: {
-                  ...economy.shopStocks,
-                  [shopDef.shopId]: updatedStock,
-                },
-              };
-              purchased = true;
-              break;
-            }
-          }
-        }
-
-        if (!purchased && locationShops.length > 0) {
-          // 상점 없는 장소의 은유 표현("정보를 산다")에는 침묵 — 일반
-          // TRADE 서사가 담당. 상점 앞에서의 실구매 실패만 안내.
-          shopActionEvents.push({
-            id: `shop_fail_${turnNo}`,
-            kind: 'SYSTEM',
-            text: `[상점] 해당 물건을 구매할 수 없다.`,
-            tags: ['SHOP', 'FAIL'],
-          });
-        }
-      }
-
-      updatedRunState.regionEconomy = economy;
-    }
+    // [arch/77 P3.9] SHOP 액션 — processShopAction으로 추출.
+    // updatedRunState(gold/inventory/equipmentBag/regionEconomy)·allEquipmentAdded·
+    // intent.target(구매 대상 보충) 제자리 변조.
+    const shopActionEvents = this.processShopAction({
+      updatedRunState,
+      ws,
+      intent,
+      rawInput,
+      locationId,
+      turnNo,
+      runSeed: run.seed,
+      allEquipmentAdded,
+    });
 
     // === User-Driven System v3: WorldDelta (세계 변화 기록) ===
     const { ws: wsWithDelta } = this.worldDeltaService.build(
