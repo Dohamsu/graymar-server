@@ -1,7 +1,13 @@
 // [arch/77 P4.1] 서술 품질 후처리 체인 정본 유닛 — 세그먼트별 동작 고정.
 
-import { applyNarrativeQualityFilters } from './narrative-filter.core.js';
-import type { NarrativeFilterDeps } from './narrative-filter.core.js';
+import {
+  applyNarrativeQualityFilters,
+  cleanupNarrativeArtifacts,
+} from './narrative-filter.core.js';
+import type {
+  NarrativeFilterDeps,
+  TextReplacementRules,
+} from './narrative-filter.core.js';
 
 const baseDeps = (
   over: Partial<NarrativeFilterDeps> = {},
@@ -149,5 +155,61 @@ describe('applyNarrativeQualityFilters', () => {
       baseDeps(),
     );
     expect(r.narrative).toBe('바람이 스몄다. 상인이 다가섰다.');
+  });
+});
+
+describe('cleanupNarrativeArtifacts (P4.2 — 5.10.5~5.10.10)', () => {
+  const emptyTr: TextReplacementRules = {
+    currency: [],
+    repeatKillAll: [],
+    repeatSecondPlus: [],
+    compoundTitleFix: null,
+  };
+
+  it('대사 내부 raw 마커 잔해 제거 (5.10.5)', () => {
+    const r = cleanupNarrativeArtifacts(
+      '@[로넨|/npc/ronen.webp] "@[로넨|/npc/ronen.webp] 어서 오시오."',
+      emptyTr,
+    );
+    expect(r).toContain('"어서 오시오."');
+  });
+
+  it('중첩 @마커 정리 (5.10.6)', () => {
+    const r = cleanupNarrativeArtifacts('@[@[로넨]] "왔군."', emptyTr);
+    expect(r).toContain('@[로넨]');
+    expect(r).not.toContain('@[@[');
+  });
+
+  it('비대칭 큰따옴표 — orphan 마지막 1개 제거 (5.10.7)', () => {
+    const r = cleanupNarrativeArtifacts(
+      '그가 말했다. "이건 비밀이오. 당신은 걸음을 옮겼다.',
+      emptyTr,
+    );
+    expect((r.match(/"/g) ?? []).length % 2).toBe(0);
+  });
+
+  it('화폐·반복 구문 룰 적용 (5.10.8/9 — killAll + secondPlus)', () => {
+    const tr: TextReplacementRules = {
+      currency: [{ pattern: '원', replacement: '골드' }],
+      repeatKillAll: ['약속이라도 한 듯'],
+      repeatSecondPlus: ['눈을 좁혔다'],
+      compoundTitleFix: null,
+    };
+    const r = cleanupNarrativeArtifacts(
+      '약속이라도 한 듯 상인이 10원을 내밀며 눈을 좁혔다. 경비병도 눈을 좁혔다.',
+      tr,
+    );
+    expect(r).toContain('10골드');
+    expect(r).not.toContain('약속이라도 한 듯');
+    expect((r.match(/눈을 좁혔다/g) ?? []).length).toBe(1);
+  });
+
+  it('마커 앞 개행 정규화 + 문장 종결부 공백 (5.10.9b/9c)', () => {
+    const r = cleanupNarrativeArtifacts(
+      '그가 말한다.@[로넨] "왔군."이어서 문이 열렸다.',
+      emptyTr,
+    );
+    expect(r).toContain('말한다.\n\n@[로넨]');
+    expect(r).toContain('"왔군."이어서'); // 따옴표 뒤는 한글+.!?+한글 조건 밖 — 원본 시맨틱 유지
   });
 });

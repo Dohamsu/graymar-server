@@ -23,7 +23,10 @@ import { korParticle } from '../common/korean.js';
 import { sanitizeNpcNamesForTurn } from '../db/types/npc-state.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { stripLeakedPromptBlocks } from './prompts/injected-block-headers.js';
-import { applyNarrativeQualityFilters } from './narrative-filter.core.js';
+import {
+  applyNarrativeQualityFilters,
+  cleanupNarrativeArtifacts,
+} from './narrative-filter.core.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
@@ -294,14 +297,9 @@ export function fixNpcMismatchCore(
   return { narrative, appearedNpcIds, corrected: { wrongName, correctName } };
 }
 
-/**
- * Step G (5.10.9c) — 문장 종결부(한글+.!?) 뒤 공백 누락 보정 (verify57 회귀).
- * 숫자/소수점/따옴표/마커는 한글 조건에 걸리지 않아 영향 없음.
- */
-export function insertSpaceAfterSentenceCore(text: string): string {
-  if (!text) return text;
-  return text.replace(/([가-힣][.!?])(?=[가-힣])/g, '$1 ');
-}
+// insertSpaceAfterSentenceCore 정본은 narrative-filter.core로 이사 (arch/77 P4.2).
+// 기존 소비처(llm-postprocess.spec 등) 경로 유지를 위한 re-export.
+export { insertSpaceAfterSentenceCore } from './narrative-filter.core.js';
 
 /**
  * 콜론 라벨 3-Tier 유일성 매칭 (무명 오귀속 정밀화 2026-07-11).
@@ -2675,125 +2673,13 @@ ${npcList}`,
         narrative = this.deduplicateAliases(narrative);
       }
 
-      // 5.10.5. 대사 내부 raw 마커 잔해 제거 (이중 마커 버그 대응 — bug fc14ed2b)
-      //   원인: LLM이 @[이름|URL] "@[이름|URL] 대사" 같은 이중 마커 생성 시, 외부
-      //   마커는 B-2/B-2.5 regex가 처리하지만 큰따옴표 내부 잔해는 뒤에 "가 아닌
-      //   일반 텍스트가 와서 어떤 regex에도 매칭되지 않아 DialogueBubble 안에 그대로
-      //   노출됨. 큰따옴표 쌍 내부에서 @?[이름|URL] / @[이름] 패턴을 제거.
+      // [arch/77 P4.2] 5.10.5~5.10.10 마커·표기 정리 시리즈 —
+      // narrative-filter.core::cleanupNarrativeArtifacts 정본 (순서 불변).
       if (narrative) {
-        narrative = narrative.replace(
-          /(["\u201C])([^"\u201D]*?)(["\u201D])/g,
-          (_match, q1: string, inner: string, q2: string) => {
-            const cleaned = inner
-              .replace(/@?\[[^\]|]*\|[^\]]+\]\s*/g, '')
-              .replace(/@\[[^\]]+\]\s*/g, '');
-            return `${q1}${cleaned}${q2}`;
-          },
+        narrative = cleanupNarrativeArtifacts(
+          narrative,
+          this.content.getTextReplacements(),
         );
-      }
-
-      // 5.10.6. 중첩 @마커 정리 (bug ca038140)
-      //   원인: LLM이 `@[@[로넨|URL]]` 같이 외부 @[...] 안에 또 다른 @[...]를
-      //   중첩해 출력하는 케이스. 이 경우 파서가 외부 마커 안의 내부 마커를
-      //   별도 개체로 인식해 dialogue 매칭이 꼬여 서술이 말풍선에 들어가는
-      //   오탐이 발생. 반복 치환으로 N단계 중첩도 해소.
-      if (narrative) {
-        let guard = 0;
-        while (/@\[@\[/.test(narrative) && guard < 5) {
-          narrative = narrative.replace(/@\[@\[([^\]]+)\]\]/g, '@[$1]');
-          guard += 1;
-        }
-      }
-
-      // 5.10.7. 비대칭 큰따옴표 정리 (bug ca038140)
-      //   원인: LLM 이 홀수 개수의 `"` 를 생성하면 마지막 orphan `"` 가 뒤
-      //   서술 전체를 대사로 확장시켜 DialogueBubble 에 들어감. orphan 을
-      //   찾아 제거해 쌍이 맞도록 조정.
-      if (narrative) {
-        const dqCount = (narrative.match(/"/g) || []).length;
-        if (dqCount % 2 === 1) {
-          // 마지막 `"` 한 개를 제거 (뒤 서술이 대사로 흡수되는 것 방지)
-          const lastIdx = narrative.lastIndexOf('"');
-          if (lastIdx >= 0) {
-            narrative =
-              narrative.slice(0, lastIdx) + narrative.slice(lastIdx + 1);
-          }
-        }
-      }
-
-      // 5.10.8. 화폐 단위 규칙 강제 (bug 4607, 4655 JSON 외부화)
-      //   규칙은 content/graymar_v1/text_replacements.json 에서 로드.
-      if (narrative) {
-        const currencyRules = this.content.getTextReplacements().currency;
-        for (const rule of currencyRules) {
-          narrative = narrative.replace(
-            new RegExp(rule.pattern, rule.flags ?? 'g'),
-            rule.replacement,
-          );
-        }
-      }
-
-      // 5.10.9. 반복 구문 블랙리스트 (bug 4620/4630, 4655 JSON 외부화)
-      //   규칙은 content/graymar_v1/text_replacements.json 에서 로드.
-      //   - killAll: 첫 등장부터 전부 제거 (관용구 남용 차단)
-      //   - secondPlus: 한 턴 내 2회+ 재등장 시 2번째부터 제거
-      if (narrative) {
-        const tr = this.content.getTextReplacements();
-        for (const patStr of tr.repeatKillAll) {
-          narrative = narrative.replace(new RegExp(patStr, 'g'), '');
-        }
-        for (const patStr of tr.repeatSecondPlus) {
-          const pat = new RegExp(patStr, 'g');
-          const matches = [...narrative.matchAll(pat)];
-          if (matches.length >= 2) {
-            let result = '';
-            let lastIdx = 0;
-            matches.forEach((m, i) => {
-              if (i === 0) return;
-              result += narrative.slice(lastIdx, m.index);
-              lastIdx = m.index + m[0].length;
-              while (
-                lastIdx < narrative.length &&
-                /[\s,]/.test(narrative[lastIdx])
-              ) {
-                lastIdx += 1;
-              }
-            });
-            result += narrative.slice(lastIdx);
-            narrative = result;
-          }
-        }
-      }
-
-      // 5.10.9b. @마커 앞 개행 강제 정규화 (bug 4687 Phase 2 대응)
-      //   LLM이 "...말한다.@[NPC|URL] "대사""처럼 서술 문장 바로 뒤에 공백/개행
-      //   없이 마커를 붙이는 경우, 클라 analyzeText 가 한 줄로 인식해 서술/대사
-      //   섞임 발생. 마커 앞에 공백/개행이 없으면 개행 2개 삽입 (Canonical Form).
-      if (narrative) {
-        narrative = narrative.replace(/([^\s\n])(@\[)/g, '$1\n\n$2');
-      }
-
-      // 5.10.9c. 문장 종결부 뒤 공백 보정 (verify57 회귀 — playtest 2026-05-14)
-      //   LLM이 "들려온다.서류 뭉치를..." 처럼 마침표/물음표/느낌표 뒤 공백 없이
-      //   다음 문장을 붙여 출력하는 케이스. 클라 analyzeText 의 문단 분리가
-      //   실패해 서술이 한 덩어리로 렌더링됨. 한글 + .!? + 한글 사이에 공백 삽입.
-      //   숫자/소수점/따옴표/마커는 한글 조건에 걸리지 않아 영향 없음.
-      if (narrative) {
-        narrative = insertSpaceAfterSentenceCore(narrative);
-      }
-
-      // 5.10.10. 복합 호칭 hallucination 제거 (bug 4636, 4655 JSON 외부화)
-      //   규칙은 content/graymar_v1/text_replacements.json 에서 로드.
-      if (narrative) {
-        const compound = this.content.getTextReplacements().compoundTitleFix;
-        if (compound) {
-          const pat = new RegExp(compound.pattern, compound.flags ?? 'g');
-          narrative = narrative.replace(pat, (match) => {
-            const parts = match.trim().split(/\s+/);
-            if (parts.length < compound.minPartsToFix) return match;
-            return parts.slice(-compound.keepTailWords).join(' ');
-          });
-        }
       }
 
       // 5.10.11+12. 별칭 아티팩트 정리 (멱등 배리어 1차 — arch/68 부록 J).

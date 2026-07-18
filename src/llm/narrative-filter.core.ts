@@ -276,3 +276,126 @@ export function applyNarrativeQualityFilters(
 
   return { narrative, violations };
 }
+
+/**
+ * Step G (5.10.9c) — 문장 종결부(한글+.!?) 뒤 공백 누락 보정 (verify57 회귀).
+ * 숫자/소수점/따옴표/마커는 한글 조건에 걸리지 않아 영향 없음.
+ * (구 정본: llm-worker.service.ts — arch/77 P4.2에서 이사, 워커가 re-export)
+ */
+export function insertSpaceAfterSentenceCore(text: string): string {
+  if (!text) return text;
+  return text.replace(/([가-힣][.!?])(?=[가-힣])/g, '$1 ');
+}
+
+export interface TextReplacementRules {
+  currency: Array<{ pattern: string; replacement: string; flags?: string }>;
+  repeatKillAll: string[];
+  repeatSecondPlus: string[];
+  compoundTitleFix?: {
+    pattern: string;
+    flags?: string;
+    minPartsToFix: number;
+    keepTailWords: number;
+  } | null;
+}
+
+// [arch/77 P4.2] 5.10.5~5.10.10 마커·표기 정리 시리즈 — llm-worker에서
+// 동작 보존 이동. 순서 불변: 대사 내부 raw 마커 제거 → 중첩 @마커 → 비대칭
+// 큰따옴표 → 화폐 단위 → 반복 구문(killAll/secondPlus) → 마커 앞 개행 →
+// 문장 종결부 공백 → 복합 호칭.
+export function cleanupNarrativeArtifacts(
+  narrativeIn: string,
+  tr: TextReplacementRules,
+): string {
+  let narrative = narrativeIn;
+  if (!narrative) return narrative;
+
+  // 5.10.5. 대사 내부 raw 마커 잔해 제거 (이중 마커 버그 대응 — bug fc14ed2b)
+  //   원인: LLM이 @[이름|URL] "@[이름|URL] 대사" 같은 이중 마커 생성 시, 외부
+  //   마커는 B-2/B-2.5 regex가 처리하지만 큰따옴표 내부 잔해는 뒤에 "가 아닌
+  //   일반 텍스트가 와서 어떤 regex에도 매칭되지 않아 DialogueBubble 안에 그대로
+  //   노출됨. 큰따옴표 쌍 내부에서 @?[이름|URL] / @[이름] 패턴을 제거.
+  narrative = narrative.replace(
+    /(["\u201C])([^"\u201D]*?)(["\u201D])/g,
+    (_match, q1: string, inner: string, q2: string) => {
+      const cleaned = inner
+        .replace(/@?\[[^\]|]*\|[^\]]+\]\s*/g, '')
+        .replace(/@\[[^\]]+\]\s*/g, '');
+      return `${q1}${cleaned}${q2}`;
+    },
+  );
+
+  // 5.10.6. 중첩 @마커 정리 (bug ca038140)
+  //   원인: LLM이 `@[@[로넨|URL]]` 같이 외부 @[...] 안에 또 다른 @[...]를
+  //   중첩해 출력하는 케이스. 반복 치환으로 N단계 중첩도 해소.
+  {
+    let guard = 0;
+    while (/@\[@\[/.test(narrative) && guard < 5) {
+      narrative = narrative.replace(/@\[@\[([^\]]+)\]\]/g, '@[$1]');
+      guard += 1;
+    }
+  }
+
+  // 5.10.7. 비대칭 큰따옴표 정리 (bug ca038140)
+  //   홀수 개수의 `"` → 마지막 orphan 제거 (뒤 서술이 대사로 흡수 방지).
+  {
+    const dqCount = (narrative.match(/"/g) || []).length;
+    if (dqCount % 2 === 1) {
+      const lastIdx = narrative.lastIndexOf('"');
+      if (lastIdx >= 0) {
+        narrative = narrative.slice(0, lastIdx) + narrative.slice(lastIdx + 1);
+      }
+    }
+  }
+
+  // 5.10.8. 화폐 단위 규칙 강제 (bug 4607, 4655 JSON 외부화)
+  for (const rule of tr.currency) {
+    narrative = narrative.replace(
+      new RegExp(rule.pattern, rule.flags ?? 'g'),
+      rule.replacement,
+    );
+  }
+
+  // 5.10.9. 반복 구문 블랙리스트 (bug 4620/4630, 4655 JSON 외부화)
+  //   - killAll: 첫 등장부터 전부 제거 / - secondPlus: 2회+ 재등장 시 2번째부터 제거
+  for (const patStr of tr.repeatKillAll) {
+    narrative = narrative.replace(new RegExp(patStr, 'g'), '');
+  }
+  for (const patStr of tr.repeatSecondPlus) {
+    const pat = new RegExp(patStr, 'g');
+    const matches = [...narrative.matchAll(pat)];
+    if (matches.length >= 2) {
+      let result = '';
+      let lastIdx = 0;
+      matches.forEach((m, i) => {
+        if (i === 0) return;
+        result += narrative.slice(lastIdx, m.index);
+        lastIdx = m.index + m[0].length;
+        while (lastIdx < narrative.length && /[\s,]/.test(narrative[lastIdx])) {
+          lastIdx += 1;
+        }
+      });
+      result += narrative.slice(lastIdx);
+      narrative = result;
+    }
+  }
+
+  // 5.10.9b. @마커 앞 개행 강제 정규화 (bug 4687 Phase 2 대응)
+  narrative = narrative.replace(/([^\s\n])(@\[)/g, '$1\n\n$2');
+
+  // 5.10.9c. 문장 종결부 뒤 공백 보정 (verify57 회귀)
+  narrative = insertSpaceAfterSentenceCore(narrative);
+
+  // 5.10.10. 복합 호칭 hallucination 제거 (bug 4636, 4655 JSON 외부화)
+  if (tr.compoundTitleFix) {
+    const compound = tr.compoundTitleFix;
+    const pat = new RegExp(compound.pattern, compound.flags ?? 'g');
+    narrative = narrative.replace(pat, (match) => {
+      const parts = match.trim().split(/\s+/);
+      if (parts.length < compound.minPartsToFix) return match;
+      return parts.slice(-compound.keepTailWords).join(' ');
+    });
+  }
+
+  return narrative;
+}
