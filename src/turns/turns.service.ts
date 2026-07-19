@@ -1037,11 +1037,14 @@ export class TurnsService {
 
       // HUB accept_quest: speakingNpc를 프롤로그 화자로 고정 (LLM이 다른 NPC로 마킹 방지)
       // architecture/63: scenario.json prologue 필드
+      // arch/80: 이미지는 에셋 풀 리졸버 우선 — 콘텐츠 하드코딩(실루엣)은 풀 미배정 시 fallback
       const prologueMeta = this.content.getPrologueMeta();
       (result.ui as any).speakingNpc = {
         npcId: prologueMeta.npcId,
         displayName: prologueMeta.displayName,
-        imageUrl: prologueMeta.imageUrl,
+        imageUrl:
+          this.content.getNpcPortraitUrl(prologueMeta.npcId) ||
+          prologueMeta.imageUrl,
       };
 
       await this.commitTurnRecord(

@@ -39,7 +39,6 @@ import {
   DEFAULT_PERMANENT_STATS,
 } from '../db/types/index.js';
 import { initNPCState, getNpcDisplayName } from '../db/types/npc-state.js';
-import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 import { IncidentManagementService } from '../engine/hub/incident-management.service.js';
 import { RngService } from '../engine/rng/rng.service.js';
 import { AffixService } from '../engine/rewards/affix.service.js';
@@ -836,15 +835,15 @@ export class RunsService {
           flags: { bonusSlot: false, downed: false, battleEnded: false },
         };
         // 프롤로그 말풍선 — architecture/63: scenario.json prologue 필드.
-        // imageUrl은 스크립트에 있으면 그것, 없으면 NPC_PORTRAITS 정본 매핑으로 폴백.
-        // (star_sand·silverdeen prologue엔 imageUrl 미정의 — 매핑으로 초상화 복원)
+        // arch/80: 에셋 풀 리졸버 우선 (정적 맵→저작 배정→동적 순) — 풀 미배정
+        // 시에만 콘텐츠 imageUrl(실루엣 등) fallback. 카른홀트 T0 실루엣 실측 수정.
         const prologueMeta = this.content.getPrologueMeta();
         (enterResult.ui as unknown as Record<string, unknown>).speakingNpc = {
           npcId: prologueMeta.npcId,
           displayName: prologueMeta.displayName,
           imageUrl:
-            prologueMeta.imageUrl ??
-            NPC_PORTRAITS[prologueMeta.npcId] ??
+            this.content.getNpcPortraitUrl(prologueMeta.npcId) ||
+            prologueMeta.imageUrl ||
             undefined,
         };
       }
