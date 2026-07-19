@@ -335,6 +335,8 @@ describe('StreamClassifierService.buildCandidates()', () => {
 
   const mockContent = {
     getNpc: (id: string) => mockNpcDefs[id] ?? null,
+    // arch/80: 초상화 통합 리졸버 — 스펙에선 정적 맵과 동일하게 빈 문자열
+    getNpcPortraitUrl: () => '',
   } as any;
 
   it('후보 names는 실명·unknownAlias만 — 역할/축약 단어 제외 (bug 6ba6fd6b)', () => {
@@ -406,6 +408,7 @@ describe('StreamClassifierService.buildCandidates()', () => {
         unknownAlias: '날카로운 눈매의 회계사',
         role: '회계사',
       }),
+      getNpcPortraitUrl: (id: string) => NPC_PORTRAITS[id] ?? '',
     } as any;
     const candidates = StreamClassifierService.buildCandidates(
       npcStates,

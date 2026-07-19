@@ -6,6 +6,7 @@
 // 확장할 수 있는 형태만 통과시킨다.
 
 import type { DynamicNpcStub } from './scenario-context.js';
+import { assetSeed, pickAsset, type PackAssetEntry } from './asset-pool.js';
 
 const POSTURES = ['FRIENDLY', 'CAUTIOUS', 'HOSTILE', 'FEARFUL', 'CALCULATING'];
 const REGISTERS = ['HAOCHE', 'HAEYO', 'BANMAL', 'HAPSYO', 'HAECHE'];
@@ -84,11 +85,32 @@ export function sanitizeDynamicStub(
 export function registerDynamicNpc(
   dynamicNpcs: DynamicNpcStub[],
   raw: Partial<DynamicNpcStub>,
+  portraitPool?: {
+    entries: PackAssetEntry[];
+    /** 저작 배정 등 이미 사용된 URL — 동적 stub 사용분은 내부에서 합산 */
+    usedUrls?: Iterable<string>;
+  },
 ): { npcId: string | null; errors: string[] } {
   const v = sanitizeDynamicStub(raw, dynamicNpcs.length + 1);
   if (!v.ok || !v.sanitized) return { npcId: null, errors: v.errors };
   if (dynamicNpcs.some((n) => n.name === v.sanitized!.name)) {
     return { npcId: null, errors: [`중복 name: ${v.sanitized.name}`] };
+  }
+  // arch/80: 팩 에셋 풀 초상화 배정 — 성별·role 키워드 매칭, 런 내 중복 배제,
+  // 시드(npcId) 결정론. 풀이 비거나 소진이면 미배정(기존 실루엣 fallback).
+  if (portraitPool && portraitPool.entries.length > 0) {
+    const used = new Set(portraitPool.usedUrls ?? []);
+    for (const n of dynamicNpcs) if (n.portraitUrl) used.add(n.portraitUrl);
+    const url = pickAsset(
+      portraitPool.entries,
+      {
+        gender: v.sanitized.gender,
+        text: `${v.sanitized.name} ${v.sanitized.role ?? ''} ${v.sanitized.oneLinePersonality ?? ''}`,
+      },
+      used,
+      assetSeed(v.sanitized.npcId),
+    );
+    if (url) v.sanitized.portraitUrl = url;
   }
   dynamicNpcs.push(v.sanitized);
   return { npcId: v.sanitized.npcId, errors: [] };

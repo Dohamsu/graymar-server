@@ -3829,9 +3829,17 @@ export class TurnsService {
                 updatedRunState.dynamicNpcs ??= [];
                 // posture/register는 느슨한 string(LLM 산출) — sanitize가
                 // 런타임 enum 검증 후 안전 기본값으로 강제한다.
+                // arch/80: 팩 에셋 풀이 있으면 등록 시 초상화 자동 배정
+                const assetManifest = this.content.getAssetManifest();
                 const reg = registerDynamicNpc(
                   updatedRunState.dynamicNpcs,
                   beat.proposedNpc as Parameters<typeof registerDynamicNpc>[1],
+                  assetManifest && assetManifest.portraits.length > 0
+                    ? {
+                        entries: assetManifest.portraits,
+                        usedUrls: this.content.getAuthoredPortraitUrls(),
+                      }
+                    : undefined,
                 );
                 if (reg.npcId) {
                   const newId = reg.npcId;

@@ -54,6 +54,8 @@ export interface DynamicNpcStub {
   speechRegister?: 'HAOCHE' | 'HAEYO' | 'BANMAL' | 'HAPSYO' | 'HAECHE';
   role?: string;
   oneLinePersonality?: string;
+  /** arch/80: 팩 에셋 풀에서 등록 시 배정된 초상화 URL (런 내 고정) */
+  portraitUrl?: string;
 }
 
 const dynamicNpcStorage = new AsyncLocalStorage<DynamicNpcStub[]>();

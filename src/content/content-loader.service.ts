@@ -44,6 +44,11 @@ import {
   enterDynamicFacts,
 } from './scenario-context.js';
 import { extractKoreanKeywords } from '../common/text-utils.js';
+import {
+  assignAuthoredPortraits,
+  type PackAssetManifest,
+} from './asset-pool.js';
+import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 
 // ── architecture/63 — scenario.json 필드 누락 시 안전 기본값 (graymar_v1 현행 값) ──
 // 엔진 서비스 파일에는 콘텐츠 리터럴을 두지 않는다. fallback은 이 파일 단일 지점.
@@ -107,6 +112,10 @@ interface ContentPackState {
   factions: Map<string, FactionDefinition>;
   entityAliasIndex: Map<string, string>;
   graph: PlannedNodeV2[];
+  /** arch/80 팩 에셋 풀 (선택 파일 assets.json) */
+  assetManifest: PackAssetManifest | null;
+  /** 저작 NPC 초상화 결정론 배정 (팩 로드 시 1회) */
+  authoredPortraits: Map<string, string>;
   textReplacements: {
     npcApproach: { pattern: string; replacement: string }[];
     currency: { pattern: string; replacement: string; flags?: string }[];
@@ -154,6 +163,8 @@ function createEmptyPack(): ContentPackState {
     factions: new Map(),
     entityAliasIndex: new Map(),
     graph: [],
+    assetManifest: null,
+    authoredPortraits: new Map(),
     textReplacements: {
       npcApproach: [],
       currency: [],
@@ -410,6 +421,22 @@ export class ContentLoaderService implements OnModuleInit {
       for (const alias of npc.entityAliases ?? []) {
         pack.entityAliasIndex.set(alias, npc.npcId);
       }
+    }
+
+    // arch/80: 팩 에셋 풀 (선택 파일 assets.json — sync_pack_assets.py 산출물)
+    //   저작 NPC 초상화는 로드 시 1회 결정론 배정, 동적 NPC는 등록 시 pick.
+    try {
+      const assetsRaw = await readFile(join(dir, 'assets.json'), 'utf-8');
+      pack.assetManifest = JSON.parse(assetsRaw) as PackAssetManifest;
+      pack.authoredPortraits = assignAuthoredPortraits(
+        npcsList,
+        pack.assetManifest.portraits ?? [],
+      );
+      this.logger.log(
+        `[AssetPool] ${scenarioId}: portraits ${pack.assetManifest.portraits?.length ?? 0} · locations ${pack.assetManifest.locations?.length ?? 0} · 저작 배정 ${pack.authoredPortraits.size}`,
+      );
+    } catch {
+      pack.assetManifest = null;
     }
 
     // architecture/63: DAG 그래프
@@ -911,6 +938,44 @@ export class ContentLoaderService implements OnModuleInit {
   /** 퀘스트 데이터 반환 (quest.json) */
   getQuestData(): unknown {
     return this.questData;
+  }
+
+  /** arch/80: 팩 에셋 매니페스트 (assets.json — 없으면 null) */
+  getAssetManifest(): PackAssetManifest | null {
+    return this.pack().assetManifest;
+  }
+
+  /** arch/80: 저작 NPC 초상화 풀 배정 (NPC_PORTRAITS 정적 맵에 없는 팩용) */
+  getAuthoredPortrait(npcId: string): string | null {
+    return this.pack().authoredPortraits.get(npcId) ?? null;
+  }
+
+  /** arch/80: 저작 배정에 이미 사용된 초상화 URL (동적 배정 시 중복 배제용) */
+  getAuthoredPortraitUrls(): string[] {
+    return [...this.pack().authoredPortraits.values()];
+  }
+
+  /**
+   * arch/80: NPC 초상화 통합 해석 — 정적 맵(graymar 레거시) → 팩 풀 저작 배정
+   * → 동적 stub(portraitUrl) 순. 없으면 빈 문자열 (기존 fallback 동작).
+   */
+  getNpcPortraitUrl(npcId: string): string {
+    const staticUrl = NPC_PORTRAITS[npcId];
+    if (staticUrl) return staticUrl;
+    const authored = this.pack().authoredPortraits.get(npcId);
+    if (authored) return authored;
+    const dyn = currentDynamicNpcs().find((n) => n.npcId === npcId);
+    return dyn?.portraitUrl ?? '';
+  }
+
+  /** arch/80: 정적+저작+동적 초상화 통합 맵 (llm-worker portraits 조회용) */
+  getNpcPortraitMap(): Record<string, string> {
+    const map: Record<string, string> = { ...NPC_PORTRAITS };
+    for (const [id, url] of this.pack().authoredPortraits) map[id] = url;
+    for (const n of currentDynamicNpcs()) {
+      if (n.portraitUrl) map[n.npcId] = n.portraitUrl;
+    }
+    return map;
   }
 
   // ──────────────────────────────────────────────────────────────

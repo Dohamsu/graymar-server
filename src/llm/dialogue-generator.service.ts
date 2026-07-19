@@ -438,7 +438,7 @@ export class DialogueGeneratorService {
       text: dialogue,
       speakerAlias: displayName,
       speakerId: input.slot.speaker_id,
-      portraitUrl: NPC_PORTRAITS[input.slot.speaker_id] ?? '',
+      portraitUrl: this.content.getNpcPortraitUrl(input.slot.speaker_id),
     };
   }
 
@@ -567,7 +567,7 @@ export class DialogueGeneratorService {
       text,
       speakerAlias: displayName,
       speakerId: input.slot.speaker_id,
-      portraitUrl: NPC_PORTRAITS[input.slot.speaker_id] ?? '',
+      portraitUrl: this.content.getNpcPortraitUrl(input.slot.speaker_id),
     };
   }
 }

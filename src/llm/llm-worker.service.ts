@@ -684,7 +684,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                     );
                     continue;
                   }
-                  const portrait = NPC_PORTRAITS[npcId] ?? '';
+                  const portrait = this.content.getNpcPortraitUrl(npcId);
                   const marker = portrait
                     ? `@[${alias}|${portrait}]`
                     : `@[${alias}]`;
@@ -936,9 +936,9 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
             }
           }
           if (!resolvedNpcId && actualImg) {
-            const matched = Object.entries(NPC_PORTRAITS).find(
-              ([, url]) => url === actualImg,
-            );
+            const matched = Object.entries(
+              this.content.getNpcPortraitMap(),
+            ).find(([, url]) => url === actualImg);
             if (matched) resolvedNpcId = matched[0];
           }
           ui.speakingNpc = {
@@ -1593,8 +1593,8 @@ ${npcList}`,
         narrative = narrative.replace(/@\[[^\]]{31,}/g, '');
 
         // Step B: @NPC_ID / @[NPC_ID] / @[RONEN] → @[표시이름|초상화URL] 변환
-        const { NPC_PORTRAITS: portraits } =
-          await import('../db/types/npc-portraits.js');
+        // arch/80: 정적 맵 → 팩 풀 저작·동적 배정 통합 맵 (기존 portraits 사용처 호환)
+        const portraits = this.content.getNpcPortraitMap();
 
         // B-0: 잔여물 제거
         narrative = narrative.replace(/@마커/g, '');

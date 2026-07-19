@@ -97,7 +97,7 @@ export class StreamClassifierService {
       const displayName = state
         ? getNpcDisplayName(state, def, turnNo)
         : def.unknownAlias || def.name;
-      const portraitUrl = NPC_PORTRAITS[npcId] ?? null;
+      const portraitUrl = content.getNpcPortraitUrl(npcId) || null;
 
       candidates.push({ npcId, names, displayName, portraitUrl });
     }
