@@ -46,6 +46,25 @@ export interface RecentTurnEntry {
   narrative: string;
 }
 
+/**
+ * 대명사 개시어 화이트리스트 (arch/78) — 개시어 합산 집계와 prompt-builder의
+ * 대명사 디렉티브(2차 처방) 감지가 공유하는 정본. 명시 목록만 — 접두 오탐 금지.
+ */
+export const PRONOUN_OPENER_WHITELIST: ReadonlySet<string> = new Set([
+  '그는',
+  '그가',
+  '그의',
+  '그를',
+  '그도',
+  '그에게',
+  '그녀는',
+  '그녀가',
+  '그녀의',
+  '그녀를',
+  '그녀도',
+  '그녀에게',
+]);
+
 export interface LlmContext {
   theme: unknown[]; // L0: 절대 삭제 금지
   storySummary: string | null; // L1
@@ -1203,21 +1222,9 @@ export class ContextBuilderService {
    * '그는' 2회 + '그가' 1회처럼 형태별 분산으로 개별 임계 미달로 새는 구멍을 막는다.
    * 접두 매칭이 아닌 명시 목록만 사용 — 그러나/그리고/그때/그런 등 비대명사 개시어를
    * 오탐으로 억제하면 문장이 부자연스러워진다 ("한복"→"한복판" 오매칭과 같은 계열 위험).
+   * arch/78 2차 처방에서 prompt-builder의 대명사 디렉티브 감지에도 공용 사용 (export).
    */
-  private static readonly PRONOUN_OPENERS = new Set([
-    '그는',
-    '그가',
-    '그의',
-    '그를',
-    '그도',
-    '그에게',
-    '그녀는',
-    '그녀가',
-    '그녀의',
-    '그녀를',
-    '그녀도',
-    '그녀에게',
-  ]);
+  private static readonly PRONOUN_OPENERS = PRONOUN_OPENER_WHITELIST;
 
   /** 개시어 반복 임계 — 3→2 (2026-07-18): 반복이 굳기 전 조기 개입. 26런 계측 15.3%→11.8% 후 롱런 잔여 처방. */
   private static readonly OPENER_REPEAT_MIN = 2;

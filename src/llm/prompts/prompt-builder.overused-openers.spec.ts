@@ -102,7 +102,7 @@ describe('PromptBuilder — 서술 개시어 편중 주입', () => {
     new FakeTokenBudget() as any,
   );
 
-  it('overusedOpeners 존재 → 개시어 자제 + 대안 개시 라인 주입', () => {
+  it('대명사 개시어 → 자제 라인 대신 [서술 지칭 규칙] 디렉티브로 승격 (arch/78 2차)', () => {
     const out = text(
       pb.buildNarrativePrompt(
         ctxWith({ overusedOpeners: ['그는', '그녀는'] }),
@@ -111,9 +111,24 @@ describe('PromptBuilder — 서술 개시어 편중 주입', () => {
         'ACTION',
       ),
     );
-    expect(out).toContain('[최근 사용 표현 — 이번 턴 자제]');
-    expect(out).toContain('"그는", "그녀는" 시작이 반복');
+    expect(out).toContain('[서술 지칭 규칙 — 이번 턴 절대 준수]');
+    expect(out).toContain('이번 턴 0회');
+    // 대명사 키는 soft 자제 라인에서 제외 (이중 지시 희석 방지)
+    expect(out).not.toContain('"그는", "그녀는" 시작이 반복');
+  });
+
+  it('비대명사 개시어 → 기존 자제 라인 유지, 디렉티브 미발화', () => {
+    const out = text(
+      pb.buildNarrativePrompt(
+        ctxWith({ overusedOpeners: ['멀리서', '서늘한'] }),
+        sr(),
+        '둘러본다',
+        'ACTION',
+      ),
+    );
+    expect(out).toContain('"멀리서", "서늘한" 시작이 반복');
     expect(out).toContain('주어를 생략');
+    expect(out).not.toContain('[서술 지칭 규칙');
   });
 
   it('개시어·표현 모두 없으면 블록 미발화', () => {

@@ -2,6 +2,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import type { LlmContext } from '../context-builder.service.js';
+import { PRONOUN_OPENER_WHITELIST } from '../context-builder.service.js';
 import type { ServerResultV1 } from '../../db/types/index.js';
 import type { NpcEmotionalState, NPCState } from '../../db/types/npc-state.js';
 import {
@@ -1081,6 +1082,15 @@ export class PromptBuilderService {
       }
     }
 
+    // [arch/78 2차 처방] 대명사 개시 디렉티브 — 세션에서 대명사 개시가 감지되면
+    // user 메시지 끝(근접 효과)에 강한 지칭 지시를 주입. [최근 사용 표현]의
+    // soft "자제" 어투는 대화 턴에서 50% 위반 실측 — 절대 규칙 어투 + positive
+    // 대안(별칭/주어 생략) + 표시명 데이터 동반이 이 디렉티브의 차이점.
+    {
+      const directive = this.buildPronounDirective(ctx, targetNpcIds, isHub);
+      if (directive) factsParts.push(directive);
+    }
+
     // 첫 문장 다양성: 직전 턴이 "당신"으로 시작했으면 다른 방식 강제
     // locationSessionTurns → recentTurns 순으로 역순 탐색, narrative가 있는 턴만
     {
@@ -1207,6 +1217,55 @@ export class PromptBuilderService {
   }
 
   private static readonly grandBudgetLogger = new Logger('PromptBuilder');
+
+  /**
+   * [arch/78 2차 처방] 대명사 개시 디렉티브 — 세션 개시어 합산 키(그는/그가 등)
+   * 감지 시 user 메시지 끝(근접 효과)에 발화하는 강한 지칭 지시.
+   * soft "자제" 어투는 대화 턴 50% 위반 실측 — hard 규칙 어투(15k에서도 0% 위반
+   * 실측 계급)로 승격 + positive 대안(주어 생략/별칭) + 표시명 데이터 동반.
+   * 게이트 실측으로 유지/폐기 판단, 실패 시 후처리(②) 논의 — arch/78 §5-1.
+   */
+  private buildPronounDirective(
+    ctx: LlmContext,
+    targetNpcIds: ReadonlySet<string>,
+    isHub: boolean,
+  ): string | null {
+    if (isHub) return null;
+    const detectedKey = (ctx.overusedOpeners ?? []).find((o) =>
+      o.split('/').every((w) => PRONOUN_OPENER_WHITELIST.has(w)),
+    );
+    // 발화 조건 (2026-07-19 게이트 A/B 확장): 감지 시 + **대화 턴 상시**.
+    // 감지 의존 발화는 15턴 중 6턴만 커버 — OFF 대화 턴 42.9% vs ON 25.6%
+    // (후반 지속 노출 시 16%) 실측. 대화 턴 대명사 편향은 만성(기저 29~35%)이라
+    // 창 임계를 기다릴 이유가 없다.
+    const pronounKey = detectedKey ?? (targetNpcIds.size > 0 ? '그는/그가' : null);
+    if (!pronounKey) return null;
+
+    let aliasLine = '';
+    if (targetNpcIds.size > 0) {
+      const npcId = [...targetNpcIds][0]!;
+      const npcDef = this.content.getNpc(npcId);
+      if (npcDef) {
+        const introduced = new Set(ctx.introducedNpcIds ?? []).has(npcId);
+        const display = introduced
+          ? npcDef.name
+          : npcDef.unknownAlias || npcDef.shortAlias || '';
+        if (display) {
+          aliasLine = `\n이번 턴 인물 별칭: "${display}" — 첫 지칭에만 쓰고 이후 문장은 주어를 생략하시오.`;
+        }
+      }
+    }
+    // 풍선효과 방어 (2026-07-19 게이트 실측): 별칭 대안을 앞세우면 모델이
+    // 별칭을 문장마다 반복해 V9 반복 센서에 걸린다 ('날카로운' 9회/3턴).
+    // 주어 생략을 기본으로, 별칭 개시는 문단당 1회로 제한.
+    return [
+      '[서술 지칭 규칙 — 이번 턴 절대 준수]',
+      `문장 첫머리를 대명사(${pronounKey} 등)로 열지 마시오 — 이번 턴 0회.`,
+      '기본은 주어 생략(행동·소리·사물 개시). 별칭/이름 개시는 문단당 최대 1회 — 같은 별칭·수식어를 문장마다 반복하면 안 됩니다.' +
+        aliasLine,
+      '변환 예: "그는 손을 뻗었다" → "손을 뻗는다".',
+    ].join('\n');
+  }
 
   /**
    * NPC 대화 자세 블록 (Step 7) — posture+personality 기반 개인화 가이드,
@@ -1521,8 +1580,13 @@ export class PromptBuilderService {
       }
       // 개시어 편중 (2026-07-17 계측: '그는/그녀는' 개시 15.3% 고정) —
       // Positive framing: 대안 개시 방식을 제시 (금지 나열보다 준수율 높음).
-      if (ctx.overusedOpeners && ctx.overusedOpeners.length > 0) {
-        const openers = ctx.overusedOpeners.map((o) => `"${o}"`).join(', ');
+      // [arch/78 2차] 대명사 합산 키는 여기서 제외 — 별도 디렉티브(buildPronounDirective)가
+      // 강한 어투로 전담. 같은 대상에 soft/hard 지시가 겹치면 서로 희석된다.
+      const nonPronounOpeners = (ctx.overusedOpeners ?? []).filter(
+        (o) => !o.split('/').every((w) => PRONOUN_OPENER_WHITELIST.has(w)),
+      );
+      if (nonPronounOpeners.length > 0) {
+        const openers = nonPronounOpeners.map((o) => `"${o}"`).join(', ');
         lines.push(
           `- 문장 첫머리 ${openers} 시작이 반복되고 있습니다. 이번 턴 서술 문장은 주어를 생략하거나(한국어에서 자연스러움) 행동·소리·사물·공간 묘사로 여세요. 위 단어로 시작하는 문장은 최대 1개.`,
         );
