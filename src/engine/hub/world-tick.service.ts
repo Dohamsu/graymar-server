@@ -5,6 +5,7 @@ import type {
   IncidentDef,
   IncidentImpactPatch,
 } from '../../db/types/index.js';
+import { deriveTimePhaseFromV2 } from '../../db/types/index.js';
 import { IncidentManagementService } from './incident-management.service.js';
 import { SignalFeedService } from './signal-feed.service.js';
 import { NpcScheduleService } from './npc-schedule.service.js';
@@ -151,13 +152,10 @@ export class WorldTickService {
       hubSafety: this.computeSafety(updated.hubHeat),
     };
 
-    // v1 호환: phaseV2 → timePhase 동기화
+    // v1 호환: phaseV2 → timePhase 파생 미러 (단일 정본 = phaseV2)
     updated = {
       ...updated,
-      timePhase:
-        updated.phaseV2 === 'DAWN' || updated.phaseV2 === 'DAY'
-          ? 'DAY'
-          : 'NIGHT',
+      timePhase: deriveTimePhaseFromV2(updated.phaseV2),
     };
 
     // Soft deadline 근접 시그널 (mainArcClock이 있을 때만)

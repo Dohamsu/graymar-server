@@ -18,6 +18,14 @@ export type TimePhase = (typeof TIME_PHASE)[number];
 export const TIME_PHASE_V2 = ['DAWN', 'DAY', 'DUSK', 'NIGHT'] as const;
 export type TimePhaseV2 = (typeof TIME_PHASE_V2)[number];
 
+/**
+ * phaseV2(4상) → timePhase(2상) 파생. timePhase는 phaseV2의 미러이며 독립 시간계가 아니다.
+ * (구 v1 timeCounter 기반 독립 토글은 phaseV2 틱과 충돌해 폐지됨 — 단일 정본 = phaseV2)
+ */
+export function deriveTimePhaseFromV2(phaseV2: TimePhaseV2): TimePhase {
+  return phaseV2 === 'DAWN' || phaseV2 === 'DAY' ? 'DAY' : 'NIGHT';
+}
+
 export const HUB_SAFETY = ['SAFE', 'ALERT', 'DANGER'] as const;
 export type HubSafety = (typeof HUB_SAFETY)[number];
 

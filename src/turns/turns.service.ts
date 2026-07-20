@@ -4185,7 +4185,7 @@ export class TurnsService {
       };
     }
 
-    ws = this.worldStateService.advanceTime(ws);
+    // (구 advanceTime v1 토글 제거 — timePhase는 postStepTick이 phaseV2에서 파생 동기화)
     ws = this.worldStateService.updateHubSafety(ws);
 
     // Deferred 체크

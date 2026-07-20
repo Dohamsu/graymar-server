@@ -2,12 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { ContentLoaderService } from '../../content/content-loader.service.js';
 import type {
   WorldState,
-  TimePhase,
   HubSafety,
   DeferredEffect,
 } from '../../db/types/index.js';
+import { deriveTimePhaseFromV2 } from '../../db/types/index.js';
 
-const TIME_CYCLE_TURNS = 5;
 const HEAT_DECAY_ON_HUB_RETURN = 5;
 const MAX_HEAT = 100;
 const MIN_HEAT = 0;
@@ -81,13 +80,15 @@ export class WorldStateService {
     };
   }
 
+  /**
+   * timePhase를 phaseV2(단일 정본)에서 파생 동기화.
+   * 구 v1 timeCounter 기반 독립 토글(5턴마다 DAY↔NIGHT)을 폐지 — phaseV2 틱과
+   * 충돌해 timePhase=NIGHT vs phaseV2=DAY 불일치를 만들던 이중 시간계를 통합한다.
+   * 실제 시간 진행은 WorldTick.preStepTick의 globalClock/phaseV2가 소유하며,
+   * 여기서는 phaseV2를 건너뛰는 경로(전투 트리거 등)의 timePhase 미러만 보정한다.
+   */
   advanceTime(ws: WorldState): WorldState {
-    const newCounter = ws.timeCounter + 1;
-    let newPhase: TimePhase = ws.timePhase;
-    if (newCounter % TIME_CYCLE_TURNS === 0) {
-      newPhase = ws.timePhase === 'DAY' ? 'NIGHT' : 'DAY';
-    }
-    return { ...ws, timeCounter: newCounter, timePhase: newPhase };
+    return { ...ws, timePhase: deriveTimePhaseFromV2(ws.phaseV2 ?? 'DAY') };
   }
 
   updateHubSafety(ws: WorldState): WorldState {
