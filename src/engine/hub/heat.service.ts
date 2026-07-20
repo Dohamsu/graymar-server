@@ -1,14 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { WorldState } from '../../db/types/index.js';
-import type { ResolveResult } from '../../db/types/index.js';
-import type { TimePhase } from '../../db/types/index.js';
 
 const HEAT_DELTA_CLAMP = 8;
 const HUB_RETURN_DECAY = 5;
-const NIGHT_BONUS = 3;
-const VIOLENCE_BONUS = 5;
-const ARC_BONUS_MIN = 3;
-const ARC_BONUS_MAX = 5;
 const PAY_COST_BASE = 50;
 const PAY_COST_HEAT_MULTIPLIER = 2;
 const PAY_COST_PENALTY_INCREMENT = 25;
@@ -29,20 +23,9 @@ export class HeatService {
     return { ...ws, hubHeat: newHeat };
   }
 
-  calculateTurnHeat(
-    resolveResult: ResolveResult,
-    timePhase: TimePhase,
-  ): number {
-    let delta = resolveResult.heatDelta;
-    if (timePhase === 'NIGHT') delta += NIGHT_BONUS;
-    if (resolveResult.triggerCombat) delta += VIOLENCE_BONUS;
-    if (resolveResult.commitmentDelta > 0) {
-      delta += Math.floor(
-        ARC_BONUS_MIN + Math.random() * (ARC_BONUS_MAX - ARC_BONUS_MIN + 1),
-      );
-    }
-    return Math.max(-HEAT_DELTA_CLAMP, Math.min(HEAT_DELTA_CLAMP, delta));
-  }
+  // [dead wiring 정리 2026-07-20] 구설계 calculateTurnHeat 삭제 — heatDelta 산출의
+  // 정본은 resolve.service.ts(결정적). 이 메서드는 호출처 0건 + Math.random() 사용으로
+  // RNG 결정론(불변식 4) 위반 소지가 있어 제거.
 
   applyDecay(ws: WorldState): WorldState {
     const newHeat = Math.max(0, ws.hubHeat - HUB_RETURN_DECAY);

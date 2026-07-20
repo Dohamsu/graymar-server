@@ -1,6 +1,6 @@
 // 정본: specs/node_routing_v2.md — 24노드 DAG 그래프 + 기존 12노드 선형 시퀀스
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { NodeType } from '../../db/types/index.js';
 import type { NodeMeta } from '../../db/types/index.js';
 import type {
@@ -22,6 +22,8 @@ export interface PlannedNode {
 
 @Injectable()
 export class RunPlannerService {
+  private readonly logger = new Logger(RunPlannerService.name);
+
   constructor(private readonly content: ContentLoaderService) {}
 
   private graphMap: Map<string, PlannedNodeV2> | null = null;
@@ -146,6 +148,13 @@ export class RunPlannerService {
     // RANDOM 엣지가 있으면 가중치 기반 선택
     const randomEdges = node.edges.filter((e) => e.condition.type === 'RANDOM');
     if (randomEdges.length > 0) {
+      // 불변식 4(RNG 결정론): randomSeed는 호출측이 run.seed 파생값으로 항상 주입한다
+      // (turns.service 2곳 확인). Math.random() 폴백이 발동하면 결정론이 깨지므로 경고.
+      if (context.randomSeed === undefined) {
+        this.logger.warn(
+          `resolveNextNodeId: randomSeed 미주입 — 비결정 폴백 발동 (node=${currentGraphNodeId})`,
+        );
+      }
       return this.pickRandomEdge(
         randomEdges,
         context.randomSeed ?? Math.random(),
