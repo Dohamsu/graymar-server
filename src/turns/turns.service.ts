@@ -451,6 +451,10 @@ import { QuestProgressionService } from '../engine/hub/quest-progression.service
 import { ShopService } from '../engine/hub/shop.service.js';
 // NPC Discoverability v1 (architecture/48)
 import { NpcWhereaboutsService } from '../engine/hub/npc-whereabouts.service.js';
+import {
+  composeHintWithWhereabouts,
+  type HintWhereabouts,
+} from '../engine/hub/quest-hint-whereabouts.core.js';
 // NPC Resolution Authority v1 (architecture/49)
 import { NpcResolverService } from '../engine/hub/npc-resolver.service.js';
 import { LegendaryRewardService } from '../engine/rewards/legendary-reward.service.js';
@@ -2460,10 +2464,15 @@ export class TurnsService {
               'RUMOR_ECHO',
             ] as const;
             const hintMode = HINT_MODES[rng.range(0, HINT_MODES.length - 1)];
+            // arch/48: 힌트 대상 fact를 아는 NPC id를 함께 저장 → 소비 턴에
+            // whereabouts를 lookup해 "어디에 있는 누구를 찾아가라" 위치 절 합성.
+            const hintTargetNpcId =
+              this.questProgression.getFactNpc(lastFactId) ?? undefined;
             updatedRunState.pendingQuestHint = {
               hint: nextHint,
               setAtTurn: turnNo,
               mode: hintMode,
+              targetNpcId: hintTargetNpcId,
             };
             this.logger.log(
               `[Quest] pendingQuestHint set for fact=${lastFactId} mode=${hintMode} at turn=${turnNo}`,
@@ -5482,8 +5491,48 @@ export class TurnsService {
         hintAge <= DIRECTION_HINT_CARRY_MAX_TURNS &&
         pending.hint
       ) {
+        // arch/48: 힌트 대상 NPC의 현재 위치를 녹여 "어디에 있는 누구를
+        // 찾아가라"로 합성. 확정 문자열이 ui.questDirectionHint(방식1)이자
+        // prompt-builder [단서 방향] directive의 "${hint}"(방식2, LLM이 살을
+        // 붙임)로 함께 흐른다. UNKNOWN(위치 불명·상호작용 불가 시간대)이면
+        // 원본 힌트 그대로 (lookupNpc가 interactable=false를 UNKNOWN 처리).
+        let composedHint = pending.hint;
+        const targetNpcId = pending.targetNpcId;
+        const phaseV2 = updatedRunState.worldState?.phaseV2;
+        const curLoc = updatedRunState.worldState?.currentLocationId;
+        if (this.npcWhereabouts && targetNpcId && phaseV2 && curLoc) {
+          const status = this.npcWhereabouts.lookupNpc(
+            targetNpcId,
+            curLoc,
+            phaseV2,
+            updatedRunState,
+          );
+          const introduced =
+            updatedRunState.npcStates?.[targetNpcId]?.introduced === true;
+          const npcDisplay = introduced
+            ? this.content.getNpc(targetNpcId)?.name
+            : undefined;
+          const where: HintWhereabouts =
+            status.kind === 'DIFFERENT_LOCATION'
+              ? {
+                  kind: 'DIFFERENT_LOCATION',
+                  locationLabel: status.locationLabel,
+                }
+              : status.kind === 'SAME_LOCATION'
+                ? { kind: 'SAME_LOCATION' }
+                : { kind: 'UNKNOWN' };
+          composedHint = composeHintWithWhereabouts(pending.hint, where, {
+            introduced,
+            npcDisplay,
+          });
+          if (composedHint !== pending.hint) {
+            this.logger.debug(
+              `[Quest] whereaboutsHint 합성: npc=${targetNpcId} kind=${status.kind} introduced=${introduced} → "${composedHint.slice(-60)}"`,
+            );
+          }
+        }
         questDirectionHintForUi = {
-          hint: pending.hint,
+          hint: composedHint,
           mode: pending.mode ?? 'OVERHEARD',
         };
       } else if (hintAge > DIRECTION_HINT_CARRY_MAX_TURNS) {

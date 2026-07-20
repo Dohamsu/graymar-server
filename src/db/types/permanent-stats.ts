@@ -142,6 +142,8 @@ export interface RunState {
       | 'SCENE_CLUE'
       | 'NPC_BEHAVIOR'
       | 'RUMOR_ECHO';
+    /** 힌트 대상 fact를 아는 NPC — 소비 턴에 whereabouts 위치 절 합성용 (arch/48). */
+    targetNpcId?: string;
   } | null;
   // Character customization
   characterName?: string; // 플레이어 지정 캐릭터 이름 (1~8자)

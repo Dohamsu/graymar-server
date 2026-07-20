@@ -273,6 +273,11 @@ export class QuestProgressionService {
   }
 
   /** fact를 알고 있는 NPC를 찾아 반환 */
+  /** factId를 knownFact로 보유한 NPC id를 반환 (없으면 null). 힌트 whereabouts 합성용. */
+  getFactNpc(factId: string): string | null {
+    return this.findFactNpc(factId);
+  }
+
   private findFactNpc(factId: string): string | null {
     const allNpcs = this.content.getAllNpcs();
     for (const npc of allNpcs) {
