@@ -48,12 +48,22 @@ import {
   assignAuthoredPortraits,
   type PackAssetManifest,
 } from './asset-pool.js';
+import { validatePackCoreSchema } from './content-schema.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 
 // ── architecture/63 — scenario.json 필드 누락 시 안전 기본값 (graymar_v1 현행 값) ──
 // 엔진 서비스 파일에는 콘텐츠 리터럴을 두지 않는다. fallback은 이 파일 단일 지점.
-/** 기본 팩 — run.scenarioId가 null인 레거시 런 포함 */
-const DEFAULT_SCENARIO_ID = 'graymar_v1';
+/** 기본 팩 — run.scenarioId가 null인 레거시 런 포함 (불변식 45: 콘텐츠 ID fallback은 이 상수만 참조) */
+export const DEFAULT_SCENARIO_ID = 'graymar_v1';
+
+/** 불변식 48: 콘텐츠 캐시 읽기 전용 강제 — 재귀 Object.freeze (제자리 변조 = 즉시 TypeError) */
+function deepFreeze<T>(obj: T): T {
+  if (obj && typeof obj === 'object' && !Object.isFrozen(obj)) {
+    Object.freeze(obj);
+    for (const value of Object.values(obj)) deepFreeze(value);
+  }
+  return obj;
+}
 /** AMBUSH encounter 미지정 장소의 범용 encounter */
 const DEFAULT_AMBUSH_ENCOUNTER_ID = 'enc_generic';
 const DEFAULT_WORLD_META: ScenarioWorldMeta = {
@@ -451,7 +461,10 @@ export class ContentLoaderService implements OnModuleInit {
       : (factionsParsed.factions ?? []);
     for (const f of factionsList) pack.factions.set(f.factionId, f);
 
-    pack.eventsV2 = JSON.parse(eventsV2Raw) as EventDefV2[];
+    // 불변식 48 기계 강제 (2026-07-20): 이벤트 캐시를 딥프리즈 — 제자리 변조 시
+    // 조용한 캐시 오염(버그 V10: 한 런의 변조가 전 런 오염) 대신 즉시 TypeError.
+    // 변조가 필요한 소비처는 structuredClone 후 사용 (getEventById는 클론 반환).
+    pack.eventsV2 = deepFreeze(JSON.parse(eventsV2Raw) as EventDefV2[]);
     pack.sceneShells = JSON.parse(sceneShellsRaw) as Record<
       string,
       Record<string, Record<string, string>>
@@ -517,6 +530,21 @@ export class ContentLoaderService implements OnModuleInit {
     // Scenario meta 로드
     const scenarioParsed = JSON.parse(scenarioMetaRaw) as ScenarioMeta | null;
     pack.scenarioMeta = scenarioParsed;
+
+    // 코어 스키마 하드 게이트 (2026-07-20) — 필수 필드 누락 팩은 부팅 실패로 즉시 드러낸다.
+    // 팩 간 발산(AUTONOMOUS 파일 부재 등)은 content-schema.ts가 loose로 수용.
+    // 콘텐츠 수정 시 사전 확인: npx jest --testPathPatterns content-schema
+    const schemaErrors = validatePackCoreSchema(scenarioId, {
+      npcs: npcsList,
+      locations: locationsList,
+      scenario: scenarioParsed,
+    });
+    if (schemaErrors.length > 0) {
+      throw new Error(
+        `[Pack] '${scenarioId}' 코어 스키마 위반 ${schemaErrors.length}건:\n` +
+          schemaErrors.join('\n'),
+      );
+    }
 
     // Quest data 로드
     pack.questData = JSON.parse(questRaw) as unknown;
@@ -746,16 +774,24 @@ export class ContentLoaderService implements OnModuleInit {
     return [...this.locations.values()];
   }
 
+  /** 반환 요소는 딥프리즈된 캐시 참조 — 읽기 전용. 변조 필요 시 structuredClone. */
   getEventsByLocation(locationId: string): EventDefV2[] {
     return this.eventsV2.filter((e) => e.locationId === locationId);
   }
 
+  /** 반환 배열·요소는 딥프리즈된 캐시 — 읽기 전용. 변조 필요 시 structuredClone. */
   getAllEventsV2(): EventDefV2[] {
     return this.eventsV2;
   }
 
+  /**
+   * 불변식 48 (2026-07-20 로더 강제 전환): 캐시 참조가 아닌 **딥카피를 반환**한다.
+   * 소비처의 structuredClone 관례 누락이 캐시 오염(버그 V10)으로 이어지던 구조를
+   * 로더 측에서 차단. 캐시 원본은 deepFreeze되어 있어 우회 변조도 즉시 실패한다.
+   */
   getEventById(eventId: string): EventDefV2 | undefined {
-    return this.eventsV2.find((e) => e.eventId === eventId);
+    const found = this.eventsV2.find((e) => e.eventId === eventId);
+    return found ? structuredClone(found) : undefined;
   }
 
   getSceneShell(

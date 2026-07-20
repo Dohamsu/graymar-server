@@ -20,7 +20,10 @@ import {
 } from '../common/errors/game-errors.js';
 import { createEmptyStructuredMemory } from '../db/types/structured-memory.js';
 import type { GetRunQuery } from './dto/get-run.dto.js';
-import { ContentLoaderService } from '../content/content-loader.service.js';
+import {
+  ContentLoaderService,
+  DEFAULT_SCENARIO_ID,
+} from '../content/content-loader.service.js';
 import { runInScenarioContext } from '../content/scenario-context.js';
 import { WorldStateService } from '../engine/hub/world-state.service.js';
 import { AgendaService } from '../engine/hub/agenda.service.js';
@@ -938,7 +941,7 @@ export class RunsService {
   ): Promise<void> {
     try {
       await this.content.ensureScenario(scenarioId);
-      const seed = await runInScenarioContext(scenarioId ?? 'graymar_v1', () =>
+      const seed = await runInScenarioContext(scenarioId ?? DEFAULT_SCENARIO_ID, () =>
         this.plotSeedGenerator.generate(),
       );
       // [P8 캠페인 실측 수정 — 2026-07-17] SELECT→전체 되쓰기는 seed 생성

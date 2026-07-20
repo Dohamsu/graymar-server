@@ -1,4 +1,11 @@
 // PR7: Procedural Event Seed 데이터 (설계문서 20)
+//
+// [불변식 45 의도적 예외 — 2026-07-20 검토 종결]
+// 이 파일은 콘텐츠성 데이터가 엔진에 상주하는 예외다. 근거:
+//  - LOC_* 한정 시드는 타 팩에서 locationId 불일치로 자연 비활성 (필터 배제, 오염 없음)
+//  - 무한정 시드는 세계관 중립(중세 판타지 범용) — 전 팩 fallback 공용
+//  - 팩별 커스텀 시드 수요가 실제 발생하면 그때 content/<pack>/procedural_seeds.json
+//    + ContentLoader API로 외부화한다 (투기적 인프라 금지)
 
 import type { ProceduralSeed } from '../../db/types/procedural-event.js';
 

@@ -8,7 +8,10 @@ import type { CarryOverState, ScenarioResult } from '../db/types/carry-over.js';
 import type { EquippedGear, ItemInstance } from '../db/types/equipment.js';
 import { NotFoundError, ForbiddenError } from '../common/errors/game-errors.js';
 import type { RunState } from '../db/types/index.js';
-import { ContentLoaderService } from '../content/content-loader.service.js';
+import {
+  ContentLoaderService,
+  DEFAULT_SCENARIO_ID,
+} from '../content/content-loader.service.js';
 import { QUEST_BALANCE } from '../engine/hub/quest-balance.config.js';
 
 /**
@@ -314,7 +317,7 @@ export class CampaignsService {
     }
 
     return {
-      scenarioId: run.scenarioId ?? 'graymar_v1',
+      scenarioId: run.scenarioId ?? DEFAULT_SCENARIO_ID,
       scenarioName,
       scenarioOrder: run.scenarioOrder ?? 1,
       runId: run.id,
