@@ -266,16 +266,19 @@ export class LlmIntentParserService implements OnModuleInit {
           )
             ? (parsed.riskLevel as 1 | 2 | 3)
             : 1;
-          const targetNpc: string | null =
-            typeof parsed.targetNpc === 'string' && parsed.targetNpc
-              ? parsed.targetNpc
-              : null;
+          const targetNpc: string | null = this.sanitizeLlmString(
+            parsed.targetNpc,
+          );
           return {
             actionType,
             secondaryActionType:
               secondaryActionType !== actionType ? secondaryActionType : null,
             tone,
-            target: (parsed.target as string) ?? null,
+            // nano LLM 은 값 없음을 JSON null 이 아니라 문자열 "null"/"none"/""
+            // 로 뱉는다 (gpt-4.1-nano 실측). ?? 만으로는 문자열 "null" 이 통과해
+            // downstream 의 `!intent.target` 가드(구매 대상 보충 등)를 무력화하므로
+            // 파싱 단계에서 실제 null 로 정규화한다.
+            target: this.sanitizeLlmString(parsed.target),
             riskLevel,
             targetNpc,
           };
@@ -287,6 +290,21 @@ export class LlmIntentParserService implements OnModuleInit {
 
     this.logger.warn(`JSON parse failed: ${text.slice(0, 200)}`);
     return null;
+  }
+
+  /**
+   * LLM 문자열 필드 정규화 — 값 없음을 나타내는 placeholder("null"/"none"/
+   * 빈 문자열, 대소문자 무관)를 실제 null 로 변환. nano LLM 이 JSON null 대신
+   * 문자열 "null" 을 출력하는 실측 대응 (target/targetNpc 공용).
+   */
+  private sanitizeLlmString(raw: unknown): string | null {
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const lower = trimmed.toLowerCase();
+    if (lower === 'null' || lower === 'none' || lower === 'undefined')
+      return null;
+    return trimmed;
   }
 
   /** 비이벤트 타입 리다이렉트 (SHOP→TRADE, SEARCH→INVESTIGATE) */

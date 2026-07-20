@@ -2755,15 +2755,17 @@ export class TurnsService {
         intent.actionType === 'SHOP' ||
         (intent.actionType === 'TRADE' &&
           /구매|구입|매입|사겠|사고 싶|사줘|산다|[을를] 사/.test(rawInput));
-      // 파서가 target을 못 뽑은 구매 입력("체력 강장제를 구매한다" →
-      // TRADE, target 없음 실측) — 현 장소 재고 이름을 원문과 직접 대조해 보충
-      if (isBuyIntent && !intent.target) {
-        const matched = this.content
+      // 구매 대상 확정 — 파서의 target 추출은 불안정하다(문자열 "null" 미추출,
+      // 또는 "체력 강장제를 구매한다"에서 대상을 "광산 감독관" 같은 엉뚱한 명사로
+      // 오추출하는 케이스 실측). 원문에 현 장소 재고 아이템명이 그대로 있으면
+      // 그것을 권위 있는 대상으로 삼아 파서 target을 덮어쓴다(null·오추출 모두 방어).
+      if (isBuyIntent) {
+        const stockNameInInput = this.content
           .getShopsByLocation(locationId)
           .flatMap((sd) => economy.shopStocks[sd.shopId]?.items ?? [])
           .map((si) => this.content.getItem(si.itemId)?.name)
           .find((nm): nm is string => !!nm && rawInput.includes(nm));
-        if (matched) intent.target = matched;
+        if (stockNameInInput) intent.target = stockNameInInput;
       }
       if (isBuyIntent && intent.target) {
         const targetItemId = intent.target.toUpperCase().replace(/\s+/g, '_');
