@@ -1884,6 +1884,32 @@ export class PromptBuilderService {
           `- 서술에 이 시간대와 모순되는 단서(예: 밤에 "햇살", 낮에 "달빛") 사용 금지.\n` +
           `- 시간 전환이 필요하면 "시간이 흘러", "해가 기울어" 같은 전환 문구를 먼저 명시.`,
       );
+
+      // [시간대 전환] — 이번 턴에 4상 시간대가 실제로 넘어간 경우에만 주입.
+      //   급작스런 조명 전환(맥락 단절) 대신, 도입부에 시간 흐름을 한 문장으로
+      //   녹이도록 강제한다. 전환이 없는 턴엔 이 블록 자체가 붙지 않는다.
+      if (ctx.phaseTransition) {
+        const transKr: Record<string, string> = {
+          DAWN: '새벽',
+          DAY: '낮',
+          DUSK: '황혼',
+          NIGHT: '밤',
+        };
+        const transPhrase: Record<string, string> = {
+          DAWN: '어느새 동이 트기 시작하고',
+          DAY: '해가 완전히 떠올라 거리가 밝아지고',
+          DUSK: '해가 기울며 그림자가 길어지고',
+          NIGHT: '어둠이 내려앉아 등불이 하나둘 켜지고',
+        };
+        const fromKr = transKr[ctx.phaseTransition.from] ?? '낮';
+        const toKr = transKr[ctx.phaseTransition.to] ?? '밤';
+        const phrase = transPhrase[ctx.phaseTransition.to] ?? '시간이 흐르고';
+        factsParts.push(
+          `[시간대 전환] 이번 장면에서 ${fromKr}에서 ${toKr}(으)로 시간이 넘어간다.\n` +
+            `- 서술 도입부에 시간 흐름을 한 문장으로 자연스럽게 묘사(예: "${phrase}…").\n` +
+            `- 조명·분위기를 새 시간대(${toKr})로 바꾸되, 급작스런 점프가 아니라 장면에 녹여라.`,
+        );
+      }
     }
 
     // [버그 d20c1de8 ②] 주변 반응 — 폭력·물리 파괴가 공공장소에서 벌어졌는데

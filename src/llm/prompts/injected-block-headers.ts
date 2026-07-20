@@ -56,6 +56,7 @@ export const INJECTED_BLOCK_HEADERS: readonly string[] = [
   '이야기 요약',
   '주인공 배경',
   '현재 시간대',
+  '시간대 전환',
   '결말 임박',
   '단서 방향',
   '도시 사건',

@@ -813,6 +813,8 @@ export class RunsService {
               hubHeat: worldState.hubHeat,
               hubSafety: worldState.hubSafety,
               timePhase: worldState.timePhase,
+              phaseV2: worldState.phaseV2,
+              day: worldState.day,
               currentLocationId: null,
               reputation: worldState.reputation ?? {},
               // P2 — 프롤로그 첫 화면부터 팩 미터 게이지 노출 (첫 턴 전에도)

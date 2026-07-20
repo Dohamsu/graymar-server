@@ -201,6 +201,8 @@ export interface LlmContext {
   // 장소 기반 NPC 필터링용
   currentLocationId: string | null;
   currentTimePhase: string | null;
+  // 이번 턴에 발생한 4상 시간대 전환 (프롬프트 [시간대 전환] 디렉티브용). null/부재=전환 없음
+  phaseTransition?: { from: string; to: string } | null;
   // Phase 2: 파티 모드 — 4인분 행동 통합
   partyActions:
     | {
@@ -1162,6 +1164,14 @@ export class ContextBuilderService {
         ((runState?.worldState as Record<string, unknown> | undefined)
           ?.timePhase as string) ??
         null,
+      phaseTransition: (() => {
+        const t = (runState?.worldState as Record<string, unknown> | undefined)
+          ?.recentPhaseTransition as
+          | { from: string; to: string }
+          | null
+          | undefined;
+        return t?.from && t?.to ? { from: t.from, to: t.to } : null;
+      })(),
       partyActions: null, // 파티 모드 시 PartyTurnService에서 주입
       // 반복 구문 방지 — 직전 3턴 narrative 에서 2회+ 등장한 빈출 bigram top 5
       overusedPhrases: this.extractOverusedPhrases(finalLocationSessionTurns),

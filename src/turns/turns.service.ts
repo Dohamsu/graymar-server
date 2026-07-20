@@ -1022,6 +1022,8 @@ export class TurnsService {
             hubHeat: ws.hubHeat,
             hubSafety: ws.hubSafety,
             timePhase: ws.timePhase,
+            phaseV2: ws.phaseV2,
+            day: ws.day,
             currentLocationId: null,
             locationDynamicStates: ws.locationDynamicStates ?? {},
             playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
@@ -1295,6 +1297,28 @@ export class TurnsService {
     };
   }
 
+  /**
+   * 행동 유형별 시간 비용(tick) 산정.
+   * 시간을 행동의 결과로 만들어 "대화 도중 강제 일몰"·기계식 밤낮 전환 체감을 제거한다.
+   * - 순수 사교 발화(인사/안부/감사/작별)는 시간 정지(0) — 잡담으로 해가 지지 않는다.
+   * - 이동·휴식은 명시적으로 시간을 크게 보낸다(2).
+   * - 그 외 일반 행동은 1tick(기존 카덴스 보존).
+   * 1일=12tick 기준: 사교 0-cost가 평균 tick/turn을 낮춰 전환이 덜 잦아진다.
+   */
+  private computeTurnTimeCost(
+    actionType: string,
+    dialogueAct: import('../common/dialogue-act.js').DialogueAct | null,
+  ): number {
+    if (dialogueAct) return 0; // GREETING/WELLBEING/THANKS/FAREWELL = 시간 정지
+    switch (actionType) {
+      case 'REST':
+      case 'MOVE_LOCATION':
+        return 2;
+      default:
+        return 1;
+    }
+  }
+
   // [arch/77 P3.3] Narrative Engine 틱·사건 반영·전설 보상 묶음 —
   // preStepTick → 팩 게이지 → Incident impact → IncidentResolutionBridge →
   // IncidentMemory 축적 → postStepTick → Legendary 보상.
@@ -1310,6 +1334,7 @@ export class TurnsService {
     event: import('../db/types/event-def.js').EventDefV2 | null;
     turnNo: number;
     locationId: string;
+    dialogueAct: import('../common/dialogue-act.js').DialogueAct | null;
   }) {
     const {
       rng,
@@ -1321,17 +1346,26 @@ export class TurnsService {
       event,
       turnNo,
       locationId,
+      dialogueAct,
     } = params;
     let ws = params.ws;
 
     // === Narrative Engine v1: preStepTick (시간 사이클 + Incident tick + signal) ===
     const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
     ws = this.worldStateService.migrateWorldState(ws);
+
+    // 행동 가중 시간 비용 — 인사·잡담은 시간 정지(0), 이동·휴식은 크게, 나머지 1tick.
+    // 시간이 행동의 결과가 되게 하여 "대화 도중 강제 일몰"·기계식 전환 체감을 제거한다.
+    const timeCost = this.computeTurnTimeCost(intent.actionType, dialogueAct);
+
+    // 전환 감지용 — 틱 이전 4상 시간대 캡처.
+    const prevPhaseV2 = ws.phaseV2;
+
     const { ws: wsAfterTick, resolvedPatches } = this.worldTick.preStepTick(
       ws,
       incidentDefs,
       rng,
-      1,
+      timeCost,
     );
     ws = wsAfterTick;
 
@@ -1341,7 +1375,7 @@ export class TurnsService {
       const { next: meterNext, crossed } = tickPackMeters(
         ws.packMeters,
         packMeterDefs,
-        1,
+        timeCost,
       );
       ws.packMeters = meterNext;
       for (const c of crossed) {
@@ -1476,6 +1510,13 @@ export class TurnsService {
       ) as import('../db/types/world-state.js').TimePhaseV2;
     }
     ws = this.worldTick.postStepTick(ws, resolvedPatches);
+
+    // 4상 시간대 전환 감지 → LLM 서술 연속성용 stash (매 턴 갱신).
+    // preStepTick에서 phaseV2가 이미 진행됨. 전환 턴에만 프롬프트 디렉티브가 붙는다.
+    ws.recentPhaseTransition =
+      prevPhaseV2 && ws.phaseV2 && prevPhaseV2 !== ws.phaseV2
+        ? { from: prevPhaseV2, to: ws.phaseV2, atClock: ws.globalClock }
+        : null;
 
     // diff용 장비 추가 수집기 (클라이언트 즉시 반영)
     const allEquipmentAdded: import('../db/types/equipment.js').ItemInstance[] =
@@ -5100,6 +5141,7 @@ export class TurnsService {
       event,
       turnNo,
       locationId,
+      dialogueAct,
     });
     ws = tickOutcome.ws;
     const incidentDefs = tickOutcome.incidentDefs;
@@ -7388,6 +7430,8 @@ export class TurnsService {
           hubHeat: ws.hubHeat,
           hubSafety: ws.hubSafety,
           timePhase: ws.timePhase,
+          phaseV2: ws.phaseV2,
+          day: ws.day,
           currentLocationId: null,
           locationDynamicStates: ws.locationDynamicStates ?? {},
           playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
@@ -8207,6 +8251,8 @@ export class TurnsService {
           hubHeat: ws.hubHeat,
           hubSafety: ws.hubSafety,
           timePhase: ws.timePhase,
+          phaseV2: ws.phaseV2,
+          day: ws.day,
           currentLocationId: ws.currentLocationId,
           locationDynamicStates: ws.locationDynamicStates ?? {},
           playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),

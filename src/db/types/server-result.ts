@@ -112,6 +112,10 @@ export type WorldStateUI = {
   hubHeat: number;
   hubSafety: string;
   timePhase: string;
+  /** 4상 시간대 (새벽/낮/황혼/밤). 구 런/미마이그레이션 시 부재 → 클라가 timePhase에서 파생 */
+  phaseV2?: string;
+  /** 현재 일수 (1부터). 12tick = 1일 */
+  day?: number;
   currentLocationId: string | null;
   /** [P2 — 73 B1] 팩 세계축 게이지 (미선언 팩은 빈 배열) */
   packMeters?: PackMeterUI[];

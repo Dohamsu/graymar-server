@@ -93,4 +93,11 @@ export type WorldState = {
   npcFleeOverrides?: Record<string, { locationId: string; untilDay: number }>;
   locationDynamicStates?: Record<string, LocationDynamicState>; // locationId → 동적 상태
   playerGoals?: PlayerGoal[]; // 플레이어 목표 (최대 5개)
+  /** 직전 턴에 발생한 4상 시간대 전환 (LLM 서술 연속성용). 매 턴 갱신, null=전환 없음.
+   *  전환 턴에만 프롬프트 [시간대 전환] 디렉티브로 자연스러운 전환 서술을 강제한다. */
+  recentPhaseTransition?: {
+    from: TimePhaseV2;
+    to: TimePhaseV2;
+    atClock: number;
+  } | null;
 };
