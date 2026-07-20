@@ -450,6 +450,9 @@ export class PromptBuilderService {
         `- ⚠️ 직전 턴 서술에 등장한 익명 배경 인물(예: "서류 뭉치를 품에 안은 실무자", "짐을 옮기던 노동자", "여인")을 **이번 턴에 다시 등장시키지 마시오**. 같은 신원·소품 조합 2회+ 반복 금지.`,
         `- 배경 인물이 필요하면 매 턴 다른 신원·소품을 골라 1문장으로 짧게 묘사. 풀: 어부 / 행상 / 견습공 / 마부 / 청소부 / 술꾼 / 노점상 / 짐꾼 / 사제 보조 / 떠도는 음유시인 / 약초 채집인.`,
         `- 배경 인물 없이 환경(빛·소리·냄새)만으로 분위기를 만들어도 좋습니다.`,
+        // #5 advance-or-dismiss (2026-07-20): 장면 연속성이 살려두는 무명 감시자가
+        //   매 턴 "훑어보기"만 반복하는 회귀 차단. 진전 또는 퇴장을 강제.
+        `- ⚠️ 직전 서술부터 계속 지켜보거나 서 있기만 하는 무명 인물(감시자·상급자·책임자 등)이 있으면, 이번 턴엔 반드시 그 인물을 **진전**시키세요 — 다가와 말을 걸거나, 개입하거나, 자리를 뜨게 하세요. "무표정하게/차갑게 훑어본다" 류의 동일한 정적 묘사를 두 번 이상 반복하지 마시오.`,
       ];
       if (ctx.recentAuxSpeakers && ctx.recentAuxSpeakers.length > 0) {
         auxBlockLines.push(
@@ -1667,25 +1670,15 @@ export class PromptBuilderService {
         if (recent && recent.length > 0) {
           const uniqueTexts = Array.from(new Set(recent.map((g) => g.text)));
           const used = uniqueTexts.slice(-5).join(' / ');
-          // posture 기반 권장 풀 (간단 버전 — 모두에게 공통 pool)
-          const recommendPool = [
-            '땀을 훔치다',
-            '헛기침을 하다',
-            '손가락을 까딱거리다',
-            '어깨를 움츠리다',
-            '목덜미를 만지다',
-            '호흡을 가다듬다',
-            '무릎을 살짝 굽히다',
-            '옷깃을 매만지다',
-            '팔짱을 끼다',
-            '주먹을 쥐었다 펴다',
-          ];
+          // L0 (2026-07-20): 구체 권장 풀 제거 — 정적 어구 풀은 positive/negative
+          //   무관하게 anchor (불변식 41/42, 789줄 원칙, memory feedback_concrete_vocab_anchor).
+          //   구 recommendPool은 하필 과사용 제스처(목덜미·호흡)를 능동 권장하는
+          //   자기강화 루프였다. 반복 억제는 L1(frequency/presence_penalty)이 담당하고,
+          //   여기선 실제 사용분에 대한 회피 nudge(동적 데이터)만 남긴다.
           factsParts.push(
-            `[${displayName}의 최근 사용 제스처 — 반복 금지]\n` +
+            `[${displayName}의 최근 사용 제스처 — 반복 회피]\n` +
               `- 이미 사용: ${used}\n` +
-              `- 이번 턴엔 다른 제스처로 감정을 드러내세요. 권장 예시:\n` +
-              `  ${recommendPool.join(', ')}\n` +
-              `- 위 예시 중 성격에 맞는 것을 골라 자연스럽게 녹이세요.`,
+              `- 이번 턴엔 같은 동작을 반복하지 말고 다른 방식으로 감정을 드러내세요.`,
           );
         }
       }
@@ -3516,6 +3509,24 @@ export class PromptBuilderService {
       // 첫 등장 판정: encounterCount 기반 (이전의 narrative 텍스트 매칭 대신 정확한 카운터 사용)
       const isFirstEncounter = (npc.encounterCount ?? 0) <= 1;
       const llmSummary = npc.llmSummary;
+
+      // #7 개방 깊이 티어 (2026-07-20): dialogueSeed(오프닝 톤)와 별개로 "얼마나 깊은
+      //   정보를 스스로 꺼내는가"를 trust/조우로 게이트. 긍정 프레이밍("여기까지 나눈다")
+      //   으로 낯선 이에게 과다 개방(첫 조우 3~4턴 만에 목격 비리 고백) 억제. soft
+      //   네거티브는 무시되므로 positive framing. 구조화 fact 게이트(서버)는 불변.
+      {
+        const trustVal = em.trust ?? 0;
+        if (isFirstEncounter && trustVal < 20) {
+          hints.push(
+            '아직 낯선 상대다 — 직업·일상·공개된 소문 정도의 표면적 화제까지만 스스로 꺼낸다. 민감한 내부 사정·목격·비밀은 신뢰가 쌓이기 전에는 먼저 털어놓지 않는다 (플레이어가 신뢰를 얻거나 판정에 성공하면 열린다)',
+          );
+        } else if (trustVal < 40) {
+          hints.push(
+            '어느 정도 말은 트인 사이다 — 개인적 견해나 간접적인 단서까지는 나누되, 핵심 비밀·직접 목격한 위험한 일은 아직 아낀다',
+          );
+        }
+        // trust≥40: 기존 dialogueSeed 심층(귓속말) 수준 — 별도 제약 없음
+      }
 
       const behaviorParts: string[] = [];
 

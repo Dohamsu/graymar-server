@@ -2634,6 +2634,10 @@ ${npcList}`,
           ? Math.min(config.maxTokens, 512)
           : config.maxTokens,
         temperature: config.temperature,
+        // L1 (2026-07-20): 반복 억제 — 프롬프트 앵커 없이 생성 단계에서 토큰 재사용을
+        //   억제 (memory feedback_concrete_vocab_anchor). 메인 서술만; nano/추출은 미설정.
+        frequencyPenalty: 0.4,
+        presencePenalty: 0.3,
         reasoningEffort,
         ...(lightConfig ? { model: lightConfig.model } : {}),
         ...(alternateModel ? { model: alternateModel } : {}),

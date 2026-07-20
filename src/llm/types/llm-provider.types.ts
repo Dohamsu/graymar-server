@@ -16,6 +16,10 @@ export interface LlmProviderRequest {
   responseFormat?: 'text' | 'json_object'; // JSON 구조화 출력 모드
   /** 요청 단위 타임아웃 (nano 감사 1번 2026-07-11) — 미지정 시 전역 LLM_TIMEOUT_MS */
   timeoutMs?: number;
+  /** OpenAI-compatible 반복 억제 (2026-07-20, memory feedback_concrete_vocab_anchor).
+   *  메인 서술만 설정 — nano/추출은 미설정(결정성 유지). Anthropic/Gemini는 미지원 → 무시. */
+  frequencyPenalty?: number;
+  presencePenalty?: number;
 }
 
 export interface LlmProviderResponse {

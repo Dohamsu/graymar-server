@@ -146,6 +146,12 @@ export class OpenAIProvider implements LlmProvider {
           ? { max_completion_tokens: request.maxTokens }
           : { max_tokens: request.maxTokens }),
         temperature: request.temperature,
+        ...(request.frequencyPenalty != null
+          ? { frequency_penalty: request.frequencyPenalty }
+          : {}),
+        ...(request.presencePenalty != null
+          ? { presence_penalty: request.presencePenalty }
+          : {}),
         ...(request.responseFormat === 'json_object'
           ? { response_format: { type: 'json_object' as const } }
           : {}),
@@ -257,6 +263,12 @@ export class OpenAIProvider implements LlmProvider {
         })),
         max_tokens: request.maxTokens,
         temperature: request.temperature,
+        ...(request.frequencyPenalty != null
+          ? { frequency_penalty: request.frequencyPenalty }
+          : {}),
+        ...(request.presencePenalty != null
+          ? { presence_penalty: request.presencePenalty }
+          : {}),
         stream: true,
         stream_options: { include_usage: true },
         ...(request.responseFormat === 'json_object'
