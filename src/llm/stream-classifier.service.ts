@@ -8,7 +8,6 @@
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { NPCState } from '../db/types/npc-state.js';
 import { getNpcDisplayName } from '../db/types/npc-state.js';
-import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 
 /** NPC 후보 정보 */
 export interface NpcCandidate {

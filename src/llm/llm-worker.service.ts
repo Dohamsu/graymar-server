@@ -35,7 +35,6 @@ import { runInTurnContext, currentTurnStore } from './turn-context.js';
 import { capturePromptFixture } from './prompts/testing/prompt-fixture-capture.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { NpcDialogueMarkerService } from './npc-dialogue-marker.service.js';
-import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 import { StreamClassifierService } from './stream-classifier.service.js';
 import {
   NanoDirectorService,

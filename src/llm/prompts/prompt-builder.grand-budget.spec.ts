@@ -26,7 +26,10 @@ describe('PromptBuilderService.enforceGrandTotal (arch/79 P3-C)', () => {
     const enforce = makeEnforce();
     const msgs: LlmMessage[] = [
       { role: 'system', content: '시스템 규칙' },
-      { role: 'user', content: '[NPC 일상 — 지금]\n잡담\n\n[플레이어 행동]\n조사한다' },
+      {
+        role: 'user',
+        content: '[NPC 일상 — 지금]\n잡담\n\n[플레이어 행동]\n조사한다',
+      },
     ];
     const before = JSON.stringify(msgs);
     enforce(msgs);
@@ -44,8 +47,8 @@ describe('PromptBuilderService.enforceGrandTotal (arch/79 P3-C)', () => {
       },
     ];
     enforce(msgs);
-    expect(msgs[1]!.content).not.toContain('[세계 상태]');
-    expect(msgs[1]!.content).toContain('[플레이어 행동]');
+    expect(msgs[1].content).not.toContain('[세계 상태]');
+    expect(msgs[1].content).toContain('[플레이어 행동]');
     expect(totalLen(msgs)).toBeLessThanOrEqual(GRAND_TOTAL_CHAR_BUDGET);
   });
 
@@ -60,9 +63,9 @@ describe('PromptBuilderService.enforceGrandTotal (arch/79 P3-C)', () => {
       },
     ];
     enforce(msgs);
-    expect(msgs[1]!.content).toContain('[관련 NPC 기록]');
-    expect(msgs[1]!.content).not.toContain('끝단어');
-    expect(msgs[1]!.content!.endsWith('…')).toBe(true);
+    expect(msgs[1].content).toContain('[관련 NPC 기록]');
+    expect(msgs[1].content).not.toContain('끝단어');
+    expect(msgs[1].content.endsWith('…')).toBe(true);
   });
 
   it('시스템 메시지와 보호 블록(목록 외)은 초과 잔존 시에도 건드리지 않는다', () => {
@@ -70,11 +73,14 @@ describe('PromptBuilderService.enforceGrandTotal (arch/79 P3-C)', () => {
     const sys = '규'.repeat(GRAND_TOTAL_CHAR_BUDGET + 500);
     const msgs: LlmMessage[] = [
       { role: 'system', content: sys },
-      { role: 'user', content: '[이번 턴 판정]\nSUCCESS\n\n[직전 NPC 대사]\n"어서 오시오."' },
+      {
+        role: 'user',
+        content: '[이번 턴 판정]\nSUCCESS\n\n[직전 NPC 대사]\n"어서 오시오."',
+      },
     ];
-    const userBefore = msgs[1]!.content;
+    const userBefore = msgs[1].content;
     enforce(msgs);
-    expect(msgs[0]!.content).toBe(sys);
-    expect(msgs[1]!.content).toBe(userBefore);
+    expect(msgs[0].content).toBe(sys);
+    expect(msgs[1].content).toBe(userBefore);
   });
 });

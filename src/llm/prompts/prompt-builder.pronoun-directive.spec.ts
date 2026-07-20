@@ -52,7 +52,9 @@ describe('PromptBuilderService.buildPronounDirective (arch/78 2차)', () => {
 
   it('HUB 턴은 미발화', () => {
     const build = makeBuild();
-    expect(build({ overusedOpeners: ['그는/그가'] }, new Set(), true)).toBeNull();
+    expect(
+      build({ overusedOpeners: ['그는/그가'] }, new Set(), true),
+    ).toBeNull();
   });
 
   it('대상 NPC가 있으면 별칭 데이터를 동반한다 (미소개→unknownAlias)', () => {

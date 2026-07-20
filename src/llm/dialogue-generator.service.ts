@@ -7,7 +7,6 @@ import { LlmConfigService } from './llm-config.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { NPCState } from '../db/types/npc-state.js';
 import { getNpcDisplayName } from '../db/types/npc-state.js';
-import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 import { korParticle } from '../common/korean.js';
 
 /** dialogue_slot의 의도 enum */

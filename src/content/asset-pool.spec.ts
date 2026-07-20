@@ -12,12 +12,21 @@ const P = (
   url: string,
   keywords: string[] = [],
   gender?: 'male' | 'female',
-): PackAssetEntry => ({ url, kind: 'portrait', keywords, ...(gender ? { gender } : {}) });
+): PackAssetEntry => ({
+  url,
+  kind: 'portrait',
+  keywords,
+  ...(gender ? { gender } : {}),
+});
 
 describe('asset-pool (arch/80)', () => {
   it('성별 명시 불일치는 배제(null), 일치는 가점', () => {
-    expect(scoreAsset(P('/a', [], 'male'), { gender: 'female', text: '' })).toBeNull();
-    expect(scoreAsset(P('/a', [], 'male'), { gender: 'male', text: '' })).toBe(1);
+    expect(
+      scoreAsset(P('/a', [], 'male'), { gender: 'female', text: '' }),
+    ).toBeNull();
+    expect(scoreAsset(P('/a', [], 'male'), { gender: 'male', text: '' })).toBe(
+      1,
+    );
     expect(scoreAsset(P('/a', []), { gender: 'female', text: '' })).toBe(0);
   });
 
@@ -42,8 +51,18 @@ describe('asset-pool (arch/80)', () => {
 
   it('저작 배정: 키워드 실매칭만 그리디, 이미지당 1명, 범용은 미배정(동적 몫)', () => {
     const npcs = [
-      { npcId: 'NPC_KH_OSLA', name: '오슬라', gender: 'female', role: '주조소 감독' },
-      { npcId: 'NPC_KH_BRIG', name: '브리그', gender: 'male', role: '광부 조장' },
+      {
+        npcId: 'NPC_KH_OSLA',
+        name: '오슬라',
+        gender: 'female',
+        role: '주조소 감독',
+      },
+      {
+        npcId: 'NPC_KH_BRIG',
+        name: '브리그',
+        gender: 'male',
+        role: '광부 조장',
+      },
     ];
     const pool = [
       P('/osla.webp', ['오슬라'], 'female'),

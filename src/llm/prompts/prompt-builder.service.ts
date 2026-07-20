@@ -1241,12 +1241,13 @@ export class PromptBuilderService {
     // 감지 의존 발화는 15턴 중 6턴만 커버 — OFF 대화 턴 42.9% vs ON 25.6%
     // (후반 지속 노출 시 16%) 실측. 대화 턴 대명사 편향은 만성(기저 29~35%)이라
     // 창 임계를 기다릴 이유가 없다.
-    const pronounKey = detectedKey ?? (targetNpcIds.size > 0 ? '그는/그가' : null);
+    const pronounKey =
+      detectedKey ?? (targetNpcIds.size > 0 ? '그는/그가' : null);
     if (!pronounKey) return null;
 
     let aliasLine = '';
     if (targetNpcIds.size > 0) {
-      const npcId = [...targetNpcIds][0]!;
+      const npcId = [...targetNpcIds][0];
       const npcDef = this.content.getNpc(npcId);
       if (npcDef) {
         const introduced = new Set(ctx.introducedNpcIds ?? []).has(npcId);

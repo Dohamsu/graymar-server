@@ -87,7 +87,8 @@ export const ScenarioCoreSchema = z
 export interface PackSchemaInput {
   npcs: unknown[];
   locations: unknown[];
-  scenario: unknown | null;
+  /** scenario.json 파싱 결과 — 무파일 팩은 null (unknown이 null 포함) */
+  scenario: unknown;
 }
 
 /**

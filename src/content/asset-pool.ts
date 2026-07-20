@@ -77,7 +77,7 @@ export function pickAsset(
   if (scored.length === 0) return null;
   const best = Math.max(...scored.map((x) => x.score));
   const top = scored.filter((x) => x.score === best);
-  return top[seed % top.length]!.url;
+  return top[seed % top.length].url;
 }
 
 /**
@@ -110,9 +110,7 @@ export function assignAuthoredPortraits(
       pairs.push({ npcId: npc.npcId, url: e.url, score: s });
     }
   }
-  pairs.sort(
-    (a, b) => b.score - a.score || a.npcId.localeCompare(b.npcId),
-  );
+  pairs.sort((a, b) => b.score - a.score || a.npcId.localeCompare(b.npcId));
   const assigned = new Map<string, string>();
   const usedUrls = new Set<string>();
   for (const p of pairs) {

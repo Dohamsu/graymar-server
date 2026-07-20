@@ -19,7 +19,7 @@ describe('composeHintWithWhereabouts', () => {
         introduced: false,
         npcDisplay: '오슬라',
       });
-      // eslint-disable-next-line no-console
+
       console.log('[미소개/다른장소]', out);
       expect(out).toContain('그런 인물은 지금 부둣가 쪽에 있을 것이다');
       expect(out).not.toContain('오슬라'); // 실명 노출 금지
@@ -31,7 +31,7 @@ describe('composeHintWithWhereabouts', () => {
         introduced: true,
         npcDisplay: '펠릭스',
       });
-      // eslint-disable-next-line no-console
+
       console.log('[소개/다른장소/받침O]', out);
       expect(out).toContain('부둣가 쪽에서 펠릭스를 만날 수 있을 것이다');
     });
@@ -41,7 +41,7 @@ describe('composeHintWithWhereabouts', () => {
         introduced: true,
         npcDisplay: '오슬라',
       });
-      // eslint-disable-next-line no-console
+
       console.log('[소개/다른장소/받침X]', out);
       expect(out).toContain('오슬라를 만날 수 있을 것이다');
     });
@@ -64,7 +64,7 @@ describe('composeHintWithWhereabouts', () => {
         introduced: true,
         npcDisplay: '오슬라',
       });
-      // eslint-disable-next-line no-console
+
       console.log('[소개/같은장소]', out);
       expect(out).toContain('마침 오슬라가 이곳에 머물고 있다');
     });
@@ -74,7 +74,7 @@ describe('composeHintWithWhereabouts', () => {
         introduced: false,
         npcDisplay: '오슬라',
       });
-      // eslint-disable-next-line no-console
+
       console.log('[미소개/같은장소]', out);
       expect(out).toContain('마침 그럴 만한 인물이 이곳에 머물고 있다');
       expect(out).not.toContain('오슬라');
@@ -108,7 +108,7 @@ describe('composeHintWithWhereabouts', () => {
         { kind: 'DIFFERENT_LOCATION', locationLabel: '창고' },
         { introduced: false },
       );
-      // eslint-disable-next-line no-console
+
       console.log('[부호보정]', out);
       expect(out).toBe(
         '회계 담당자를 찾아라. 그런 인물은 지금 창고 쪽에 있을 것이다.',

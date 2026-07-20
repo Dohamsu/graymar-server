@@ -52,7 +52,7 @@ describe('ContextBuilderService.extractOverusedOpeners (2026-07-18)', () => {
       turn('그는 문을 열었다.', '그녀는 창밖을 바라보았다.'),
     ]);
     expect(out).toHaveLength(1);
-    expect(out[0]!.split('/')).toEqual(
+    expect(out[0].split('/')).toEqual(
       expect.arrayContaining(['그는', '그녀는']),
     );
   });

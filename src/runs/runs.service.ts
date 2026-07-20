@@ -941,8 +941,9 @@ export class RunsService {
   ): Promise<void> {
     try {
       await this.content.ensureScenario(scenarioId);
-      const seed = await runInScenarioContext(scenarioId ?? DEFAULT_SCENARIO_ID, () =>
-        this.plotSeedGenerator.generate(),
+      const seed = await runInScenarioContext(
+        scenarioId ?? DEFAULT_SCENARIO_ID,
+        () => this.plotSeedGenerator.generate(),
       );
       // [P8 캠페인 실측 수정 — 2026-07-17] SELECT→전체 되쓰기는 seed 생성
       // ~10초 사이 커밋된 턴과 경합: seed가 유실되거나(kh_1 실측 — 자율 런이
