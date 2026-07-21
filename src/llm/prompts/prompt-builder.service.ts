@@ -1419,14 +1419,22 @@ export class PromptBuilderService {
 
     // 판정 결과 — 해당 턴의 판정+행동 조합만 동적 주입 (system에서 전체 매트릭스 제거)
     if (sr.ui?.resolveOutcome) {
-      const actionType = (sr.ui as Record<string, unknown>)?.actionContext
-        ? ((
-            (sr.ui as Record<string, unknown>).actionContext as Record<
-              string,
-              unknown
-            >
-          )?.intentActionType as string)
-        : '';
+      // 정본 필드는 parsedType (turns.service actionContext). 과거 이 블록만
+      // intentActionType(어디서도 set 안 되는 데드 필드)을 단독으로 읽어 항상
+      // undefined → _DEFAULT 로 폴백돼 행동별 판정 디렉티브가 사문화됐던 회귀 수정.
+      // focused-NPC 블록(위)과 동일한 fallback 체인으로 정합.
+      const actionCtx = (sr.ui as Record<string, unknown>)?.actionContext as
+        | {
+            parsedType?: string;
+            actionType?: string;
+            intentActionType?: string;
+          }
+        | undefined;
+      const actionType =
+        actionCtx?.parsedType ??
+        actionCtx?.actionType ??
+        actionCtx?.intentActionType ??
+        '';
       const outcome = sr.ui.resolveOutcome as string;
 
       // 행동별 판정 결과 매트릭스 (해당 조합만 전달)
