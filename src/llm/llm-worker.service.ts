@@ -2552,13 +2552,26 @@ ${npcList}`,
           dialogueActForIntroGen !== 'FAREWELL'
         ) {
           try {
+            // 카른홀트 #11: 소개 턴이 실제 첫 만남인지 재등장인지 분기.
+            //   FRIENDLY/FEARFUL appearanceCount≥3 경로나 CAUTIOUS(2회)/
+            //   CALCULATING(3회) NPC는 소개 턴이 첫 만남이 아니다 — 그런데도
+            //   "처음 마주한 상황"으로 주면 nano가 웰컴 인사("어서 오세요…편히
+            //   쉬어 가세요")를 생성해 진행 중인 진지한 대화 말미에 붙어 맥락이
+            //   끊긴다(오슬라 T13 실측). 재등장이면 "뒤늦은 통성명" 프레이밍.
+            const introNpcState = llmContext.npcStates?.[firstMeetIntroId];
+            const isReencounter =
+              (introNpcState?.appearanceCount ?? 0) >= 2 ||
+              (introNpcState?.encounterCount ?? 0) >= 2;
+            const situationContext = isReencounter
+              ? `이미 몇 마디 나눈 상대에게 뒤늦게 통성명하는 상황(첫 만남 아님 — "어서 오세요/편히 쉬어 가세요" 류 환영 인사 금지). 장소: ${llmContext.locationContext ?? '거리'}`
+              : `${llmContext.locationContext ?? '거리'}에서 상대와 처음 마주한 상황`;
             const gen = await this.dialogueGenerator.generateIntroDialogue({
               npcId: firstMeetIntroId,
-              npcState: llmContext.npcStates?.[firstMeetIntroId],
+              npcState: introNpcState,
               // 완주 평가 ③-4: rawInput(예: "물건을 훔친다")을 그대로 주면
               // nano가 그 행동을 승인하는 대사를 생성 ("가져가셔도 좋습니다"
               // 실측) — 장소 중심 중립 문맥으로 전달
-              situationContext: `${llmContext.locationContext ?? '거리'}에서 상대와 처음 마주한 상황`,
+              situationContext,
               turnNo: pending.turnNo,
             });
             if (gen) {
