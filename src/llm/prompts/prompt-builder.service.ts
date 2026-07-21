@@ -930,6 +930,34 @@ export class PromptBuilderService {
       }
     }
 
+    // [arch/83 #13 안 A] 무명 화자 프레이밍 — 이 턴에 이름을 밝힐 특정 인물이
+    //   없을 때(primaryNpcId/speakingNpc/focused/target 전부 부재), LLM이 사건
+    //   정보를 익명 인물의 "긴 증언"으로 풀어놓으면 "이름 붙어야 할 정보원인데
+    //   무명"인 위화감이 생긴다(카른홀트 시장 PROC/FREE 정보원 실측). 승격 대신
+    //   전달 형식을 소문·조각으로 프레이밍해 위화감의 원인을 제거한다. 배경
+    //   인물 로테이션(arch/80)·소문 힌트 모드(OVERHEARD 등)와 정합.
+    //   HUB(선택지 네비)·전투 턴은 무명 정보원 fact 전달이 없어 제외(프롬프트 최소).
+    if (!isCombat && !isHub) {
+      const factSpeakerId =
+        (
+          (sr.ui as Record<string, unknown>)?.speakingNpc as
+            | { npcId?: string }
+            | undefined
+        )?.npcId ??
+        (
+          (sr.ui as Record<string, unknown>)?.actionContext as
+            | { primaryNpcId?: string }
+            | undefined
+        )?.primaryNpcId;
+      const anonymousPrimaryTurn =
+        !factSpeakerId && !ctx.focusedNpcId && targetNpcIds.size === 0;
+      if (anonymousPrimaryTurn) {
+        factsParts.push(
+          `[무명 화자 프레이밍]\n이 장면엔 이름을 밝힐 만한 특정 인물이 없습니다. 사건·단서 정보를 전할 때 한 사람의 길고 상세한 증언으로 풀어놓지 마세요 — 대신 ① 여러 사람의 수군거림·시장 소문·주워들은 말 조각이나 ② 지나가는 인물의 짧은 한두 마디(신원을 세우지 않는)로 전하세요. 무명 인물이 사건 전모를 혼자 설명하는 장면 금지.`,
+        );
+      }
+    }
+
     // P5: FREE 턴 단서 힌트 — 미발견 단서가 있는 장소에서 탐색 동기 부여
     if (ctx.questFactHint) {
       factsParts.push(
