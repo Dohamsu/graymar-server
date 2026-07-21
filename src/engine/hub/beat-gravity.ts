@@ -128,7 +128,9 @@ export function scoreBeatCandidate(
     ctx.lastPrimaryNpcId &&
     beat.involvedNpcIds.includes(ctx.lastPrimaryNpcId)
   ) {
-    score += Math.floor(B.GRAVITY_NPC_BONUS / 2);
+    // [arch/83 안 C] 직전 상호작용 NPC 일치: ½ → ⅔ 가중. 진행 중 대화와
+    // 이어지는 비트를 더 당겨 무관 비트 채택(aligned=False)을 줄인다.
+    score += Math.floor((B.GRAVITY_NPC_BONUS * 2) / 3);
   }
 
   // 미발견 keyFact 힌트 + 막 압박 인력

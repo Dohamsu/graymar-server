@@ -118,14 +118,14 @@ describe('scoreBeatCandidate', () => {
     );
   });
 
-  it('직전 상호작용 NPC는 타겟의 절반 가중', () => {
+  it('직전 상호작용 NPC는 타겟의 ⅔ 가중 (arch/83 안 C)', () => {
     const s = scoreBeatCandidate(
       beat(),
       baseCtx({ lastPrimaryNpcId: 'NPC_A' }),
     );
     expect(s).toBe(
       AUTONOMOUS_BALANCE.GRAVITY_LOCATION_BONUS +
-        Math.floor(AUTONOMOUS_BALANCE.GRAVITY_NPC_BONUS / 2),
+        Math.floor((AUTONOMOUS_BALANCE.GRAVITY_NPC_BONUS * 2) / 3),
     );
   });
 

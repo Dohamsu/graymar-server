@@ -73,14 +73,25 @@ export const AUTONOMOUS_BALANCE = {
   /** 워커가 선계산하는 비트 후보 수 (§9.3 적중률 계측 후 조정) */
   BEAT_CANDIDATE_COUNT: 3,
 
-  /** 후보 유효 턴 수 — generatedAtTurn + N 턴까지 채택 허용 (초과 시 stale 폐기) */
-  BEAT_STALE_MAX_TURNS: 2,
+  /**
+   * 후보 유효 턴 수 — generatedAtTurn + N 턴까지 채택 허용 (초과 시 stale 폐기).
+   * [arch/83 안 A] 2→3: 비트는 LOCATION 턴에만 재생성돼 HUB 경유(이동·거점
+   * 복귀) 시 신선도가 끊긴다. 창을 1턴 넓혀 HUB 왕복 후에도 다음 탐색/강제
+   * 턴에서 채택 기회를 얻게 한다(병목 §3-b). 게이트·정합 점수는 불변.
+   */
+  BEAT_STALE_MAX_TURNS: 3,
 
   /** 인력: 후보 장소 = 현재 장소 가중 */
   GRAVITY_LOCATION_BONUS: 30,
 
-  /** 인력: 관련 NPC가 플레이어 타겟/직전 상호작용 NPC와 일치 가중 */
-  GRAVITY_NPC_BONUS: 25,
+  /**
+   * 인력: 관련 NPC가 플레이어 타겟/직전 상호작용 NPC와 일치 가중.
+   * [arch/83 안 C] 25→30: 채택 "품질"(정합) 레버 — 현 대화 상대를 포함하는
+   * 비트가 더 쉽게 선택돼, 진행 중 대화와 이어지는 비트가 뽑히게 한다(무관
+   * 비트 채택 aligned=False 감소). 수량엔 영향 미미(임계는 장소 30으로 이미
+   * 통과), 후보 선택만 현 맥락 쪽으로 당긴다. 직전 상호작용은 ⅔ 가중(아래).
+   */
+  GRAVITY_NPC_BONUS: 30,
 
   /** 인력: 비트 affordances에 플레이어 행동 계열 포함 가중 */
   GRAVITY_AFFORDANCE_BONUS: 20,
