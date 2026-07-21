@@ -10,6 +10,36 @@ export interface NarrativeFilterNpcDef {
   aliases?: string[];
 }
 
+// [#7 실명 오변형 계측] 한글 음절 자모 분해 — 초성/중성/종성 인덱스.
+// 완성형 한글(0xAC00~0xD7A3)만. 그 외(자모 단독·비한글)는 null.
+const HANGUL_BASE = 0xac00;
+const HANGUL_END = 0xd7a3;
+function decomposeSyllable(
+  ch: string,
+): { cho: number; jung: number; jong: number } | null {
+  const code = ch.charCodeAt(0);
+  if (code < HANGUL_BASE || code > HANGUL_END) return null;
+  const offset = code - HANGUL_BASE;
+  return {
+    cho: Math.floor(offset / 588),
+    jung: Math.floor((offset % 588) / 28),
+    jong: offset % 28,
+  };
+}
+
+/**
+ * [#7] 두 한글 음절이 "초성·중성 동일, 종성만 상이"인가 (자모 근접 변형).
+ * 예: '핍'(ㅍㅣ+ㅂ) ↔ '핀'(ㅍㅣ+ㄴ) → true. LLM 즉흥 실명 오변형('핍'→'핀')을
+ * 레벤슈타인(문자 단위) 대신 자모 단위로 좁혀 1음절 이름을 안전 범위로 감지.
+ */
+export function isJongseongVariantCore(a: string, b: string): boolean {
+  if (a === b) return false;
+  const da = decomposeSyllable(a);
+  const db = decomposeSyllable(b);
+  if (!da || !db) return false;
+  return da.cho === db.cho && da.jung === db.jung && da.jong !== db.jong;
+}
+
 export interface NarrativeFilterDeps {
   /** content/text_replacements.json npcApproach 룰 (P1) */
   approachRules: Array<{ pattern: string; replacement: string }>;

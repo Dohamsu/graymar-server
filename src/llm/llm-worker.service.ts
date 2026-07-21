@@ -26,6 +26,7 @@ import { stripLeakedPromptBlocks } from './prompts/injected-block-headers.js';
 import {
   applyNarrativeQualityFilters,
   cleanupNarrativeArtifacts,
+  isJongseongVariantCore,
 } from './narrative-filter.core.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
@@ -3521,6 +3522,45 @@ ${npcList}`,
         );
       } catch (err) {
         this.logger.warn(`[SpeechAudit] error: ${err}`);
+      }
+
+      // [#7 1단계 계측 센서 — arch/78·82] introduced primaryNpc 실명 오변형 탐지.
+      // 로그만 남기고 서술은 변경하지 않는다(동작 0). introduced된 화자는 그 턴에
+      // 실명이 나와야 하는데 본문에 정확 실명이 없고, 대신 자모 종성변형('핍'→'핀')이
+      // 주격/목적격 조사 밀착으로 등장하면 오변형 후보로 warn. 3팩 롱런으로 실제
+      // 발생률·FP 후보를 정량화한 뒤 2단계(자모 단위 교정) 도입 여부를 결정한다.
+      // 1음절 이름은 length>=2 가드로 기존 교정망이 의도적으로 제외한 사각지대.
+      try {
+        const primaryNpcIdForAudit = (
+          (serverResult.ui as Record<string, unknown>)?.actionContext as
+            | { primaryNpcId?: string | null }
+            | undefined
+        )?.primaryNpcId;
+        if (primaryNpcIdForAudit && narrative) {
+          const pState = (llmContext.npcStates ?? {})[primaryNpcIdForAudit];
+          const pDef = this.content.getNpc(primaryNpcIdForAudit);
+          const pName = pDef?.name;
+          if (pState?.introduced && pName && !narrative.includes(pName)) {
+            const PARTICLE = /[은는이가을를에게]/;
+            const seen = new Set<string>();
+            for (const nameCh of pName) {
+              for (let i = 0; i < narrative.length; i++) {
+                const ch = narrative[i];
+                if (!isJongseongVariantCore(ch, nameCh)) continue;
+                const next = narrative[i + 1] ?? '';
+                if (!PARTICLE.test(next)) continue;
+                const key = `${ch}${next}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                this.logger.warn(
+                  `[NameVariantAudit] turn=${pending.turnNo} primaryNpc=${primaryNpcIdForAudit}(${pName}) 실명 미등장 + 종성변형 '${key}' 감지 (오변형 의심, 로그만)`,
+                );
+              }
+            }
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`[NameVariantAudit] error: ${err}`);
       }
 
       // llmChoices 는 Track 2 (서술 기반 nano 선택지 재생성) 완료 후

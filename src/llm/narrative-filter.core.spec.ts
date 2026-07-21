@@ -3,6 +3,7 @@
 import {
   applyNarrativeQualityFilters,
   cleanupNarrativeArtifacts,
+  isJongseongVariantCore,
 } from './narrative-filter.core.js';
 import type {
   NarrativeFilterDeps,
@@ -211,5 +212,34 @@ describe('cleanupNarrativeArtifacts (P4.2 — 5.10.5~5.10.10)', () => {
     );
     expect(r).toContain('말한다.\n\n@[로넨]');
     expect(r).toContain('"왔군."이어서'); // 따옴표 뒤는 한글+.!?+한글 조건 밖 — 원본 시맨틱 유지
+  });
+});
+
+// [#7 실명 오변형 계측] 자모 종성변형 판별
+describe('isJongseongVariantCore', () => {
+  it('핍 ↔ 핀 (초성ㅍ·중성ㅣ 동일, 종성 ㅂ≠ㄴ) → true', () => {
+    expect(isJongseongVariantCore('핀', '핍')).toBe(true);
+    expect(isJongseongVariantCore('핍', '핀')).toBe(true);
+  });
+
+  it('종성 유무 차이도 변형 (강 ↔ 가) → true', () => {
+    expect(isJongseongVariantCore('강', '가')).toBe(true);
+  });
+
+  it('같은 글자 → false', () => {
+    expect(isJongseongVariantCore('핍', '핍')).toBe(false);
+  });
+
+  it('초성 다름 (핀 ↔ 딘) → false', () => {
+    expect(isJongseongVariantCore('핀', '딘')).toBe(false);
+  });
+
+  it('중성 다름 (핀 ↔ 폰) → false', () => {
+    expect(isJongseongVariantCore('핀', '폰')).toBe(false);
+  });
+
+  it('비한글(자모 단독·영문) → false', () => {
+    expect(isJongseongVariantCore('ㅎ', '핍')).toBe(false);
+    expect(isJongseongVariantCore('a', 'b')).toBe(false);
   });
 });
