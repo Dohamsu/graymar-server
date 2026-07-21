@@ -81,6 +81,12 @@ export interface TurnModeContext {
 // [불변식 26] 같은 NPC 대화 연속 캡 — 초과 시 CONVERSATION_CONT 해제.
 const CONVERSATION_MAX_CONSECUTIVE = 4;
 
+// [#9 자기소개 맥락 게이트] 적대·폭력 행동 — 이 턴엔 NPC 자기소개를 억제한다.
+// 겁먹은 피해자가 가해자에게 이름을 밝히는 부자연 차단(불변식 15 posture 임계는
+// 유지하되 적대 맥락에선 지연). shouldAvoidSelfIntro(posture)는 arch/65 강제
+// 삽입에 우회당하므로 소개 트리거 단계에서 막아야 하류 전체가 안 탄다.
+const ADVERSARIAL_ACTIONS = new Set(['FIGHT', 'THREATEN', 'STEAL', 'SNEAK']);
+
 // [A2' 후속] 세계를 탐색하는 비대화 행동 — 이 행동은 장소 저작 이벤트를 우선 탄다.
 const EXPLORE_ACTIONS = new Set(['INVESTIGATE', 'OBSERVE', 'SEARCH']);
 
@@ -104,22 +110,26 @@ const SOCIAL_ACTIONS = new Set([
 ]);
 
 // [#5 상점 구매 정합] 원문의 구매 표현 패턴 — SHOP 인텐트가 normalizeActionType
-// 으로 TRADE에 흡수되므로(arch/68 부록 E), TRADE + 이 패턴을 실구매 신호로 본다.
+// 으로 TRADE에 흡수되므로(arch/68 부록 E), 이 패턴을 실구매 신호로 본다.
 const SHOP_BUY_PATTERN = /구매|구입|매입|사겠|사고 싶|사줘|산다|[을를] 사/;
+// [#8] 부정·거절 표현 — 명시 구매 패턴이 있어도 실구매가 아닌 경우 배제.
+const SHOP_BUY_NEGATION =
+  /안\s*(사|구매|구입|매입)|사지\s*(않|말)|(구매|구입|매입)하지\s*(않|말)|거절|포기|취소/;
 
 /**
- * [#5] 실구매 의도인가 — actionType + 원문 구매 표현. 현장 상점 존재 여부는
- * 호출부가 별도로 AND 한다. processShopAction(실거래)과 determineTurnMode(화자
- * 라우팅)가 동일 판별을 공유하도록 단일 정본으로 추출(2트랙 desync 봉합).
+ * [#5/#8] 실구매 의도인가 — actionType에 비의존, 원문 구매 표현(부정 제외)으로 판정.
+ * 배경(#8): 구매가 IntentParser의 actionType 분류(LLM 확률)에 걸려, "치료제"의
+ * '치료'가 HELP 키워드와 충돌해 KW=HELP로 밀리면 TRADE 신호가 약해지고, TRADE가
+ * HIGH_RISK_KW_PRIORITY에 없어 LLM 오분류(TALK)가 그대로 채택되던 실측(silverdeen
+ * T5). actionType이 무엇이든 원문에 명시 구매 표현이 있으면 실구매로 본다. 현장 상점
+ * 존재는 호출부(isShopPurchaseTurn·processShopAction)가 AND — 상점/아이템 없으면 no-op.
  */
 export function isShopBuyIntentCore(
   actionType: string,
   rawInput: string,
 ): boolean {
-  return (
-    actionType === 'SHOP' ||
-    (actionType === 'TRADE' && SHOP_BUY_PATTERN.test(rawInput))
-  );
+  if (actionType === 'SHOP') return true;
+  return SHOP_BUY_PATTERN.test(rawInput) && !SHOP_BUY_NEGATION.test(rawInput);
 }
 
 export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
@@ -3048,12 +3058,19 @@ export class TurnsService {
         (npcStates[npcId].pendingIntroduction === true ||
           shouldIntroduce(npcStates[npcId], introPosture, npcTier))
       ) {
-        // architecture/64 B: pendingIntroduction(등장 누적/연출 실패 이월) 승격 포함 —
-        // 이 NPC가 이번 턴 장면에 등장하므로 정식 소개 연출 지시와 함께 공개.
-        npcStates[npcId].introduced = true;
-        npcStates[npcId].introducedAtTurn = turnNo; // 2턴 분리: 이번 턴은 alias, 다음 턴부터 실명
-        npcStates[npcId].pendingIntroduction = false;
-        newlyIntroducedNpcIds.push(npcId);
+        if (ADVERSARIAL_ACTIONS.has(intent.actionType)) {
+          // [#9] 적대·폭력 턴 — 자기소개 지연. introduced로 확정하지 않고
+          // pendingIntroduction으로 이월해 다음 비적대 조우 턴에 자연 발동
+          // (arch/64 B 이월 메커니즘 재사용). 피해자→가해자 이름 밝힘 차단.
+          npcStates[npcId].pendingIntroduction = true;
+        } else {
+          // architecture/64 B: pendingIntroduction(등장 누적/연출 실패 이월) 승격 포함 —
+          // 이 NPC가 이번 턴 장면에 등장하므로 정식 소개 연출 지시와 함께 공개.
+          npcStates[npcId].introduced = true;
+          npcStates[npcId].introducedAtTurn = turnNo; // 2턴 분리: 이번 턴은 alias, 다음 턴부터 실명
+          npcStates[npcId].pendingIntroduction = false;
+          newlyIntroducedNpcIds.push(npcId);
+        }
       }
 
       const npc = npcStates[npcId];
@@ -3599,13 +3616,18 @@ export class TurnsService {
         (npcStates[injectedNpcId].pendingIntroduction === true ||
           shouldIntroduce(npcStates[injectedNpcId], introPosture))
       ) {
-        // architecture/64 B: pending 승격 포함 (primary 경로와 동일 규칙)
-        npcStates[injectedNpcId].introduced = true;
-        // 이름 공개 정밀 분석(2026-07-10) D: 2턴 분리 — primary 경로와 동일하게
-        // 소개 턴엔 별칭 유지, 다음 턴부터 실명 (기존엔 이 경로만 미설정)
-        npcStates[injectedNpcId].introducedAtTurn = turnNo;
-        npcStates[injectedNpcId].pendingIntroduction = false;
-        newlyIntroducedNpcIds.push(injectedNpcId);
+        if (ADVERSARIAL_ACTIONS.has(intent.actionType)) {
+          // [#9] 적대·폭력 턴 — 소개 지연 (primary 경로와 동일 규칙)
+          npcStates[injectedNpcId].pendingIntroduction = true;
+        } else {
+          // architecture/64 B: pending 승격 포함 (primary 경로와 동일 규칙)
+          npcStates[injectedNpcId].introduced = true;
+          // 이름 공개 정밀 분석(2026-07-10) D: 2턴 분리 — primary 경로와 동일하게
+          // 소개 턴엔 별칭 유지, 다음 턴부터 실명 (기존엔 이 경로만 미설정)
+          npcStates[injectedNpcId].introducedAtTurn = turnNo;
+          npcStates[injectedNpcId].pendingIntroduction = false;
+          newlyIntroducedNpcIds.push(injectedNpcId);
+        }
       }
       updatedRunState.npcStates = npcStates;
 

@@ -303,8 +303,19 @@ describe('determineTurnMode', () => {
     expect(isShopBuyIntent('TRADE', '거래를 시도한다')).toBe(false);
   });
 
-  it('isShopBuyIntentCore: TALK + "구매" → false (구매 actionType 아님)', () => {
-    expect(isShopBuyIntent('TALK', '구매 얘기를 꺼낸다')).toBe(false);
+  // [#8] actionType 비의존 — 파서가 TALK/HELP로 오분류해도 명시 구매는 잡는다
+  it('isShopBuyIntentCore: TALK + "구매한다" → true (#8 actionType 비의존)', () => {
+    expect(isShopBuyIntent('TALK', '하급 치료제를 구매한다')).toBe(true);
+  });
+
+  it('isShopBuyIntentCore: HELP + "구매한다"(치료제→HELP 오분류) → true (#8)', () => {
+    expect(isShopBuyIntent('HELP', '치료제를 구매한다')).toBe(true);
+  });
+
+  it('isShopBuyIntentCore: 부정·거절 표현 → false (#8 부정 가드)', () => {
+    expect(isShopBuyIntent('TRADE', '구매를 거절한다')).toBe(false);
+    expect(isShopBuyIntent('TALK', '치료제를 사지 않는다')).toBe(false);
+    expect(isShopBuyIntent('TRADE', '구매를 포기한다')).toBe(false);
   });
 
   // ── 비사회적 행동 + lastPrimaryNpcId → PLAYER_DIRECTED ──
