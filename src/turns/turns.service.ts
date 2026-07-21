@@ -61,7 +61,18 @@ export interface TurnModeContext {
    * 패턴(조사 최다 이탈 요인) 원천 차단. beat 경로(1.5·3.6) 승격을 모두 막는다.
    */
   intentSuppressesBeat?: boolean;
+  /**
+   * [불변식 26 캡 강제] 직전까지 같은 NPC와 대화 계열로 연속한 턴 수.
+   * CONVERSATION_MAX_CONSECUTIVE 이상이면 대화 연속(규칙 2·2b)을 끊어
+   * 이벤트 매칭을 재개(같은 장소 다른 NPC/이벤트 롤 기회). 문서-구현 갭 봉합:
+   * 과거 CONVERSATION_CONT는 무한 유지돼 자유 ACTION 대화의 4턴 캡이 사문이었음.
+   * 플레이어 명시 지목(규칙 1)은 이보다 위에서 처리되므로 캡과 무관하게 대화 유지.
+   */
+  conversationConsecutiveTurns?: number;
 }
+
+// [불변식 26] 같은 NPC 대화 연속 캡 — 초과 시 CONVERSATION_CONT 해제.
+const CONVERSATION_MAX_CONSECUTIVE = 4;
 
 // [A2' 후속] 세계를 탐색하는 비대화 행동 — 이 행동은 장소 저작 이벤트를 우선 탄다.
 const EXPLORE_ACTIONS = new Set(['INVESTIGATE', 'OBSERVE', 'SEARCH']);
@@ -112,8 +123,21 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
     return TurnMode.WORLD_EVENT;
   }
 
+  // [불변식 26 캡] 같은 NPC와 대화 계열로 4턴 연속 → CONVERSATION_CONT 해제.
+  // 무한 유지되던 자유 ACTION 대화 잠금을 끊어 이벤트 매칭을 재개(같은 장소의
+  // 다른 NPC/이벤트 롤 기회). 사교 발화(작별 등, intentSuppressesBeat)는 대화
+  // 자연 종료 턴이므로 캡 예외 — 마무리 대사를 사건으로 덮지 않는다(불변식 47).
+  // 명시 지목(규칙 1)은 이 위에서 처리되므로 플레이어가 원하면 대화는 계속 유지된다.
+  const conversationCapReached =
+    (ctx.conversationConsecutiveTurns ?? 0) >= CONVERSATION_MAX_CONSECUTIVE &&
+    !ctx.intentSuppressesBeat;
+
   // 2) 대화 연속 (SOCIAL_ACTION + 이전 대화 NPC 존재)
-  if (ctx.lastPrimaryNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
+  if (
+    !conversationCapReached &&
+    ctx.lastPrimaryNpcId &&
+    SOCIAL_ACTIONS.has(ctx.actionType)
+  ) {
     if (ctx.isFirstTurnAtLocation) {
       return TurnMode.WORLD_EVENT;
     }
@@ -122,7 +146,11 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
 
   // 2b) 맥락 NPC 연결 — FIGHT/STEAL 후 TALK 시 직전 NPC를 대화 대상으로 유지
   // "이게 뭔지 대답해" 같이 대상 미명시 + 직전 턴에 NPC가 있었으면 맥락 연결
-  if (ctx.contextNpcId && SOCIAL_ACTIONS.has(ctx.actionType)) {
+  if (
+    !conversationCapReached &&
+    ctx.contextNpcId &&
+    SOCIAL_ACTIONS.has(ctx.actionType)
+  ) {
     if (ctx.isFirstTurnAtLocation) {
       return TurnMode.WORLD_EVENT;
     }
@@ -3695,6 +3723,22 @@ export class TurnsService {
         | null
         | undefined;
 
+      // [불변식 26 캡] 같은 대화 NPC와 연속한 턴 수 — actionHistory 역순 카운트.
+      // determineTurnMode 에서 4턴 초과 시 CONVERSATION_CONT 를 해제하는 데 쓴다.
+      let conversationConsecutiveTurns = 0;
+      if (lastPrimaryNpcId) {
+        for (let i = actionHistory.length - 1; i >= 0; i--) {
+          if (
+            (actionHistory[i] as Record<string, unknown>).primaryNpcId ===
+            lastPrimaryNpcId
+          ) {
+            conversationConsecutiveTurns++;
+          } else {
+            break;
+          }
+        }
+      }
+
       // 플레이어 텍스트에서 NPC 매칭 (사전 판별 — turnMode 결정용)
       const earlyTargetNpcId = this.extractTargetNpcFromInput(
         rawInput,
@@ -3781,6 +3825,7 @@ export class TurnsService {
         conversationLockActive,
         intentSuppressesBeat,
         beatMatchesInteraction,
+        conversationConsecutiveTurns,
       });
       this.logger.log(
         `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'}, beatAvail=${beatAvailable}, beatForce=${beatForceWindow}, beatAge=${beatAge}, cands=${nextBeats?.candidates.length ?? 0})`,
@@ -8021,6 +8066,12 @@ export class TurnsService {
       '맞붙',
       '쳐죽',
       '죽인다',
+      // "싸움을 걸다/건다/걸겠" 관용구 — 명사+의문("싸움이 있소?")은
+      // 조사 '을'로 배제되므로 회상 잡담 오탐 없이 공격 의도만 포착.
+      '싸움을 걸',
+      '싸움을 건',
+      '시비를 걸',
+      '시비를 건',
     ];
     return STRONG_FIGHT_PATTERNS.some((p) => text.includes(p));
   }

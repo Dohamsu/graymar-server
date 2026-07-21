@@ -173,6 +173,83 @@ describe('determineTurnMode', () => {
     ).toBe(TurnMode.CONVERSATION_CONT);
   });
 
+  // ── 불변식 26 캡: 같은 NPC 4턴 연속 대화 → CONVERSATION_CONT 해제 ──
+  it('연속 3턴(미도달) + TALK → CONVERSATION_CONT 유지', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TALK',
+          lastPrimaryNpcId: 'NPC_A',
+          conversationConsecutiveTurns: 3,
+        }),
+      ),
+    ).toBe(TurnMode.CONVERSATION_CONT);
+  });
+
+  it('연속 4턴(캡 도달) + TALK → CONVERSATION_CONT 해제(PLAYER_DIRECTED)', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TALK',
+          lastPrimaryNpcId: 'NPC_A',
+          conversationConsecutiveTurns: 4,
+        }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
+  it('캡 도달이어도 사교 발화(intentSuppressesBeat) → 대화 자연 종료 유지', () => {
+    // 작별 등 마무리 대사는 사건으로 덮지 않는다(불변식 47).
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TALK',
+          lastPrimaryNpcId: 'NPC_A',
+          conversationConsecutiveTurns: 5,
+          intentSuppressesBeat: true,
+        }),
+      ),
+    ).toBe(TurnMode.CONVERSATION_CONT);
+  });
+
+  it('캡 도달 + INVESTIGATE + exploreEventAvailable → WORLD_EVENT(이벤트 매칭 재개)', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'INVESTIGATE',
+          lastPrimaryNpcId: 'NPC_A',
+          conversationConsecutiveTurns: 4,
+          exploreEventAvailable: true,
+        }),
+      ),
+    ).toBe(TurnMode.WORLD_EVENT);
+  });
+
+  it('캡 도달이어도 명시 지목(earlyTargetNpcId) → PLAYER_DIRECTED (규칙 1 우선, 의도 존중)', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TALK',
+          lastPrimaryNpcId: 'NPC_A',
+          earlyTargetNpcId: 'NPC_A',
+          conversationConsecutiveTurns: 6,
+        }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
+  it('캡 도달 + contextNpcId(맥락 연결)도 해제 — 규칙 2b 캡 적용', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TALK',
+          contextNpcId: 'NPC_A',
+          conversationConsecutiveTurns: 4,
+        }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
   // ── 비사회적 행동 + lastPrimaryNpcId → PLAYER_DIRECTED ──
   it('FIGHT + lastPrimaryNpcId → PLAYER_DIRECTED (비사회적)', () => {
     expect(

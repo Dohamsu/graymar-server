@@ -1448,6 +1448,8 @@ export class PromptBuilderService {
           SNEAK: '완벽한 은신 성공.',
           STEAL: '성공적 탈취.',
           FIGHT: '제압 성공.',
+          TRADE:
+            '거래가 성사된다. [이번 턴 사건]에 구매/판매 내역이 있으면 그 물건이 손에 들어오는 장면으로. 없으면 값을 흥정해 조건을 맞춘다. 상대가 상인이 아니면 물건을 파는 곳으로 안내하거나 대신 정보를 내준다.',
           INVESTIGATE: '핵심 단서 발견.',
           OBSERVE: '핵심 정보 포착.',
           SEARCH: '핵심 단서 발견.',
@@ -1464,6 +1466,8 @@ export class PromptBuilderService {
           SNEAK: '간신히 숨었으나 흔적을 남김.',
           STEAL: '일부만 탈취하거나 목격자가 생김.',
           FIGHT: '상처를 입혔으나 제압 실패.',
+          TRADE:
+            '거래가 반만 성사. 값을 더 부르거나 물건 일부만 내준다. ⚠️ 불이익 1개: 바가지·미심쩍은 물건·주변의 눈길.',
           INVESTIGATE: '모호한 단서만. 핵심은 놓침.',
           OBSERVE: '일부만 포착. 핵심은 놓침.',
           SEARCH: '모호한 단서만.',
@@ -1479,6 +1483,7 @@ export class PromptBuilderService {
           SNEAK: '발각됨.',
           STEAL: '현장에서 잡힘.',
           FIGHT: '반격당함.',
+          TRADE: '거래 결렬. 상대가 거절하거나 값이 전혀 맞지 않는다.',
           INVESTIGATE: '아무것도 못 찾음.',
           OBSERVE: '아무것도 포착 못함.',
           SEARCH: '아무것도 못 찾음.',
