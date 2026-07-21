@@ -1314,6 +1314,13 @@ export class ContextBuilderService {
         | Record<string, unknown>
         | undefined;
       const primaryNpcId = actionCtx?.primaryNpcId as string | null | undefined;
+      // [#5 상점 구매 정합] 실구매 턴(FREE_SHOP_) = 대화 장면 이탈. 직전 대화
+      // 상대/장면 이어쓰기를 주입하면 LLM이 그 NPC(비상인)를 판매자로 소환하므로,
+      // 이 턴은 최근 상호작용 상대 fallback·직전 장면 이어쓰기를 스킵하고 상점
+      // 전환 sceneFrame 을 강제 활용한다.
+      const isShopPurchaseTurn = (
+        (actionCtx?.eventId as string) ?? ''
+      ).startsWith('FREE_SHOP_');
 
       // 1a. 플레이어 입력(rawInput)에서 NPC 이름 감지 → 서술 중심 NPC 지정
       const rawInput =
@@ -1362,8 +1369,9 @@ export class ContextBuilderService {
             `이벤트 NPC: ${displayName} (${posture})${isChoiceTarget ? '' : ' — 배경에만 등장, 대화 주도하지 말 것'}`,
           );
         }
-      } else {
+      } else if (!isShopPurchaseTurn) {
         // 직전 턴들에서 NPC 추적 (최근 3턴 내 actionContext에서 primaryNpcId 검색)
+        // 실구매 턴은 스킵 — 직전 대화 NPC(비상인)를 판매자로 소환하는 것 차단.
         const recentLocationTurns = allLocationTurnRows.slice(-3);
         for (const t of recentLocationTurns.reverse()) {
           const sr = t.serverResult as ServerResultV1 | null;
@@ -1396,8 +1404,9 @@ export class ContextBuilderService {
       const ongoingNarrativeTurns = locationSessionTurns.filter(
         (t) => t.narrative && t.narrative.length > 0,
       );
-      if (ongoingNarrativeTurns.length >= 2) {
+      if (ongoingNarrativeTurns.length >= 2 && !isShopPurchaseTurn) {
         // 2턴 이상 진행: sceneFrame 완전 무시, 직전 내러티브의 마지막 150자로 장면 파악
+        // (실구매 턴 제외 — 대화 장면을 이어붙이면 상대 NPC가 판매자로 소환됨)
         const lastNarrative =
           ongoingNarrativeTurns[ongoingNarrativeTurns.length - 1].narrative;
         if (lastNarrative) {

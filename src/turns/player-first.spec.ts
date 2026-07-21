@@ -11,6 +11,7 @@ import {
   TurnMode,
   determineTurnModeCore as determineTurnMode,
   extractTargetNpcCore as extractTargetNpcFromInput,
+  isShopBuyIntentCore as isShopBuyIntent,
   type TurnModeContext as TurnModeInput,
   type TargetNpcCandidate as MockNpc,
 } from './turns.service.js';
@@ -248,6 +249,62 @@ describe('determineTurnMode', () => {
         }),
       ),
     ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
+  // ── #5 실구매 턴: 대화 잠금 제외(상점 화자 트랙) ──
+  it('실구매(isShopPurchase) + TRADE + lastPrimaryNpcId → CONVERSATION_CONT 제외', () => {
+    // 비상인 대화 잠금 NPC가 판매자로 오귀속되던 것 차단 → PLAYER_DIRECTED.
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TRADE',
+          lastPrimaryNpcId: 'NPC_ORPHAN',
+          isShopPurchase: true,
+        }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
+  it('실구매 아님(isShopPurchase=false) + TRADE + lastPrimaryNpcId → CONVERSATION_CONT 유지', () => {
+    // 순수 흥정/거래 대화는 기존대로 대화 연속.
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TRADE',
+          lastPrimaryNpcId: 'NPC_A',
+          isShopPurchase: false,
+        }),
+      ),
+    ).toBe(TurnMode.CONVERSATION_CONT);
+  });
+
+  it('실구매 + contextNpcId(맥락 연결)도 제외 — 규칙 2b', () => {
+    expect(
+      determineTurnMode(
+        baseCtx({
+          actionType: 'TRADE',
+          contextNpcId: 'NPC_ORPHAN',
+          isShopPurchase: true,
+        }),
+      ),
+    ).toBe(TurnMode.PLAYER_DIRECTED);
+  });
+
+  // ── #5 isShopBuyIntentCore 판별 ──
+  it('isShopBuyIntentCore: TRADE + "구매" → true', () => {
+    expect(isShopBuyIntent('TRADE', '하급 치료제를 구매한다')).toBe(true);
+  });
+
+  it('isShopBuyIntentCore: SHOP → true (원문 무관)', () => {
+    expect(isShopBuyIntent('SHOP', '')).toBe(true);
+  });
+
+  it('isShopBuyIntentCore: TRADE + 구매 표현 없음 → false (순수 거래 대화)', () => {
+    expect(isShopBuyIntent('TRADE', '거래를 시도한다')).toBe(false);
+  });
+
+  it('isShopBuyIntentCore: TALK + "구매" → false (구매 actionType 아님)', () => {
+    expect(isShopBuyIntent('TALK', '구매 얘기를 꺼낸다')).toBe(false);
   });
 
   // ── 비사회적 행동 + lastPrimaryNpcId → PLAYER_DIRECTED ──

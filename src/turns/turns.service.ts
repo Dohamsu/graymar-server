@@ -69,6 +69,13 @@ export interface TurnModeContext {
    * 플레이어 명시 지목(규칙 1)은 이보다 위에서 처리되므로 캡과 무관하게 대화 유지.
    */
   conversationConsecutiveTurns?: number;
+  /**
+   * [#5 상점 구매 정합] 이번 턴이 실구매(구매 표현 + 현장 상점 존재)인가.
+   * true면 대화 연속(규칙 2·2b)에서 제외 — 비상인 대화 잠금 NPC(겁먹은 고아 등)가
+   * 판매자로 오귀속되던 desync 차단. 구매는 상점 화자(primaryNpcId=null) 트랙으로
+   * 라우팅되고, 실거래는 processShopAction 이 별도로 수행한다.
+   */
+  isShopPurchase?: boolean;
 }
 
 // [불변식 26] 같은 NPC 대화 연속 캡 — 초과 시 CONVERSATION_CONT 해제.
@@ -95,6 +102,25 @@ const SOCIAL_ACTIONS = new Set([
   'OBSERVE',
   'TRADE',
 ]);
+
+// [#5 상점 구매 정합] 원문의 구매 표현 패턴 — SHOP 인텐트가 normalizeActionType
+// 으로 TRADE에 흡수되므로(arch/68 부록 E), TRADE + 이 패턴을 실구매 신호로 본다.
+const SHOP_BUY_PATTERN = /구매|구입|매입|사겠|사고 싶|사줘|산다|[을를] 사/;
+
+/**
+ * [#5] 실구매 의도인가 — actionType + 원문 구매 표현. 현장 상점 존재 여부는
+ * 호출부가 별도로 AND 한다. processShopAction(실거래)과 determineTurnMode(화자
+ * 라우팅)가 동일 판별을 공유하도록 단일 정본으로 추출(2트랙 desync 봉합).
+ */
+export function isShopBuyIntentCore(
+  actionType: string,
+  rawInput: string,
+): boolean {
+  return (
+    actionType === 'SHOP' ||
+    (actionType === 'TRADE' && SHOP_BUY_PATTERN.test(rawInput))
+  );
+}
 
 export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
   // 1) 플레이어가 NPC를 명시적으로 지목
@@ -132,9 +158,14 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
     (ctx.conversationConsecutiveTurns ?? 0) >= CONVERSATION_MAX_CONSECUTIVE &&
     !ctx.intentSuppressesBeat;
 
+  // [#5 상점 구매 정합] 실구매 턴은 대화 연속(2·2b)에서 제외 — TRADE 가
+  // SOCIAL_ACTIONS 라 대화 잠금 NPC(비상인)에게 hijack 되던 것을 차단.
+  // 구매는 아래 규칙을 거쳐 이벤트 매칭이 상점 화자 트랙으로 오버라이드한다.
+  const conversationBlocked = conversationCapReached || ctx.isShopPurchase;
+
   // 2) 대화 연속 (SOCIAL_ACTION + 이전 대화 NPC 존재)
   if (
-    !conversationCapReached &&
+    !conversationBlocked &&
     ctx.lastPrimaryNpcId &&
     SOCIAL_ACTIONS.has(ctx.actionType)
   ) {
@@ -147,7 +178,7 @@ export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
   // 2b) 맥락 NPC 연결 — FIGHT/STEAL 후 TALK 시 직전 NPC를 대화 대상으로 유지
   // "이게 뭔지 대답해" 같이 대상 미명시 + 직전 턴에 NPC가 있었으면 맥락 연결
   if (
-    !conversationCapReached &&
+    !conversationBlocked &&
     ctx.contextNpcId &&
     SOCIAL_ACTIONS.has(ctx.actionType)
   ) {
@@ -2788,10 +2819,7 @@ export class TurnsService {
       // TRADE로 정규화(normalizeActionType)해 SHOP 분기가 도달 불능이었다
       // (전 DB SHOP 인텐트 0건·[상점] 이벤트 0건 실측). TRADE라도 원문에
       // 구매 표현이 있으면 상점 구매를 시도한다.
-      const isBuyIntent =
-        intent.actionType === 'SHOP' ||
-        (intent.actionType === 'TRADE' &&
-          /구매|구입|매입|사겠|사고 싶|사줘|산다|[을를] 사/.test(rawInput));
+      const isBuyIntent = isShopBuyIntentCore(intent.actionType, rawInput);
       // 구매 대상 확정 — 파서의 target 추출은 불안정하다(문자열 "null" 미추출,
       // 또는 "체력 강장제를 구매한다"에서 대상을 "광산 감독관" 같은 엉뚱한 명사로
       // 오추출하는 케이스 실측). 원문에 현 장소 재고 아이템명이 그대로 있으면
@@ -3809,6 +3837,13 @@ export class TurnsService {
           b.involvedNpcIds.includes(contextNpcId),
         );
 
+      // [#5 상점 구매 정합] 실구매 턴 = 구매 표현 + 현장 상점 존재. determineTurnMode
+      // 는 이 턴을 대화 연속에서 제외하고, 아래 이벤트 매칭은 상점 화자(primaryNpcId
+      // =null) 트랙으로 오버라이드한다 — 비상인 대화 잠금 NPC 오귀속 차단.
+      const isShopPurchaseTurn =
+        isShopBuyIntentCore(intent.actionType, rawInput) &&
+        this.content.getShopsByLocation(locationId).length > 0;
+
       // ── Player-First 턴 모드 결정 ──
       const turnMode = this.determineTurnMode({
         earlyTargetNpcId,
@@ -3826,316 +3861,349 @@ export class TurnsService {
         intentSuppressesBeat,
         beatMatchesInteraction,
         conversationConsecutiveTurns,
+        isShopPurchase: isShopPurchaseTurn,
       });
       this.logger.log(
         `[TurnMode] ${turnMode} (target=${earlyTargetNpcId ?? intentV3.targetNpcId ?? 'none'}, action=${intent.actionType}, firstTurn=${isFirstTurnAtLocation}, pressure=${incidentPressureHigh}, questFact=${questFactTrigger}, contextNpc=${contextNpcId ?? 'none'}, beatAvail=${beatAvailable}, beatForce=${beatForceWindow}, beatAge=${beatAge}, cands=${nextBeats?.candidates.length ?? 0})`,
       );
 
       // ── 모드별 이벤트 매칭 ──
-      switch (turnMode) {
-        case TurnMode.PLAYER_DIRECTED: {
-          // 플레이어가 NPC/행동을 명시 → 이벤트 매칭 스킵
-          const targetNpcForShell =
-            earlyTargetNpcId ?? intentV3.targetNpcId ?? null;
-          matchedEvent = {
-            eventId: `FREE_PLAYER_${turnNo}`,
-            eventType: 'ENCOUNTER' as any,
-            locationId,
-            affordances: [intent.actionType] as any[],
-            matchPolicy: 'NEUTRAL' as any,
-            priority: 1,
-            weight: 1,
-            friction: 0,
-            conditions: [],
-            payload: {
-              sceneFrame: '',
-              choices: [],
-              tags: [],
-              primaryNpcId: targetNpcForShell,
-            },
-          } as any;
-          this.logger.log(
-            `[PlayerDirected] 이벤트 스킵, NPC=${targetNpcForShell ?? 'none'}, action=${intent.actionType}`,
-          );
-          break;
-        }
-
-        case TurnMode.CONVERSATION_CONT: {
-          // 대화 연속 → 이벤트 매칭 스킵, 같은 NPC 유지
-          // lastPrimaryNpcId(대화 잠금) 우선, 없으면 contextNpcId(맥락 NPC) fallback
-          const convNpcId = lastPrimaryNpcId ?? contextNpcId;
-          matchedEvent = {
-            eventId: `FREE_CONV_${turnNo}`,
-            eventType: 'FALLBACK' as any,
-            locationId,
-            priority: 1,
-            weight: 1,
-            conditions: [],
-            affordances: ['ANY'],
-            friction: 0,
-            matchPolicy: 'NEUTRAL',
-            payload: {
-              sceneFrame: '',
-              choices: [],
-              tags: [],
-              primaryNpcId: convNpcId,
-            },
-          } as any;
-          this.logger.log(
-            `[ConversationCont] 대화 연속 감지 → 이벤트 스킵, NPC=${lastPrimaryNpcId}, action=${intent.actionType}`,
-          );
-          break;
-        }
-
-        case TurnMode.WORLD_EVENT: {
-          // 세계 이벤트 트리거 → 기존 이벤트 매칭 파이프라인
-          this.logger.log(
-            `[WorldEvent] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} questFact=${questFactTrigger}`,
-          );
-
-          // [P4 — arch/75 §5.1] Emergent Director 비트 채택 — SitGen보다 우선.
-          // 미채택(null) 시 그대로 기존 폴백 체인으로 진행 (디렉터 재호출 금지).
-          // [D1-b — arch/76 불변식 47] 사교 발화·REST 의도 턴은 채택 자체를 건너뛴다
-          // (rule 3 경로로 WORLD_EVENT가 됐어도 비트는 넣지 않음 — 의도 존중).
-          if (beatAvailable && !intentSuppressesBeat && runState.plotSeed) {
-            const undiscoveredFactIds = new Set(
-              getUndiscoveredKeyFacts(
-                runState.plotSeed,
-                runState.plotProgress,
-              ).map((f) => f.factId),
-            );
-            const adoption = selectBeatForAdoption(nextBeats, {
-              turnNo,
+      // [#5 A+C] 실구매 턴은 turnMode 무관하게 상점 화자 트랙으로 오버라이드.
+      // primaryNpcId=null(무명 상인) — 비상인 대화 잠금 NPC 오귀속 차단(A).
+      // 직전 대화 상대가 있으면 대화→구매 전환을 sceneFrame 으로 명시(C).
+      // 실거래(골드·아이템)는 processShopAction 이 별도 수행하며 [상점] 사건을 낸다.
+      if (isShopPurchaseTurn) {
+        const shopFrame = lastPrimaryNpcId
+          ? '방금까지의 대화를 잠시 멈추고, 광장 좌판에서 이름 모를 상인에게 물건을 산다. 대화 상대는 판매자가 아니다.'
+          : '';
+        matchedEvent = {
+          eventId: `FREE_SHOP_${turnNo}`,
+          eventType: 'SHOP' as any,
+          locationId,
+          affordances: ['TRADE'] as any[],
+          matchPolicy: 'NEUTRAL' as any,
+          priority: 1,
+          weight: 1,
+          friction: 0,
+          conditions: [],
+          payload: {
+            sceneFrame: shopFrame,
+            choices: [],
+            tags: ['SHOP'],
+            primaryNpcId: null,
+          },
+        } as any;
+        this.logger.log(
+          `[ShopPurchase] 상점 화자 트랙 → 이벤트 스킵, primaryNpc=null, action=${intent.actionType}`,
+        );
+      } else
+        switch (turnMode) {
+          case TurnMode.PLAYER_DIRECTED: {
+            // 플레이어가 NPC/행동을 명시 → 이벤트 매칭 스킵
+            const targetNpcForShell =
+              earlyTargetNpcId ?? intentV3.targetNpcId ?? null;
+            matchedEvent = {
+              eventId: `FREE_PLAYER_${turnNo}`,
+              eventType: 'ENCOUNTER' as any,
               locationId,
-              actionType: intent.actionType,
-              targetNpcId: earlyTargetNpcId ?? intentV3.targetNpcId ?? null,
-              lastPrimaryNpcId: lastPrimaryNpcId ?? null,
-              undiscoveredFactIds,
-              actProgress: getActProgress(runState.plotSeed.acts, turnNo),
-              // [버그 d20c1de8] 연속 상호작용 NPC 무관 비트 하드 불채택 —
-              // 단 플레이어가 이번 턴 다른 NPC를 명시 지목했으면 그쪽 의도 우선.
-              requiredNpcId:
-                earlyTargetNpcId ?? intentV3.targetNpcId ?? contextNpcId,
-            });
-            const pp = runState.plotProgress ?? { discoveredKeyFactIds: [] };
-            if (adoption) {
-              const { beat } = adoption;
-              // 신규 인물 제안은 채택 시에만 동기 경로에서 등록 (§15.2 —
-              // 워커는 제안만). 등록 즉시 재적재해 이번 턴부터 getNpc 해석.
-              let involved = beat.involvedNpcIds;
-              if (beat.proposedNpc && involved.includes('NPC_DYN_NEW')) {
-                // 커밋은 updatedRunState를 쓴다(얕은 복사) — 신규 필드 대입은
-                // 반드시 updatedRunState에 (runState 대입은 커밋에서 유실).
-                updatedRunState.dynamicNpcs ??= [];
-                // posture/register는 느슨한 string(LLM 산출) — sanitize가
-                // 런타임 enum 검증 후 안전 기본값으로 강제한다.
-                // arch/80: 팩 에셋 풀이 있으면 등록 시 초상화 자동 배정
-                const assetManifest = this.content.getAssetManifest();
-                const reg = registerDynamicNpc(
-                  updatedRunState.dynamicNpcs,
-                  beat.proposedNpc as Parameters<typeof registerDynamicNpc>[1],
-                  assetManifest && assetManifest.portraits.length > 0
-                    ? {
-                        entries: assetManifest.portraits,
-                        usedUrls: this.content.getAuthoredPortraitUrls(),
-                      }
-                    : undefined,
-                );
-                if (reg.npcId) {
-                  const newId = reg.npcId;
-                  involved = involved.map((id) =>
-                    id === 'NPC_DYN_NEW' ? newId : id,
-                  );
-                  this.content.applyDynamicNpcs(updatedRunState.dynamicNpcs);
-                  this.logger.log(
-                    `[PlotBeat] 동적 NPC 등록 ${newId} (${beat.proposedNpc.name})`,
-                  );
-                } else {
-                  involved = involved.filter((id) => id !== 'NPC_DYN_NEW');
-                }
-              }
-              const beatPrimaryNpcId =
-                involved.find((id) => id !== 'NPC_DYN_NEW') ?? null;
-              matchedEvent = {
-                eventId: beat.beatId,
-                eventType: 'OPPORTUNITY' as any,
-                locationId,
-                affordances: (beat.affordances?.length
-                  ? beat.affordances
-                  : ['ANY']) as any[],
-                matchPolicy: 'NEUTRAL' as any,
-                priority: 1,
-                weight: 1,
-                friction: 0,
-                conditions: [],
-                // P4-5: 판정 성공 시 기존 fact 공개 경로가 이 id를 발견 처리
-                discoverableFact: beat.hintedFactId,
-                payload: {
-                  sceneFrame: beat.premise,
-                  choices: [],
-                  tags: ['BEAT'],
-                  primaryNpcId: beatPrimaryNpcId,
-                },
-              } as any;
-              // 소비(턴 동기 경로는 채택 시 소비만 — §15.2) + 적중률 계측
-              updatedRunState.nextBeatCandidates = null;
-              pp.adoptedBeatCount = (pp.adoptedBeatCount ?? 0) + 1;
-              pp.lastAdoptedBeatTurn = turnNo; // C 강제창 리셋
-              // [D1-c — arch/76] 의도 정합 채택률·premise 다양성 계측 로그
-              pp.beatAdoptions = [
-                ...(pp.beatAdoptions ?? []),
-                {
-                  turnNo,
-                  beatId: beat.beatId,
-                  actionType: intent.actionType,
-                  aligned: isBeatIntentAligned(beat, intent.actionType),
-                  premise: beat.premise?.slice(0, 60),
-                },
-              ];
-              updatedRunState.plotProgress = pp;
-              this.logger.log(
-                `[PlotBeat] 채택 ${beat.beatId} score=${adoption.score} npc=${beatPrimaryNpcId ?? '-'} fact=${beat.hintedFactId ?? '-'}`,
-              );
-            } else {
-              // 미정합 — 후보는 stale 될 때까지 보존(다음 턴 재기회), 계측만
-              pp.discardedBeatCount = (pp.discardedBeatCount ?? 0) + 1;
-              updatedRunState.plotProgress = pp;
-              this.logger.debug(
-                `[PlotBeat] 정합 후보 없음 (age=${beatAge}) → 폴백 체인`,
-              );
-            }
+              affordances: [intent.actionType] as any[],
+              matchPolicy: 'NEUTRAL' as any,
+              priority: 1,
+              weight: 1,
+              friction: 0,
+              conditions: [],
+              payload: {
+                sceneFrame: '',
+                choices: [],
+                tags: [],
+                primaryNpcId: targetNpcForShell,
+              },
+            } as any;
+            this.logger.log(
+              `[PlayerDirected] 이벤트 스킵, NPC=${targetNpcForShell ?? 'none'}, action=${intent.actionType}`,
+            );
+            break;
           }
 
-          const allEvents = this.content.getAllEventsV2();
-          const recentEventIds = actionHistory
-            .filter((h) => h.eventId)
-            .map((h) => h.eventId!);
+          case TurnMode.CONVERSATION_CONT: {
+            // 대화 연속 → 이벤트 매칭 스킵, 같은 NPC 유지
+            // lastPrimaryNpcId(대화 잠금) 우선, 없으면 contextNpcId(맥락 NPC) fallback
+            const convNpcId = lastPrimaryNpcId ?? contextNpcId;
+            matchedEvent = {
+              eventId: `FREE_CONV_${turnNo}`,
+              eventType: 'FALLBACK' as any,
+              locationId,
+              priority: 1,
+              weight: 1,
+              conditions: [],
+              affordances: ['ANY'],
+              friction: 0,
+              matchPolicy: 'NEUTRAL',
+              payload: {
+                sceneFrame: '',
+                choices: [],
+                tags: [],
+                primaryNpcId: convNpcId,
+              },
+            } as any;
+            this.logger.log(
+              `[ConversationCont] 대화 연속 감지 → 이벤트 스킵, NPC=${lastPrimaryNpcId}, action=${intent.actionType}`,
+            );
+            break;
+          }
 
-          // SituationGenerator 우선 시도
-          const lastEventId = recentEventIds[recentEventIds.length - 1] ?? '';
-          const lastWasDynamic =
-            lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
-          const dynamicRoll = rng.range(0, 100);
+          case TurnMode.WORLD_EVENT: {
+            // 세계 이벤트 트리거 → 기존 이벤트 매칭 파이프라인
+            this.logger.log(
+              `[WorldEvent] firstTurn=${isFirstTurnAtLocation} pressureHigh=${incidentPressureHigh} questFact=${questFactTrigger}`,
+            );
 
-          const { SITGEN_CHANCE } = QUEST_BALANCE;
-          if (
-            !matchedEvent && // [P4] 비트 채택 턴은 SitGen 스킵 (채택 이벤트 보존)
-            this.situationGenerator &&
-            !lastWasDynamic &&
-            dynamicRoll < SITGEN_CHANCE &&
-            !questFactTrigger
-          ) {
-            try {
-              const incidentDefs =
-                this.content.getIncidentsData() as IncidentDef[];
-              const recentPrimaryNpcIds = actionHistory
-                .filter((h) => (h as Record<string, unknown>).primaryNpcId)
-                .map(
-                  (h) => (h as Record<string, unknown>).primaryNpcId as string,
+            // [P4 — arch/75 §5.1] Emergent Director 비트 채택 — SitGen보다 우선.
+            // 미채택(null) 시 그대로 기존 폴백 체인으로 진행 (디렉터 재호출 금지).
+            // [D1-b — arch/76 불변식 47] 사교 발화·REST 의도 턴은 채택 자체를 건너뛴다
+            // (rule 3 경로로 WORLD_EVENT가 됐어도 비트는 넣지 않음 — 의도 존중).
+            if (beatAvailable && !intentSuppressesBeat && runState.plotSeed) {
+              const undiscoveredFactIds = new Set(
+                getUndiscoveredKeyFacts(
+                  runState.plotSeed,
+                  runState.plotProgress,
+                ).map((f) => f.factId),
+              );
+              const adoption = selectBeatForAdoption(nextBeats, {
+                turnNo,
+                locationId,
+                actionType: intent.actionType,
+                targetNpcId: earlyTargetNpcId ?? intentV3.targetNpcId ?? null,
+                lastPrimaryNpcId: lastPrimaryNpcId ?? null,
+                undiscoveredFactIds,
+                actProgress: getActProgress(runState.plotSeed.acts, turnNo),
+                // [버그 d20c1de8] 연속 상호작용 NPC 무관 비트 하드 불채택 —
+                // 단 플레이어가 이번 턴 다른 NPC를 명시 지목했으면 그쪽 의도 우선.
+                requiredNpcId:
+                  earlyTargetNpcId ?? intentV3.targetNpcId ?? contextNpcId,
+              });
+              const pp = runState.plotProgress ?? { discoveredKeyFactIds: [] };
+              if (adoption) {
+                const { beat } = adoption;
+                // 신규 인물 제안은 채택 시에만 동기 경로에서 등록 (§15.2 —
+                // 워커는 제안만). 등록 즉시 재적재해 이번 턴부터 getNpc 해석.
+                let involved = beat.involvedNpcIds;
+                if (beat.proposedNpc && involved.includes('NPC_DYN_NEW')) {
+                  // 커밋은 updatedRunState를 쓴다(얕은 복사) — 신규 필드 대입은
+                  // 반드시 updatedRunState에 (runState 대입은 커밋에서 유실).
+                  updatedRunState.dynamicNpcs ??= [];
+                  // posture/register는 느슨한 string(LLM 산출) — sanitize가
+                  // 런타임 enum 검증 후 안전 기본값으로 강제한다.
+                  // arch/80: 팩 에셋 풀이 있으면 등록 시 초상화 자동 배정
+                  const assetManifest = this.content.getAssetManifest();
+                  const reg = registerDynamicNpc(
+                    updatedRunState.dynamicNpcs,
+                    beat.proposedNpc as Parameters<
+                      typeof registerDynamicNpc
+                    >[1],
+                    assetManifest && assetManifest.portraits.length > 0
+                      ? {
+                          entries: assetManifest.portraits,
+                          usedUrls: this.content.getAuthoredPortraitUrls(),
+                        }
+                      : undefined,
+                  );
+                  if (reg.npcId) {
+                    const newId = reg.npcId;
+                    involved = involved.map((id) =>
+                      id === 'NPC_DYN_NEW' ? newId : id,
+                    );
+                    this.content.applyDynamicNpcs(updatedRunState.dynamicNpcs);
+                    this.logger.log(
+                      `[PlotBeat] 동적 NPC 등록 ${newId} (${beat.proposedNpc.name})`,
+                    );
+                  } else {
+                    involved = involved.filter((id) => id !== 'NPC_DYN_NEW');
+                  }
+                }
+                const beatPrimaryNpcId =
+                  involved.find((id) => id !== 'NPC_DYN_NEW') ?? null;
+                matchedEvent = {
+                  eventId: beat.beatId,
+                  eventType: 'OPPORTUNITY' as any,
+                  locationId,
+                  affordances: (beat.affordances?.length
+                    ? beat.affordances
+                    : ['ANY']) as any[],
+                  matchPolicy: 'NEUTRAL' as any,
+                  priority: 1,
+                  weight: 1,
+                  friction: 0,
+                  conditions: [],
+                  // P4-5: 판정 성공 시 기존 fact 공개 경로가 이 id를 발견 처리
+                  discoverableFact: beat.hintedFactId,
+                  payload: {
+                    sceneFrame: beat.premise,
+                    choices: [],
+                    tags: ['BEAT'],
+                    primaryNpcId: beatPrimaryNpcId,
+                  },
+                } as any;
+                // 소비(턴 동기 경로는 채택 시 소비만 — §15.2) + 적중률 계측
+                updatedRunState.nextBeatCandidates = null;
+                pp.adoptedBeatCount = (pp.adoptedBeatCount ?? 0) + 1;
+                pp.lastAdoptedBeatTurn = turnNo; // C 강제창 리셋
+                // [D1-c — arch/76] 의도 정합 채택률·premise 다양성 계측 로그
+                pp.beatAdoptions = [
+                  ...(pp.beatAdoptions ?? []),
+                  {
+                    turnNo,
+                    beatId: beat.beatId,
+                    actionType: intent.actionType,
+                    aligned: isBeatIntentAligned(beat, intent.actionType),
+                    premise: beat.premise?.slice(0, 60),
+                  },
+                ];
+                updatedRunState.plotProgress = pp;
+                this.logger.log(
+                  `[PlotBeat] 채택 ${beat.beatId} score=${adoption.score} npc=${beatPrimaryNpcId ?? '-'} fact=${beat.hintedFactId ?? '-'}`,
                 );
-              const situation = this.situationGenerator.generate(
-                ws,
+              } else {
+                // 미정합 — 후보는 stale 될 때까지 보존(다음 턴 재기회), 계측만
+                pp.discardedBeatCount = (pp.discardedBeatCount ?? 0) + 1;
+                updatedRunState.plotProgress = pp;
+                this.logger.debug(
+                  `[PlotBeat] 정합 후보 없음 (age=${beatAge}) → 폴백 체인`,
+                );
+              }
+            }
+
+            const allEvents = this.content.getAllEventsV2();
+            const recentEventIds = actionHistory
+              .filter((h) => h.eventId)
+              .map((h) => h.eventId!);
+
+            // SituationGenerator 우선 시도
+            const lastEventId = recentEventIds[recentEventIds.length - 1] ?? '';
+            const lastWasDynamic =
+              lastEventId.startsWith('SIT_') || lastEventId.startsWith('PROC_');
+            const dynamicRoll = rng.range(0, 100);
+
+            const { SITGEN_CHANCE } = QUEST_BALANCE;
+            if (
+              !matchedEvent && // [P4] 비트 채택 턴은 SitGen 스킵 (채택 이벤트 보존)
+              this.situationGenerator &&
+              !lastWasDynamic &&
+              dynamicRoll < SITGEN_CHANCE &&
+              !questFactTrigger
+            ) {
+              try {
+                const incidentDefs =
+                  this.content.getIncidentsData() as IncidentDef[];
+                const recentPrimaryNpcIds = actionHistory
+                  .filter((h) => (h as Record<string, unknown>).primaryNpcId)
+                  .map(
+                    (h) =>
+                      (h as Record<string, unknown>).primaryNpcId as string,
+                  );
+                const situation = this.situationGenerator.generate(
+                  ws,
+                  locationId,
+                  intent,
+                  allEvents,
+                  incidentDefs,
+                  recentPrimaryNpcIds,
+                  discoveredFacts,
+                );
+                if (situation) {
+                  matchedEvent = situation.eventDef;
+                  this.logger.debug(
+                    `[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`,
+                  );
+                  if (
+                    situation.trigger === 'CONSEQUENCE' &&
+                    situation.relatedFacts.length > 0
+                  ) {
+                    const usedFacts = (ws as any)._consequenceUsedFacts ?? [];
+                    (ws as any)._consequenceUsedFacts = [
+                      ...usedFacts,
+                      ...situation.relatedFacts,
+                    ];
+                  }
+                }
+              } catch (err) {
+                this.logger.warn(
+                  `[SituationGenerator] error, falling back to EventMatcher: ${err}`,
+                );
+              }
+            }
+
+            if (!matchedEvent) {
+              const NON_SOCIAL_BREAK = new Set(['SNEAK', 'STEAL', 'FIGHT']);
+              const shouldBreakNpc = NON_SOCIAL_BREAK.has(intent.actionType);
+              const sessionNpcContext = {
+                lastPrimaryNpcId: shouldBreakNpc
+                  ? null
+                  : ((lastEntry?.primaryNpcId as string) ?? null),
+                sessionTurnCount: actionHistory.length,
+                interactedNpcIds: [
+                  ...new Set(
+                    (actionHistory as Array<Record<string, unknown>>)
+                      .filter((a) => a.primaryNpcId)
+                      .map((a) => a.primaryNpcId as string),
+                  ),
+                ],
+              };
+
+              // Player-First: WORLD_EVENT에서도 targetNpcId를 전달하여 호환 이벤트 우선
+              const earlyTarget =
+                earlyTargetNpcId ?? intentV3.targetNpcId ?? null;
+              const directorResult = this.eventDirector.select(
+                allEvents,
                 locationId,
                 intent,
-                allEvents,
-                incidentDefs,
-                recentPrimaryNpcIds,
-                discoveredFacts,
+                ws,
+                arcState,
+                agenda,
+                cooldowns,
+                turnNo,
+                rng,
+                recentEventIds,
+                routingResult,
+                sessionNpcContext,
+                intentV3,
+                earlyTarget,
               );
-              if (situation) {
-                matchedEvent = situation.eventDef;
+              matchedEvent = directorResult.selectedEvent;
+
+              if (directorResult.filterLog.length > 0) {
                 this.logger.debug(
-                  `[SituationGenerator] trigger=${situation.trigger} event=${matchedEvent.eventId} npc=${situation.primaryNpcId ?? '-'} facts=${situation.relatedFacts.length}`,
+                  `[EventDirector] ${directorResult.filterLog.join(', ')}`,
                 );
-                if (
-                  situation.trigger === 'CONSEQUENCE' &&
-                  situation.relatedFacts.length > 0
-                ) {
-                  const usedFacts = (ws as any)._consequenceUsedFacts ?? [];
-                  (ws as any)._consequenceUsedFacts = [
-                    ...usedFacts,
-                    ...situation.relatedFacts,
-                  ];
-                }
               }
-            } catch (err) {
-              this.logger.warn(
-                `[SituationGenerator] error, falling back to EventMatcher: ${err}`,
-              );
             }
-          }
 
-          if (!matchedEvent) {
-            const NON_SOCIAL_BREAK = new Set(['SNEAK', 'STEAL', 'FIGHT']);
-            const shouldBreakNpc = NON_SOCIAL_BREAK.has(intent.actionType);
-            const sessionNpcContext = {
-              lastPrimaryNpcId: shouldBreakNpc
-                ? null
-                : ((lastEntry?.primaryNpcId as string) ?? null),
-              sessionTurnCount: actionHistory.length,
-              interactedNpcIds: [
-                ...new Set(
-                  (actionHistory as Array<Record<string, unknown>>)
-                    .filter((a) => a.primaryNpcId)
-                    .map((a) => a.primaryNpcId as string),
-                ),
-              ],
-            };
-
-            // Player-First: WORLD_EVENT에서도 targetNpcId를 전달하여 호환 이벤트 우선
-            const earlyTarget =
-              earlyTargetNpcId ?? intentV3.targetNpcId ?? null;
-            const directorResult = this.eventDirector.select(
-              allEvents,
-              locationId,
-              intent,
-              ws,
-              arcState,
-              agenda,
-              cooldowns,
-              turnNo,
-              rng,
-              recentEventIds,
-              routingResult,
-              sessionNpcContext,
-              intentV3,
-              earlyTarget,
-            );
-            matchedEvent = directorResult.selectedEvent;
-
-            if (directorResult.filterLog.length > 0) {
-              this.logger.debug(
-                `[EventDirector] ${directorResult.filterLog.join(', ')}`,
+            // ProceduralEvent fallback
+            if (!matchedEvent || matchedEvent.eventType === 'FALLBACK') {
+              const proceduralHistory = ws.proceduralHistory ?? [];
+              const proceduralResult = this.proceduralEvent.generate(
+                {
+                  locationId,
+                  timePhase: ws.phaseV2 ?? ws.timePhase,
+                  stage:
+                    ws.mainArc?.stage != null
+                      ? String(ws.mainArc.stage)
+                      : undefined,
+                },
+                proceduralHistory,
+                turnNo,
+                rng,
               );
+              if (proceduralResult) {
+                matchedEvent = proceduralResult;
+                this.logger.debug(
+                  `[ProceduralEvent] 생성: ${proceduralResult.eventId}`,
+                );
+              }
             }
+            break;
           }
-
-          // ProceduralEvent fallback
-          if (!matchedEvent || matchedEvent.eventType === 'FALLBACK') {
-            const proceduralHistory = ws.proceduralHistory ?? [];
-            const proceduralResult = this.proceduralEvent.generate(
-              {
-                locationId,
-                timePhase: ws.phaseV2 ?? ws.timePhase,
-                stage:
-                  ws.mainArc?.stage != null
-                    ? String(ws.mainArc.stage)
-                    : undefined,
-              },
-              proceduralHistory,
-              turnNo,
-              rng,
-            );
-            if (proceduralResult) {
-              matchedEvent = proceduralResult;
-              this.logger.debug(
-                `[ProceduralEvent] 생성: ${proceduralResult.eventId}`,
-              );
-            }
-          }
-          break;
         }
-      }
     }
 
     // 이벤트 없는 턴: FREE 이벤트 셸 보장
@@ -5270,10 +5338,17 @@ export class TurnsService {
       this.logger.log(
         `[NpcResolver] npcId=${resolution.npcId} source=${resolution.source} conf=${resolution.confidence} lock=${resolution.lockApplied}`,
       );
+      // [#5 상점 구매 정합] 실구매 턴(FREE_SHOP_ 오버라이드)은 대화 잠금 화자를
+      // 무시 — 불변식 34에서 CONVERSATION_LOCK 이 이벤트 payload(null)를 덮어
+      // 비상인 대화 상대(핍/카야)가 판매자로 오귀속되던 것 차단(turnMode 분리만으론
+      // NpcResolver 경로가 남던 실측). 상점 화자는 무명(primaryNpcId=null)으로 유지.
+      const isShopPurchaseTurn = event.eventId?.startsWith('FREE_SHOP_') ?? false;
       // resolution source별 변수 매핑 (기존 코드 호환)
       if (resolution.npcId) {
         if (resolution.source === 'CONVERSATION_LOCK') {
-          conversationLockedNpcId = resolution.npcId;
+          if (!isShopPurchaseTurn) {
+            conversationLockedNpcId = resolution.npcId;
+          }
         } else if (resolution.source !== 'EVENT_PRIMARY') {
           // STRONG_EXPLICIT_NAME / STRONG_PARTICLE / MEDIUM_ROLE_KEYWORD / WEAK_ALIAS_PARTIAL
           textMatchedNpcId = resolution.npcId;
