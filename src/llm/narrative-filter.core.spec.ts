@@ -99,6 +99,29 @@ describe('applyNarrativeQualityFilters', () => {
     expect(r.violations.some((v) => v.includes('NPC_NAME'))).toBe(true);
   });
 
+  it('P4 unknownAlias가 alias 토큰 포함 시 비멱등 중첩 방지 (안주인/주인 스킵)', () => {
+    const r = applyNarrativeQualityFilters(
+      '주름진 눈매의 안주인이 고개를 든다. 오슬라가 잔을 닦는다. 안주인이 말한다.',
+      baseDeps({
+        npcStates: { NPC_INN: { introduced: false } },
+        getNpc: (id) =>
+          id === 'NPC_INN'
+            ? {
+                name: '오슬라',
+                unknownAlias: '주름진 눈매의 안주인',
+                aliases: ['오슬라', '안주인', '주인'],
+              }
+            : undefined,
+      }),
+    );
+    // 중첩 아티팩트 없음
+    expect(r.narrative).not.toContain('주름진 눈매의 주름진 눈매의');
+    expect(r.narrative).not.toContain('안안주인');
+    // 실명 오슬라는 여전히 가려짐 (별칭으로 치환)
+    expect(r.narrative).not.toContain('오슬라');
+    expect(r.narrative).toContain('주름진 눈매의 안주인');
+  });
+
   it('P4 소개 완료 NPC는 실명 유지', () => {
     const r = applyNarrativeQualityFilters(
       '펠릭스가 고개를 끄덕였다.',

@@ -195,14 +195,24 @@ export function applyNarrativeQualityFilters(
       const npcDef = deps.getNpc(npcId);
       if (!npcDef?.name) continue;
       const alias = npcDef.unknownAlias || '누군가';
+      // 비멱등 중첩 방어: 치환값(alias=unknownAlias)이 검색 토큰을 부분 문자열로
+      //   포함하면 replaceAll이 이미 확장된 표기를 재치환해 중첩된다 —
+      //   "주름진 눈매의 안주인" ⊃ "안주인"·"주인" → "주름진 눈매의 주름진 눈매의
+      //   안주인"·"안안주인" 실측(카른홀트 run2 T01·T10 콜론 라벨). 토큰이
+      //   alias에 이미 들어있으면 치환 자체가 불필요(가림 대상 아님)하므로 스킵.
       // 서술 sanitize — 2글자 미만 NPC 이름은 일반 단어 오탐 방지 (예: "벅"→"허벅지" 매칭)
-      if (npcDef.name.length >= 2 && narrative.includes(npcDef.name)) {
+      if (
+        npcDef.name.length >= 2 &&
+        !alias.includes(npcDef.name) &&
+        narrative.includes(npcDef.name)
+      ) {
         narrative = narrative.replaceAll(npcDef.name, alias);
         violations.push(`AUTO_FIX: NPC_NAME(${npcDef.name}→${alias})`);
       }
       for (const a of npcDef.aliases ?? []) {
         // 1글자 alias는 동사/조사에 오탐 (예: "쥐"→"쥐었다") → 2글자 이상만 치환
         if (a.length < 2) continue;
+        if (alias.includes(a)) continue; // 중첩 방어 (위 주석)
         if (narrative.includes(a)) {
           narrative = narrative.replaceAll(a, alias);
         }
@@ -210,11 +220,12 @@ export function applyNarrativeQualityFilters(
       // 선택지 label sanitize
       if (deps.llmChoices) {
         for (const choice of deps.llmChoices) {
-          if (choice.label.includes(npcDef.name)) {
+          if (!alias.includes(npcDef.name) && choice.label.includes(npcDef.name)) {
             choice.label = choice.label.replaceAll(npcDef.name, alias);
           }
           for (const a of npcDef.aliases ?? []) {
             if (a.length < 2) continue;
+            if (alias.includes(a)) continue; // 중첩 방어
             if (choice.label.includes(a)) {
               choice.label = choice.label.replaceAll(a, alias);
             }
