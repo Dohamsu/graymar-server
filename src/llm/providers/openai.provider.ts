@@ -223,7 +223,11 @@ export class OpenAIProvider implements LlmProvider {
               ),
             },
           }
-        : {}),
+        : model.includes('deepseek')
+          ? // DeepSeek V4: 기본 reasoning 활성 — 미차단 시 reasoning이 maxTokens를
+            // 소진해 content 0자로 스트림 종료 (2026-07-22 모델 평가 실측)
+            { reasoning: { enabled: false } }
+          : {}),
     };
   }
 
