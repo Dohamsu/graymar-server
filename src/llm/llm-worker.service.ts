@@ -2632,14 +2632,22 @@ ${npcList}`,
         : null;
       const reasoningEffort = this.determineReasoningEffort(llmContext);
 
-      // 모델 교차: 턴 번호 기반으로 메인/서브 모델 번갈아 사용 (어휘 편향 상쇄)
-      // 환경변수 LLM_ALTERNATE_MODEL이 설정된 경우에만 활성화
+      // 모델 교차: 짝수 턴은 LLM_ALTERNATE_MODEL, 홀수 턴은 메인 모델과
+      // LLM_MAIN_ALTERNATE_MODEL 교대 — 인접 턴이 항상 타 계열이 되도록 유지하면서
+      // 같은 모델의 재등장 간격을 2턴 → 4턴으로 늘린다 (어휘 편향 상쇄).
+      // 패턴: main → alt → mainAlt → alt → main → ... (env 미설정 시 기존 동작)
       let alternateModel: string | undefined;
       const altModel = process.env.LLM_ALTERNATE_MODEL;
+      const mainAltModel = process.env.LLM_MAIN_ALTERNATE_MODEL;
       if (!isCombat && altModel && pending.turnNo % 2 === 0) {
         alternateModel = altModel;
         this.logger.debug(
           `[ModelAlternate] turn=${pending.turnNo} → alternate model: ${altModel}`,
+        );
+      } else if (!isCombat && mainAltModel && pending.turnNo % 4 === 3) {
+        alternateModel = mainAltModel;
+        this.logger.debug(
+          `[ModelAlternate] turn=${pending.turnNo} → main-alternate model: ${mainAltModel}`,
         );
       }
 

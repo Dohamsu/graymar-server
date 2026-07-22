@@ -220,6 +220,22 @@ export class OpenAIProvider implements LlmProvider {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
+    // 모델별 프로바이더 allowlist (arch/25 D-8 — 31B 풀 불안정 대응).
+    // 전역 스위치와 달리 해당 모델의 호출에만 적용되어 교차 모델·nano 라우팅에 영향 없음.
+    // 형식: "modelId=ProviderA|ProviderB;modelId2=ProviderC" ('='/'|'/';' — 모델 id의 ':' 회피)
+    let only: string[] | undefined;
+    for (const entry of (process.env.LLM_PROVIDER_ONLY_MAP ?? '').split(';')) {
+      const eq = entry.indexOf('=');
+      if (eq < 0) continue;
+      if (entry.slice(0, eq).trim() === model) {
+        only = entry
+          .slice(eq + 1)
+          .split('|')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        break;
+      }
+    }
     return {
       provider: {
         sort,
@@ -235,6 +251,7 @@ export class OpenAIProvider implements LlmProvider {
             }
           : {}),
         ...(order.length > 0 ? { order } : {}),
+        ...(only && only.length > 0 ? { only } : {}),
       },
       // Gemini 2.5 Flash: thinking(reasoning) 비활성화 — OpenRouter는 max_tokens: 0으로 제어
       ...(model.includes('gemini')
