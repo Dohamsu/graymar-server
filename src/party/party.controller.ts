@@ -43,6 +43,8 @@ import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { runSessions } from '../db/schema/run-sessions.js';
 import { partyMembers } from '../db/schema/party-members.js';
 import { nodeInstances } from '../db/schema/node-instances.js';
+import { runParticipants } from '../db/schema/run-participants.js';
+import { turns } from '../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 
 @Controller('v1/parties')
@@ -447,6 +449,7 @@ export class PartyController {
     const run = await this.db.query.runSessions.findFirst({
       where: eq(runSessions.id, runId),
       columns: {
+        userId: true,
         currentTurnNo: true,
         partyId: true,
         currentLocationId: true,
@@ -468,6 +471,23 @@ export class PartyController {
       ),
       columns: { nodeType: true },
     });
+    // S2 (arch/84): HUB 비-go_ CHOICE 중 accept_quest/contact_ally/pay_cost 는
+    // 리더 대표 통과(통합 판정·투표 없이 solo 파이프라인 직행). arc_commit_* 은
+    // 이번 스코프 제외(아래 400 가드로 유지). ACTION·미지 CHOICE 도 400 유지.
+    const LEADER_HUB_CHOICES = ['accept_quest', 'contact_ally', 'pay_cost'];
+    if (
+      activeNode?.nodeType === 'HUB' &&
+      inputType === 'CHOICE' &&
+      LEADER_HUB_CHOICES.includes(rawInput)
+    ) {
+      return this.partyTurnService.submitLeaderHubChoice(
+        runId,
+        partyId,
+        userId,
+        rawInput,
+      );
+    }
+
     if (
       activeNode?.nodeType === 'HUB' &&
       !(inputType === 'CHOICE' && rawInput.startsWith('go_'))
@@ -505,6 +525,47 @@ export class PartyController {
     );
   }
 
+  // ── arch/84: 멤버 화면 데이터 경로 (리더 런 상태 조회) ──
+
+  @Get(':partyId/runs/:runId/state')
+  async getPartyRunState(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+    @Param('runId') runId: string,
+    @Query('turnsLimit') turnsLimitStr?: string,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+      columns: { userId: true, partyId: true },
+    });
+    if (!run) throw new NotFoundError('런을 찾을 수 없습니다.');
+    if (run.partyId !== partyId)
+      throw new BadRequestError('이 파티의 런이 아닙니다.');
+
+    // run_participants 기록이 있으면 이탈 여부 확인 (Phase 3 합류 런).
+    // lobby-start 신규 파티 런은 run_participants 미기록 — 파티 멤버십으로 허용.
+    const participant = await this.db.query.runParticipants.findFirst({
+      where: and(
+        eq(runParticipants.runId, runId),
+        eq(runParticipants.userId, userId),
+      ),
+      columns: { leftAt: true },
+    });
+    if (participant?.leftAt) {
+      throw new BadRequestError('던전에서 이탈했습니다.');
+    }
+
+    const turnsLimit = turnsLimitStr
+      ? Math.min(50, Math.max(1, parseInt(turnsLimitStr, 10) || 20))
+      : 20;
+
+    // 소유권 우회: 리더 userId 로 getRun 호출 — 멤버가 리더 런 상태를 읽는
+    // 유일한 창구. 반환 구조는 솔로 getRun 과 동일해 클라 초기 복원에 직접 사용.
+    return this.runsService.getRun(runId, run.userId, { turnsLimit });
+  }
+
   // ── Phase 2: 파티 턴 상세 조회 ──
 
   @Get(':partyId/runs/:runId/turns/:turnNo')
@@ -523,28 +584,19 @@ export class PartyController {
       turnNo,
     );
 
-    // 솔로 턴 결과 (turns 테이블)
-    const run = await this.db.query.runSessions.findFirst({
-      where: eq(runSessions.id, runId),
-      columns: { userId: true },
+    // 솔로 턴 레코드 직접 조회 (arch/84 S6-2).
+    // 기존 getRun 경유는 serverResult 를 매핑하지 않아 항상 null 이었고 워커
+    // llmChoices 도 누락 — turns 테이블 직독으로 solo getTurnDetail 과 동일한
+    // llm 계약(status/output/choices)을 파티 멤버에게 제공한다.
+    const turnRow = await this.db.query.turns.findFirst({
+      where: and(eq(turns.runId, runId), eq(turns.turnNo, turnNo)),
+      columns: {
+        serverResult: true,
+        llmStatus: true,
+        llmOutput: true,
+        llmChoices: true,
+      },
     });
-
-    let turnResult: unknown = null;
-    if (run) {
-      try {
-        turnResult = await this.runsService.getRun(runId, run.userId, {
-          turnsLimit: 50,
-        });
-      } catch {
-        // 조회 실패 무시
-      }
-    }
-
-    // 해당 턴 데이터 찾기
-    const turnData = (turnResult as Record<string, unknown> | null)?.turns as
-      | Array<Record<string, unknown>>
-      | undefined;
-    const matchedTurn = turnData?.find((t) => (t.turnNo as number) === turnNo);
 
     return {
       turnNo,
@@ -554,10 +606,11 @@ export class PartyController {
         isAutoAction: a.isAutoAction,
         submittedAt: a.submittedAt,
       })),
-      serverResult: matchedTurn?.serverResult ?? null,
+      serverResult: turnRow?.serverResult ?? null,
       llm: {
-        status: matchedTurn?.llmStatus ?? null,
-        output: matchedTurn?.llmOutput ?? null,
+        status: turnRow?.llmStatus ?? null,
+        output: turnRow?.llmOutput ?? null,
+        choices: turnRow?.llmChoices ?? null,
       },
     };
   }

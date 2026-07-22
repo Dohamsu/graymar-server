@@ -4,6 +4,7 @@ import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { partyTurnActions } from '../db/schema/party-turn-actions.js';
 import { partyMembers } from '../db/schema/party-members.js';
 import { runSessions } from '../db/schema/run-sessions.js';
+import { nodeInstances } from '../db/schema/node-instances.js';
 import { turns } from '../db/schema/index.js';
 import { users } from '../db/schema/users.js';
 import { PartyStreamService } from './party-stream.service.js';
@@ -35,6 +36,8 @@ interface TurnTimer {
   timeout: ReturnType<typeof setTimeout>;
   warnings: ReturnType<typeof setTimeout>[];
   memberUserIds: string[];
+  /** 이 턴 타이머의 실제 마감 시각 (30초 후) — waiting 브로드캐스트에서 참조 */
+  deadline: Date;
 }
 
 @Injectable()
@@ -94,6 +97,7 @@ export class PartyTurnService {
       timeout,
       warnings,
       memberUserIds,
+      deadline,
     });
 
     // 대기 현황 브로드캐스트
@@ -169,6 +173,10 @@ export class PartyTurnService {
     allSubmitted: boolean;
     actions?: Awaited<ReturnType<typeof this.getSubmittedActions>>;
   }> {
+    // S5: 이 턴의 타이머가 아직 없으면 lazy 시작 (첫 제출 시점).
+    // 30초 마감·경고·waiting 브로드캐스트를 여기서 살린다.
+    await this.ensureTurnTimer(runId, turnNo, partyId);
+
     // AI 제어 멤버 자동 제출 (이탈자 매턴 자동행동)
     await this.autoSubmitForAiMembers(runId, turnNo, partyId);
 
@@ -239,19 +247,90 @@ export class PartyTurnService {
       const pending = timer.memberUserIds.filter(
         (id) => !submitted.includes(id),
       );
+      // S5 deadline 버그 수정: 상수 소거로 항상 Date.now()(=즉시 0초)가 되던 것을
+      // 실제 타이머 마감 시각으로 교체.
       this.streamService.broadcast(partyId, 'dungeon:waiting', {
         turnNo,
         submitted,
         pending,
-        deadline: new Date(
-          Date.now() +
-            TURN_TIMEOUT_MS -
-            (Date.now() - (Date.now() - TURN_TIMEOUT_MS)),
-        ).toISOString(),
+        deadline: timer.deadline.toISOString(),
       });
     }
 
     return { accepted: true, allSubmitted: false };
+  }
+
+  /**
+   * S1: HUB 비-go_ CHOICE(accept_quest/contact_ally/pay_cost)의 리더 대표 통과.
+   * 통합 판정·투표 없이 리더 계정으로 solo 파이프라인에 CHOICE 를 직접 제출한다.
+   * 멤버가 호출하면 위임 응답(throw 아님)을 반환해 클라가 안내를 표시한다.
+   */
+  async submitLeaderHubChoice(
+    runId: string,
+    partyId: string,
+    userId: string,
+    choiceId: string,
+  ): Promise<
+    | { accepted: false; leaderOnly: true; message: string }
+    | {
+        accepted: true;
+        leaderChoice: true;
+        serverResult: unknown;
+        llmStatus: string;
+      }
+  > {
+    const run = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.id, runId),
+      columns: { userId: true, currentTurnNo: true },
+    });
+    if (!run) {
+      return {
+        accepted: false,
+        leaderOnly: true,
+        message: '런을 찾을 수 없습니다.',
+      };
+    }
+
+    const leaderId = run.userId;
+    // 리더만 거점 결정 실행. 멤버는 위임 안내.
+    if (leaderId !== userId) {
+      return {
+        accepted: false,
+        leaderOnly: true,
+        message: '리더가 거점 결정을 내립니다.',
+      };
+    }
+
+    const turnNo = (run.currentTurnNo ?? 0) + 1;
+
+    // 리더 계정으로 solo 엔진에 CHOICE 직접 제출.
+    // idempotencyKey 는 party-hubchoice 접두로 통합 판정(party-...)과 분리.
+    const turnResult = (await this.turnsService.submitTurn(runId, leaderId, {
+      input: { type: 'CHOICE' as const, choiceId },
+      expectedNextTurnNo: turnNo,
+      idempotencyKey: `party-hubchoice-${runId}-${turnNo}`,
+    })) as {
+      serverResult?: unknown;
+      llm?: { status?: string } | null;
+    };
+
+    const llmStatus = turnResult.llm?.status ?? 'PENDING';
+
+    // 파티 전원에게 턴 결과 전파 (리더 대표 턴은 partyActions 없음).
+    this.streamService.broadcast(partyId, 'dungeon:turn_resolved', {
+      runId,
+      turnNo,
+      actions: [] as unknown[],
+      serverResult: turnResult.serverResult,
+      llmStatus,
+    });
+
+    return {
+      accepted: true,
+      leaderChoice: true,
+      serverResult: turnResult.serverResult,
+      llmStatus,
+    };
   }
 
   /**
@@ -650,6 +729,35 @@ export class PartyTurnService {
         }
       }
 
+      // S5: 다음 턴 타이머 연쇄 — LOCATION 노드에서만 시작한다.
+      // (HUB 복귀는 CHOICE/투표 경로라 타이머 불필요, RUN_ENDED 는 종료.)
+      if (nodeOutcome !== 'RUN_ENDED') {
+        const postRun = await this.db.query.runSessions.findFirst({
+          where: eq(runSessions.id, runId),
+          columns: {
+            currentNodeIndex: true,
+            currentTurnNo: true,
+            status: true,
+          },
+        });
+        if (postRun && postRun.status === 'RUN_ACTIVE') {
+          const node = await this.db.query.nodeInstances.findFirst({
+            where: and(
+              eq(nodeInstances.runId, runId),
+              eq(nodeInstances.nodeIndex, postRun.currentNodeIndex ?? 0),
+            ),
+            columns: { nodeType: true },
+          });
+          if (node?.nodeType === 'LOCATION') {
+            const nextTurnNo = (postRun.currentTurnNo ?? turnNo) + 1;
+            const memberUserIds = await this.getPartyMemberUserIds(partyId);
+            if (memberUserIds.length > 0) {
+              this.startTurn(runId, nextTurnNo, partyId, memberUserIds);
+            }
+          }
+        }
+      }
+
       this.logger.log(
         `Party turn resolved: run=${runId} turn=${turnNo} actions=${actions.length}`,
       );
@@ -688,6 +796,33 @@ export class PartyTurnService {
   }
 
   // ── Private helpers ──
+
+  /**
+   * S5: 해당 턴의 타이머가 없거나 다른 턴을 가리키면 새로 시작한다.
+   * checkAllSubmitted 의 DB 멤버수 fallback 과 동일한 집합(partyMembers)을
+   * 사용하므로, 타이머 존재가 전원 제출 판정을 바꾸지 않는다.
+   */
+  private async ensureTurnTimer(
+    runId: string,
+    turnNo: number,
+    partyId: string,
+  ): Promise<void> {
+    const existing = this.timers.get(runId);
+    if (existing && existing.turnNo === turnNo) return;
+
+    const memberUserIds = await this.getPartyMemberUserIds(partyId);
+    if (memberUserIds.length === 0) return;
+
+    this.startTurn(runId, turnNo, partyId, memberUserIds);
+  }
+
+  private async getPartyMemberUserIds(partyId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ userId: partyMembers.userId })
+      .from(partyMembers)
+      .where(eq(partyMembers.partyId, partyId));
+    return rows.map((r) => r.userId);
+  }
 
   private async getSubmittedUserIds(
     runId: string,
