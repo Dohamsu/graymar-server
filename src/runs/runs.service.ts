@@ -1008,9 +1008,28 @@ export class RunsService {
     const endingsCount = Number(endingsCountRows[0]?.value ?? 0);
 
     if (!run) return { lastCharacter, endingsCount };
+
+    // 이어하기 라벨용 팩 인지 프리셋 이름 — 클라 정적 graymar 목록엔 KH_*/SS_* 등
+    // 타 팩 프리셋이 없어 raw ID가 노출되던 결함의 서버측 정본 (불변식 45).
+    let presetName: string | undefined;
+    if (run.presetId) {
+      try {
+        const scenarioId = run.scenarioId ?? DEFAULT_SCENARIO_ID;
+        await this.content.ensureScenario(scenarioId);
+        presetName = runInScenarioContext(
+          scenarioId,
+          () => this.content.getPreset(run.presetId!)?.name,
+        );
+      } catch {
+        // 팩 로드 실패 시 라벨만 fallback (클라가 presetId로 대체 표기)
+      }
+    }
+
     return {
       runId: run.id,
       presetId: run.presetId,
+      presetName,
+      characterName: run.runState?.characterName ?? undefined,
       gender: run.gender ?? 'male',
       currentTurnNo: run.currentTurnNo,
       currentNodeIndex: run.currentNodeIndex,
