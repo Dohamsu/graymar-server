@@ -29,6 +29,7 @@ import {
   isJongseongVariantCore,
 } from './narrative-filter.core.js';
 import { LlmCallerService } from './llm-caller.service.js';
+import { salvageNarrativeShape } from './narrative-shape.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { AiTurnLogService } from './ai-turn-log.service.js';
 import { LlmCallLogService } from './llm-call-log.service.js';
@@ -2829,6 +2830,28 @@ ${npcList}`,
       // 빈 서술 방어 최종 게이트 (arch/25 D-8 백로그 ①): caller 층 방어를 뚫고
       // 0토큰·공백 응답이 success로 도달해도 DONE(재시도 불가) 대신 FAILED로 커밋해
       // 클라이언트 retry-llm 게이트를 살린다.
+      // JSON 형태 방어(동일 D-8): 스트리밍 경로는 caller의 ensureNonEmpty를 거치지
+      // 않으므로(streamResponse 직결) 여기서 봉투/프리픽스를 구제하거나 실패 처리.
+      // 스트림 중 노출된 JSON 토큰은 done 최종본 교체 프로토콜(R7)이 정리한다.
+      if (callResult.success && callResult.response && !useJsonMode) {
+        const rawNarrText = callResult.response.text ?? '';
+        const salvagedNarr = rawNarrText.trim()
+          ? salvageNarrativeShape(rawNarrText)
+          : '';
+        if (salvagedNarr == null) {
+          callResult = {
+            success: false,
+            error: `JSON 형태 서술 구제 불가 (model=${callResult.response.model}, head=${rawNarrText.slice(0, 40)})`,
+            providerUsed: callResult.providerUsed,
+            attempts: callResult.attempts,
+          };
+        } else if (salvagedNarr !== rawNarrText && salvagedNarr) {
+          this.logger.warn(
+            `[NarrativeShape] turn=${pending.turnNo} JSON 봉투/프리픽스 구제 (model=${callResult.response.model})`,
+          );
+          callResult.response.text = salvagedNarr;
+        }
+      }
       if (
         callResult.success &&
         callResult.response &&

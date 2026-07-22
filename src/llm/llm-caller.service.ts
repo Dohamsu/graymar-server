@@ -4,6 +4,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { LlmProviderRegistryService } from './providers/llm-provider-registry.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { recordLlmCall } from './turn-context.js';
+import { salvageNarrativeShape } from './narrative-shape.js';
 import type {
   LlmProviderRequest,
   LlmProviderResponse,
@@ -87,15 +88,34 @@ export class LlmCallerService {
    * 빈 응답 방어 (arch/25 D-8): 0토큰·공백 응답을 성공으로 반환하면 워커가
    * llmStatus=DONE으로 커밋해 빈 서술이 노출되고 retry-llm 게이트도 죽는다.
    * 실패로 던져 재시도·fallback 체인(classifyError 기본 RETRYABLE)을 태운다.
+   *
+   * JSON 형태 방어(동일 D-8): 서술 자리에 온 JSON 봉투/프리픽스는 구제 가능하면
+   * 본문만 남기고(response.text 교체), 구제 불가면 빈 응답과 동일하게 던진다.
+   * 단 nano·plot·classifier 등은 정당한 JSON을 반환하므로 salvageShape는
+   * narrative 스테이지 + 비JSON모드에서만 켠다 (오폭 방지).
    */
   private ensureNonEmpty(
     response: LlmProviderResponse,
     providerName: string,
+    salvageShape = false,
   ): void {
     if (!response.text?.trim()) {
       throw new Error(
         `빈 LLM 응답 (provider=${providerName}, model=${response.model}, completionTokens=${response.completionTokens ?? 0})`,
       );
+    }
+    if (!salvageShape) return;
+    const salvaged = salvageNarrativeShape(response.text);
+    if (salvaged == null) {
+      throw new Error(
+        `JSON 형태 응답 구제 불가 (provider=${providerName}, model=${response.model}, head=${response.text.slice(0, 40)})`,
+      );
+    }
+    if (salvaged !== response.text) {
+      this.logger.warn(
+        `[NarrativeShape] JSON 봉투/프리픽스 구제 (model=${response.model}): ${response.text.slice(0, 40)}...`,
+      );
+      response.text = salvaged;
     }
   }
 
@@ -106,13 +126,17 @@ export class LlmCallerService {
     const config = this.configService.get();
     const primary = this.registry.getPrimary();
     let attempts = 0;
+    // JSON 형태 구제는 서술 스테이지 + 비JSON모드 한정 (nano/plot 등 JSON 응답 오폭 방지)
+    const salvageShape =
+      (stage === 'narrative' || stage === 'narrative-retry') &&
+      request.responseFormat !== 'json_object';
 
     // 1차 시도: Primary (레이트 리밋 적용)
     attempts++;
     try {
       await this.rateLimiter.acquire();
       const response = await primary.generate(request);
-      this.ensureNonEmpty(response, primary.name);
+      this.ensureNonEmpty(response, primary.name, salvageShape);
       this.record(response, primary.name, attempts, stage);
       return { success: true, response, providerUsed: primary.name, attempts };
     } catch (err) {
@@ -127,7 +151,7 @@ export class LlmCallerService {
         try {
           await this.rateLimiter.acquire();
           const response = await primary.generate(request);
-          this.ensureNonEmpty(response, primary.name);
+          this.ensureNonEmpty(response, primary.name, salvageShape);
           this.record(response, primary.name, attempts, stage);
           return {
             success: true,
@@ -164,7 +188,7 @@ export class LlmCallerService {
     try {
       await this.rateLimiter.acquire();
       const response = await fallback.generate(fallbackRequest);
-      this.ensureNonEmpty(response, fallback.name);
+      this.ensureNonEmpty(response, fallback.name, salvageShape);
       this.logger.log(`Fallback "${fallback.name}" succeeded`);
       this.record(response, fallback.name, attempts, stage);
       return { success: true, response, providerUsed: fallback.name, attempts };
