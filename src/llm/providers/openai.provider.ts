@@ -207,11 +207,34 @@ export class OpenAIProvider implements LlmProvider {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
+    // 2026-07-22 프로바이더 튜닝 (env 스위치, 미설정 시 기존 동작 유지)
+    // - REQUIRE_PARAMS: frequency/presence_penalty 미지원 프로바이더 배제 (불변식 50 레버 보장)
+    // - MAX_PRICE: "prompt,completion" USD/M 상한 — 동일 모델 프로바이더 간 2.6배 가격 편차 방어
+    // - ORDER: 프로바이더 우선 순서 고정 (캐시 적중 누적용, allow_fallbacks 유지)
+    const requireParams = process.env.LLM_PROVIDER_REQUIRE_PARAMS === 'true';
+    const maxPriceParts = (process.env.LLM_PROVIDER_MAX_PRICE ?? '')
+      .split(',')
+      .map((s) => parseFloat(s.trim()))
+      .filter((n) => !isNaN(n));
+    const order = (process.env.LLM_PROVIDER_ORDER ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
     return {
       provider: {
         sort,
         allow_fallbacks: true,
         ...(ignore.length > 0 ? { ignore } : {}),
+        ...(requireParams ? { require_parameters: true } : {}),
+        ...(maxPriceParts.length === 2
+          ? {
+              max_price: {
+                prompt: maxPriceParts[0],
+                completion: maxPriceParts[1],
+              },
+            }
+          : {}),
+        ...(order.length > 0 ? { order } : {}),
       },
       // Gemini 2.5 Flash: thinking(reasoning) 비활성화 — OpenRouter는 max_tokens: 0으로 제어
       ...(model.includes('gemini')
