@@ -83,6 +83,22 @@ export class LlmCallerService {
     });
   }
 
+  /**
+   * 빈 응답 방어 (arch/25 D-8): 0토큰·공백 응답을 성공으로 반환하면 워커가
+   * llmStatus=DONE으로 커밋해 빈 서술이 노출되고 retry-llm 게이트도 죽는다.
+   * 실패로 던져 재시도·fallback 체인(classifyError 기본 RETRYABLE)을 태운다.
+   */
+  private ensureNonEmpty(
+    response: LlmProviderResponse,
+    providerName: string,
+  ): void {
+    if (!response.text?.trim()) {
+      throw new Error(
+        `빈 LLM 응답 (provider=${providerName}, model=${response.model}, completionTokens=${response.completionTokens ?? 0})`,
+      );
+    }
+  }
+
   async call(
     request: LlmProviderRequest,
     stage = 'unknown',
@@ -96,6 +112,7 @@ export class LlmCallerService {
     try {
       await this.rateLimiter.acquire();
       const response = await primary.generate(request);
+      this.ensureNonEmpty(response, primary.name);
       this.record(response, primary.name, attempts, stage);
       return { success: true, response, providerUsed: primary.name, attempts };
     } catch (err) {
@@ -110,6 +127,7 @@ export class LlmCallerService {
         try {
           await this.rateLimiter.acquire();
           const response = await primary.generate(request);
+          this.ensureNonEmpty(response, primary.name);
           this.record(response, primary.name, attempts, stage);
           return {
             success: true,
@@ -146,6 +164,7 @@ export class LlmCallerService {
     try {
       await this.rateLimiter.acquire();
       const response = await fallback.generate(fallbackRequest);
+      this.ensureNonEmpty(response, fallback.name);
       this.logger.log(`Fallback "${fallback.name}" succeeded`);
       this.record(response, fallback.name, attempts, stage);
       return { success: true, response, providerUsed: fallback.name, attempts };

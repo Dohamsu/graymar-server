@@ -399,6 +399,15 @@ export class OpenAIProvider implements LlmProvider {
       if (firstTokenTimer) clearTimeout(firstTokenTimer);
     }
 
+    // 빈 스트림 방어 (arch/25 D-8): 프로바이더가 콘텐츠 없이 스트림을 정상 종료하면
+    // 빈 done이 성공으로 흘러 빈 서술이 DONE 커밋되던 경로 — 실패로 던져
+    // caller의 non-stream fallback(재시도+fallback 모델) 체인을 태운다.
+    if (!fullText.trim()) {
+      throw new Error(
+        `빈 스트림 응답 (0토큰) — model=${modelUsed}, provider=${providerName ?? 'unknown'}`,
+      );
+    }
+
     yield {
       type: 'done',
       response: {

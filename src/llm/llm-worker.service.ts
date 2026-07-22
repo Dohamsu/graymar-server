@@ -2826,6 +2826,22 @@ ${npcList}`,
         }
       }
 
+      // 빈 서술 방어 최종 게이트 (arch/25 D-8 백로그 ①): caller 층 방어를 뚫고
+      // 0토큰·공백 응답이 success로 도달해도 DONE(재시도 불가) 대신 FAILED로 커밋해
+      // 클라이언트 retry-llm 게이트를 살린다.
+      if (
+        callResult.success &&
+        callResult.response &&
+        !callResult.response.text?.trim()
+      ) {
+        callResult = {
+          success: false,
+          error: `빈 서술 응답 (model=${callResult.response.model}, completionTokens=${callResult.response.completionTokens ?? 0})`,
+          providerUsed: callResult.providerUsed,
+          attempts: callResult.attempts,
+        };
+      }
+
       // 5. 내러티브 결정 — 실패 또는 mock fallback 시 SceneShell로 graceful degradation
       // Dual-Track: 스트리밍 모드에서는 후처리 경량화 (Step C, F만)
       const isStreamingMode = !!(this.streamBroker && !isCombat);
