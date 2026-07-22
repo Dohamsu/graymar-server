@@ -458,6 +458,9 @@ export function fixNpcNameParticlesCore(
 @Injectable()
 export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LlmWorkerService.name);
+  // [시드 경주 방어 2026-07-22] AUTONOMOUS 런이 plotSeed 없이 LOCATION 턴을
+  // 진행 중일 때 런당 1회 경고 (백그라운드 생성 60초~2분대 vs 빠른 턴 제출)
+  private readonly seedWaitWarnedRuns = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
   /**
    * P3-S6: nano 가 생성한 choices 를 턴 단위로 임시 보관.
@@ -3892,6 +3895,21 @@ ${npcList}`,
           pending.runId,
           pending.turnNo,
           workerRunState,
+        );
+      } else if (
+        pending.nodeType === 'LOCATION' &&
+        !workerRunState?.plotSeed &&
+        this.content.getNarrativeMode() === 'AUTONOMOUS' &&
+        !this.seedWaitWarnedRuns.has(pending.runId)
+      ) {
+        // [시드 경주 방어] 조용한 무발화 가시화 — plotSeed 백그라운드 생성이
+        // 턴 제출 페이스를 못 따라잡는 중 (2026-07-22 실측: 봇 12턴이 시드
+        // 생성 2분 14초를 앞질러 디렉터 전체 무발화). 시드 동결 완료 후
+        // 턴부터 자동 정상화되므로 non-fatal, 런당 1회만 경고.
+        if (this.seedWaitWarnedRuns.size > 1000) this.seedWaitWarnedRuns.clear();
+        this.seedWaitWarnedRuns.add(pending.runId);
+        this.logger.warn(
+          `[PlotDirector] plotSeed 부재로 선계산 스킵 (run=${pending.runId}, turn=${pending.turnNo}) — 백그라운드 시드 생성이 턴 페이스보다 늦는 중`,
         );
       }
 

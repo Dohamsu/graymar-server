@@ -939,6 +939,7 @@ export class RunsService {
     runId: string,
     scenarioId: string | null,
   ): Promise<void> {
+    const startedAt = Date.now();
     try {
       await this.content.ensureScenario(scenarioId);
       const seed = await runInScenarioContext(
@@ -956,8 +957,10 @@ export class RunsService {
           updatedAt: new Date(),
         })
         .where(eq(runSessions.id, runId));
+      // 생성 소요 관측 — 60초~2분대 실측 (2026-07-22). 빠른 턴 제출(봇)이 이
+      // 창을 앞지르면 디렉터 무발화 → 워커의 [PlotDirector] seed 대기 경고와 짝.
       this.logger.log(
-        `[createRun] AUTONOMOUS Plot Seed 백그라운드 동결 ${runId} (culprit=${seed.truth.culpritNpcId}, fallback=${!!seed.generatedByFallback})`,
+        `[createRun] AUTONOMOUS Plot Seed 백그라운드 동결 ${runId} (culprit=${seed.truth.culpritNpcId}, fallback=${!!seed.generatedByFallback}, ${Math.round((Date.now() - startedAt) / 1000)}s)`,
       );
     } catch (err) {
       this.logger.warn(
