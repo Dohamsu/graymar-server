@@ -512,16 +512,9 @@ export class PartyTurnService {
         llm?: { status?: string } | null;
       };
 
-      // 6. 턴 레코드에 partyActions 저장 (LLM Worker가 참조)
-      await this.db
-        .update(turns)
-        .set({
-          actionPlan: {
-            ...(typeof turnResult.serverResult === 'object' ? {} : {}),
-            partyActions: partyActionsData,
-          } as unknown as import('../db/types/index.js').ActionPlan[],
-        })
-        .where(and(eq(turns.runId, runId), eq(turns.turnNo, turnNo)));
+      // 6. (제거됨 2026-07-22) actionPlan에 partyActions 사후 병합하던 UPDATE는
+      // 커밋 직후 워커 즉시 킥(arch/62)과 race — 워커가 party_turn_actions
+      // 테이블을 직독하도록 전환 (llm-worker 1.5). 엔진 actionPlan 원본도 보존됨.
 
       // 7. SSE 브로드캐스트: 턴 결과
       this.streamService.broadcast(partyId, 'dungeon:turn_resolved', {
@@ -666,6 +659,29 @@ export class PartyTurnService {
       this.logger.error(
         `Party turn resolve failed: run=${runId} turn=${turnNo}`,
         err,
+      );
+      // 소프트락 방지 (2026-07-22 실측: HUB에서 ACTION 통합 판정 실패 시
+      // 제출 기록이 남아 멱등성 체크에 걸려 영구 재제출 불가):
+      // 턴이 미커밋 상태로 실패했다면 제출 기록을 회수해 재시도를 허용하고,
+      // 파티 전체에 실패를 알린다 (기존에는 로그만 남고 클라이언트는 무한 대기).
+      const committed = await this.db.query.turns.findFirst({
+        where: and(eq(turns.runId, runId), eq(turns.turnNo, turnNo)),
+        columns: { id: true },
+      });
+      if (!committed) {
+        await this.db
+          .delete(partyTurnActions)
+          .where(
+            and(
+              eq(partyTurnActions.runId, runId),
+              eq(partyTurnActions.turnNo, turnNo),
+            ),
+          );
+      }
+      this.streamService.broadcastError(
+        partyId,
+        'TURN_RESOLVE_FAILED',
+        '턴 처리에 실패했습니다. 행동을 다시 제출해주세요.',
       );
       return { success: false };
     }

@@ -42,6 +42,7 @@ import { RunParticipantsService } from './run-participants.service.js';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { runSessions } from '../db/schema/run-sessions.js';
 import { partyMembers } from '../db/schema/party-members.js';
+import { nodeInstances } from '../db/schema/node-instances.js';
 import { eq, and } from 'drizzle-orm';
 
 @Controller('v1/parties')
@@ -320,14 +321,29 @@ export class PartyController {
     const { memberUserIds, memberProfiles } =
       await this.lobbyService.initiateDungeonStart(userId, partyId);
 
-    // 리더의 프리셋/성별로 런 생성
+    // 리더의 프리셋/성별로 런 생성.
+    // 시나리오 계승 (2026-07-22): 로비 프리셋은 리더의 최근 런에서 오는데
+    // (예: karnholt KH_*), scenarioId 없이 createRun하면 기본 팩 스코프에서
+    // 프리셋 검증에 걸려 시작 자체가 불가 — 같은 최근 런의 scenarioId를 함께 넘긴다.
     const leader = memberProfiles.find((m) => m.isLeader) ?? memberProfiles[0];
-    const run = await this.runsService.createRun(
-      userId,
-      leader.presetId ?? undefined,
-      leader.gender,
-      { partyId },
-    );
+    const leaderRecentRun = await this.db.query.runSessions.findFirst({
+      where: eq(runSessions.userId, userId),
+      orderBy: (rs, { desc }) => [desc(rs.startedAt)],
+      columns: { scenarioId: true },
+    });
+    let run: Awaited<ReturnType<RunsService['createRun']>>;
+    try {
+      run = await this.runsService.createRun(
+        userId,
+        leader.presetId ?? undefined,
+        leader.gender,
+        { partyId, scenarioId: leaderRecentRun?.scenarioId ?? undefined },
+      );
+    } catch (err) {
+      // 런 생성 실패 시 파티가 IN_DUNGEON에 갇히지 않도록 복귀
+      await this.lobbyService.endDungeon(partyId);
+      throw err;
+    }
 
     const runId = run.run.id;
 
@@ -430,11 +446,36 @@ export class PartyController {
     // 현재 턴 번호를 직접 DB에서 조회 (파티 런은 소유자가 리더이므로 getRun 우회)
     const run = await this.db.query.runSessions.findFirst({
       where: eq(runSessions.id, runId),
-      columns: { currentTurnNo: true, partyId: true, currentLocationId: true },
+      columns: {
+        currentTurnNo: true,
+        partyId: true,
+        currentLocationId: true,
+        currentNodeIndex: true,
+      },
     });
     if (!run) throw new NotFoundError('런을 찾을 수 없습니다.');
     if (run.partyId !== partyId)
       throw new BadRequestError('이 파티의 런이 아닙니다.');
+
+    // HUB 노드 가드 (2026-07-22): HUB는 서버 계약상 CHOICE 전용인데
+    // 파티 경로는 ACTION도 accepted:true로 받아둔 뒤 통합 판정에서
+    // "HUB requires CHOICE input"으로 조용히 실패 → 제출 기록이 남아
+    // 멱등성 체크에 걸리는 영구 소프트락 실측. 제출 시점에 즉시 거부한다.
+    const activeNode = await this.db.query.nodeInstances.findFirst({
+      where: and(
+        eq(nodeInstances.runId, runId),
+        eq(nodeInstances.nodeIndex, run.currentNodeIndex ?? 0),
+      ),
+      columns: { nodeType: true },
+    });
+    if (
+      activeNode?.nodeType === 'HUB' &&
+      !(inputType === 'CHOICE' && rawInput.startsWith('go_'))
+    ) {
+      throw new BadRequestError(
+        '거점에서는 장소 선택(이동 투표)만 제출할 수 있습니다.',
+      );
+    }
 
     // HUB CHOICE → 이동 투표 자동 생성 (다수결)
     if (inputType === 'CHOICE' && rawInput.startsWith('go_')) {

@@ -16,6 +16,7 @@ import {
   runSessions,
   nodeMemories,
   runMemories,
+  partyTurnActions,
 } from '../db/schema/index.js';
 import { ContextBuilderService } from './context-builder.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
@@ -2224,16 +2225,55 @@ ${npcList}`,
         playerTargetNpcId,
       );
 
-      // 1.5. 파티 모드: partyActions 주입
-      if (
-        runSession?.partyRunMode === 'PARTY' &&
-        pending.actionPlan &&
-        typeof pending.actionPlan === 'object'
-      ) {
-        const ap = pending.actionPlan as unknown as Record<string, unknown>;
-        if (ap.partyActions && Array.isArray(ap.partyActions)) {
-          llmContext.partyActions =
-            ap.partyActions as typeof llmContext.partyActions;
+      // 1.5. 파티 모드: partyActions 주입 — party_turn_actions 정본 직독.
+      // actionPlan 경유는 resolveTurn의 사후 UPDATE와 커밋 직후 워커 즉시 킥
+      // 사이 race로 누락됨 (2026-07-22 실측: 파티 턴이 단수 솔로 서사로 생성).
+      // 제출 행은 submitTurn 이전에 존재하므로 테이블 직독은 race-free.
+      if (runSession?.partyRunMode === 'PARTY') {
+        const actionRows = await this.db
+          .select({
+            userId: partyTurnActions.userId,
+            rawInput: partyTurnActions.rawInput,
+            isAutoAction: partyTurnActions.isAutoAction,
+          })
+          .from(partyTurnActions)
+          .where(
+            and(
+              eq(partyTurnActions.runId, pending.runId),
+              eq(partyTurnActions.turnNo, pending.turnNo),
+            ),
+          )
+          .orderBy(partyTurnActions.submittedAt);
+        if (actionRows.length > 0) {
+          const partyMembers = (
+            runSession.runState as unknown as {
+              partyMembers?: {
+                userId: string;
+                nickname?: string;
+                presetId?: string | null;
+              }[];
+            } | null
+          )?.partyMembers;
+          llmContext.partyActions = actionRows.map((row) => {
+            const profile = partyMembers?.find((m) => m.userId === row.userId);
+            return {
+              userId: row.userId,
+              nickname: profile?.nickname ?? '용병',
+              presetId: profile?.presetId ?? undefined,
+              rawInput: row.rawInput,
+              isAutoAction: row.isAutoAction ?? false,
+            };
+          });
+        } else if (
+          pending.actionPlan &&
+          typeof pending.actionPlan === 'object'
+        ) {
+          // 구버전 턴(재시도 등) fallback: actionPlan에 병합 저장된 기록
+          const ap = pending.actionPlan as unknown as Record<string, unknown>;
+          if (ap.partyActions && Array.isArray(ap.partyActions)) {
+            llmContext.partyActions =
+              ap.partyActions as typeof llmContext.partyActions;
+          }
         }
       }
 
@@ -3953,7 +3993,8 @@ ${npcList}`,
         // 턴 제출 페이스를 못 따라잡는 중 (2026-07-22 실측: 봇 12턴이 시드
         // 생성 2분 14초를 앞질러 디렉터 전체 무발화). 시드 동결 완료 후
         // 턴부터 자동 정상화되므로 non-fatal, 런당 1회만 경고.
-        if (this.seedWaitWarnedRuns.size > 1000) this.seedWaitWarnedRuns.clear();
+        if (this.seedWaitWarnedRuns.size > 1000)
+          this.seedWaitWarnedRuns.clear();
         this.seedWaitWarnedRuns.add(pending.runId);
         this.logger.warn(
           `[PlotDirector] plotSeed 부재로 선계산 스킵 (run=${pending.runId}, turn=${pending.turnNo}) — 백그라운드 시드 생성이 턴 페이스보다 늦는 중`,
