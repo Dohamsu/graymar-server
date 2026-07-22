@@ -2780,12 +2780,18 @@ ${npcList}`,
           : config.provider === 'gemini'
             ? config.geminiModel
             : config.openaiModel;
+      // 임계는 env 외부화 — alternate 모델의 정상적인 짧은 서술(160~200tok)이
+      // 재시도 이중 지불로 이어지는 것을 방지 (2026-07-22 교차 실측: 7턴 중 2턴 2배 과금)
+      const shortResponseMinTokens = parseInt(
+        process.env.LLM_SHORT_RESPONSE_MIN_TOKENS ?? '200',
+        10,
+      );
       if (
         callResult.success &&
         callResult.response &&
         alternateModel &&
         alternateModel !== mainNarrativeModel &&
-        (callResult.response.completionTokens ?? 0) < 200
+        (callResult.response.completionTokens ?? 0) < shortResponseMinTokens
       ) {
         this.logger.warn(
           `[ShortResponse] turn=${pending.turnNo} model=${callResult.response.model} tokens=${callResult.response.completionTokens} → 메인 모델로 재시도`,
