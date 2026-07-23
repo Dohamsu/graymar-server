@@ -3,6 +3,7 @@ import { RunsModule } from '../runs/runs.module.js';
 import { TurnsModule } from '../turns/turns.module.js';
 import { AdminHealthController } from './admin-health.controller.js';
 import { AdminLlmController } from './admin-llm.controller.js';
+import { AdminOpenRouterService } from './admin-openrouter.service.js';
 import { AdminOpsService } from './admin-ops.service.js';
 import { AdminRunsController } from './admin-runs.controller.js';
 import { AdminStatsController } from './admin-stats.controller.js';
@@ -23,6 +24,6 @@ import { AdminUsersController } from './admin-users.controller.js';
     AdminRunsController,
     AdminLlmController,
   ],
-  providers: [AdminStatsService, AdminOpsService],
+  providers: [AdminStatsService, AdminOpsService, AdminOpenRouterService],
 })
 export class AdminModule {}
