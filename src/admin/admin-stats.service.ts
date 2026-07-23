@@ -122,15 +122,19 @@ export class AdminStatsService {
           WHERE created_at >= now() - interval '7 days'`),
       this.one<{ n: number }>(sql`
           SELECT count(*)::int AS n FROM bug_reports WHERE status = 'open'`),
-      // 포인트 유통량 = 전체 유저 잔액 캐시 합 (원장 정합은 arch/85)
+      // 포인트 유통량 = 실유저 잔액 캐시 합 (테스터 제외, 원장 정합은 arch/85)
       this.one<{ n: number }>(sql`
-          SELECT coalesce(sum(points), 0)::int AS n FROM users`),
+          SELECT coalesce(sum(points), 0)::int AS n
+          FROM users WHERE ${notTesterSql('email')}`),
+      // 오늘 포인트 발행/소진 — 테스터 제외
       this.one<{ issued: number; spent: number }>(sql`
           SELECT
-            coalesce(sum(delta) FILTER (WHERE delta > 0), 0)::int AS issued,
-            coalesce(abs(sum(delta) FILTER (WHERE delta < 0)), 0)::int AS spent
-          FROM point_transactions
-          WHERE created_at >= date_trunc('day', now())`),
+            coalesce(sum(pt.delta) FILTER (WHERE pt.delta > 0), 0)::int AS issued,
+            coalesce(abs(sum(pt.delta) FILTER (WHERE pt.delta < 0)), 0)::int AS spent
+          FROM point_transactions pt
+          JOIN users u ON u.id = pt.user_id
+          WHERE pt.created_at >= date_trunc('day', now())
+            AND ${notTesterSql('u.email')}`),
     ]);
 
     return {
@@ -203,12 +207,14 @@ export class AdminStatsService {
       refunded: number;
     }>(sql`
       SELECT
-        to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS date,
-        coalesce(sum(delta) FILTER (WHERE delta > 0), 0)::int AS issued,
-        coalesce(abs(sum(delta) FILTER (WHERE reason = 'SPEND')), 0)::int AS spent,
-        coalesce(sum(delta) FILTER (WHERE reason = 'REFUND'), 0)::int AS refunded
-      FROM point_transactions
-      WHERE created_at >= ${this.sinceDay(days)}
+        to_char(date_trunc('day', pt.created_at), 'YYYY-MM-DD') AS date,
+        coalesce(sum(pt.delta) FILTER (WHERE pt.delta > 0), 0)::int AS issued,
+        coalesce(abs(sum(pt.delta) FILTER (WHERE pt.reason = 'SPEND')), 0)::int AS spent,
+        coalesce(sum(pt.delta) FILTER (WHERE pt.reason = 'REFUND'), 0)::int AS refunded
+      FROM point_transactions pt
+      JOIN users u ON u.id = pt.user_id
+      WHERE pt.created_at >= ${this.sinceDay(days)}
+        AND ${notTesterSql('u.email')}
       GROUP BY 1
       ORDER BY 1 ASC`);
     return { daily };
