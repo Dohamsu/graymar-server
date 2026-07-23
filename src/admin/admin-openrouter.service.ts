@@ -136,11 +136,13 @@ export class AdminOpenRouterService {
       .slice(0, 10);
     const inWindow = items.filter((it) => it.date >= since);
 
-    // 일자별 실제 합
+    // 일자별 실제 합. Activity date 는 "YYYY-MM-DD HH:MM:SS" 로 올 수 있어 10자 정규화
+    // (llm_call_logs 측정 date 는 "YYYY-MM-DD" — 키 정렬 필수, 미정규화 시 병합 깨짐)
     const actualByDate = new Map<string, number>();
     const modelAgg = new Map<string, { usd: number; requests: number }>();
     for (const it of inWindow) {
-      actualByDate.set(it.date, (actualByDate.get(it.date) ?? 0) + it.usage);
+      const day = it.date.slice(0, 10);
+      actualByDate.set(day, (actualByDate.get(day) ?? 0) + it.usage);
       const m = modelAgg.get(it.model) ?? { usd: 0, requests: 0 };
       m.usd += it.usage;
       m.requests += it.requests;
