@@ -39,6 +39,10 @@ export const turns = pgTable(
     inputType: text('input_type', { enum: INPUT_TYPE }).notNull(),
     rawInput: text('raw_input').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
+    // arch/85 — 이 턴을 만든 유저 액션의 차감 키(body.idempotencyKey). 전이 턴
+    // (enter/hub/combat/dag)은 파생 idempotencyKey를 쓰므로, 그 LLM 실패 시
+    // 워커가 차감 SPEND를 찾아 환불하려면 별도로 차감 키를 보존해야 한다.
+    chargeKey: text('charge_key'),
 
     // 파이프라인 결과
     parsedBy: text('parsed_by', { enum: PARSED_BY }),

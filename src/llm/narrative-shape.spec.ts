@@ -3,12 +3,14 @@ import { salvageNarrativeShape } from './narrative-shape.js';
 
 describe('salvageNarrativeShape', () => {
   it('일반 서술은 원문 그대로 (no-op)', () => {
-    const s = '해가 기울며 그림자가 길게 늘어진다.\n\n@[로넨|/x.webp] "안녕하십니까."';
+    const s =
+      '해가 기울며 그림자가 길게 늘어진다.\n\n@[로넨|/x.webp] "안녕하십니까."';
     expect(salvageNarrativeShape(s)).toBe(s);
   });
 
   it('JSON 봉투 {"content": ...} → 본문 언랩 (run 0e6cc9ec T5 실측형)', () => {
-    const body = '서늘한 새벽 공기가 주변을 맴돈다.\n\n회계사: "…이 할 정도의 오차요."';
+    const body =
+      '서늘한 새벽 공기가 주변을 맴돈다.\n\n회계사: "…이 할 정도의 오차요."';
     const s = JSON.stringify({ content: body });
     expect(salvageNarrativeShape(s)).toBe(body);
   });
@@ -20,12 +22,17 @@ describe('salvageNarrativeShape', () => {
   });
 
   it('한 줄 JSON 프리픽스 + 본문 → 프리픽스 제거 (run 01d79acc T5 실측형)', () => {
-    const s = '{"action": "TALK", "result": "SUCCESS", "target": "NPC_MIRELA"}\n\n해가 완전히 떠올라 거리가 밝아진다.';
-    expect(salvageNarrativeShape(s)).toBe('해가 완전히 떠올라 거리가 밝아진다.');
+    const s =
+      '{"action": "TALK", "result": "SUCCESS", "target": "NPC_MIRELA"}\n\n해가 완전히 떠올라 거리가 밝아진다.';
+    expect(salvageNarrativeShape(s)).toBe(
+      '해가 완전히 떠올라 거리가 밝아진다.',
+    );
   });
 
   it('서술 필드 없는 순수 JSON → null (구제 불가 → 재시도 체인)', () => {
-    expect(salvageNarrativeShape('{"action": "TALK", "result": "SUCCESS"}')).toBeNull();
+    expect(
+      salvageNarrativeShape('{"action": "TALK", "result": "SUCCESS"}'),
+    ).toBeNull();
   });
 
   it('잘린/파싱 불가 JSON → null', () => {

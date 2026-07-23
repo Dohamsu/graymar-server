@@ -8,6 +8,7 @@ import {
   BadRequestError,
   UnauthorizedError,
 } from '../common/errors/game-errors.js';
+import { PointsService } from '../points/points.service.js';
 import type { RegisterBody, LoginBody } from './dto/auth.dto.js';
 
 // P2-S1: 10 → 12 (현대 OWASP 권장). 12rounds ≈ 250ms 해싱.
@@ -18,6 +19,7 @@ export class AuthService {
   constructor(
     @Inject(DB) private readonly db: DrizzleDB,
     private readonly jwtService: JwtService,
+    private readonly points: PointsService,
   ) {}
 
   async register(body: RegisterBody) {
@@ -45,6 +47,9 @@ export class AuthService {
         email: users.email,
         nickname: users.nickname,
       });
+
+    // arch/85 §2 — 가입 보너스 지급 (SIGNUP_BONUS_POINTS)
+    await this.points.grantSignupBonus(user.id);
 
     const token = this.jwtService.sign({ sub: user.id, email: user.email });
 

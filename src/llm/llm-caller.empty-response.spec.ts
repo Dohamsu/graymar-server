@@ -56,7 +56,8 @@ describe('LlmCallerService 빈 응답 방어', () => {
   it('primary 연속 빈 응답 → fallback 모델로 성공', async () => {
     const { caller, fallback } = makeCaller(
       () => Promise.resolve(EMPTY),
-      () => Promise.resolve({ text: '폴백 서술', model: 'openai/gpt-4.1-mini' }),
+      () =>
+        Promise.resolve({ text: '폴백 서술', model: 'openai/gpt-4.1-mini' }),
     );
     const result = await caller.call({ messages: [] } as never, 'narrative');
     expect(result.success).toBe(true);
@@ -77,7 +78,8 @@ describe('LlmCallerService 빈 응답 방어', () => {
   it('공백 문자만 있는 응답도 빈 응답으로 취급', async () => {
     const { caller } = makeCaller(
       () => Promise.resolve({ text: '  \n\t ', model: 'm' }),
-      () => Promise.resolve({ text: '폴백 서술', model: 'openai/gpt-4.1-mini' }),
+      () =>
+        Promise.resolve({ text: '폴백 서술', model: 'openai/gpt-4.1-mini' }),
     );
     const result = await caller.call({ messages: [] } as never, 'narrative');
     expect(result.success).toBe(true);

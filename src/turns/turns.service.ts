@@ -486,6 +486,7 @@ import {
   type ChallengeDecision,
 } from '../llm/challenge-classifier.service.js';
 import { LlmWorkerService } from '../llm/llm-worker.service.js';
+import { PointsService } from '../points/points.service.js';
 import { TurnOrchestrationService } from '../engine/hub/turn-orchestration.service.js';
 // User-Driven System v3
 import { IntentV3BuilderService } from '../engine/hub/intent-v3-builder.service.js';
@@ -635,6 +636,8 @@ export class TurnsService {
     private readonly challengeClassifier?: ChallengeClassifierService,
     // 레이턴시 #3 — 커밋 직후 워커 즉시 킥 (1초 폴링 대기 제거)
     @Optional() private readonly llmWorker?: LlmWorkerService,
+    // arch/85 — 포인트 차감 (채팅당). 글로벌 모듈
+    @Optional() private readonly points?: PointsService,
   ) {}
 
   /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
@@ -738,51 +741,71 @@ export class TurnsService {
     // 노드 타입에 따라 분기
     const nodeType = currentNode.nodeType;
 
-    if (nodeType === 'HUB') {
-      return this.handleHubTurn(
-        run,
-        currentNode,
-        expectedTurnNo,
-        body,
-        runState,
-        playerStats,
-      );
-    } else if (nodeType === 'LOCATION') {
-      return this.handleLocationTurn(
-        run,
-        currentNode,
-        expectedTurnNo,
-        body,
-        runState,
-        playerStats,
-      );
-    } else if (nodeType === 'COMBAT') {
-      return this.handleCombatTurn(
-        run,
-        currentNode,
-        expectedTurnNo,
-        body,
-        runState,
-        playerStats,
-      );
-    } else if (
-      run.currentGraphNodeId &&
-      (nodeType === 'EVENT' ||
-        nodeType === 'REST' ||
-        nodeType === 'SHOP' ||
-        nodeType === 'EXIT')
-    ) {
-      return this.handleDagNodeTurn(
-        run,
-        currentNode,
-        expectedTurnNo,
-        body,
-        runState,
-        playerStats,
-      );
+    // arch/85 — 포인트 차감 (전 턴 일괄, 유저 액션 1회 = 1차감). 멱등: idempotencyKey.
+    // 노드 검증 통과 후 디스패치 직전에 차감하고, 핸들러가 액션을 거부(throw)하면
+    // 환불한다 — 거부된 액션(예: HUB 자유텍스트) 과금 방지 (D5 실패 무과금).
+    // didCharge: 이 제출이 실제로 차감했는지. 동시 중복 제출의 loser(멱등·23505로
+    // charged:false)는 형제의 차감을 환불하면 안 되므로 catch 환불을 가드한다.
+    let didCharge = false;
+    if (this.points) {
+      const charge = await this.points.chargeTurn(userId, body.idempotencyKey);
+      didCharge = charge.charged;
     }
 
-    throw new InvalidInputError(`Unsupported node type: ${nodeType}`);
+    try {
+      if (nodeType === 'HUB') {
+        return await this.handleHubTurn(
+          run,
+          currentNode,
+          expectedTurnNo,
+          body,
+          runState,
+          playerStats,
+        );
+      } else if (nodeType === 'LOCATION') {
+        return await this.handleLocationTurn(
+          run,
+          currentNode,
+          expectedTurnNo,
+          body,
+          runState,
+          playerStats,
+        );
+      } else if (nodeType === 'COMBAT') {
+        return await this.handleCombatTurn(
+          run,
+          currentNode,
+          expectedTurnNo,
+          body,
+          runState,
+          playerStats,
+        );
+      } else if (
+        run.currentGraphNodeId &&
+        (nodeType === 'EVENT' ||
+          nodeType === 'REST' ||
+          nodeType === 'SHOP' ||
+          nodeType === 'EXIT')
+      ) {
+        return await this.handleDagNodeTurn(
+          run,
+          currentNode,
+          expectedTurnNo,
+          body,
+          runState,
+          playerStats,
+        );
+      }
+
+      throw new InvalidInputError(`Unsupported node type: ${nodeType}`);
+    } catch (err) {
+      // 차감 후 파이프라인 거부/실패 시 환불 (D5). 이 제출이 실제 차감한 경우만
+      // (동시 중복 제출 loser의 handler throw가 형제 차감을 환불하는 것 방지).
+      if (this.points && didCharge) {
+        await this.points.refundTurn(userId, body.idempotencyKey);
+      }
+      throw err;
+    }
   }
 
   // --- HUB 턴 ---
@@ -940,6 +963,7 @@ export class TurnsService {
         inputType: 'SYSTEM',
         rawInput: '',
         idempotencyKey: `${run.id}_enter_${transition.nextNodeIndex}`,
+        chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
         parsedBy: null,
         confidence: null,
         parsedIntent: null,
@@ -1336,6 +1360,7 @@ export class TurnsService {
       inputType: 'SYSTEM',
       rawInput: '',
       idempotencyKey: `${run.id}_hub_${turnNo + 1}`,
+      chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
       parsedBy: null,
       confidence: null,
       parsedIntent: null,
@@ -5190,6 +5215,7 @@ export class TurnsService {
         inputType: 'SYSTEM',
         rawInput: '',
         idempotencyKey: `${run.id}_combat_${turnNo + 1}`,
+        chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
         parsedBy: null,
         confidence: null,
         parsedIntent: null,
@@ -5364,7 +5390,8 @@ export class TurnsService {
       // 무시 — 불변식 34에서 CONVERSATION_LOCK 이 이벤트 payload(null)를 덮어
       // 비상인 대화 상대(핍/카야)가 판매자로 오귀속되던 것 차단(turnMode 분리만으론
       // NpcResolver 경로가 남던 실측). 상점 화자는 무명(primaryNpcId=null)으로 유지.
-      const isShopPurchaseTurn = event.eventId?.startsWith('FREE_SHOP_') ?? false;
+      const isShopPurchaseTurn =
+        event.eventId?.startsWith('FREE_SHOP_') ?? false;
       // resolution source별 변수 매핑 (기존 코드 호환)
       if (resolution.npcId) {
         if (resolution.source === 'CONVERSATION_LOCK') {
@@ -6701,6 +6728,7 @@ export class TurnsService {
         inputType: 'SYSTEM',
         rawInput: '',
         idempotencyKey: `${run.id}_dag_${dagTransition.nextNodeIndex}`,
+        chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
         parsedBy: null,
         confidence: null,
         parsedIntent: null,
@@ -7318,6 +7346,7 @@ export class TurnsService {
           inputType: 'SYSTEM',
           rawInput: '',
           idempotencyKey: `${run.id}_dag_${dagTransition.nextNodeIndex}`,
+          chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
           parsedBy: null,
           confidence: null,
           parsedIntent: null,
@@ -7379,6 +7408,7 @@ export class TurnsService {
             inputType: 'SYSTEM',
             rawInput: '',
             idempotencyKey: `${run.id}_return_${turnNo + 1}`,
+            chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
             parsedBy: null,
             confidence: null,
             parsedIntent: null,
@@ -7512,6 +7542,7 @@ export class TurnsService {
   ) {
     const llmStatus: LlmStatus = skipLlm ? 'SKIPPED' : 'PENDING';
     await this.db.insert(turns).values({
+      chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
       runId: run.id,
       turnNo,
       nodeInstanceId: currentNode.id,
@@ -7847,6 +7878,7 @@ export class TurnsService {
       inputType: 'SYSTEM',
       rawInput: '',
       idempotencyKey: `${run.id}_loc_${transition.nextNodeIndex}`,
+      chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
       parsedBy: null,
       confidence: null,
       parsedIntent: null,

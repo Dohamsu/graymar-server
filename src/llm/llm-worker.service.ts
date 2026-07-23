@@ -55,6 +55,7 @@ import {
 } from './npc-reaction-director.service.js';
 import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
+import { PointsService } from '../points/points.service.js';
 import {
   collectRecentNpcUtterances,
   extractNpcUtterances,
@@ -491,6 +492,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly streamBroker: LlmStreamBrokerService,
     @Optional()
     private readonly npcReactionDirector?: NpcReactionDirectorService,
+    // arch/85 §4.4 — D5 실패 턴 환불
+    @Optional() private readonly points?: PointsService,
   ) {}
 
   onModuleInit(): void {
@@ -3368,6 +3371,8 @@ ${npcList}`,
                     : 'unknown',
           })
           .where(eq(turns.id, pending.id));
+        // arch/85 §4.4 — D5 실패 턴 무과금 (LLM 에러 결과 경로)
+        await this.refundOnFailure(pending);
         return;
       }
 
@@ -4018,6 +4023,37 @@ ${npcList}`,
           llmError: { error: String(err), worker: WORKER_ID },
         })
         .where(eq(turns.id, pending.id));
+
+      // arch/85 §4.4 — D5 실패 턴 무과금 (예외 경로)
+      await this.refundOnFailure(pending);
+    }
+  }
+
+  /**
+   * arch/85 §4.4 — D5 실패 턴 무과금. LLM 최종 FAILED 시 차감 포인트 환불.
+   * 예외 경로 + LLM 에러 결과 경로 양쪽에서 호출. 멱등(refundTurn).
+   */
+  private async refundOnFailure(
+    pending: typeof turns.$inferSelect,
+  ): Promise<void> {
+    if (!this.points) return;
+    try {
+      const run = await this.db.query.runSessions.findFirst({
+        where: eq(runSessions.id, pending.runId),
+        columns: { userId: true },
+      });
+      // arch/85 — 차감은 body.idempotencyKey로 키잉되지만 전이 턴(enter/hub/
+      // combat/dag/return/loc)은 파생 idempotencyKey를 쓴다. chargeKey(있으면)로
+      // 차감 SPEND를 찾아 환불 — 전이 턴 LLM 실패도 D5 무과금 보장.
+      const refundKey = pending.chargeKey ?? pending.idempotencyKey;
+      if (run?.userId) {
+        await this.points.refundTurn(run.userId, refundKey);
+      }
+    } catch (refundErr) {
+      this.logger.error(
+        `point refund failed for turn ${pending.turnNo}`,
+        refundErr,
+      );
     }
   }
 

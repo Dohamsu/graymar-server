@@ -220,7 +220,10 @@ export function applyNarrativeQualityFilters(
       // 선택지 label sanitize
       if (deps.llmChoices) {
         for (const choice of deps.llmChoices) {
-          if (!alias.includes(npcDef.name) && choice.label.includes(npcDef.name)) {
+          if (
+            !alias.includes(npcDef.name) &&
+            choice.label.includes(npcDef.name)
+          ) {
             choice.label = choice.label.replaceAll(npcDef.name, alias);
           }
           for (const a of npcDef.aliases ?? []) {

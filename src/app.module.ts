@@ -16,6 +16,7 @@ import { SceneImageModule } from './scene-image/scene-image.module.js';
 import { PortraitModule } from './portrait/portrait.module.js';
 import { PartyModule } from './party/party.module.js';
 import { EndingsModule } from './endings/endings.module.js';
+import { PointsModule } from './points/points.module.js';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { EndingsModule } from './endings/endings.module.js';
     PortraitModule,
     PartyModule,
     EndingsModule,
+    PointsModule,
   ],
   controllers: [AppController],
   providers: [

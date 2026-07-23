@@ -65,3 +65,26 @@ export class InternalError extends GameError {
     super('INTERNAL_ERROR', message, HttpStatus.INTERNAL_SERVER_ERROR, details);
   }
 }
+
+/** 코드 충전 실패 — 사유별 top-level code. arch/85 §5 */
+export type RedeemErrorCode =
+  | 'CODE_NOT_FOUND'
+  | 'CODE_EXPIRED'
+  | 'CODE_EXHAUSTED'
+  | 'ALREADY_REDEEMED';
+
+export class RedeemError extends GameError {
+  constructor(code: RedeemErrorCode, message: string) {
+    super(code, message, HttpStatus.BAD_REQUEST, { reason: code });
+  }
+}
+
+/** 포인트 부족 — 채팅 차감 불가. arch/85 §4.2 (402 Payment Required) */
+export class InsufficientPointsError extends GameError {
+  constructor(
+    message = '포인트가 부족합니다. 코드를 입력해 충전해주세요.',
+    details?: Record<string, unknown>,
+  ) {
+    super('INSUFFICIENT_POINTS', message, HttpStatus.PAYMENT_REQUIRED, details);
+  }
+}
