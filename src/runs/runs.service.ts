@@ -1447,6 +1447,11 @@ export class RunsService {
     if (run.status !== 'RUN_ACTIVE')
       throw new BadRequestError('Run is not active');
 
+    // 팩 스코프: EquipmentService.equip이 getItem으로 아이템 정의를 해석하므로
+    // 런의 팩으로 스코프를 잡아야 비-graymar 고유 아이템(EQ_SS_* 등)이 조회된다 (arch/63).
+    await this.content.ensureScenario(run.scenarioId);
+    this.content.enterScenario(run.scenarioId);
+
     const runState = run.runState as RunState;
     const equipped = runState.equipped ?? {};
     const bag = runState.equipmentBag ?? [];
@@ -1505,6 +1510,10 @@ export class RunsService {
     if (run.status !== 'RUN_ACTIVE')
       throw new BadRequestError('Run is not active');
 
+    // 팩 스코프: unequip 후 스탯 재계산이 getItem/getItemSetMap을 참조 (arch/63).
+    await this.content.ensureScenario(run.scenarioId);
+    this.content.enterScenario(run.scenarioId);
+
     const runState = run.runState as RunState;
     const equipped = runState.equipped ?? {};
     const bag = runState.equipmentBag ?? [];
@@ -1555,6 +1564,10 @@ export class RunsService {
     if (run.userId !== userId) throw new ForbiddenError('Not your run');
     if (run.status !== 'RUN_ACTIVE')
       throw new BadRequestError('Run is not active');
+
+    // 팩 스코프: 소비품 효과 해석(getItem)이 런의 팩을 참조 (arch/63).
+    await this.content.ensureScenario(run.scenarioId);
+    this.content.enterScenario(run.scenarioId);
 
     // 전투 중이면 거부
     const currentNode = await this.db.query.nodeInstances.findFirst({
