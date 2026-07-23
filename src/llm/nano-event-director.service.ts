@@ -67,8 +67,11 @@ export interface NanoEventContext {
   lockedNpcId?: string | null;
   /** 선택지 개선 P2 — 대화 행위 (GREETING/WELLBEING/THANKS/FAREWELL). FAREWELL이면 대화 계속 선택지 금지 */
   dialogueAct?: string | null;
-  /** 선택지 개선 P3 — 직전 턴 선택지 라벨 (같은 구조/유사 라벨 반복 방지) */
-  previousChoiceLabels?: string[];
+  /** 선택지 개선 P3v2 — 직전 턴 선택지 접근 축(affordance)만 전달.
+   *  라벨 원문 주입은 nano가 금지 목록을 그대로 복제하는 anchor로 실측되어
+   *  폐지 (불변식 50, 2026-07-23 — 인접 턴 라벨 3/3 바이트 동일 재현).
+   *  라벨 단위 반복 차단은 서버 사후 dedupe(llm-worker)가 담당한다. */
+  previousChoiceAffordances?: string[];
   /** 경제 싱크 — 이 NPC가 미공개 fact를 보류/거부함. 선택지에 BRIBE 1개 포함 유도 */
   bribeOpportunity?: { npcId: string } | null;
   /** 버그 86bff72b — NpcResolver 최종 결정 NPC. nanoCtx 빌드가 resolver보다
@@ -101,8 +104,10 @@ const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
    - 라벨은 서술의 구체 요소(NPC의 마지막 발언/사물/인물/장소 디테일)를 1개 이상 인용해서 작성.
      "더 물어본다", "주변을 살핀다", "조용히 물러난다" 같은 범용 라벨 지양.
    - NPC가 서술에서 질문/제안으로 끝났으면 → 그 질문에 응답하는 선택지(긍정/부정/회피)를 반드시 1개 이상 포함.
-   - [직전 턴 선택지]가 주어지면 같은 구조·유사 표현 반복 금지. 다른 각도의 행동 제시.
+   - [직전 턴 접근 축]이 주어지면 같은 문장 공식 반복 금지. 다른 각도의 행동 제시.
    - 라벨 문체는 "~한다"로 통일 (예: "장부 이야기를 꺼낸다"). "~하기" 명사형 금지.
+   - 선택지는 플레이어(외부에서 온 조사자) 시점의 능동 행동만. 플레이어가 사건의 범인/당사자인 것처럼 시인·자백하는 선택지 금지.
+   - affordance는 라벨의 행동과 일치시킬 것: 물러남/거리두기/관찰=OBSERVE, 질문/대화=TALK, 금전 제안=BRIBE, 단서 조사=INVESTIGATE.
 5. opening: "당신은" 금지. 직전과 다른 감각(시각/청각/후각/촉각/시간). 15~30자.
 6. avoid: 직전 서술에서 반복된 표현 2~3개.
 7. affordance: INVESTIGATE, PERSUADE, SNEAK, BRIBE, THREATEN, HELP, STEAL, FIGHT, OBSERVE, TRADE, TALK, SEARCH 중 선택.
@@ -258,17 +263,22 @@ export class NanoEventDirectorService {
         ``,
         `[정보 보류 국면] ${bribeNpc?.displayName ?? '상대'}은(는) 무언가 알고 있지만 입을 열지 않았습니다.`,
         `선택지 3개 중 정확히 1개는 이 인물에게 대가를 제시하는 금전 접근으로 만드세요 — affordance "BRIBE", npcId "${ctx.bribeOpportunity.npcId}".`,
-        `라벨은 노골적인 "뇌물"이라는 단어 대신 "은화 몇 닢을 슬쩍 밀어 넣는다", "수고비를 얹어 다시 묻는다" 같은 자연스러운 표현으로.`,
+        `라벨에 "뇌물"이라는 단어를 쓰지 마세요. 대신 지금 장면에 있는 사물·상황(탁자 위 물건, 상대의 소지품, 방금 오간 대화 등)을 끌어들인 완곡한 금전 제안 행동 문장으로 서술하세요 — 장면이 다르면 라벨도 달라야 합니다.`,
         `⚠️ 이 금전 접근은 '선택지'로만 제시하세요. concept·opening·npcGesture(서술 방향)에는 뇌물/은화 지불 장면을 넣지 마세요 — 플레이어는 아직 뇌물을 주지 않았습니다. 서술 방향은 플레이어의 이번 행동("${ctx.rawInput}", ${ctx.actionType})을 따릅니다.`,
       );
     }
 
-    // P3 — 직전 턴 선택지 라벨: 매 턴 "더 묻는다/살핀다/물러난다" 공식 반복 방지
-    if (ctx.previousChoiceLabels && ctx.previousChoiceLabels.length > 0) {
+    // P3v2 — 직전 턴 접근 축만 추상 주입: 라벨 원문을 negative로 나열하면
+    // nano가 그 목록을 그대로 복제한다 (anchor 실측 2026-07-23, 불변식 50).
+    // 구체 어휘 0개 — 축 이름(enum)만 노출하고 다른 축 선택을 유도한다.
+    if (
+      ctx.previousChoiceAffordances &&
+      ctx.previousChoiceAffordances.length > 0
+    ) {
+      const axes = [...new Set(ctx.previousChoiceAffordances)].join(', ');
       parts.push(
         ``,
-        `[직전 턴 선택지 — 같은 구조/유사 라벨 금지]`,
-        ...ctx.previousChoiceLabels.slice(0, 4).map((l) => `- ${l}`),
+        `[직전 턴 접근 축: ${axes}] 직전 턴과 같은 문장 공식을 반복하지 마세요. 이번 턴 선택지 3개 중 최소 1개는 위 축이 아닌 다른 접근(현재 상황에 맞는 것)으로 구성하세요.`,
       );
     }
 

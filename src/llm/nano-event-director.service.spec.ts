@@ -394,6 +394,25 @@ describe('NanoEventDirectorService', () => {
       expect(msg).not.toContain('[정보 보류 국면]');
     });
 
+    it('bribeOpportunity 프롬프트에 따옴표 예시 어구 없음 (anchor 방지, 2026-07-23)', () => {
+      // 예시 어구 리터럴이 nano 라벨로 그대로 복제되던 실측(42라벨 중 26%)
+      // — 불변식 42/50. 장면 결합형 추상 지시로 교체 후 회귀 방지.
+      const ctx = makeCtx({ bribeOpportunity: { npcId: 'NPC_A' } });
+      const msg = callBuild(service, ctx);
+      expect(msg).not.toContain('은화 몇 닢');
+      expect(msg).not.toContain('수고비를 얹어');
+      expect(msg).toContain('완곡한 금전 제안');
+    });
+
+    it('previousChoiceAffordances -> [직전 턴 접근 축] 추상 주입, 라벨 원문 없음 (P3v2)', () => {
+      const ctx = makeCtx({
+        previousChoiceAffordances: ['TALK', 'OBSERVE', 'TALK'],
+      });
+      const msg = callBuild(service, ctx);
+      expect(msg).toContain('[직전 턴 접근 축: TALK, OBSERVE]');
+      expect(msg).not.toContain('유사 라벨 금지'); // 구 P3 negative 목록 폐지 확인
+    });
+
     it('targetNpcId -> includes "[NPC 지정]"', () => {
       const ctx = makeCtx({ targetNpcId: 'NPC_B' });
       const msg = callBuild(service, ctx);

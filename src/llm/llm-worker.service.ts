@@ -191,6 +191,139 @@ export function sanitizeNanoChoiceNpcsCore(
   return choices;
 }
 
+/**
+ * ChoiceDedupe 코어 (2026-07-23 — 선택지 시스템 검증 후속)
+ * 직전 턴 nano 선택지 라벨과 정규화 일치 또는 2-gram Jaccard ≥ 0.7 인
+ * 라벨을 폐기한다. 배경: 직전 라벨을 프롬프트 negative 목록으로 주입하던
+ * P3가 anchor로 작동해 인접 턴 라벨 3/3 바이트 동일 재현 (불변식 50).
+ * 프롬프트는 추상 축만 주입(P3v2)하고, 라벨 단위 강제는 여기서 기계로 한다.
+ * 폐기 후 go_hub 제외 2개 미만이면 세트 무효(null) — 호출부가 서버 기본
+ * 선택지로 자연 fallback 한다 (Track 2는 스트림 choices_loading 이후라
+ * 재호출 금지). spec이 직접 import (export 정본 원칙).
+ */
+export function dedupeChoicesAgainstPreviousCore(
+  choices: ChoiceItem[] | null,
+  prevLabels: string[],
+  log: (msg: string) => void,
+): ChoiceItem[] | null {
+  if (!choices || prevLabels.length === 0) return choices;
+  const norm = (s: string) => s.replace(/[\s.,!?'"“”‘’…—·-]/g, '');
+  const bigrams = (s: string) => {
+    const n = norm(s);
+    const set = new Set<string>();
+    for (let i = 0; i < n.length - 1; i++) set.add(n.slice(i, i + 2));
+    return set;
+  };
+  const prevSets = prevLabels.map((l) => ({ n: norm(l), b: bigrams(l) }));
+  const kept: ChoiceItem[] = [];
+  let dropped = 0;
+  for (const c of choices) {
+    if (c.id === 'go_hub') {
+      kept.push(c);
+      continue;
+    }
+    const n = norm(c.label);
+    const b = bigrams(c.label);
+    const dup = prevSets.some((p) => {
+      if (p.n === n) return true;
+      let inter = 0;
+      for (const g of b) if (p.b.has(g)) inter++;
+      const uni = b.size + p.b.size - inter;
+      return uni > 0 && inter / uni >= 0.7;
+    });
+    if (dup) {
+      dropped++;
+      log(`직전 턴 유사 라벨 폐기: "${c.label}"`);
+    } else {
+      kept.push(c);
+    }
+  }
+  if (dropped === 0) return choices;
+  const nonHub = kept.filter((c) => c.id !== 'go_hub');
+  if (nonHub.length < 2) {
+    log(
+      `폐기 후 잔여 ${nonHub.length}개 — 세트 무효, 서버 기본 선택지 fallback`,
+    );
+    return null;
+  }
+  return kept;
+}
+
+/**
+ * ChoiceAffFix 코어 (2026-07-23 — 선택지 시스템 검증 후속)
+ * nano 선택지의 라벨-affordance 모순을 확정 직전에 교정한다.
+ * 배경: "조용히 물러난다"에 aff=HELP 등이 붙으면 클릭 시 affordance가
+ * actionType에 직결되어(intent-parser-v2 AFFORDANCE_TO_ACTION) 라벨 의도와
+ * 다른 판정·서술로 흐른다 (런 A2 T4~T7 실측: 동일 라벨에 SNEAK→HELP→OBSERVE).
+ * 고정밀 키워드만 — 모호하면 무수정. 교정 시 modifier(프리셋 보너스)도
+ * 새 affordance 기준으로 재계산해 표시-판정 일치를 유지한다.
+ * nano/choice_ 생성 선택지만 대상 (서버·이벤트 저작 선택지는 신뢰).
+ */
+const CHOICE_AFF_RULES: Array<{
+  re: RegExp;
+  allowed: Set<string>;
+  to: string;
+}> = [
+  // 금전 제안 — 질문 동반형("수고비를 얹어 묻는다")보다 먼저 평가해야 BRIBE 유지
+  {
+    re: /은화|수고비|뒷돈|금화를|값을 치|대가를 (제시|얹|건네)/,
+    allowed: new Set(['BRIBE']),
+    to: 'BRIBE',
+  },
+  { re: /위협|협박/, allowed: new Set(['THREATEN']), to: 'THREATEN' },
+  {
+    re: /싸움을 걸|주먹을|공격한다|후려친/,
+    allowed: new Set(['FIGHT']),
+    to: 'FIGHT',
+  },
+  // "훔쳐본다"(몰래 관찰)는 제외 — 정확히 절도 동사만
+  { re: /훔친다|훔쳐 낸|소매치기/, allowed: new Set(['STEAL']), to: 'STEAL' },
+  {
+    re: /물러난|물러선|자리를 (뜬|떠난)|떠난다|피하며|거리를 둔/,
+    allowed: new Set(['SNEAK', 'OBSERVE']),
+    to: 'OBSERVE',
+  },
+  {
+    re: /조사한다|조사를|흔적을 (살핀|찾|조사)/,
+    allowed: new Set(['INVESTIGATE', 'OBSERVE', 'SEARCH']),
+    to: 'INVESTIGATE',
+  },
+  {
+    re: /묻는다|물어본다|질문(한다|을 던진)|답한다|대답한다|말을 건다|이야기를 (꺼낸|나눈)/,
+    allowed: new Set(['TALK', 'PERSUADE', 'TRADE']),
+    to: 'TALK',
+  },
+  {
+    re: /관찰한다|지켜본다|살핀다|살펴본다/,
+    allowed: new Set(['OBSERVE', 'INVESTIGATE']),
+    to: 'OBSERVE',
+  },
+];
+
+export function correctChoiceAffordanceCore(
+  choices: ChoiceItem[] | null,
+  presetBonuses: Record<string, number>,
+  log: (msg: string) => void,
+): ChoiceItem[] | null {
+  if (!choices) return choices;
+  for (const c of choices) {
+    if (!c.id.startsWith('nano_') && !c.id.startsWith('choice_')) continue;
+    const payload = c.action?.payload as Record<string, unknown> | undefined;
+    const aff = payload?.affordance as string | undefined;
+    if (!aff) continue;
+    const rule = CHOICE_AFF_RULES.find((r) => r.re.test(c.label));
+    if (!rule || rule.allowed.has(aff)) continue;
+    payload!.affordance = rule.to;
+    // 표시-판정 일치: 프리셋 보너스 modifier를 새 affordance로 재계산
+    if (presetBonuses[rule.to]) c.modifier = presetBonuses[rule.to];
+    else delete c.modifier;
+    log(
+      `"${c.label.slice(0, 24)}" ${aff} → ${rule.to} (라벨-affordance 모순 교정)`,
+    );
+  }
+  return choices;
+}
+
 // ─── 후처리 정본 코어 (spec 직접 import — 복제 drift 방지, 테스트 감사 2026-07-13) ───
 // 인라인 블록/private 메서드로 있던 순수 문자열 로직을 export 함수로 추출.
 // 클래스 쪽은 위임만 하고, content/logger 의존은 인자로 주입받는다.
@@ -2300,10 +2433,21 @@ ${npcList}`,
         ?.nanoEventCtx as
         | import('./nano-event-director.service.js').NanoEventContext
         | undefined;
-      // P3 — 직전 턴 선택지 라벨을 nano에도 전달 (같은 객체를 Track 2가 재사용).
-      // 기존엔 main LLM에만 전달되어 nano 선택지가 매 턴 같은 공식으로 반복됐다.
-      if (nanoEventCtx && previousChoiceLabels?.length) {
-        nanoEventCtx.previousChoiceLabels = previousChoiceLabels;
+      // P3v2 — nano에는 직전 턴 접근 축(affordance)만 전달. 라벨 원문 주입은
+      // nano가 금지 목록을 바이트 동일 복제하는 anchor로 실측 폐지 (불변식 50,
+      // 2026-07-23). 라벨 반복 차단은 finalChoices 직전 dedupe가 담당.
+      if (nanoEventCtx && prevTurn?.llmChoices?.length) {
+        const prevAffordances = prevTurn.llmChoices
+          .filter((c) => c.id !== 'go_hub')
+          .map(
+            (c) =>
+              (c.action?.payload as Record<string, unknown> | undefined)
+                ?.affordance as string | undefined,
+          )
+          .filter((a): a is string => !!a);
+        if (prevAffordances.length > 0) {
+          nanoEventCtx.previousChoiceAffordances = prevAffordances;
+        }
       }
       // 레이턴시 #1 — NpcReactionDirector 실행부를 클로저로 추출 (병렬/직렬 공용)
       const startNpcReaction = async (
@@ -3794,9 +3938,28 @@ ${npcList}`,
       // Track 2 완료 후 최종 선택지 결정 — DB 와 stream 이 동일 값을 참조해야
       // 클라가 클릭한 nano_${turnNo}_${idx} 가 서버 매칭과 일치한다.
       // NanoChoiceNpcFix — nano 선택지 sourceNpcId 오염 교정 후 확정 (버그 5f31d803)
+      // ChoiceDedupe — 직전 턴 라벨과 동일/유사 세트 폐기 (P3v2, 불변식 50)
+      // ChoiceAffFix — 라벨-affordance 모순 교정 + modifier 재계산 (2026-07-23)
+      const presetBonusesForFix =
+        ((runSession?.runState as Record<string, unknown> | undefined)
+          ?.actionBonuses as Record<string, number> | undefined) ??
+        (runSession?.presetId
+          ? this.content.getPreset(runSession.presetId)?.actionBonuses
+          : undefined) ??
+        {};
       const finalChoices = this.sanitizeNanoChoiceNpcs(
-        this.pendingNanoChoices.get(`${pending.runId}:${pending.turnNo}`) ??
-          llmChoices,
+        correctChoiceAffordanceCore(
+          dedupeChoicesAgainstPreviousCore(
+            this.pendingNanoChoices.get(`${pending.runId}:${pending.turnNo}`) ??
+              llmChoices,
+            previousChoiceLabels ?? [],
+            (msg) =>
+              this.logger.log(`[ChoiceDedupe] turn=${pending.turnNo} ${msg}`),
+          ),
+          presetBonusesForFix,
+          (msg) =>
+            this.logger.log(`[ChoiceAffFix] turn=${pending.turnNo} ${msg}`),
+        ),
         serverResult,
         pending.turnNo,
         npcFarewellDetectedThisTurn,
