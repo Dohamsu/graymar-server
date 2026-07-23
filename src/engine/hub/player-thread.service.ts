@@ -8,6 +8,18 @@ import type {
   IncidentRoutingResult,
 } from '../../db/types/index.js';
 
+// 사용자 노출 요약문용 한글 표기 (parsed-intent-v3 APPROACH_VECTOR와 1:1)
+const APPROACH_VECTOR_KO: Record<string, string> = {
+  SOCIAL: '사교',
+  STEALTH: '은밀',
+  PRESSURE: '압박',
+  ECONOMIC: '거래',
+  OBSERVATIONAL: '관찰',
+  POLITICAL: '정치',
+  LOGISTICAL: '실무',
+  VIOLENT: '무력',
+};
+
 const THREAD_EMERGE_THRESHOLD = 2; // 2회 이상 반복 → EMERGING
 const THREAD_ACTIVE_THRESHOLD = 4; // 4회 이상 → ACTIVE
 const THREAD_ABANDON_TURNS = 22; // 마지막 행동 후 22턴 경과 → ABANDONED (4개 LOCATION 순환 고려)
@@ -141,7 +153,9 @@ export class PlayerThreadService {
         ? Math.round((thread.successCount / thread.actionCount) * 100)
         : 0;
     const locName = this.content.getLocationShortName(thread.locationId);
-    return `${locName}에서 ${thread.approachVector} 접근 ${thread.actionCount}회 (성공률 ${rate}%)`;
+    const vectorKo =
+      APPROACH_VECTOR_KO[thread.approachVector] ?? thread.approachVector;
+    return `${locName}에서 ${vectorKo} 접근 ${thread.actionCount}회 (성공률 ${rate}%)`;
   }
 
   private trimThreads(threads: PlayerThread[]): PlayerThread[] {

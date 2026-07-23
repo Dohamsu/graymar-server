@@ -31,6 +31,7 @@ import { initPackMeters, buildPackMetersUI } from '../engine/hub/pack-meter.js';
 import { ArcService } from '../engine/hub/arc.service.js';
 import { SceneShellService } from '../engine/hub/scene-shell.service.js';
 import { SummaryBuilderService } from '../engine/hub/summary-builder.service.js';
+import { QuestProgressionService } from '../engine/hub/quest-progression.service.js';
 import {
   type ServerResultV1,
   type RunState,
@@ -78,6 +79,7 @@ export class RunsService {
     private readonly equipmentService: EquipmentService,
     private readonly summaryBuilder: SummaryBuilderService,
     private readonly plotSeedGenerator: PlotSeedGeneratorService,
+    private readonly questProgression: QuestProgressionService,
   ) {}
 
   async createRun(
@@ -910,6 +912,10 @@ export class RunsService {
       },
       lastResult: result.enterResult,
       battleState: null,
+      // 퀘스트탭 현황판 — 새 게임 시작 직후에도 단계/이정표 표시 (2026-07-23)
+      questStatus: this.questProgression.buildQuestStatus(
+        result.run.runState ?? initialRunState,
+      ),
       runState: result.run.runState ?? initialRunState,
       memory: {
         // architecture/63: scenario.json themeMemories의 location 항목 파생
@@ -1390,6 +1396,12 @@ export class RunsService {
       lastResult,
       battleState,
       npcEmotional,
+      // 퀘스트탭 현황판 복원 (2026-07-23) — 마지막 턴이 이동/HUB 턴이면
+      // ui.questStatus가 없어 이어하기 시 탭이 비는 갭을 메운다 (npcEmotional과 동일 패턴)
+      questStatus: this.questProgression.buildQuestStatus(
+        (run.runState ??
+          {}) as import('../db/types/permanent-stats.js').RunState,
+      ),
       runState: run.runState ?? null,
       memory: memory
         ? {

@@ -226,6 +226,27 @@ export type QuestRevealUI = {
   matchedByTopic: boolean;
 };
 
+/** 퀘스트탭 현황판 (2026-07-23) — 의뢰 단계·발견 단서·다음 이정표.
+ *  미발견 단서는 내용을 숨기고 발견 가능 지역만 노출 (스포일러 균형). */
+export type QuestStatusUI = {
+  questId: string;
+  title: string;
+  state: string; // e.g. S2_PROVE_TAMPER
+  stateIndex: number; // 0-based
+  totalStates: number;
+  stateDescription: string | null;
+  /** 발견한 단서 (발견 순) */
+  discoveredFacts: Array<{ factId: string; description: string }>;
+  /** 다음 전환에 필요한 미발견 단서의 이정표 — 지역명만 (내용 비공개) */
+  nextObjectives: Array<{ locationIds: string[]; locationNames: string[] }>;
+  /** 최근 발견 단서의 방향 힌트 (quest.json nextHint — [단서 방향]과 동일 소스) */
+  directionHint: string | null;
+  /** 종착 단계 (S5 최종 선택) — 더 모을 단서 없음 */
+  terminal: boolean;
+  /** 세력 표시명 (콘텐츠 서빙 — 클라 하드코딩 대체) */
+  factionNames: Record<string, string>;
+};
+
 export type UIBundle = {
   availableActions: string[];
   targetLabels: TargetLabel[];

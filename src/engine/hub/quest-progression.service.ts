@@ -13,11 +13,20 @@ interface StateTransition {
   description?: string;
 }
 
+interface QuestFactDef {
+  description?: string;
+  nextHint?: string;
+  discoveryLocations?: string[];
+  primarySources?: string[];
+}
+
 interface QuestData {
   questId: string;
+  title?: string;
   states: string[];
+  stateDescriptions?: Record<string, string>;
   stateTransitions: Record<string, StateTransition>;
-  facts: Record<string, unknown>;
+  facts: Record<string, QuestFactDef>;
   /** 경제 루프 — fact 발견/단계 전환 사례금 (quest.json rewards, 팩별 밸런싱) */
   rewards?: {
     factGold?: number;
@@ -286,6 +295,83 @@ export class QuestProgressionService {
       }
     }
     return null;
+  }
+
+  /**
+   * 퀘스트탭 현황판 데이터 (2026-07-23) — 의뢰 단계·발견 단서·다음 이정표.
+   * quest.json이 이미 보유한 stateDescriptions·facts.discoveryLocations를
+   * 클라이언트 현황판용으로 조립한다. 미발견 단서는 내용을 숨기고
+   * 발견 가능 지역만 노출한다 (이정표 역할, 스포일러 억제).
+   * 호출 전 enterScenario로 런 팩 스코프가 잡혀 있어야 한다 (arch/86 규약).
+   */
+  buildQuestStatus(
+    runState: RunState,
+  ): import('../../db/types/server-result.js').QuestStatusUI | null {
+    const quest = this.content.getQuestData() as QuestData | null;
+    if (!quest?.states?.length) return null;
+
+    const state = runState.questState ?? quest.states[0];
+    const stateIndex = Math.max(0, quest.states.indexOf(state));
+    const discoveredIds = runState.discoveredQuestFacts ?? [];
+    const discoveredSet = new Set(discoveredIds);
+
+    const discoveredFacts = discoveredIds.map((factId) => ({
+      factId,
+      description: quest.facts?.[factId]?.description ?? factId,
+    }));
+
+    // 다음 전환에 필요한 미발견 fact → 지역 이정표 (중복 지역 병합 없이 fact별 1행)
+    const nextObjectives: Array<{
+      locationIds: string[];
+      locationNames: string[];
+    }> = [];
+    for (const [key, transition] of Object.entries(
+      quest.stateTransitions ?? {},
+    )) {
+      const arrowIdx = key.indexOf('→');
+      if (arrowIdx === -1 || key.slice(0, arrowIdx) !== state) continue;
+      const pending = [
+        ...(transition.requiredFacts ?? []),
+        ...(transition.requiredAnyOf ?? []).flat(),
+        ...(transition.alternativeFacts ?? []),
+      ].filter((f) => !discoveredSet.has(f));
+      for (const factId of pending) {
+        const locIds = quest.facts?.[factId]?.discoveryLocations ?? [];
+        if (locIds.length === 0) continue;
+        nextObjectives.push({
+          locationIds: locIds,
+          locationNames: locIds.map((id) =>
+            this.content.getLocationShortName(id),
+          ),
+        });
+      }
+    }
+
+    const lastFactId = discoveredIds[discoveredIds.length - 1];
+    const directionHint = lastFactId
+      ? (this.getFactNextHint(lastFactId) ?? null)
+      : null;
+
+    const factionNames: Record<string, string> = {};
+    for (const factionId of Object.keys(
+      runState.worldState?.reputation ?? {},
+    )) {
+      factionNames[factionId] = this.content.getFactionDisplayName(factionId);
+    }
+
+    return {
+      questId: quest.questId,
+      title: quest.title ?? quest.questId,
+      state,
+      stateIndex,
+      totalStates: quest.states.length,
+      stateDescription: quest.stateDescriptions?.[state] ?? null,
+      discoveredFacts,
+      nextObjectives,
+      directionHint,
+      terminal: this.isTerminalState(state),
+      factionNames,
+    };
   }
 
   /** fact를 알고 있는 NPC를 찾아 반환 */

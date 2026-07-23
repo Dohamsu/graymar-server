@@ -3598,6 +3598,11 @@ export class TurnsService {
     (result.ui as any).narrativeMarks = ws.narrativeMarks ?? [];
     (result.ui as any).mainArcClock = ws.mainArcClock ?? null;
     (result.ui as any).day = ws.day ?? 1;
+    // 퀘스트탭 현황판 (2026-07-23) — 의뢰 단계·발견 단서·다음 지역 이정표
+    if (this.questProgression) {
+      (result.ui as any).questStatus =
+        this.questProgression.buildQuestStatus(updatedRunState);
+    }
   }
 
   // [arch/77 P3.12] PR-A: orchestration 주입 NPC 보충 처리 — eventPrimaryNpc가
