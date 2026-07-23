@@ -31,6 +31,12 @@ export interface ModelActualRow {
   requests: number;
 }
 
+/** 모델별 누적 막대용 flat 행 — { date, [modelSlug]: usd, ... } */
+export interface DailyByModelRow {
+  date: string;
+  [model: string]: number | string;
+}
+
 /**
  * OpenRouter 실제 과금 대조 — Activity API(실제 청구) vs llm_call_logs(우리 측정).
  * management 키(`OPENROUTER_MANAGEMENT_KEY`)로만 접근 가능. 추론 키는 403.
@@ -92,6 +98,8 @@ export class AdminOpenRouterService {
     fetchedAt: string | null;
     daily: DailyReconcileRow[];
     models: ModelActualRow[];
+    modelList: string[];
+    dailyByModel: DailyByModelRow[];
     totalActualUsd: number;
     totalMeasuredUsd: number;
   }> {
@@ -125,6 +133,8 @@ export class AdminOpenRouterService {
         fetchedAt: null,
         daily,
         models: [],
+        modelList: [],
+        dailyByModel: [],
         totalActualUsd: 0,
         totalMeasuredUsd: daily.reduce((s, d) => s + d.measuredUsd, 0),
       };
@@ -140,6 +150,8 @@ export class AdminOpenRouterService {
     // (llm_call_logs 측정 date 는 "YYYY-MM-DD" — 키 정렬 필수, 미정규화 시 병합 깨짐)
     const actualByDate = new Map<string, number>();
     const modelAgg = new Map<string, { usd: number; requests: number }>();
+    // 모델별 누적 막대용: date → (model → usd)
+    const byDateModel = new Map<string, Map<string, number>>();
     for (const it of inWindow) {
       const day = it.date.slice(0, 10);
       actualByDate.set(day, (actualByDate.get(day) ?? 0) + it.usage);
@@ -147,6 +159,9 @@ export class AdminOpenRouterService {
       m.usd += it.usage;
       m.requests += it.requests;
       modelAgg.set(it.model, m);
+      const dm = byDateModel.get(day) ?? new Map<string, number>();
+      dm.set(it.model, (dm.get(it.model) ?? 0) + it.usage);
+      byDateModel.set(day, dm);
     }
 
     const allDates = new Set<string>([
@@ -163,11 +178,35 @@ export class AdminOpenRouterService {
       .map(([model, v]) => ({ model, actualUsd: v.usd, requests: v.requests }))
       .sort((a, b) => b.actualUsd - a.actualUsd);
 
+    // 모델별 누적 막대 — 상위 8모델 + 나머지 '기타' (OpenRouter 스타일 stacked)
+    const TOP_N = 8;
+    const OTHER = '기타';
+    const topModels = models.slice(0, TOP_N).map((m) => m.model);
+    const topSet = new Set(topModels);
+    const hasOther = models.length > TOP_N;
+    const modelList = hasOther ? [...topModels, OTHER] : topModels;
+
+    const actualDates = [...actualByDate.keys()].sort();
+    const dailyByModel: DailyByModelRow[] = actualDates.map((date) => {
+      const row: DailyByModelRow = { date };
+      for (const m of modelList) row[m] = 0;
+      const dm = byDateModel.get(date);
+      if (dm) {
+        for (const [model, usd] of dm) {
+          const key = topSet.has(model) ? model : OTHER;
+          row[key] = Number(row[key] ?? 0) + usd;
+        }
+      }
+      return row;
+    });
+
     return {
       configured: true,
       fetchedAt: new Date(this.cache?.at ?? Date.now()).toISOString(),
       daily,
       models,
+      modelList,
+      dailyByModel,
       totalActualUsd: daily.reduce((s, d) => s + d.actualUsd, 0),
       totalMeasuredUsd: daily.reduce((s, d) => s + d.measuredUsd, 0),
     };
