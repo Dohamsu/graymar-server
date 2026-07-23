@@ -1,8 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { execSync } from 'node:child_process';
-import { desc, eq, count, and } from 'drizzle-orm';
+import { desc, eq, count, and, getTableColumns } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { bugReports } from '../db/schema/bug-reports.js';
+import { users } from '../db/schema/users.js';
 
 /** 서버 git 버전 — 프로세스 시작 시 1회 캐싱 */
 const SERVER_VERSION = (() => {
@@ -66,9 +67,15 @@ export class BugReportService {
     const offset = (page - 1) * limit;
 
     const [reports, [{ total }]] = await Promise.all([
+      // 보고자 닉네임·이메일 join (어드민 표시용, arch/87)
       this.db
-        .select()
+        .select({
+          ...getTableColumns(bugReports),
+          reporterNickname: users.nickname,
+          reporterEmail: users.email,
+        })
         .from(bugReports)
+        .leftJoin(users, eq(users.id, bugReports.userId))
         .orderBy(desc(bugReports.createdAt))
         .limit(limit)
         .offset(offset),
@@ -79,9 +86,16 @@ export class BugReportService {
   }
 
   async findOne(id: string) {
-    const report = await this.db.query.bugReports.findFirst({
-      where: eq(bugReports.id, id),
-    });
+    const [report] = await this.db
+      .select({
+        ...getTableColumns(bugReports),
+        reporterNickname: users.nickname,
+        reporterEmail: users.email,
+      })
+      .from(bugReports)
+      .leftJoin(users, eq(users.id, bugReports.userId))
+      .where(eq(bugReports.id, id))
+      .limit(1);
 
     if (!report) {
       throw new NotFoundError(`Bug report ${id} not found`);

@@ -1,7 +1,18 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { desc, eq, sql, type SQL } from 'drizzle-orm';
+import { TESTER_DOMAINS_SQL_ARRAY } from '../common/tester.util.js';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { turns } from '../db/schema/turns.js';
+
+/**
+ * "테스터 아님" SQL predicate — 이메일 도메인 기준. 집계에서 플레이테스트/E2E
+ * 트래픽을 제외한다. emailCol 은 컨트롤 상수(예: 'email', 'u.email')만 전달. arch/87
+ */
+function notTesterSql(emailCol: string): SQL {
+  return sql.raw(
+    `lower(split_part(${emailCol}, '@', 2)) <> ALL(${TESTER_DOMAINS_SQL_ARRAY})`,
+  );
+}
 
 /** days 파라미터 클램프 — 기본 30, 최대 90. arch/87 §4.2 (jsonb 언네스트 기간 제한) */
 export function clampDays(
@@ -65,12 +76,14 @@ export class AdminStatsService {
       outstanding,
       ptToday,
     ] = await Promise.all([
+      // 가입 — 테스터 계정 제외 (arch/87 §4.2)
       this.one<{ today: number; d7: number }>(sql`
           SELECT
             count(*) FILTER (WHERE created_at >= date_trunc('day', now()))::int AS today,
             count(*) FILTER (WHERE created_at >= now() - interval '7 days')::int AS d7
-          FROM users`),
-      // 활성 유저 = 해당 기간 턴 제출 유저 distinct (turns → run_sessions.user_id)
+          FROM users
+          WHERE ${notTesterSql('email')}`),
+      // 활성 유저 = 해당 기간 턴 제출 유저 distinct (turns → run_sessions.user_id), 테스터 제외
       this.one<{ today: number; d7: number }>(sql`
           SELECT
             count(DISTINCT r.user_id) FILTER (
@@ -78,17 +91,28 @@ export class AdminStatsService {
             count(DISTINCT r.user_id)::int AS d7
           FROM turns t
           JOIN run_sessions r ON r.id = t.run_id
-          WHERE t.created_at >= now() - interval '7 days'`),
+          JOIN users u ON u.id = r.user_id
+          WHERE t.created_at >= now() - interval '7 days'
+            AND ${notTesterSql('u.email')}`),
+      // 활성 런 — 테스터 제외
       this.one<{ n: number }>(sql`
-          SELECT count(*)::int AS n FROM run_sessions WHERE status = 'RUN_ACTIVE'`),
+          SELECT count(*)::int AS n
+          FROM run_sessions rs
+          JOIN users u ON u.id = rs.user_id
+          WHERE rs.status = 'RUN_ACTIVE'
+            AND ${notTesterSql('u.email')}`),
+      // 턴 집계 — 테스터 제외 (오늘 턴·실패율 모두 실유저 기준)
       this.one<{ today: number; total7: number; failed7: number }>(sql`
           SELECT
-            count(*) FILTER (WHERE created_at >= date_trunc('day', now()))::int AS today,
-            count(*) FILTER (WHERE created_at >= now() - interval '7 days')::int AS total7,
+            count(*) FILTER (WHERE t.created_at >= date_trunc('day', now()))::int AS today,
+            count(*) FILTER (WHERE t.created_at >= now() - interval '7 days')::int AS total7,
             count(*) FILTER (
-              WHERE created_at >= now() - interval '7 days'
-                AND llm_status = 'FAILED')::int AS failed7
-          FROM turns`),
+              WHERE t.created_at >= now() - interval '7 days'
+                AND t.llm_status = 'FAILED')::int AS failed7
+          FROM turns t
+          JOIN run_sessions r ON r.id = t.run_id
+          JOIN users u ON u.id = r.user_id
+          WHERE ${notTesterSql('u.email')}`),
       this.one<{ today: number; d7: number }>(sql`
           SELECT
             coalesce(sum(total_cost_usd) FILTER (

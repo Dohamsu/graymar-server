@@ -23,7 +23,9 @@ describe('minutesSince', () => {
 
   it('raw SQL 문자열 timestamp 도 coerce (실측 회귀 — at.getTime TypeError)', () => {
     expect(minutesSince('2026-07-23T11:50:00Z', NOW)).toBe(10);
-    expect(minutesSince('2026-07-23 11:50:00', new Date('2026-07-23 12:00:00'))).toBe(10);
+    expect(
+      minutesSince('2026-07-23 11:50:00', new Date('2026-07-23 12:00:00')),
+    ).toBe(10);
   });
 });
 

@@ -17,10 +17,7 @@ export type AdminUsersQuery = z.infer<typeof AdminUsersQuerySchema>;
 /** 런 목록 쿼리 */
 export const AdminRunsQuerySchema = z.object({
   status: z.preprocess(emptyToUndefined, z.enum(RUN_STATUS).optional()),
-  scenarioId: z.preprocess(
-    emptyToUndefined,
-    z.string().max(100).optional(),
-  ),
+  scenarioId: z.preprocess(emptyToUndefined, z.string().max(100).optional()),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -53,3 +50,16 @@ export const AbortRunBodySchema = z.object({
   reason: z.string().min(1).max(500),
 });
 export type AbortRunBody = z.infer<typeof AbortRunBodySchema>;
+
+/** 유저 비밀번호 강제 변경 — 최소 8자, reason 필수 (감사 로그) */
+export const SetPasswordBodySchema = z.object({
+  password: z.string().min(8).max(200),
+  reason: z.string().min(1).max(500),
+});
+export type SetPasswordBody = z.infer<typeof SetPasswordBodySchema>;
+
+/** 유저 삭제 — reason 필수 (감사 로그, 되돌릴 수 없는 하드 삭제) */
+export const DeleteUserBodySchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+export type DeleteUserBody = z.infer<typeof DeleteUserBodySchema>;
