@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import {
   BadRequestError,
   InsufficientPointsError,
+  NotFoundError,
   RedeemError,
 } from '../common/errors/game-errors.js';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
@@ -273,6 +275,57 @@ export class PointsService {
   }
 
   // ── Admin ─────────────────────────────────────────────
+
+  /**
+   * 어드민 수동 조정 (arch/87 §4.1) — 원장 insert + users.points 캐시 갱신을
+   * 한 트랜잭션으로 (chargeTurn 과 동일한 조건부 UPDATE 원자 패턴). 차감으로
+   * 잔액이 음수가 되면 400. refId 는 감사용 임의 uuid (멱등 unique 인덱스
+   * (userId, refType, refId, reason) 충돌 방지 — 조정은 매회 독립 행).
+   */
+  async adjustPoints(
+    userId: string,
+    amount: number,
+  ): Promise<{ balance: number }> {
+    if (!Number.isInteger(amount) || amount === 0) {
+      throw new BadRequestError('조정 금액은 0이 아닌 정수여야 합니다.');
+    }
+    return this.db.transaction(async (tx) => {
+      const target = await tx.query.users.findFirst({
+        where: eq(users.id, userId),
+        columns: { id: true },
+      });
+      if (!target) throw new NotFoundError('User not found');
+      // 원자적 갱신 — 차감 시 잔액 >= |amount| 조건부 (레이스 없음)
+      const [row] = await tx
+        .update(users)
+        .set({ points: sql`${users.points} + ${amount}` })
+        .where(
+          amount < 0
+            ? and(eq(users.id, userId), gte(users.points, -amount))
+            : eq(users.id, userId),
+        )
+        .returning({ points: users.points });
+      if (!row) {
+        throw new BadRequestError('차감 시 잔액이 음수가 될 수 없습니다.', {
+          amount,
+          balance: await this.getBalance(userId),
+        });
+      }
+      await tx.insert(pointTransactions).values({
+        userId,
+        delta: amount,
+        reason: 'ADMIN',
+        refType: 'admin',
+        refId: randomUUID(),
+        balanceAfter: row.points,
+      });
+      this.logger.log(
+        `admin adjust ${amount > 0 ? '+' : ''}${amount}p user=${userId} balance=${row.points}`,
+      );
+      return { balance: row.points };
+    });
+  }
+
   /** 코드 발급 (admin). arch/85 §5 */
   async createCode(input: {
     points: number;

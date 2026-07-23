@@ -27,3 +27,4 @@ export { runParticipants, RUN_PARTICIPANT_ROLE } from './run-participants.js';
 export { pointTransactions, POINT_TX_REASON } from './point-transactions.js';
 export { redeemCodes } from './redeem-codes.js';
 export { codeRedemptions } from './code-redemptions.js';
+export { adminAuditLogs } from './admin-audit-logs.js';

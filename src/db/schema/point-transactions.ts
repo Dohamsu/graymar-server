@@ -13,11 +13,18 @@ import { users } from './users.js';
  * 포인트 원장 (진실의 원천). users.points 는 이 원장의 캐시.
  * arch/85 §3.2
  * - reason: REDEEM(코드 충전) | SPEND(채팅 차감) | REFUND(실패 턴 환불) | BONUS(가입 지급)
+ *           | ADMIN(어드민 수동 조정 — arch/87 §4.1, DB 는 text 라 마이그레이션 불필요)
  * - refType/refId: 차감/환불은 'turn'+idempotencyKey(=turn.chargeKey — 전이 턴은
  *   파생 idempotencyKey를 쓰므로 차감 키를 chargeKey로 보존), 충전은 'code'+codeId,
  *   가입은 'signup'+userId
  */
-export const POINT_TX_REASON = ['REDEEM', 'SPEND', 'REFUND', 'BONUS'] as const;
+export const POINT_TX_REASON = [
+  'REDEEM',
+  'SPEND',
+  'REFUND',
+  'BONUS',
+  'ADMIN',
+] as const;
 export type PointTxReason = (typeof POINT_TX_REASON)[number];
 
 export const pointTransactions = pgTable(

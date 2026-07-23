@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { AdminEndpoint } from '../common/decorators/admin-endpoint.decorator.js';
 import { UserId } from '../common/decorators/user-id.decorator.js';
-import { AdminTokenGuard } from '../common/guards/admin-token.guard.js';
 import { AuthGuard } from '../common/guards/auth.guard.js';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe.js';
 import {
@@ -41,9 +41,9 @@ export class PointsController {
   }
 }
 
-/** 코드 발급 — ADMIN_TOKEN 게이트. arch/85 §5 */
+/** 코드 발급 — 어드민 게이트(토큰 or role) + 감사 로그. arch/85 §5, arch/87 §2 */
 @Controller('v1/admin/codes')
-@UseGuards(AdminTokenGuard)
+@AdminEndpoint()
 export class AdminCodesController {
   constructor(private readonly points: PointsService) {}
 

@@ -4,7 +4,8 @@ import type { Request } from 'express';
 import { UnauthorizedError } from '../errors/game-errors.js';
 
 export const USER_ID_KEY = 'userId';
-const COOKIE_NAME = 'graymar_token';
+export const AUTH_COOKIE_NAME = 'graymar_token';
+const COOKIE_NAME = AUTH_COOKIE_NAME;
 
 @Injectable()
 export class AuthGuard implements CanActivate {

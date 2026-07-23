@@ -8,24 +8,30 @@ import {
   BadRequestException,
   UseGuards,
 } from '@nestjs/common';
+import { AdminEndpoint } from '../common/decorators/admin-endpoint.decorator.js';
 import { AuthGuard } from '../common/guards/auth.guard.js';
 import { LlmConfigService, type LlmConfigPatch } from './llm-config.service.js';
 
 const VALID_PROVIDERS = ['mock', 'openai', 'claude', 'gemini'] as const;
 
 @Controller('v1/settings/llm')
-@UseGuards(AuthGuard)
 export class LlmSettingsController {
   constructor(private readonly configService: LlmConfigService) {}
 
   /** 현재 LLM 설정 조회 (API 키 마스킹) */
   @Get()
+  @UseGuards(AuthGuard)
   getSettings() {
     return this.configService.getPublic();
   }
 
-  /** LLM 설정 런타임 변경 — 다음 poll 사이클부터 반영 */
+  /**
+   * LLM 설정 런타임 변경 — 다음 poll 사이클부터 반영.
+   * 어드민 전용 (구 AuthGuard — 일반 유저가 운영 LLM 설정을 바꿀 수 있던
+   * 보안 결함 P0 수정). arch/87 §2.2
+   */
   @Patch()
+  @AdminEndpoint()
   updateSettings(@Body() body: LlmConfigPatch) {
     // provider 유효성 검증
     if (
