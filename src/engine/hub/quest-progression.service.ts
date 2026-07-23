@@ -211,6 +211,22 @@ export class QuestProgressionService {
   }
 
   /**
+   * 종착 상태 판별: 이 상태에서 시작하는(from===state) stateTransition이 하나도
+   * 없으면 종착(더 이상 진행할 fact 목표가 없음 = 최종 선택 단계). getStaleHint가
+   * 종착에서 null을 반환해 "체류 유도 힌트"가 침묵하던 구멍을 상위에서 보강하는 데 사용.
+   */
+  isTerminalState(currentState: string): boolean {
+    const quest = this.content.getQuestData() as QuestData | null;
+    if (!quest?.stateTransitions) return false;
+    for (const key of Object.keys(quest.stateTransitions)) {
+      const arrowIdx = key.indexOf('→');
+      if (arrowIdx === -1) continue;
+      if (key.slice(0, arrowIdx) === currentState) return false;
+    }
+    return true;
+  }
+
+  /**
    * 진행도 힌트: 현재 퀘스트 단계에서 다음 전환에 필요한 미발견 fact를 반환.
    * 일정 턴 이상 같은 단계에 머무르면 힌트 이벤트로 사용.
    */

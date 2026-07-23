@@ -2376,6 +2376,24 @@ export class TurnsService {
             } as any;
           }
         } else {
+          // [엔딩 동선 보강] 종착 상태(전방 전환 없음)인데 아크 루트 미커밋이면
+          // 매 턴 "거점 복귀 → 최종 선택" 유도 힌트를 심는다. getStaleHint가 종착에서
+          // null을 반환해 아래 체류 힌트가 침묵하던 구멍 — S5에서 플레이어가 조사 루프에
+          // 갇혀 최종 선택(arc_commit) 동선을 못 찾고 S5+5 타이머로 무커밋 엔딩되던 문제.
+          // 커밋 선택지가 있는 팩(arc_events.json routeCommitChoices)에만 적용.
+          if (
+            updatedRunState.arcState &&
+            !updatedRunState.arcState.currentRoute &&
+            this.questProgression.isTerminalState(currentQuestState) &&
+            this.content.getArcRouteCommitChoices().length > 0
+          ) {
+            updatedRunState.pendingQuestHint = {
+              hint: '단서가 모두 모였다. 거점으로 돌아가 최종 선택을 내릴 때다.',
+              setAtTurn: turnNo,
+              mode: 'SCENE_CLUE',
+            };
+          }
+
           // 단계 미변경 → 체류 턴 체크 (진행도 힌트)
           const STALE_THRESHOLD = 5;
           const sinceTurn = (
@@ -3005,6 +3023,7 @@ export class TurnsService {
     }>;
     newlyIntroducedNpcIds: string[];
     newlyEncounteredNpcIds: string[];
+    currentNodeId: string;
   }): {
     ws: WorldState;
     npcAgitationUi: {
@@ -3018,7 +3037,6 @@ export class TurnsService {
       eventPrimaryNpc,
       npcStates,
       runState,
-      actionHistory,
       relations,
       challengeDecision,
       intent,
@@ -3032,6 +3050,7 @@ export class TurnsService {
       pendingPostureEvents,
       newlyIntroducedNpcIds,
       newlyEncounteredNpcIds,
+      currentNodeId,
     } = params;
     let ws = params.ws;
     let npcAgitationUi: {
@@ -3055,13 +3074,14 @@ export class TurnsService {
         });
       }
 
-      // encounterCount 증가 — 이번 방문 내 첫 만남인 경우에만 (방문 단위 1회)
-      const alreadyMetThisVisit = actionHistory.some(
-        (h) => h.primaryNpcId === npcId,
-      );
-      if (!alreadyMetThisVisit) {
+      // encounterCount 증가 — 이번 방문(LOCATION 노드 instance) 첫 만남에만 (방문 단위 1회).
+      // per-visit 키를 actionHistory.primaryNpcId 스캔이 아니라 nodeInstanceId 명시 플래그로
+      // 판정한다 — 워커 LockSeed(서술 화자 백필)가 커밋 후 actionHistory를 오염시켜, NPC가
+      // 환경 이벤트 턴에 서술 화자로 먼저 등장하면 증가가 영구 스킵되던 버그 차단.
+      if (npcStates[npcId].lastEncounterNodeId !== currentNodeId) {
         npcStates[npcId].encounterCount =
           (npcStates[npcId].encounterCount ?? 0) + 1;
+        npcStates[npcId].lastEncounterNodeId = currentNodeId;
       }
 
       // 첫 실제 만남 감지: 새로 생성되었거나, encounterCount가 0→1로 변한 경우
@@ -3597,6 +3617,7 @@ export class TurnsService {
     turnNo: number;
     newlyIntroducedNpcIds: string[];
     newlyEncounteredNpcIds: string[];
+    currentNodeId: string;
   }): void {
     const {
       injectedNpcId,
@@ -3604,7 +3625,6 @@ export class TurnsService {
       npcStates,
       updatedRunState,
       relations,
-      actionHistory,
       event,
       rawInput,
       intent,
@@ -3613,6 +3633,7 @@ export class TurnsService {
       turnNo,
       newlyIntroducedNpcIds,
       newlyEncounteredNpcIds,
+      currentNodeId,
     } = params;
     if (injectedNpcId && !eventPrimaryNpc) {
       // orchestration에서 주입된 NPC도 emotional/encounter 처리
@@ -3626,13 +3647,12 @@ export class TurnsService {
         });
         newlyEncounteredNpcIds.push(injectedNpcId);
       }
-      // 방문 단위 encounterCount 증가
-      const alreadyMetInjected = actionHistory.some(
-        (h) => h.primaryNpcId === injectedNpcId,
-      );
-      if (!alreadyMetInjected) {
+      // 방문 단위 encounterCount 증가 — primary 경로와 동일하게 nodeInstanceId 명시
+      // 플래그로 판정 (워커 LockSeed의 actionHistory 오염 면역).
+      if (npcStates[injectedNpcId].lastEncounterNodeId !== currentNodeId) {
         npcStates[injectedNpcId].encounterCount =
           (npcStates[injectedNpcId].encounterCount ?? 0) + 1;
+        npcStates[injectedNpcId].lastEncounterNodeId = currentNodeId;
       }
       // 소개 판정 — base posture 기준 (감정 변화로 effective posture가 바뀌어도 소개 임계값은 고정)
       const introPosture = npcStates[injectedNpcId].posture;
@@ -5510,6 +5530,7 @@ export class TurnsService {
       pendingPostureEvents,
       newlyIntroducedNpcIds,
       newlyEncounteredNpcIds,
+      currentNodeId: currentNode.id as string,
     });
     ws = npcEmotionOutcome.ws;
     const npcAgitationUi = npcEmotionOutcome.npcAgitationUi;
@@ -5784,6 +5805,7 @@ export class TurnsService {
       turnNo,
       newlyIntroducedNpcIds,
       newlyEncounteredNpcIds,
+      currentNodeId: currentNode.id as string,
     });
 
     // 비도전 행위 여부 (MOVE_LOCATION, REST, SHOP, TALK → 주사위 UI 숨김)

@@ -75,6 +75,11 @@ export interface NPCState {
   /** 소개 연출 실패(IntroRollback) 누적 — 경로 선택에 사용 (architecture/64 튜닝) */
   introAttempts?: number;
   encounterCount: number;
+  /** 이 NPC의 encounterCount를 마지막으로 증가시킨 LOCATION 노드 instance id.
+   *  per-visit 1회 증가 dedup을 actionHistory.primaryNpcId 스캔 대신 명시 플래그로 —
+   *  워커 LockSeed(서술 화자 백필, llm-worker.service.ts)가 커밋 후 actionHistory를
+   *  오염시켜 조우 카운트가 영구 스킵되던 버그 차단. LOCATION 방문=노드 instance 1개. */
+  lastEncounterNodeId?: string;
   // LLM 서술에 @마커로 등장한 누적 횟수 — encounterCount와 별개로
   // 반복 호칭 고착 방지용. 임계치 이상이면 posture 무관 강제 소개.
   appearanceCount?: number;
