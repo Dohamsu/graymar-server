@@ -443,3 +443,88 @@ export function cleanupNarrativeArtifacts(
 
   return narrative;
 }
+
+// ═══════════════════════════════════════════════════════════
+// bug 5bcfe78b (arch/88 후속) — "대사 누락" 판정 (A-append)
+//
+// 저모델(deepseek-v4-flash)이 서술을 대사 직전에서 절단하는 실측 사례:
+// "…고개를 살짝 숙이며." 로 끝나 뒤에 대사가 와야 하는데 없음. 발화형
+// npcReaction(OPEN_UP 등)인데 대사가 0개. "서술이 대사를 약속했는데 대사가
+// 없다"를 감지해 서버가 primaryNpc 대사 1줄을 말미에 보강(재시도 아님).
+// ═══════════════════════════════════════════════════════════
+
+export type MissingDialogueReason =
+  | 'CONNECTIVE_CUT'
+  | 'REACTION_NO_DIALOGUE'
+  | null;
+
+/**
+ * 발화형 reactionType — NPC가 이번 턴에 "말한다"류.
+ * (npc-reaction-director.service.ts ReactionType 중)
+ */
+const VERBAL_REACTION_TYPES = new Set([
+  'WELCOME',
+  'OPEN_UP',
+  'PROBE',
+  'DEFLECT',
+  'THREATEN',
+]);
+
+/**
+ * 비발화형 reactionType — 감독이 명시적으로 침묵/거리두기로 결정.
+ * 이 경우 서술이 잘렸어도 대사를 날조하지 않는다(디렉터 존중, 불변식 47 연장).
+ */
+const NONVERBAL_REACTION_TYPES = new Set(['SILENCE', 'DISMISS']);
+
+/**
+ * 비종결 연결어미 — 뒤에 대사/행동이 와야 하는데 잘린 신호.
+ * arch/88 스펙 목록(…며/…고/…자/…면서/…는데/…으며/…이며) + 대사 유도가
+ * 강한 …더니/…자마자. 절단 시 모델이 종결부호(.,…)를 덧붙이는 경우를 커버해
+ * 뒤 종결부호를 허용한다.
+ */
+const CONNECTIVE_CUT_RE =
+  /(?:으며|이며|면서|자마자|는데|더니|며|고|자)\s*["'“”)\]]?\s*[.,·…．]*\s*$/;
+
+/**
+ * 완결 대사(닫힌 따옴표 쌍) 존재 — 이미 대사가 있으면 보강 불필요(오탐 방지).
+ */
+const CLOSED_QUOTE_PAIR_RE = /["“][^"”\n]{2,}["”]/;
+
+/**
+ * narrative(후처리 완료 최종본)가 "대사를 약속했는데 대사가 없는" 상태인지 판정.
+ * - null 반환 = 보강 불필요(정상). 정상 턴 오탐 0 지향.
+ * - 이미 완결 대사(닫힌 따옴표 쌍)나 @마커가 있으면 무조건 스킵.
+ * - 감독이 침묵/거리두기(SILENCE/DISMISS)로 결정한 턴은 스킵.
+ * - ① 비종결 연결어미로 끝남 → 'CONNECTIVE_CUT'
+ * - ② 발화형 reactionType인데 따옴표·@마커 0개 → 'REACTION_NO_DIALOGUE'
+ */
+export function detectMissingDialogue(
+  narrative: string | null | undefined,
+  reactionType: string | null | undefined,
+): MissingDialogueReason {
+  const text = (narrative ?? '').trim();
+  if (!text) return null;
+  // 오탐 방지: 이미 완결 대사(닫힌 따옴표 쌍) 또는 @마커가 있으면 스킵
+  if (CLOSED_QUOTE_PAIR_RE.test(text)) return null;
+  if (text.includes('@[')) return null;
+  // 감독이 명시적으로 비발화(침묵/무시)로 결정 → 대사 날조 금지
+  if (reactionType && NONVERBAL_REACTION_TYPES.has(reactionType)) return null;
+  // ① 비종결 연결어미로 끝남 — 대사/행동이 와야 하는데 잘림
+  if (CONNECTIVE_CUT_RE.test(text)) return 'CONNECTIVE_CUT';
+  // ② 발화형 reactionType인데 따옴표·@마커 0개
+  if (reactionType && VERBAL_REACTION_TYPES.has(reactionType)) {
+    return 'REACTION_NO_DIALOGUE';
+  }
+  return null;
+}
+
+/**
+ * 연결어미 절단(CONNECTIVE_CUT) 시 매달린 종결부호를 정리해 대사가 자연스레
+ * 이어지도록 한다("…숙이며." → "…숙이며"). 과설계 방지: 연결어미 뒤 종결부호만
+ * 벗기고 문장 구조는 건드리지 않는다.
+ */
+export function trimDanglingConnectivePunct(text: string): string {
+  return text
+    .trimEnd()
+    .replace(/((?:으며|이며|면서|자마자|는데|더니|며|고|자))[.,·…．]+$/, '$1');
+}

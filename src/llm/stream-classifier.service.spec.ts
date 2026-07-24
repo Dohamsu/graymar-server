@@ -312,6 +312,49 @@ describe('StreamClassifierService — feed() + flush()', () => {
 });
 
 // ═══════════════════════════════════════════════════════════
+// bug 5bcfe78b (arch/88 후속) — flush() 미완결 대사 emit 보류
+// ═══════════════════════════════════════════════════════════
+
+describe('StreamClassifierService — flush() 미완결 대사 보류 (bug 5bcfe78b)', () => {
+  it('열린 따옴표 잔여(안 닫힌 대사) → flush emit 없음', () => {
+    const svc = makeSvc(ALL_CANDIDATES, 'NPC_RONEN');
+    // 절단 실측: 서술이 대사 직전에서 끊겨 여는 따옴표만 있고 닫는 게 없음
+    const events = feedAll(svc, '수녀가 고개를 살짝 숙이며 "무엇을 찾으시');
+    // 미완결 대사 조각은 라이브 유출 금지 → 이벤트 없음
+    expect(events).toHaveLength(0);
+  });
+
+  it('완결 잔여(따옴표 짝 맞음) → 기존대로 emit', () => {
+    const svc = makeSvc(ALL_CANDIDATES, 'NPC_RONEN');
+    // 트레일링 개행 없이 완결 대사로 끝나는 잔여 → flush가 정상 방출해야 함
+    const events = feedAll(svc, '로넨이 말했다. "평안하시오."');
+    const dialogue = events.find((e) => e.type === 'dialogue');
+    expect(dialogue).toBeDefined();
+    expect(dialogue?.text).toBe('평안하시오.');
+  });
+
+  it('유니코드 여는 따옴표만(안 닫힘) → flush emit 없음', () => {
+    const svc = makeSvc(ALL_CANDIDATES, 'NPC_RONEN');
+    const events = feedAll(svc, '로넨이 입을 열며 “이건');
+    expect(events).toHaveLength(0);
+  });
+
+  it('hasUnclosedQuote — ASCII 홀수/유니코드 여닫이 판정', () => {
+    expect(StreamClassifierService.hasUnclosedQuote('말했다 "미완결')).toBe(
+      true,
+    );
+    expect(StreamClassifierService.hasUnclosedQuote('말했다 "완결"')).toBe(
+      false,
+    );
+    expect(StreamClassifierService.hasUnclosedQuote('“미완결')).toBe(true);
+    expect(StreamClassifierService.hasUnclosedQuote('“완결”')).toBe(false);
+    expect(StreamClassifierService.hasUnclosedQuote('따옴표 없는 서술')).toBe(
+      false,
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
 // buildCandidates()
 // ═══════════════════════════════════════════════════════════
 

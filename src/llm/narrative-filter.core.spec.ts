@@ -4,6 +4,8 @@ import {
   applyNarrativeQualityFilters,
   cleanupNarrativeArtifacts,
   isJongseongVariantCore,
+  detectMissingDialogue,
+  trimDanglingConnectivePunct,
 } from './narrative-filter.core.js';
 import type {
   NarrativeFilterDeps,
@@ -264,5 +266,88 @@ describe('isJongseongVariantCore', () => {
   it('비한글(자모 단독·영문) → false', () => {
     expect(isJongseongVariantCore('ㅎ', '핍')).toBe(false);
     expect(isJongseongVariantCore('a', 'b')).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// bug 5bcfe78b (arch/88 후속) — detectMissingDialogue "대사 누락" 판정
+// ═══════════════════════════════════════════════════════════
+
+describe('detectMissingDialogue — 대사 누락 판정 (bug 5bcfe78b)', () => {
+  it('① 연결어미 절단(…숙이며.) + 대사 0 → CONNECTIVE_CUT', () => {
+    expect(detectMissingDialogue('수녀가 고개를 살짝 숙이며.', 'OPEN_UP')).toBe(
+      'CONNECTIVE_CUT',
+    );
+    // 종결부호 없이 연결어미로 끝나도 감지
+    expect(detectMissingDialogue('그는 입을 열더니', 'PROBE')).toBe(
+      'CONNECTIVE_CUT',
+    );
+    // reactionType 없어도 절단 신호만으로 감지 (deepseek 절단 케이스)
+    expect(detectMissingDialogue('그녀가 천천히 고개를 돌리며', null)).toBe(
+      'CONNECTIVE_CUT',
+    );
+  });
+
+  it('② 발화형 reaction + 따옴표·마커 0 → REACTION_NO_DIALOGUE', () => {
+    expect(
+      detectMissingDialogue('수녀는 잠시 그를 바라보았다.', 'OPEN_UP'),
+    ).toBe('REACTION_NO_DIALOGUE');
+    expect(
+      detectMissingDialogue('위병대장이 손을 들어 제지했다.', 'THREATEN'),
+    ).toBe('REACTION_NO_DIALOGUE');
+  });
+
+  it('오탐 방지: 이미 완결 대사(닫힌 따옴표 쌍) → null', () => {
+    expect(
+      detectMissingDialogue('수녀가 말했다. "평안하시오."', 'OPEN_UP'),
+    ).toBeNull();
+    // 연결어미로 끝나 보여도 앞에 완결 대사가 있으면 스킵
+    expect(
+      detectMissingDialogue('"어서 오시오." 그가 고개를 숙이며', 'OPEN_UP'),
+    ).toBeNull();
+  });
+
+  it('오탐 방지: @마커가 이미 있으면 → null', () => {
+    expect(
+      detectMissingDialogue(
+        '@[근엄한 위병대장|/x.webp] "멈추시오"',
+        'THREATEN',
+      ),
+    ).toBeNull();
+  });
+
+  it('감독이 비발화(SILENCE/DISMISS)로 결정한 턴 → null (대사 날조 금지)', () => {
+    expect(
+      detectMissingDialogue('그는 아무 말 없이 고개를 돌리며', 'SILENCE'),
+    ).toBeNull();
+    expect(
+      detectMissingDialogue('그녀는 등을 보인 채 자리를 떴다.', 'DISMISS'),
+    ).toBeNull();
+  });
+
+  it('정상 종결 서술(종결어미) + 비발화 reaction 없음 → null (무동작)', () => {
+    expect(detectMissingDialogue('바람이 거세게 불어왔다.', null)).toBeNull();
+    expect(
+      detectMissingDialogue('거리는 조용했고 인적이 드물었다.', undefined),
+    ).toBeNull();
+  });
+
+  it('빈 문자열/공백 → null', () => {
+    expect(detectMissingDialogue('', 'OPEN_UP')).toBeNull();
+    expect(detectMissingDialogue('   ', 'OPEN_UP')).toBeNull();
+    expect(detectMissingDialogue(null, 'OPEN_UP')).toBeNull();
+  });
+});
+
+describe('trimDanglingConnectivePunct — 연결어미 매달린 종결부호 정리', () => {
+  it('연결어미 뒤 종결부호 제거(…숙이며. → …숙이며)', () => {
+    expect(trimDanglingConnectivePunct('고개를 살짝 숙이며.')).toBe(
+      '고개를 살짝 숙이며',
+    );
+    expect(trimDanglingConnectivePunct('입을 열더니…')).toBe('입을 열더니');
+  });
+
+  it('연결어미가 아니면 종결부호 유지', () => {
+    expect(trimDanglingConnectivePunct('불어왔다.')).toBe('불어왔다.');
   });
 });

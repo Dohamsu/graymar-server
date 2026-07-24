@@ -113,15 +113,34 @@ export class StreamClassifierService {
 
   /**
    * 스트리밍 종료 시 잔여 버퍼 강제 방출
+   *
+   * bug 5bcfe78b (arch/88 후속) — tryFlush는 열린 따옴표를 문장 경계로 안 잡아
+   * 미완결 대사를 버퍼에 보류하지만, 스트림 종료 시 flush가 잔여를 무조건 emit해
+   * 안 닫힌(미완결) 대사 조각이 화면에 타이핑됐다가 done 최종본(대사 제거/교정본)
+   * 으로 교체되며 "사라지는" 회귀가 있었다. 미완결 잔여는 어차피 서버 후처리에서
+   * 제거/보강되고, 클라는 done 이벤트 최종본을 authoritative로 렌더하므로 라이브
+   * 유출이 불필요하다. 완결(따옴표 짝 맞음) 잔여는 기존대로 emit(정상 턴 100% 보존).
    */
   flush(): SegmentEvent[] {
     const events: SegmentEvent[] = [];
     const text = this.buffer.trim();
-    if (text.length > 0) {
+    if (text.length > 0 && !StreamClassifierService.hasUnclosedQuote(text)) {
       events.push(...this.classifySentence(text));
     }
     this.buffer = '';
     return events;
+  }
+
+  /**
+   * 잔여 텍스트에 안 닫힌 여는 따옴표가 있는지 — 미완결 대사 감지.
+   * ASCII 따옴표(")는 여닫이 구분이 없어 총 개수 홀수 = 미완결.
+   * 유니코드는 여는(“) 개수 > 닫는(”) 개수 = 미완결.
+   */
+  static hasUnclosedQuote(text: string): boolean {
+    const asciiCount = (text.match(/"/g) ?? []).length;
+    const openTypo = (text.match(/“/g) ?? []).length;
+    const closeTypo = (text.match(/”/g) ?? []).length;
+    return asciiCount % 2 === 1 || openTypo > closeTypo;
   }
 
   /**

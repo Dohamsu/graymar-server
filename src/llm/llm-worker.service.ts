@@ -28,6 +28,8 @@ import {
   applyNarrativeQualityFilters,
   cleanupNarrativeArtifacts,
   isJongseongVariantCore,
+  detectMissingDialogue,
+  trimDanglingConnectivePunct,
 } from './narrative-filter.core.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { salvageNarrativeShape } from './narrative-shape.js';
@@ -1202,6 +1204,87 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           .where(eq(turns.id, pending.id));
       }
     }
+  }
+
+  /**
+   * A-append (bug 5bcfe78b, arch/88 후속) — 미완성 대사 서버 보강.
+   *
+   * detectMissingDialogue로 "서술이 대사를 약속했는데 대사가 없다"를 판정하고,
+   * 판정 시 DialogueGenerator(기존 Stage B 경로 재사용)로 primaryNpc 대사 1줄을
+   * 생성해 서버 마커 규약(@[표시명|초상화url] "대사")대로 narrative 말미에 append.
+   * 재시도가 아니라 기존 서술을 보존한 채 보강한다. 생성 불가·실패 시 원본 반환
+   * (조용히 스킵 — 불변식 2). speechRegister는 DialogueGenerator가 검증/보장.
+   */
+  private async appendMissingDialogue(params: {
+    narrative: string;
+    serverResult: ServerResultV1;
+    npcStates: Record<string, import('../db/types/npc-state.js').NPCState>;
+    npcReaction: NpcReactionResult | null;
+    turnNo: number;
+  }): Promise<string> {
+    const { narrative, serverResult, npcStates, npcReaction, turnNo } = params;
+
+    const reason = detectMissingDialogue(
+      narrative,
+      npcReaction?.reactionType ?? null,
+    );
+    if (!reason) return narrative;
+
+    // 발화 주체 결정 — 이번 턴 primaryNpcId (없으면 보강 대상 없음 → 스킵).
+    const primaryNpcId = (
+      (serverResult.ui as Record<string, unknown>)?.actionContext as
+        | { primaryNpcId?: string | null }
+        | undefined
+    )?.primaryNpcId;
+    if (!primaryNpcId) return narrative;
+    const npcDef = this.content.getNpc(primaryNpcId);
+    if (!npcDef) return narrative;
+
+    // reactionType → dialogue intent 매핑 (발화 의도 근사).
+    const REACTION_TO_INTENT: Record<string, DialogueIntent> = {
+      WELCOME: 'GREET',
+      OPEN_UP: 'INFO',
+      PROBE: 'QUESTION',
+      DEFLECT: 'REFUSE',
+      THREATEN: 'THREATEN',
+    };
+    const intent: DialogueIntent =
+      (npcReaction?.reactionType &&
+        REACTION_TO_INTENT[npcReaction.reactionType]) ||
+      'REACT';
+
+    // DialogueGenerator 기존 경로 재사용 (generateAll — 단일 슬롯).
+    const [result] = await this.dialogueGenerator.generateAll([
+      {
+        slot: {
+          speaker_id: primaryNpcId,
+          intent,
+          context: npcReaction?.immediateGoal || '상황에 반응해 한마디 건넨다',
+          tone: npcReaction?.emotionalUndertone,
+        },
+        npcState: npcStates[primaryNpcId],
+        previousDialogues: [],
+        narrativeContext: narrative.slice(-200),
+        turnNo,
+      },
+    ]);
+    if (!result || !result.text || result.text.length < 2) return narrative;
+
+    // 연결어미 절단('…숙이며.')이면 매달린 종결부호를 정리해 대사가 이어지게.
+    let base = narrative;
+    if (reason === 'CONNECTIVE_CUT') {
+      base = trimDanglingConnectivePunct(base);
+    }
+
+    const marker = result.portraitUrl
+      ? `@[${result.speakerAlias}|${result.portraitUrl}]`
+      : `@[${result.speakerAlias}]`;
+    const appended = `${base.trimEnd()}\n\n${marker} "${result.text}"`;
+
+    this.logger.log(
+      `[DialogueAppend] turn=${turnNo} reason=${reason} npc=${primaryNpcId}(${npcDef.name}) reaction=${npcReaction?.reactionType ?? 'none'} — 미완성 대사 서버 보강`,
+    );
+    return appended;
   }
 
   // [arch/77 P4.5] architecture/44 §이슈② — 런 전역 narrativeThemes 기록.
@@ -3819,6 +3902,27 @@ ${npcList}`,
         }
       } catch (err) {
         this.logger.warn(`[NameVariantAudit] error: ${err}`);
+      }
+
+      // A-append (bug 5bcfe78b, arch/88 후속) — "대사 누락" 서버 보강.
+      //   저모델(deepseek-v4-flash)이 서술을 대사 직전에서 절단하는 실측:
+      //   "…고개를 살짝 숙이며." 로 끝나 대사가 와야 하는데 없음(발화형
+      //   npcReaction=OPEN_UP인데 따옴표·마커 0개). 재시도가 아니라 기존 서술을
+      //   유지한 채 primaryNpc 대사 1줄을 말미에 append한다. 실패 시 조용히 스킵
+      //   (불변식 2 — 하드 실패 금지, 턴 진행 유지). done emit + DB 커밋이 같은
+      //   `narrative` 단일 변수를 쓰므로 여기(커밋 직전)서 한 번만 보강하면 양쪽 반영.
+      if (narrative && !isEndingTurn) {
+        try {
+          narrative = await this.appendMissingDialogue({
+            narrative,
+            serverResult,
+            npcStates: llmContext.npcStates ?? {},
+            npcReaction,
+            turnNo: pending.turnNo,
+          });
+        } catch (err) {
+          this.logger.warn(`[DialogueAppend] error (skip): ${err}`);
+        }
       }
 
       // llmChoices 는 Track 2 (서술 기반 nano 선택지 재생성) 완료 후
