@@ -26,7 +26,10 @@ interface QuestData {
   states: string[];
   stateDescriptions?: Record<string, string>;
   stateTransitions: Record<string, StateTransition>;
-  facts: Record<string, QuestFactDef>;
+  /** graymar: factId→정의 dict (인라인 레거시) / silverdeen·star_sand: factId 배열
+   *  (정의는 facts.json Fact 일급 객체 — arch/46). 조회는 resolveFactDef 경유. */
+  facts: Record<string, QuestFactDef> | string[];
+  arcRoutes?: Array<{ routeId: string; label?: string }>;
   /** 경제 루프 — fact 발견/단계 전환 사례금 (quest.json rewards, 팩별 밸런싱) */
   rewards?: {
     factGold?: number;
@@ -207,16 +210,37 @@ export class QuestProgressionService {
   }
 
   /**
-   * factId에 해당하는 quest.json의 nextHint를 반환.
+   * fact 정의 해석 — quest.json 인라인 dict(graymar 레거시) 우선, 없으면
+   * facts.json Fact 일급 객체(content.getFact) fallback. silverdeen·star_sand는
+   * quest.facts가 factId 배열이라 인라인 조회가 항상 miss — fallback이 정본 경로.
+   * (미해석 시 raw FACT_* ID가 퀘스트탭에 노출되던 결함 수정, 2026-07-24)
+   */
+  private resolveFactDef(
+    quest: QuestData | null,
+    factId: string,
+  ): QuestFactDef | null {
+    const inline = Array.isArray(quest?.facts)
+      ? undefined
+      : quest?.facts?.[factId];
+    if (inline && (inline.description || inline.discoveryLocations)) {
+      return inline;
+    }
+    const def = this.content.getFact(factId);
+    if (!def) return inline ?? null;
+    return {
+      description: def.description ?? def.topic,
+      nextHint: def.nextHint,
+      discoveryLocations: def.discoveryLocations,
+    };
+  }
+
+  /**
+   * factId에 해당하는 nextHint를 반환 (quest.json 인라인 → facts.json fallback).
    * fact 발견 직후, 다음 턴 LLM 프롬프트에 방향 힌트로 사용.
    */
   getFactNextHint(factId: string): string | null {
-    const quest = this.content.getQuestData() as
-      | (QuestData & { facts?: Record<string, { nextHint?: string }> })
-      | null;
-    if (!quest?.facts) return null;
-    const fact = quest.facts[factId];
-    return fact?.nextHint ?? null;
+    const quest = this.content.getQuestData() as QuestData | null;
+    return this.resolveFactDef(quest, factId)?.nextHint ?? null;
   }
 
   /**
@@ -260,7 +284,7 @@ export class QuestProgressionService {
           const npcId = this.findFactNpc(f);
           return {
             factId: f,
-            hint: hint ?? `${f}와 관련된 단서가 근처에 있다`,
+            hint: hint ?? '아직 밝혀지지 않은 단서가 근처에 있다',
             targetNpcId: npcId ?? undefined,
           };
         }
@@ -275,7 +299,7 @@ export class QuestProgressionService {
           const npcId = this.findFactNpc(f);
           return {
             factId: f,
-            hint: hint ?? `${f}와 관련된 단서가 근처에 있다`,
+            hint: hint ?? '아직 밝혀지지 않은 단서가 근처에 있다',
             targetNpcId: npcId ?? undefined,
           };
         }
@@ -288,7 +312,7 @@ export class QuestProgressionService {
           const npcId = this.findFactNpc(f);
           return {
             factId: f,
-            hint: hint ?? `${f}와 관련된 단서가 근처에 있다`,
+            hint: hint ?? '아직 밝혀지지 않은 단서가 근처에 있다',
             targetNpcId: npcId ?? undefined,
           };
         }
@@ -317,7 +341,7 @@ export class QuestProgressionService {
 
     const discoveredFacts = discoveredIds.map((factId) => ({
       factId,
-      description: quest.facts?.[factId]?.description ?? factId,
+      description: this.resolveFactDef(quest, factId)?.description ?? factId,
     }));
 
     // 다음 전환에 필요한 미발견 fact → 지역 이정표 (중복 지역 병합 없이 fact별 1행)
@@ -336,7 +360,8 @@ export class QuestProgressionService {
         ...(transition.alternativeFacts ?? []),
       ].filter((f) => !discoveredSet.has(f));
       for (const factId of pending) {
-        const locIds = quest.facts?.[factId]?.discoveryLocations ?? [];
+        const locIds =
+          this.resolveFactDef(quest, factId)?.discoveryLocations ?? [];
         if (locIds.length === 0) continue;
         nextObjectives.push({
           locationIds: locIds,
@@ -359,6 +384,13 @@ export class QuestProgressionService {
       factionNames[factionId] = this.content.getFactionDisplayName(factionId);
     }
 
+    // 아크 노선 팩별 라벨 — 클라 graymar 하드코딩 대체 (예: star_sand "해방 — 닻을 끊는다")
+    const arcRouteLabels: Record<string, string> = {};
+    for (const route of quest.arcRoutes ?? []) {
+      if (route.routeId && route.label)
+        arcRouteLabels[route.routeId] = route.label;
+    }
+
     return {
       questId: quest.questId,
       title: quest.title ?? quest.questId,
@@ -371,6 +403,7 @@ export class QuestProgressionService {
       directionHint,
       terminal: this.isTerminalState(state),
       factionNames,
+      arcRouteLabels,
     };
   }
 

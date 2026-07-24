@@ -73,9 +73,10 @@ export class PlayerGoalService {
       if (ws.playerGoals.filter((g) => !g.completed).length >= MAX_ACTIVE_GOALS)
         break;
 
+      // 미등록 패턴은 raw 영문 노출 대신 중립 문구 (사용자 노출 텍스트)
       const goalDesc =
         IMPLICIT_GOAL_DESCRIPTIONS[p.pattern] ??
-        `${p.pattern} 관련 활동을 계속하고 있다`;
+        '같은 방식의 행동을 반복하고 있다';
 
       const newGoal: PlayerGoal = {
         id: `goal_implicit_${p.pattern}_${turnNo}`,
@@ -173,6 +174,24 @@ const IMPLICIT_GOAL_DESCRIPTIONS: Record<string, string> = {
   diplomatic: '외교적 수단으로 상황을 풀어나가는 경향',
   stealth: '은밀한 방법으로 목표에 접근하는 경향',
   commercial: '거래와 경제적 수단을 활용하는 경향',
+  // 실제 유입 값은 IntentActionType.toLowerCase() (turns.service 패턴 감지) —
+  // 위 4종 레거시 키와 안 맞아 raw 패턴("talk 관련 활동...")이 노출되던 결함
+  // 수정 (2026-07-24). 사용자 노출 문구이므로 전 actionType 커버.
+  talk: '사람들과 대화하며 정보를 모으고 있다',
+  investigate: '단서를 파고들며 조사를 이어가고 있다',
+  observe: '주변을 관찰하며 상황을 살피고 있다',
+  search: '구석구석 뒤지며 수색하고 있다',
+  persuade: '설득으로 사람들을 움직이려 하고 있다',
+  bribe: '금전으로 입을 열게 하려 하고 있다',
+  threaten: '위협적인 방식으로 밀어붙이고 있다',
+  sneak: '은밀하게 움직이며 눈에 띄지 않으려 하고 있다',
+  steal: '남의 물건에 손을 대는 일이 잦다',
+  fight: '힘으로 부딪히는 일이 잦다',
+  help: '어려운 사람들을 도우며 신뢰를 쌓고 있다',
+  trade: '거래로 이득을 챙기고 있다',
+  rest: '휴식을 자주 취하며 때를 기다리고 있다',
+  shop: '물건을 사들이며 채비를 갖추고 있다',
+  move_location: '여러 지역을 오가며 발품을 팔고 있다',
   investigative: '진실을 추적하고 단서를 모으는 경향',
   helpful: '약자를 돕고 관계를 쌓아가는 경향',
 };

@@ -245,6 +245,8 @@ export type QuestStatusUI = {
   terminal: boolean;
   /** 세력 표시명 (콘텐츠 서빙 — 클라 하드코딩 대체) */
   factionNames: Record<string, string>;
+  /** 아크 노선 팩별 라벨 (quest.json arcRoutes — routeId → label). 클라 하드코딩 대체 */
+  arcRouteLabels: Record<string, string>;
 };
 
 export type UIBundle = {
