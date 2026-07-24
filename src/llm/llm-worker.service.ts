@@ -368,10 +368,17 @@ export function fixNpcMismatchCore(
   npcStates: Record<string, { introduced?: boolean }>,
   getNpcDef: (id: string) => NpcNameLike | undefined,
   appearedNpcIds: Set<string>,
+  // [버그 5fcf825a — A안 좁은 게이트] 잠금 중 극적으로 등장하는 주요 인물의
+  // 첫 대사 마커를 primary로 재귀속하지 않고 보존하기 위한 예외 판정.
+  // markerName(첫 마커 표시명)을 받아 게이트 통과 시 등장 NPC id를, 아니면
+  // null 을 반환. 미지정(기존 호출부)이면 항상 재귀속(원 동작 보존).
+  isProtectedDramaticEntry?: (markerName: string) => string | null,
 ): {
   narrative: string;
   appearedNpcIds: Set<string>;
   corrected: { wrongName: string; correctName: string } | null;
+  // 게이트를 통과해 마커가 보존된 등장 NPC id (있으면 다음 턴 잠금 인계 대상)
+  protectedEntryNpcId?: string | null;
 } {
   if (!primaryNpcId) {
     return { narrative, appearedNpcIds, corrected: null };
@@ -400,6 +407,22 @@ export function fixNpcMismatchCore(
 
   if (isMatchPrimary) {
     return { narrative, appearedNpcIds, corrected: null };
+  }
+
+  // [버그 5fcf825a] 좁은 게이트 예외 — 다른 NPC가 등장했으나 그가
+  // 이 장면에 극적으로 진입하는 주요 인물(CORE/SUB·present·≠잠금)이면
+  // 마커를 보존하고 교정을 건너뛴다 (배경/무명/미해결 마커는 아래 교정 유지).
+  if (isProtectedDramaticEntry) {
+    const enteredNpcId = isProtectedDramaticEntry(markerName);
+    if (enteredNpcId) {
+      appearedNpcIds.add(enteredNpcId);
+      return {
+        narrative,
+        appearedNpcIds,
+        corrected: null,
+        protectedEntryNpcId: enteredNpcId,
+      };
+    }
   }
 
   // 다른 NPC가 등장 — 마커를 primaryNpcId의 별칭으로 교체
@@ -433,6 +456,40 @@ export function fixNpcMismatchCore(
   appearedNpcIds.add(primaryNpcId);
 
   return { narrative, appearedNpcIds, corrected: { wrongName, correctName } };
+}
+
+/**
+ * [버그 5fcf825a — A안 좁은 게이트] 대화 잠금 중 서술에 극적으로 등장하는
+ * NPC 의 첫 대사 마커를 Step F 재귀속에서 예외 처리할지 판정.
+ *
+ * 전부 충족해야 예외(true):
+ *   ① tier ∈ {CORE, SUB}         — 배경/앰비언트(BACKGROUND·군중·행인)는 금지(R6 원취지 보존)
+ *   ② 이 씬 첫 등장               — appearanceCount 0 또는 직전 잠금 NPC가 아님(④로 보장)
+ *   ③ 현재 장소 presentNpcs 포함
+ *   ④ 잠금 NPC와 다름
+ *
+ * BACKGROUND·미해결(id null)·비present·잠금 NPC 재등장은 모두 false → 기존 교정 유지.
+ */
+export function evaluateDramaticEntryGateCore(params: {
+  enteredNpcId: string | null;
+  lockNpcId: string | null;
+  tier: string | undefined;
+  presentNpcIds: readonly string[];
+  appearanceCount: number;
+}): boolean {
+  const { enteredNpcId, lockNpcId, tier, presentNpcIds, appearanceCount } =
+    params;
+  if (!enteredNpcId) return false;
+  // ④ 잠금 NPC와 다름
+  if (lockNpcId && enteredNpcId === lockNpcId) return false;
+  // ① tier ∈ {CORE, SUB} (BACKGROUND·군중·행인 차단 — R6 라이라 회귀 방지)
+  if (tier !== 'CORE' && tier !== 'SUB') return false;
+  // ③ 현재 장소 presentNpcs 포함
+  if (!presentNpcIds.includes(enteredNpcId)) return false;
+  // ② 이 씬 첫 등장 (appearanceCount 0 또는 ≠잠금 — ④로 이미 보장되어 항상 참)
+  const isFirstAppearance = appearanceCount === 0 || enteredNpcId !== lockNpcId;
+  if (!isFirstAppearance) return false;
+  return true;
 }
 
 // insertSpaceAfterSentenceCore 정본은 narrative-filter.core로 이사 (arch/77 P4.2).
@@ -994,6 +1051,37 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     return narrative;
   }
 
+  /**
+   * [버그 5fcf825a — A안 잠금 인계] 잠금 중 극적 등장 NPC 로 대화 잠금을 인계.
+   *   이번 턴 actionHistory 엔트리의 primaryNpcId 를 등장 NPC 로 덮어써
+   *   다음 턴 conversationLock/primaryNpcId(turns.service lastPrimaryNpcId)가
+   *   그 NPC 를 가리키게 한다 — LockSeed(primaryNpcId==null 시에만 시드)와 달리
+   *   잠금 primary 가 이미 있어도 override 한다. CAS 경유(불변식 2 소프트 상태).
+   */
+  private async seedConversationHandover(
+    runId: string,
+    turnNo: number,
+    npcId: string,
+  ): Promise<void> {
+    await this.applyRunStatePatch(runId, 'DramaticEntryHandover', (rs) => {
+      const history = rs.actionHistory as
+        | Array<Record<string, unknown>>
+        | undefined;
+      if (!history) return false;
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].turnNo === turnNo) {
+          if (history[i].primaryNpcId === npcId) return false;
+          history[i].primaryNpcId = npcId;
+          return true;
+        }
+      }
+      return false;
+    });
+    this.logger.log(
+      `[DramaticEntryHandover] turn=${turnNo} 대화 잠금 인계 → ${npcId}`,
+    );
+  }
+
   // [arch/77 P4.4] 5.13 — speakingNpc + npcPortrait를 LLM '최종본' 기반으로
   // 재결정 (완전형 마커 역해석 보충 → 첫 마커 화자 갱신 + LockSeed CAS →
   // 카드 교체/제거). serverResult UPDATE는 ui 갱신 전용(SSoT DONE 커밋과 별개).
@@ -1385,6 +1473,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     jsonModeParsed: boolean;
     isStreamingMode: boolean;
     focusedNpcId: string | null;
+    // [버그 5fcf825a] 대화 잠금 활성 여부 — 극적 등장 예외(Step F)는 잠금 턴에만 적용
+    conversationLockActive: boolean;
   }): Promise<{
     narrative: string;
     appearedNpcIds: Set<string>;
@@ -1395,6 +1485,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     getNpcDisplayNameFn:
       | typeof import('../db/types/npc-state.js').getNpcDisplayName
       | undefined;
+    // 잠금 중 극적 등장 게이트를 통과해 마커가 보존된 NPC id (다음 턴 잠금 인계 대상)
+    protectedEntryNpcId: string | null;
   }> {
     const {
       serverResult,
@@ -1403,6 +1495,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       jsonModeParsed,
       isStreamingMode,
       focusedNpcId,
+      conversationLockActive,
     } = params;
     let narrative = params.narrative;
     // 5.5. nano 후처리: 대사 @NPC_ID 마커 삽입 → 표시이름 변환 → 실명 세이프가드
@@ -1415,6 +1508,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     let getNpcDisplayNameFnOut:
       | typeof import('../db/types/npc-state.js').getNpcDisplayName
       | undefined;
+    let protectedEntryNpcIdOut: string | null = null;
 
     if (runSession?.runState) {
       const rs = runSession.runState as unknown as Record<string, unknown>;
@@ -2225,6 +2319,50 @@ ${npcList}`,
                 ?.speakingNpc as Record<string, unknown>
             )?.npcId) as string | null;
 
+          // [버그 5fcf825a — A안] 잠금 중 극적 등장 예외 판정기.
+          //   대화 잠금 턴에 한해, 첫 마커 NPC가 present CORE/SUB(≠잠금)이면
+          //   재귀속 대신 마커를 보존한다 (좁은 게이트 — 배경/무명은 교정 유지).
+          //   비잠금 턴은 undefined → 기존 재귀속 동작 완전 보존.
+          let isProtectedDramaticEntry:
+            | ((markerName: string) => string | null)
+            | undefined;
+          if (conversationLockActive) {
+            const ws = rs.worldState as Record<string, unknown> | undefined;
+            const curLoc = ws?.currentLocationId as string | undefined;
+            const locDyn = ws?.locationDynamicStates as
+              | Record<string, { presentNpcs?: string[] }>
+              | undefined;
+            const presentNpcIds: string[] = curLoc
+              ? (locDyn?.[curLoc]?.presentNpcs ?? [])
+              : [];
+            const resolveMarkerNpcId = (markerName: string): string | null => {
+              for (const n of this.content.getAllNpcs()) {
+                if (
+                  n.name === markerName ||
+                  n.unknownAlias === markerName ||
+                  n.shortAlias === markerName ||
+                  (n.aliases ?? []).includes(markerName)
+                ) {
+                  return n.npcId;
+                }
+              }
+              return null;
+            };
+            isProtectedDramaticEntry = (markerName: string): string | null => {
+              const enteredNpcId = resolveMarkerNpcId(markerName);
+              if (!enteredNpcId) return null;
+              const def = this.content.getNpc(enteredNpcId);
+              const ok = evaluateDramaticEntryGateCore({
+                enteredNpcId,
+                lockNpcId: primaryNpcId,
+                tier: def?.tier ?? 'SUB', // 로더 기본값 SUB (content.types)
+                presentNpcIds,
+                appearanceCount: npcStates[enteredNpcId]?.appearanceCount ?? 0,
+              });
+              return ok ? enteredNpcId : null;
+            };
+          }
+
           // 정본: fixNpcMismatchCore
           const fixed = fixNpcMismatchCore(
             narrative,
@@ -2233,9 +2371,15 @@ ${npcList}`,
             npcStates,
             (id) => this.content.getNpc(id),
             appearedNpcIds,
+            isProtectedDramaticEntry,
           );
           narrative = fixed.narrative;
-          if (fixed.corrected) {
+          if (fixed.protectedEntryNpcId) {
+            protectedEntryNpcIdOut = fixed.protectedEntryNpcId;
+            this.logger.log(
+              `[DramaticEntry] turn=${pending.turnNo} 잠금(primary=${primaryNpcId}) 중 주요 인물 극적 등장 마커 보존 → ${fixed.protectedEntryNpcId}`,
+            );
+          } else if (fixed.corrected) {
             this.logger.log(
               `[NpcMismatch] LLM이 ${fixed.corrected.wrongName}를 등장시켰으나 primaryNpcId=${primaryNpcId}(${fixed.corrected.correctName})로 교정`,
             );
@@ -2317,6 +2461,7 @@ ${npcList}`,
       portraits: portraitsOut,
       npcStatesRef: npcStatesRefOut,
       getNpcDisplayNameFn: getNpcDisplayNameFnOut,
+      protectedEntryNpcId: protectedEntryNpcIdOut,
     };
   }
 
@@ -3629,6 +3774,7 @@ ${npcList}`,
         jsonModeParsed,
         isStreamingMode,
         focusedNpcId: llmContext.focusedNpcId ?? null,
+        conversationLockActive: !!llmContext.conversationLock,
       });
       narrative = markerOutcome.narrative;
       const _appearedNpcIds = markerOutcome.appearedNpcIds;
@@ -3639,6 +3785,19 @@ ${npcList}`,
       // dialogue_slot에서 등장한 NPC도 _appearedNpcIds에 추가 (5.9 npcPortrait 갱신용)
       for (const npcId of dialogueSlotNpcIds) {
         _appearedNpcIds.add(npcId);
+      }
+
+      // [버그 5fcf825a — A안 잠금 인계] 잠금 중 주요 인물이 극적으로 등장·발화한
+      //   턴이면, 이번 턴 actionHistory 엔트리의 primaryNpcId 를 그 NPC 로
+      //   덮어써 다음 턴 conversationLock/primaryNpcId 를 인계한다. 그래야
+      //   다음 턴부터 등장 NPC 가 자연스러운 primary 로 대화를 이어간다
+      //   (회계사가 이번 턴 침묵 후 끝내 말 안 하던 anticlimax 해소).
+      if (markerOutcome.protectedEntryNpcId) {
+        await this.seedConversationHandover(
+          pending.runId,
+          pending.turnNo,
+          markerOutcome.protectedEntryNpcId,
+        );
       }
 
       // 6. DONE 저장 (토큰 통계 + 프롬프트 포함)

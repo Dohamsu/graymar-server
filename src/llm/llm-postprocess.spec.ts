@@ -9,6 +9,7 @@ import {
   ANON_SPEAKER_LABEL_RE,
   removeNpcPrefixInQuotesCore as stepE_removeNpcPrefixInQuotes,
   fixNpcMismatchCore as stepF_fixNpcMismatch,
+  evaluateDramaticEntryGateCore,
   insertSpaceAfterSentenceCore as stepG_insertSpaceAfterSentence,
   resolveColonLabelNpcCore,
   npcMentionedInNarrativeCore,
@@ -305,6 +306,148 @@ describe('Step F: NPC 불일치 교정', () => {
     );
     expect(result.narrative).toContain('@[에드릭 베일|/images/edric.png]');
     expect(result.narrative).not.toContain('그림자 상인');
+  });
+
+  // [버그 5fcf825a — A안 좁은 게이트] 잠금 중 극적 등장 예외
+  describe('극적 등장 예외 (isProtectedDramaticEntry) — Step F 마커 보존', () => {
+    // primary(잠금)=NPC_MOON_SEA(미렐라 대역), 등장=NPC_EDRIC(회계사, CORE)
+    const primaryLock = 'NPC_MOON_SEA';
+
+    it('게이트 통과 시 등장 NPC 마커를 보존하고 재귀속하지 않는다', () => {
+      const narrative = '@[날카로운 눈매의 회계사] "그 장부, 다시 봅시다."';
+      const gate = (markerName: string): string | null =>
+        markerName === '날카로운 눈매의 회계사' ? 'NPC_EDRIC' : null;
+      const appeared = new Set<string>();
+      const result = stepF_fixNpcMismatch(
+        narrative,
+        primaryLock,
+        {},
+        {},
+        getNpcDef,
+        appeared,
+        gate,
+      );
+      // 마커 보존 (미렐라로 교정 안 됨)
+      expect(result.narrative).toBe(narrative);
+      expect(result.corrected).toBeNull();
+      expect(result.protectedEntryNpcId).toBe('NPC_EDRIC');
+      expect(result.appearedNpcIds.has('NPC_EDRIC')).toBe(true);
+    });
+
+    it('게이트 미통과(null 반환)면 기존대로 primary로 재귀속한다', () => {
+      const narrative = '@[날카로운 눈매의 회계사] "그 장부, 다시 봅시다."';
+      const gate = (): string | null => null; // 배경/무명 취급
+      const result = stepF_fixNpcMismatch(
+        narrative,
+        primaryLock,
+        {},
+        {},
+        getNpcDef,
+        new Set(),
+        gate,
+      );
+      // primary(문서아)로 교정됨
+      expect(result.narrative).toContain('조용한 문서 실무자');
+      expect(result.narrative).not.toContain('날카로운 눈매의 회계사');
+      expect(result.corrected).not.toBeNull();
+      expect(result.protectedEntryNpcId).toBeFalsy();
+    });
+
+    it('predicate 미지정(기존 호출부)이면 원 동작 그대로 재귀속', () => {
+      const narrative = '@[날카로운 눈매의 회계사] "그 장부, 다시 봅시다."';
+      const result = stepF_fixNpcMismatch(
+        narrative,
+        primaryLock,
+        {},
+        {},
+        getNpcDef,
+        new Set(),
+      );
+      expect(result.narrative).toContain('조용한 문서 실무자');
+      expect(result.corrected).not.toBeNull();
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// 극적 등장 게이트 (evaluateDramaticEntryGateCore)
+//   [버그 5fcf825a] 잠금 중 극적 등장 NPC 재갈 해소 — 좁은 게이트로만 예외.
+//   ① CORE/SUB ② 첫 등장 ③ present ④ ≠잠금 전부 충족 시에만 true.
+// ═══════════════════════════════════════════════════════════
+
+describe('극적 등장 게이트 (evaluateDramaticEntryGateCore)', () => {
+  const present = ['NPC_MIRELLA', 'NPC_EDRIC_VEIL', 'NPC_GUARD_A'];
+
+  it('CORE 신규 등장(present·≠잠금) → 허용', () => {
+    expect(
+      evaluateDramaticEntryGateCore({
+        enteredNpcId: 'NPC_EDRIC_VEIL',
+        lockNpcId: 'NPC_MIRELLA',
+        tier: 'CORE',
+        presentNpcIds: present,
+        appearanceCount: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it('SUB 신규 등장 → 허용', () => {
+    expect(
+      evaluateDramaticEntryGateCore({
+        enteredNpcId: 'NPC_EDRIC_VEIL',
+        lockNpcId: 'NPC_MIRELLA',
+        tier: 'SUB',
+        presentNpcIds: present,
+        appearanceCount: 2,
+      }),
+    ).toBe(true);
+  });
+
+  it('BACKGROUND(경비·행인·군중) → 금지 (R6 라이라 회귀 방지)', () => {
+    expect(
+      evaluateDramaticEntryGateCore({
+        enteredNpcId: 'NPC_GUARD_A',
+        lockNpcId: 'NPC_MIRELLA',
+        tier: 'BACKGROUND',
+        presentNpcIds: present,
+        appearanceCount: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it('잠금 NPC 재등장(자기 자신) → 무동작(금지)', () => {
+    expect(
+      evaluateDramaticEntryGateCore({
+        enteredNpcId: 'NPC_MIRELLA',
+        lockNpcId: 'NPC_MIRELLA',
+        tier: 'CORE',
+        presentNpcIds: present,
+        appearanceCount: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it('현재 장소 presentNpcs 미포함 → 금지', () => {
+    expect(
+      evaluateDramaticEntryGateCore({
+        enteredNpcId: 'NPC_EDRIC_VEIL',
+        lockNpcId: 'NPC_MIRELLA',
+        tier: 'CORE',
+        presentNpcIds: ['NPC_MIRELLA'], // 회계사 부재
+        appearanceCount: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it('enteredNpcId null(마커 미해결) → 금지', () => {
+    expect(
+      evaluateDramaticEntryGateCore({
+        enteredNpcId: null,
+        lockNpcId: 'NPC_MIRELLA',
+        tier: 'CORE',
+        presentNpcIds: present,
+        appearanceCount: 0,
+      }),
+    ).toBe(false);
   });
 });
 
