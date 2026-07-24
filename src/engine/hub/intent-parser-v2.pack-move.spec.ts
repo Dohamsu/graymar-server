@@ -11,9 +11,16 @@ import { makeFakeContentWithMoveKeywords } from './test-support/fake-content-mov
 
 // star_sand LOC_SS_TOWER "오로라 관측탑" moveKeywords
 const STAR_SAND_MOVE_KEYWORDS = [
-  '관측탑', '오로라', '탑', '관측', '망원경', // LOC_SS_TOWER
-  '수녀원', '등불', '절벽', // LOC_SS_CONVENT
-  '심장', '웅덩이', // LOC_SS_HEART
+  '관측탑',
+  '오로라',
+  '탑',
+  '관측',
+  '망원경', // LOC_SS_TOWER
+  '수녀원',
+  '등불',
+  '절벽', // LOC_SS_CONVENT
+  '심장',
+  '웅덩이', // LOC_SS_HEART
 ];
 
 describe('detectLocationBasedMove — 팩 파생 장소명 (bug b4e4da73)', () => {
@@ -21,12 +28,14 @@ describe('detectLocationBasedMove — 팩 파생 장소명 (bug b4e4da73)', () =
     makeFakeContentWithMoveKeywords(STAR_SAND_MOVE_KEYWORDS),
   );
 
-  it.each(['관측탑으로 간다', '관측탑으로 가줘', '수녀원으로 향한다', '심장 웅덩이로 이동한다'])(
-    '"%s" → detectLocationBasedMove true',
-    (input) => {
-      expect(parser.detectLocationBasedMove(input)).toBe(true);
-    },
-  );
+  it.each([
+    '관측탑으로 간다',
+    '관측탑으로 가줘',
+    '수녀원으로 향한다',
+    '심장 웅덩이로 이동한다',
+  ])('"%s" → detectLocationBasedMove true', (input) => {
+    expect(parser.detectLocationBasedMove(input)).toBe(true);
+  });
 
   it('"관측탑으로 간다" → parse actionType MOVE_LOCATION', () => {
     expect(parser.parse('관측탑으로 간다').actionType).toBe('MOVE_LOCATION');
