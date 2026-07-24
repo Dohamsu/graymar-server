@@ -1270,11 +1270,11 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     ]);
     if (!result || !result.text || result.text.length < 2) return narrative;
 
-    // 연결어미 절단('…숙이며.')이면 매달린 종결부호를 정리해 대사가 이어지게.
-    let base = narrative;
-    if (reason === 'CONNECTIVE_CUT') {
-      base = trimDanglingConnectivePunct(base);
-    }
+    // 연결어미 꼬리('…숙이며.')의 매달린 종결부호를 정리해 대사가 이어지게.
+    // ②(REACTION_NO_DIALOGUE)로 잡힌 턴도 "…하며."류 꼬리일 수 있어 reason과
+    // 무관하게 항상 호출한다 — 꼬리가 없으면 no-op, 청유형 등 정상 종결은
+    // trim 어미 세트에 없어 보존된다.
+    const base = trimDanglingConnectivePunct(narrative);
 
     const marker = result.portraitUrl
       ? `@[${result.speakerAlias}|${result.portraitUrl}]`

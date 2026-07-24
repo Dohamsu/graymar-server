@@ -477,13 +477,27 @@ const VERBAL_REACTION_TYPES = new Set([
 const NONVERBAL_REACTION_TYPES = new Set(['SILENCE', 'DISMISS']);
 
 /**
- * 비종결 연결어미 — 뒤에 대사/행동이 와야 하는데 잘린 신호.
- * arch/88 스펙 목록(…며/…고/…자/…면서/…는데/…으며/…이며) + 대사 유도가
- * 강한 …더니/…자마자. 절단 시 모델이 종결부호(.,…)를 덧붙이는 경우를 커버해
- * 뒤 종결부호를 허용한다.
+ * 무조건 연결어미 — 이 음절로 끝나는 정상 종결 문장이 한국어에 사실상 없어
+ * reaction 무관하게 절단으로 확신할 수 있는 부류만 남긴다 (오탐 0 지향).
+ *
+ * 제외한 어미와 이유 (2026-07-24 오탐 리뷰):
+ * - "고": 명사 종결("낡은 창고.")·인용 생략 종결("…믿는다고.")과 충돌
+ * - "자": 청유형 종결("돌아가자.")·명사("혼자.", "남자.")와 충돌
+ * - "는데": 구어 여운형 종결("심상치 않은데.")과 충돌
+ * 이들 절단은 판정 ②(발화형 reaction + 따옴표 0)가 인수한다 — 발화형
+ * reaction 턴이면 꼬리 형태와 무관하게 ②가 발동하므로 커버리지 손실은
+ * "reaction null + 고/자/는데 절단" 교집합뿐. 형태소 분석 없는 regex로는
+ * 구분이 원리적으로 불가능해(word boundary 오매칭과 동일 구조) 애매한
+ * 증거로 대사를 날조하지 않는 쪽을 택했다(불변식 47 연장).
+ *
+ * 절단 시 모델이 종결부호(.,…)를 덧붙이는 경우를 커버해 뒤 종결부호를
+ * 허용한다 (CONNECTIVE_TAIL — trimDanglingConnectivePunct와 공유).
  */
-const CONNECTIVE_CUT_RE =
-  /(?:으며|이며|면서|자마자|는데|더니|며|고|자)\s*["'“”)\]]?\s*[.,·…．]*\s*$/;
+const CONNECTIVE_ENDINGS = '으며|이며|면서|자마자|더니|며';
+const CONNECTIVE_TAIL = String.raw`\s*["'“”)\]]?\s*[.,·…．]*\s*$`;
+const CONNECTIVE_CUT_RE = new RegExp(
+  `(?:${CONNECTIVE_ENDINGS})${CONNECTIVE_TAIL}`,
+);
 
 /**
  * 완결 대사(닫힌 따옴표 쌍) 존재 — 이미 대사가 있으면 보강 불필요(오탐 방지).
@@ -519,12 +533,17 @@ export function detectMissingDialogue(
 }
 
 /**
- * 연결어미 절단(CONNECTIVE_CUT) 시 매달린 종결부호를 정리해 대사가 자연스레
- * 이어지도록 한다("…숙이며." → "…숙이며"). 과설계 방지: 연결어미 뒤 종결부호만
- * 벗기고 문장 구조는 건드리지 않는다.
+ * 연결어미로 끝난 서술의 매달린 종결부호·따옴표 파편을 정리해 뒤에 붙는
+ * 대사가 자연스레 이어지도록 한다("…숙이며." → "…숙이며", "…숙이며". → 동일).
+ * CONNECTIVE_CUT_RE와 동일한 어미 세트·꼬리 패턴을 공유해 "감지되는데 정리는
+ * 안 되는" 불일치를 막는다. 연결어미 꼬리가 없으면 no-op이므로 판정 reason과
+ * 무관하게 항상 호출해도 안전하다 (②로 잡힌 "…하며." 턴도 커버).
+ * 청유형("돌아가자.") 등 정상 종결은 어미 세트에 없어 건드리지 않는다.
  */
+const CONNECTIVE_TRIM_RE = new RegExp(
+  `((?:${CONNECTIVE_ENDINGS}))${CONNECTIVE_TAIL}`,
+);
+
 export function trimDanglingConnectivePunct(text: string): string {
-  return text
-    .trimEnd()
-    .replace(/((?:으며|이며|면서|자마자|는데|더니|며|고|자))[.,·…．]+$/, '$1');
+  return text.trimEnd().replace(CONNECTIVE_TRIM_RE, '$1');
 }
