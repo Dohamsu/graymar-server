@@ -1,11 +1,14 @@
 import { IntentParserV2Service } from './intent-parser-v2.service.js';
+import { makeFakeContentForMove } from './test-support/fake-content-move.js';
 import type { IntentActionType } from '../../db/types/parsed-intent-v2.js';
 
 describe('IntentParserV2Service — 듀얼 Intent 시스템 (35개 입력)', () => {
   let parser: IntentParserV2Service;
 
   beforeAll(() => {
-    parser = new IntentParserV2Service();
+    // detectLocationBasedMove가 활성 팩 moveKeywords에서 장소명을 파생하므로
+    // 유닛 테스트엔 graymar 장소명을 반환하는 fake ContentLoader를 주입.
+    parser = new IntentParserV2Service(makeFakeContentForMove());
   });
 
   // ============================================================

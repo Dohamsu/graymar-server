@@ -5,6 +5,7 @@ import type {
   IntentTone,
 } from '../../db/types/index.js';
 import type { NpcForIntent } from '../../llm/prompts/intent-system-prompt.js';
+import { ContentLoaderService } from '../../content/content-loader.service.js';
 
 // ============================================================
 // HUB 키워드 → ActionType 매핑 (우선순위 높은 것이 위)
@@ -736,46 +737,9 @@ const KEYWORD_MAP: Array<{ keywords: string[]; actionType: IntentActionType }> =
   ];
 
 // ── 장소명 기반 이동 감지 ──
-// 입력에 장소명 + 이동 맥락이 동시에 나타나면 MOVE_LOCATION 강제 판정
-const LOCATION_NAMES = [
-  // LOC_MARKET
-  '시장',
-  '상점가',
-  '장터',
-  '노점가',
-  // LOC_GUARD
-  '경비대',
-  '초소',
-  '병영',
-  '수비대',
-  '순찰대',
-  // LOC_HARBOR
-  '항만',
-  '부두',
-  '항구',
-  '선착장',
-  '포구',
-  '배터',
-  // LOC_SLUMS
-  '빈민가',
-  '슬럼',
-  '하층가',
-  '빈민굴',
-  // LOC_NOBLE
-  '귀족',
-  '상류',
-  '저택',
-  '귀족가',
-  // LOC_TAVERN (기존 HUB 대체)
-  '선술집',
-  '숙소',
-  '잠긴 닻',
-  '거점',
-  // LOC_DOCKS_WAREHOUSE
-  '창고',
-  '창고구',
-  '하역장',
-];
+// 입력에 장소명 + 이동 맥락이 동시에 나타나면 MOVE_LOCATION 강제 판정.
+// 장소명은 하드코딩하지 않고 활성 팩 moveKeywords에서 파생 (detectLocationBasedMove,
+// 불변식 45). 구 graymar 전용 LOCATION_NAMES 배열은 제거 — bug b4e4da73.
 
 // "장소명 + 이 중 하나" → 이동 의도 (예: "항만 쪽으로", "시장에 가", "경비대로 향")
 // 주의: "에서"는 현재 위치를 나타내는 조사이므로 포함하지 않음 ("시장에서 물건을 본다" ≠ 이동)
@@ -917,6 +881,8 @@ const AFFORDANCE_TO_ACTION: Record<string, IntentActionType> = {
 
 @Injectable()
 export class IntentParserV2Service {
+  constructor(private readonly content: ContentLoaderService) {}
+
   parse(
     inputText: string,
     source: 'RULE' | 'LLM' | 'CHOICE' = 'RULE',
@@ -1145,20 +1111,26 @@ export class IntentParserV2Service {
   }
 
   detectLocationBasedMove(input: string): boolean {
-    for (const locName of LOCATION_NAMES) {
-      const idx = input.indexOf(locName);
-      if (idx === -1) continue;
+    // 불변식 45: 장소명은 하드코딩 리터럴이 아니라 활성 팩 moveKeywords에서 파생.
+    // (구 graymar 전용 LOCATION_NAMES 배열 → star_sand·silverdeen·karnholt 등
+    //  비-graymar 팩의 "관측탑으로 간다"류가 복합감지에 안 걸려 이동이 LLM
+    //  오분류로 흡수되던 버그. bug b4e4da73 — architecture/63 디커플링 누락 보강.)
+    for (const entry of this.content.getMoveKeywordEntries()) {
+      for (const locName of entry.keywords) {
+        const idx = input.indexOf(locName);
+        if (idx === -1) continue;
 
-      // 장소명 이후의 텍스트에서 이동 접미사 확인
-      const afterLoc = input.slice(idx + locName.length);
-      for (const suffix of MOVE_SUFFIXES) {
-        if (afterLoc.startsWith(suffix) || afterLoc.startsWith(' ' + suffix)) {
-          return true;
+        // 장소명 이후의 텍스트에서 이동 접미사 확인
+        const afterLoc = input.slice(idx + locName.length);
+        for (const suffix of MOVE_SUFFIXES) {
+          if (
+            afterLoc.startsWith(suffix) ||
+            afterLoc.startsWith(' ' + suffix)
+          ) {
+            return true;
+          }
         }
       }
-
-      // 장소명 이전에 "~로/~쪽으로" + 장소명 형태도 체크 (예: "쪽으로 시장")
-      // 일반적이지 않으므로 후방만 체크하면 충분
     }
     return false;
   }

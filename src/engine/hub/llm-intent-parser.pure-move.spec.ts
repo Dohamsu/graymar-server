@@ -7,9 +7,10 @@
 
 import { IntentParserV2Service } from './intent-parser-v2.service.js';
 import { LlmIntentParserService } from './llm-intent-parser.service.js';
+import { makeFakeContentForMove } from './test-support/fake-content-move.js';
 
 describe('detectPureMoveIntent — 무목적지 순수 이동 상용구', () => {
-  const parser = new IntentParserV2Service();
+  const parser = new IntentParserV2Service(makeFakeContentForMove());
 
   it.each([
     '다른 장소로 이동한다',
@@ -37,7 +38,7 @@ describe('detectPureMoveIntent — 무목적지 순수 이동 상용구', () => 
 });
 
 describe('mergeResults — 순수 이동 KW_OVERRIDE (LLM=TALK 흡수 방지)', () => {
-  const keywordParser = new IntentParserV2Service();
+  const keywordParser = new IntentParserV2Service(makeFakeContentForMove());
   const svc = new LlmIntentParserService(
     keywordParser,
     { getByName: () => null } as never,
