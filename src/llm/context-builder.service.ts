@@ -2158,9 +2158,22 @@ export class ContextBuilderService {
           if (presentNpcs && presentNpcs.length > 0) {
             // architecture/57: focused 모드에서는 메인 NPC 만 노출.
             //  보조 NPC 이름을 LLM 에 알려주면 "라이라가 매 턴 끼어드는" 회귀 유발.
-            const visibleNpcs = focusedNpcId
+            const focusedNpcs = focusedNpcId
               ? presentNpcs.filter((id) => id === focusedNpcId)
               : presentNpcs;
+            // bug cd14ed12 — faced(CORE/SUB)가 present면 BACKGROUND는 등장인물
+            //  목록에서 제외한다. BG를 LLM에 "이 장소에 있는 인물"로 광고하면
+            //  서술이 얼굴 없는 배경 엑스트라(얼음배 수리공=BG_03)를 다턴 대화
+            //  focus로 featuring → 마커가 BG에 바인딩 → 초상화 없는 focus 재발.
+            //  BG는 presentNpcs(월드 상태)엔 남되 서술 등장인물로는 비노출(진짜
+            //  배경 유지). faced가 하나도 없을 때만 BG로 폴백. focusedNpcId
+            //  경로는 이미 단일 지목이라 그대로 둔다.
+            const facedNpcs = focusedNpcId
+              ? focusedNpcs
+              : focusedNpcs.filter(
+                  (id) => this.content.getNpc(id)?.tier !== 'BACKGROUND',
+                );
+            const visibleNpcs = facedNpcs.length > 0 ? facedNpcs : focusedNpcs;
             if (visibleNpcs.length > 0) {
               const npcNames = visibleNpcs.map((id: string) => {
                 const npcDef = this.content.getNpc(id);
