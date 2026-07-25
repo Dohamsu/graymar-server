@@ -266,6 +266,13 @@ export type UIBundle = {
   questReveal?: QuestRevealUI;
   /** architecture/59 — 직전 턴 발견 fact의 방향 힌트 ([단서 방향] 연출, 발견 다음 턴 1회) */
   questDirectionHint?: { hint: string; mode: string };
+  /** [arch/89 B′] 미정산 사례금 — 의뢰인 대면·거점 복귀 시 받게 될 몫. HUD 표기용 */
+  pendingQuestReward?: {
+    gold: number;
+    equipmentCount: number;
+    /** 지급 주체 표시명 (의뢰인). 없으면 주체 미정 팩 */
+    clientName: string | null;
+  };
   // Narrative Engine v1 확장
   signalFeed?: SignalFeedItemUI[];
   activeIncidents?: IncidentSummaryUI[];

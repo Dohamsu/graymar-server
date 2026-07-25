@@ -132,6 +132,19 @@ export interface RunState {
   // Quest Progression: 퀘스트 단계 + 발견된 팩트 ID 추적
   questState?: string; // "S0_ARRIVE" | "S1_GET_ANGLE" | ... | "S5_RESOLVE"
   discoveredQuestFacts?: string[]; // ["FACT_LEDGER_EXISTS", "FACT_WAGE_FRAUD_PATTERN", ...]
+  /**
+   * 미정산 사례금 — arch/89 B′. fact 발견/단계 전환 시 즉시 지급하지 않고 여기 적립하며,
+   * ① 의뢰인 대면 ② 거점(HUB) 복귀 ③ 런 종료 중 먼저 오는 시점에 정산한다.
+   * 골목에서 혼자 단서를 캔 순간 골드가 솟던 "출처 없는 보상"을 없애기 위한 구조.
+   */
+  pendingQuestReward?: {
+    /** 미수령 골드 누적액 */
+    gold: number;
+    /** 미수령 장비 baseItemId 목록 (전환 보상 — 의뢰 경비 지원) */
+    equipment: string[];
+    /** 최초 적립 턴 (UI 안내·디버깅용) */
+    sinceTurn: number;
+  } | null;
   /** 다음 턴 LLM 프롬프트에 전달할 퀘스트 방향 힌트 (fact 발견 턴에 저장, 다음 턴에 전달 후 초기화) */
   pendingQuestHint?: {
     hint: string;

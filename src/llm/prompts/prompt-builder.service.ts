@@ -1552,7 +1552,13 @@ export class PromptBuilderService {
     }
 
     // events (UI kind는 필터링 — 정본: CLAUDE.md Event kind UI 필터링 대상)
-    const filteredEvents = sr.events.filter((e) => e.kind !== 'UI');
+    // [arch/89 A] 사례금 **적립**(QUEST_REWARD_ACCRUE)은 제외한다. 지급 주체가 장면에
+    // 없는데 금액을 프롬프트에 넣으면 LLM이 그 자리 NPC에게 임의 귀속시켜 돈을 쥐여주는
+    // 장면을 지어낸다(실측: 추궁당한 NPC가 사례금을 건넴). 실제 지급 턴의
+    // QUEST_REWARD_SETTLE은 주체가 명시돼 있고 의뢰인이 화자이므로 그대로 전달한다.
+    const filteredEvents = sr.events.filter(
+      (e) => e.kind !== 'UI' && !(e.tags ?? []).includes('QUEST_REWARD_ACCRUE'),
+    );
     if (filteredEvents.length > 0) {
       const eventTexts = filteredEvents.map((e) => `- [${e.kind}] ${e.text}`);
       factsParts.push(`[이번 턴 사건]\n${eventTexts.join('\n')}`);

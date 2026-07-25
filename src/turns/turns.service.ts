@@ -1339,12 +1339,29 @@ export class TurnsService {
       ...(locMemUpdate ? { locationMemories: locMemUpdate } : {}),
     };
 
+    // [arch/89 B′] 정산 트리거 ② — 거점 복귀. 의뢰인을 직접 찾아가지 않아도
+    // 여기서 밀린 사례금이 들어온다. 이 안전판이 없으면 "돈 받으러 가라"는
+    // 왕복 강요가 되어 불변식 47(의도 존중)과 충돌한다.
+    const hubSettlement = this.settlePendingQuestReward({
+      runState: hubRunState,
+      turnNo,
+      rng: this.rngService.create(run.seed, turnNo),
+      locationId: (currentNode.locationId as string | undefined) ?? '',
+      source: 'HUB_RETURN',
+    });
+
     await this.db
       .update(nodeInstances)
       .set({ status: 'NODE_ENDED', updatedAt: new Date() })
       .where(eq(nodeInstances.id, currentNode.id));
 
     const result = this.buildSystemResult(turnNo, currentNode, systemText);
+    if (hubSettlement) {
+      result.events.push(
+        ...this.buildSettlementEvents(turnNo, hubSettlement, 'SENT'),
+      );
+      result.diff.inventory.goldDelta += hubSettlement.gold;
+    }
     await this.commitTurnRecord(
       run,
       currentNode,
@@ -4476,7 +4493,8 @@ export class TurnsService {
     intentV3: ReturnType<IntentV3BuilderService['build']>;
     summaryText: string | null;
     totalGoldDelta: number;
-    questGoldReward: number;
+    /** arch/89 — 이번 턴 실지급(정산)된 사례금. 적립만 된 액수는 포함하지 않는다. */
+    questSettledGold: number;
     relevantIncident: ReturnType<
       IncidentManagementService['findRelevantIncident']
     >;
@@ -4498,7 +4516,7 @@ export class TurnsService {
       intentV3,
       summaryText,
       totalGoldDelta,
-      questGoldReward,
+      questSettledGold,
       relevantIncident,
       priorWsSnapshot,
       npcStates,
@@ -4534,7 +4552,7 @@ export class TurnsService {
           eventTags: event.payload.tags ?? [],
           summaryShort: summaryText ?? undefined,
           reputationChanges: resolveResult.reputationChanges,
-          goldDelta: totalGoldDelta + questGoldReward,
+          goldDelta: totalGoldDelta + questSettledGold,
           incidentImpact: relevantIncident
             ? {
                 incidentId: relevantIncident.incident.incidentId,
@@ -5890,36 +5908,33 @@ export class TurnsService {
       }
     }
 
-    // 경제 루프 — 단서·진전 사례금 지급 (fact 발견/questState 전환 누적분).
-    // totalGoldDelta(BRIBE 비용+행동 보상)는 fact 발견보다 앞서 이미 적용됐으므로 별도 가산.
-    if (questGoldReward > 0) {
-      updatedRunState.gold += questGoldReward;
-      this.logger.log(
-        `[Quest] 사례금 지급: +${questGoldReward}G (gold=${updatedRunState.gold})`,
-      );
-    }
+    // 경제 루프 — 단서·진전 사례금 (arch/89 B′): 발견 즉시 지급이 아니라 **적립**한다.
+    // 지급 주체(의뢰인)가 그 자리에 없는데 골드가 솟으면 LLM이 현장 NPC에게 임의
+    // 귀속시켜(추궁당한 상대가 사례금을 건네는 등) 장면이 붕괴한다 — 실측 72턴 중
+    // 35%가 "그 자리 NPC가 돈 주머니를 건넨다". 정산은 의뢰인 대면/거점 복귀/런 종료.
+    this.accruePendingQuestReward(
+      updatedRunState,
+      questGoldReward,
+      questEquipmentRewards,
+      turnNo,
+    );
 
-    // P4 — 단계 전환 장비 보상 지급 (의뢰인의 경비 지원, quest.json 정의라 유한)
-    const questEquipmentGranted: import('../db/types/equipment.js').ItemInstance[] =
-      [];
-    for (const baseItemId of questEquipmentRewards) {
-      const inst = this.rewardsService.grantQuestEquipment(baseItemId, rng);
-      if (!inst) continue;
-      if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
-      updatedRunState.equipmentBag.push(inst);
-      allEquipmentAdded.push(inst);
-      questEquipmentGranted.push(inst);
-      this.recordItemMemory(
-        updatedRunState,
-        inst,
-        turnNo,
-        '의뢰 지원 장비 (퀘스트 진전 보상)',
-        locationId,
-      );
-      this.logger.log(
-        `[Quest] 지원 장비 지급: ${inst.displayName} (${baseItemId})`,
-      );
-    }
+    // 정산 트리거 ① — 의뢰인과 대면한 턴. 이때만 "돈이 건네지는" 서술이 정당하다.
+    const questClientNpcId =
+      this.questProgression?.getQuestClientNpcId() ?? null;
+    const questSettlement =
+      questClientNpcId && event.payload.primaryNpcId === questClientNpcId
+        ? this.settlePendingQuestReward({
+            runState: updatedRunState,
+            turnNo,
+            rng,
+            locationId,
+            source: 'CLIENT_MEETING',
+          })
+        : null;
+    const questEquipmentGranted = questSettlement?.instances ?? [];
+    const settledGold = questSettlement?.gold ?? 0;
+    for (const inst of questEquipmentGranted) allEquipmentAdded.push(inst);
 
     // summary.short: "이번 턴의 핵심 한 문장" — 행동 + 판정결과만 (sceneFrame 분리하여 중복 전달 방지)
     const outcomeLabel =
@@ -5991,7 +6006,8 @@ export class TurnsService {
           : {}),
       },
       isNonChallenge,
-      totalGoldDelta + questGoldReward,
+      // arch/89 — HUD 골드 변화는 적립액이 아니라 이번 턴 실지급(정산)액
+      totalGoldDelta + settledGold,
       locationReward.items,
       isNonChallenge
         ? undefined
@@ -6093,29 +6109,13 @@ export class TurnsService {
         tags: ['GOLD', 'GOLD_SPEND'],
       });
     }
-    // 단서·진전 사례금 연출 — 행동 보상([골드])과 출처를 구분해 별도 표기.
-    // 서사 명분: 의뢰 경비 지원 (프롤로그의 의뢰인 구조). 수치는 quest.json rewards.
-    if (questGoldReward > 0) {
-      result.events.push({
-        id: `quest_gold_${turnNo}`,
-        kind: 'GOLD',
-        text: `[사례금] 조사 진전의 대가 ${questGoldReward}골드`,
-        tags: ['GOLD', 'GOLD_REWARD', 'QUEST_REWARD'],
-      });
-    }
-    // P4 — 전환 장비 보상 연출 (드랍 [장비]와 출처 구분)
-    for (const inst of questEquipmentGranted) {
-      result.events.push({
-        id: `quest_eq_${inst.instanceId.slice(0, 8)}`,
-        kind: 'LOOT',
-        text: `[사례금] 의뢰 지원 장비 — ${inst.displayName}`,
-        tags: ['LOOT', 'EQUIPMENT_DROP', 'QUEST_REWARD'],
-        data: {
-          baseItemId: inst.baseItemId,
-          instanceId: inst.instanceId,
-          displayName: inst.displayName,
-        } as Record<string, unknown>,
-      });
+    // [arch/89 B′] 적립 연출 + 미정산 잔액 HUD 노출
+    this.applyAccrualToResult(result, updatedRunState, questGoldReward, turnNo);
+    // [arch/89 C] 정산 연출 — 이 턴은 의뢰인이 화자이므로 서술에 돈이 오가도 정당하다.
+    if (questSettlement) {
+      result.events.push(
+        ...this.buildSettlementEvents(turnNo, questSettlement, 'HANDED'),
+      );
     }
     // 아이템 획득 연출 이벤트 — 드랍 + payload itemRewards 통합 단일 경로 (점검 2026-07-09).
     // [골드]/[장비] 이벤트와 접두 표기를 통일하고 item_reward 이중 이벤트를 제거.
@@ -6355,7 +6355,8 @@ export class TurnsService {
       intentV3,
       summaryText,
       totalGoldDelta,
-      questGoldReward,
+      // arch/89 — 기억에 남길 골드 변화도 실지급(정산)액 기준
+      questSettledGold: settledGold,
       relevantIncident,
       priorWsSnapshot,
       npcStates,
@@ -6416,6 +6417,22 @@ export class TurnsService {
         if (locMemEnd) postTickRunState.locationMemories = locMemEnd;
       } catch {
         /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */
+      }
+
+      // [arch/89 B′] 정산 트리거 ③ — 런 종료. 미수령분이 사장되지 않도록
+      // 마지막에 정산한다(여정 아카이브 최종 골드 정합).
+      const endSettlement = this.settlePendingQuestReward({
+        runState: postTickRunState,
+        turnNo,
+        rng,
+        locationId,
+        source: 'RUN_END',
+      });
+      if (endSettlement) {
+        result.events.push(
+          ...this.buildSettlementEvents(turnNo, endSettlement, 'CLOSED'),
+        );
+        result.diff.inventory.goldDelta += endSettlement.gold;
       }
 
       // 엔딩 생성
@@ -7688,6 +7705,175 @@ export class TurnsService {
         },
       },
       choices,
+    };
+  }
+
+  /**
+   * [arch/89 B′] 사례금 적립 — fact 발견/단계 전환분을 pendingQuestReward에 누적한다.
+   * 즉시 지급하지 않는 이유는 지급 주체가 장면에 없기 때문 (§결함 2 참조).
+   */
+  private accruePendingQuestReward(
+    runState: RunState,
+    gold: number,
+    equipment: string[],
+    turnNo: number,
+  ): void {
+    if (gold <= 0 && equipment.length === 0) return;
+    const acc = runState.pendingQuestReward ?? {
+      gold: 0,
+      equipment: [],
+      sinceTurn: turnNo,
+    };
+    acc.gold += gold;
+    acc.equipment = [...acc.equipment, ...equipment];
+    runState.pendingQuestReward = acc;
+    this.logger.log(
+      `[Quest] 사례금 적립: +${gold}G` +
+        `${equipment.length ? ` +장비 ${equipment.length}` : ''}` +
+        ` (미정산 누계 ${acc.gold}G)`,
+    );
+  }
+
+  /**
+   * [arch/89 B′] 적립 연출 + 미정산 잔액 HUD 노출.
+   * 적립 이벤트는 kind QUEST(골드는 아직 안 늘었다) + QUEST_REWARD_ACCRUE 태그로,
+   * 프롬프트 [이번 턴 사건]에서 제외되어 LLM이 현장 NPC에게 돈을 쥐여주지 않는다.
+   * 미정산 잔액이 HUD에 늘 보여야 정산 지연이 버그가 아니라 규칙으로 읽힌다.
+   */
+  private applyAccrualToResult(
+    result: ServerResultV1,
+    runState: RunState,
+    accruedGold: number,
+    turnNo: number,
+  ): void {
+    const owed = runState.pendingQuestReward;
+    const clientName =
+      this.questProgression?.getQuestClientDisplayName() ?? null;
+    if (owed && (owed.gold > 0 || owed.equipment.length > 0)) {
+      result.ui.pendingQuestReward = {
+        gold: owed.gold,
+        equipmentCount: owed.equipment.length,
+        clientName,
+      };
+    }
+    if (accruedGold > 0) {
+      const owedTotal = owed?.gold ?? 0;
+      result.events.push({
+        id: `quest_gold_accrue_${turnNo}`,
+        kind: 'QUEST',
+        text: clientName
+          ? `[사례금 적립] 조사 진전 ${accruedGold}골드 — ${clientName}에게 받을 몫 (누계 ${owedTotal}골드)`
+          : `[사례금 적립] 조사 진전 ${accruedGold}골드 (누계 ${owedTotal}골드)`,
+        tags: ['QUEST', 'QUEST_REWARD_ACCRUE'],
+      });
+    }
+  }
+
+  /**
+   * [arch/89 C] 정산 연출 이벤트 조립 — 지급 주체를 텍스트에 명시해 LLM 임의 귀속을
+   * 차단한다. 트리거 3곳(대면·거점·종료)이 문구만 다르고 구조가 같아 단일화.
+   */
+  private buildSettlementEvents(
+    turnNo: number,
+    settlement: {
+      gold: number;
+      instances: import('../db/types/equipment.js').ItemInstance[];
+      clientName: string | null;
+    },
+    phrasing: 'HANDED' | 'SENT' | 'CLOSED',
+  ): ServerResultV1['events'] {
+    const events: ServerResultV1['events'] = [];
+    const who = settlement.clientName;
+    if (settlement.gold > 0) {
+      let text: string;
+      if (!who) {
+        text = `[사례금] 밀린 조사 사례금 ${settlement.gold}골드`;
+      } else if (phrasing === 'HANDED') {
+        text = `[사례금] ${who}의 경비 지원 ${settlement.gold}골드`;
+      } else if (phrasing === 'SENT') {
+        text = `[사례금] ${who}${korParticle(who, '이', '가')} 보낸 경비 ${settlement.gold}골드`;
+      } else {
+        text = `[사례금] ${who}${korParticle(who, '과', '와')}의 셈을 마쳤다 — ${settlement.gold}골드`;
+      }
+      events.push({
+        id: `quest_gold_${turnNo}`,
+        kind: 'GOLD',
+        text,
+        tags: ['GOLD', 'GOLD_REWARD', 'QUEST_REWARD_SETTLE'],
+      });
+    }
+    for (const inst of settlement.instances) {
+      events.push({
+        id: `quest_eq_${inst.instanceId.slice(0, 8)}`,
+        kind: 'LOOT',
+        text: who
+          ? `[사례금] ${who}${korParticle(who, '이', '가')} 대준 의뢰 장비 — ${inst.displayName}`
+          : `[사례금] 의뢰 지원 장비 — ${inst.displayName}`,
+        tags: ['LOOT', 'EQUIPMENT_DROP', 'QUEST_REWARD_SETTLE'],
+        data: {
+          baseItemId: inst.baseItemId,
+          instanceId: inst.instanceId,
+          displayName: inst.displayName,
+        } as Record<string, unknown>,
+      });
+    }
+    return events;
+  }
+
+  /**
+   * [arch/89 B′] 미정산 사례금 정산 — 적립분(pendingQuestReward)을 실제 골드·장비로
+   * 지급하고 상태를 비운다. 호출 지점은 "지급 주체가 납득되는 순간" 셋뿐:
+   *   ① CLIENT_MEETING — 의뢰인과 대면한 LOCATION 턴 (대면 전달)
+   *   ② HUB_RETURN — 거점 복귀 (연락책 경유 정산 — 왕복 강요를 피하는 안전판)
+   *   ③ RUN_END — 런 종료 (미수령분 사장 방지)
+   * 적립이 없으면 null을 반환하므로 호출부는 분기 없이 그대로 넘길 수 있다.
+   */
+  private settlePendingQuestReward(params: {
+    runState: RunState;
+    turnNo: number;
+    rng: ReturnType<RngService['create']>;
+    locationId: string;
+    source: 'CLIENT_MEETING' | 'HUB_RETURN' | 'RUN_END';
+  }): {
+    gold: number;
+    instances: import('../db/types/equipment.js').ItemInstance[];
+    clientName: string | null;
+  } | null {
+    const { runState, turnNo, rng, locationId, source } = params;
+    const pending = runState.pendingQuestReward;
+    if (!pending || (pending.gold <= 0 && pending.equipment.length === 0)) {
+      return null;
+    }
+
+    const instances: import('../db/types/equipment.js').ItemInstance[] = [];
+    for (const baseItemId of pending.equipment) {
+      const inst = this.rewardsService.grantQuestEquipment(baseItemId, rng);
+      if (!inst) continue;
+      if (!runState.equipmentBag) runState.equipmentBag = [];
+      runState.equipmentBag.push(inst);
+      instances.push(inst);
+      this.recordItemMemory(
+        runState,
+        inst,
+        turnNo,
+        '의뢰 지원 장비 (퀘스트 진전 보상)',
+        locationId,
+      );
+    }
+
+    if (pending.gold > 0) runState.gold += pending.gold;
+    runState.pendingQuestReward = null;
+
+    this.logger.log(
+      `[Quest] 사례금 정산(${source}): +${pending.gold}G` +
+        `${instances.length ? ` +장비 ${instances.length}` : ''}` +
+        ` (gold=${runState.gold})`,
+    );
+
+    return {
+      gold: pending.gold,
+      instances,
+      clientName: this.questProgression?.getQuestClientDisplayName() ?? null,
     };
   }
 

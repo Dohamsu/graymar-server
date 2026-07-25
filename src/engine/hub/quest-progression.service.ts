@@ -23,6 +23,8 @@ interface QuestFactDef {
 interface QuestData {
   questId: string;
   title?: string;
+  /** 사례금 지급 주체 — 의뢰인 NPC (arch/89). 미정의 시 prologue.npcId fallback */
+  clientNpcId?: string;
   states: string[];
   stateDescriptions?: Record<string, string>;
   stateTransitions: Record<string, StateTransition>;
@@ -107,6 +109,27 @@ export class QuestProgressionService {
   getTransitionGoldReward(from: string, to: string): number {
     const quest = this.content.getQuestData() as QuestData | null;
     return quest?.rewards?.transitionGold?.[`${from}→${to}`] ?? 0;
+  }
+
+  /**
+   * 사례금 지급 주체 — 의뢰인 NPC id (arch/89 C).
+   * quest.json clientNpcId가 정본이며, 미정의 팩은 프롤로그 화자(의뢰를 준 인물)로
+   * fallback. 둘 다 없으면 null → 사례금은 주체 없이 적립만 되고 거점 정산만 남는다.
+   */
+  getQuestClientNpcId(): string | null {
+    const quest = this.content.getQuestData() as QuestData | null;
+    return quest?.clientNpcId ?? this.content.getPrologueMeta()?.npcId ?? null;
+  }
+
+  /** 의뢰인 표시명 — 이벤트 텍스트의 지급 주체 명시용 (불변식 45: 로더 파생) */
+  getQuestClientDisplayName(): string | null {
+    const npcId = this.getQuestClientNpcId();
+    if (!npcId) return null;
+    return (
+      this.content.getNpc(npcId)?.name ??
+      this.content.getPrologueMeta()?.displayName ??
+      null
+    );
   }
 
   /** P4 — 단계 전환 장비 보상 baseItemId (미정의 시 null) */
