@@ -1932,18 +1932,14 @@ export class PromptBuilderService {
           DUSK: '황혼',
           NIGHT: '밤',
         };
-        const transPhrase: Record<string, string> = {
-          DAWN: '어느새 동이 트기 시작하고',
-          DAY: '해가 완전히 떠올라 거리가 밝아지고',
-          DUSK: '해가 기울며 그림자가 길어지고',
-          NIGHT: '어둠이 내려앉아 등불이 하나둘 켜지고',
-        };
+        // 불변식 50: 구체 예문 주입 금지 — 구 transPhrase 예문("해가 기울며
+        // 그림자가 길어지고" 등)을 LLM이 그대로 복제해 전환 38회 중 41히트로
+        // 반복되던 anchor 실측(2026-07-25). 추상 지시만 남긴다.
         const fromKr = transKr[ctx.phaseTransition.from] ?? '낮';
         const toKr = transKr[ctx.phaseTransition.to] ?? '밤';
-        const phrase = transPhrase[ctx.phaseTransition.to] ?? '시간이 흐르고';
         factsParts.push(
           `[시간대 전환] 이번 장면에서 ${fromKr}에서 ${toKr}(으)로 시간이 넘어간다.\n` +
-            `- 서술 도입부에 시간 흐름을 한 문장으로 자연스럽게 묘사(예: "${phrase}…").\n` +
+            `- 서술 도입부에 시간의 흐름을 한 문장 녹이되, 이 장소·상황의 구체 사물로 표현하라 (하늘·조명 상투구 반복 금지).\n` +
             `- 조명·분위기를 새 시간대(${toKr})로 바꾸되, 급작스런 점프가 아니라 장면에 녹여라.`,
         );
       }

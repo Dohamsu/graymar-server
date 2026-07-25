@@ -390,6 +390,11 @@ import {
 } from './npc-agitation.core.js';
 import { computeTacticEffects } from '../engine/combat/combat-tactic.core.js';
 import { mergeInventoryItem } from './run-state-apply.core.js';
+import {
+  computeTurnTimeCost,
+  MOVE_TIME_COST,
+  TRAVEL_LEG_TIME_COST,
+} from './time-cost.js';
 
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { and, asc, eq, ne, sql } from 'drizzle-orm';
@@ -901,7 +906,11 @@ export class TurnsService {
     if (hubChoiceLoc) {
       const locationId = hubChoiceLoc.locationId;
       const locName = hubChoiceLoc.name;
-      const newWs = this.worldStateService.moveToLocation(ws, locationId);
+      // 이동 = 시간 소요 (arch/81 2차) — HUB 경유 편도 1tick (왕복 합 = 직행 2)
+      const newWs = this.worldTick.advanceClockForTravel(
+        this.worldStateService.moveToLocation(ws, locationId),
+        TRAVEL_LEG_TIME_COST,
+      );
       updatedRunState.worldState = newWs;
       updatedRunState.actionHistory = []; // LOCATION 이동 시 고집 이력 초기화
 
@@ -1318,7 +1327,11 @@ export class TurnsService {
       runState,
       turnNo,
     );
-    const hubWs = this.worldStateService.returnToHub(ws);
+    // 이동 = 시간 소요 (arch/81 2차) — HUB 경유 편도 1tick (왕복 합 = 직행 2)
+    const hubWs = this.worldTick.advanceClockForTravel(
+      this.worldStateService.returnToHub(ws),
+      TRAVEL_LEG_TIME_COST,
+    );
     const hubRunState: RunState = {
       ...runState,
       worldState: hubWs,
@@ -1395,27 +1408,8 @@ export class TurnsService {
     };
   }
 
-  /**
-   * 행동 유형별 시간 비용(tick) 산정.
-   * 시간을 행동의 결과로 만들어 "대화 도중 강제 일몰"·기계식 밤낮 전환 체감을 제거한다.
-   * - 순수 사교 발화(인사/안부/감사/작별)는 시간 정지(0) — 잡담으로 해가 지지 않는다.
-   * - 이동·휴식은 명시적으로 시간을 크게 보낸다(2).
-   * - 그 외 일반 행동은 1tick(기존 카덴스 보존).
-   * 1일=12tick 기준: 사교 0-cost가 평균 tick/turn을 낮춰 전환이 덜 잦아진다.
-   */
-  private computeTurnTimeCost(
-    actionType: string,
-    dialogueAct: import('../common/dialogue-act.js').DialogueAct | null,
-  ): number {
-    if (dialogueAct) return 0; // GREETING/WELLBEING/THANKS/FAREWELL = 시간 정지
-    switch (actionType) {
-      case 'REST':
-      case 'MOVE_LOCATION':
-        return 2;
-      default:
-        return 1;
-    }
-  }
+  // (시간 비용 산정은 time-cost.ts computeTurnTimeCost 정본으로 이전 —
+  //  arch/81 2차: 대화 계열 0, 시간이 걸리는 행동 1, 휴식 2, 이동은 travel 헬퍼 소유)
 
   // [arch/77 P3.3] Narrative Engine 틱·사건 반영·전설 보상 묶음 —
   // preStepTick → 팩 게이지 → Incident impact → IncidentResolutionBridge →
@@ -1452,9 +1446,9 @@ export class TurnsService {
     const incidentDefs = this.content.getIncidentsData() as IncidentDef[];
     ws = this.worldStateService.migrateWorldState(ws);
 
-    // 행동 가중 시간 비용 — 인사·잡담은 시간 정지(0), 이동·휴식은 크게, 나머지 1tick.
-    // 시간이 행동의 결과가 되게 하여 "대화 도중 강제 일몰"·기계식 전환 체감을 제거한다.
-    const timeCost = this.computeTurnTimeCost(intent.actionType, dialogueAct);
+    // 행동 가중 시간 비용 (time-cost.ts 정본) — 대화 계열·사교 발화는 시간 정지(0),
+    // 시간이 걸리는 행동만 1tick, 휴식 2. 대화 중 시간대 전환을 원천 차단한다.
+    const timeCost = computeTurnTimeCost(intent.actionType, dialogueAct);
 
     // 전환 감지용 — 틱 이전 4상 시간대 캡처.
     const prevPhaseV2 = ws.phaseV2;
@@ -7856,8 +7850,12 @@ export class TurnsService {
     );
     if (locMemTransition) updatedRunState.locationMemories = locMemTransition;
 
-    // WorldState 업데이트
-    const newWs = this.worldStateService.moveToLocation(ws, toLocationId);
+    // WorldState 업데이트 — 이동 = 시간 소요 (arch/81 2차), 전환 시 도착 턴에
+    // recentPhaseTransition 이 [시간대 전환] 디렉티브로 소비된다.
+    const newWs = this.worldTick.advanceClockForTravel(
+      this.worldStateService.moveToLocation(ws, toLocationId),
+      MOVE_TIME_COST,
+    );
     updatedRunState.worldState = newWs;
     updatedRunState.actionHistory = []; // 이동 시 고집 이력 초기화
 

@@ -246,6 +246,55 @@ export class WorldTickService {
     return this.postStepTick(preWs, resolvedPatches);
   }
 
+  /**
+   * 이동 전용 경량 시계 전진 — arch/81 2차 재설계 (2026-07-25).
+   *
+   * 장소 전환 경로(HUB go_* / performLocationTransition / returnToHubFlow)는
+   * 행동 파이프라인(preStepTick)을 타지 않는 조기 return이라 시간이 전혀 흐르지
+   * 않았다. "시간은 이동과 시간이 걸리는 행동에서만 흐른다" 설계에 따라 이동
+   * 턴에 이 헬퍼로 시계만 전진시킨다.
+   *
+   * 의도적으로 Incident tick·spawn·signal·packMeter는 제외한다 — 이동 SYSTEM
+   * 턴에 사건 스폰/시그널이 붙는 부작용 방지. 사건 진행은 기존대로 행동 턴
+   * (preStepTick)이 소유한다.
+   *
+   * - globalClock/phaseV2/day 전진 + timePhase 파생 미러 (불변식 49)
+   * - 전환 발생 시 recentPhaseTransition 기록 → 도착 턴 LLM이 [시간대 전환]
+   *   디렉티브로 "도착하니 해가 저물어 있었다"류 서술을 받는다.
+   * - NPC 스케줄 재배치 (시간이 흘렀으므로 위치 갱신)
+   */
+  advanceClockForTravel(ws: WorldState, ticks: number): WorldState {
+    if (ticks <= 0) return ws;
+    const prevPhase: TimePhaseV2 =
+      ws.phaseV2 ?? (ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY');
+
+    let updated: WorldState = {
+      ...ws,
+      phaseV2: prevPhase,
+      globalClock: ws.globalClock + ticks,
+    };
+    updated = this.advancePhaseV2(updated);
+    updated = {
+      ...updated,
+      timePhase: deriveTimePhaseFromV2(updated.phaseV2),
+      recentPhaseTransition:
+        prevPhase !== updated.phaseV2
+          ? {
+              from: prevPhase,
+              to: updated.phaseV2,
+              atClock: updated.globalClock,
+            }
+          : null,
+    };
+
+    // 시간이 흘렀으니 NPC 위치도 스케줄 기준으로 재배치
+    if (this.npcSchedule) {
+      this.npcSchedule.updateAllNpcLocations(updated);
+    }
+
+    return updated;
+  }
+
   private advancePhaseV2(ws: WorldState): WorldState {
     const tickInDay = ws.globalClock % TICKS_PER_DAY;
     let accumulated = 0;
