@@ -384,6 +384,7 @@ export function findDowngradeLockNpcCore(
 import { korParticle, korParticleRo } from '../common/korean.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 import { decideWitnessReaction } from './witness-reaction.core.js';
+import { resolvePlayerTargetOverride } from './npc-override.core.js';
 import {
   agitationCooldownActive,
   decideAgitatedBehavior,
@@ -4866,91 +4867,25 @@ export class TurnsService {
     // 플레이어가 ACTION 텍스트에서 특정 NPC를 지목한 경우, 이벤트의 primaryNpcId를 교체
     // 우선순위: (1) 실명 전체 매칭 (2) "~에게" 패턴 키워드 (3) 별칭 전체 매칭 (4) 키워드 3자+ 부분 매칭
     if (body.input.type === 'ACTION' && rawInput) {
-      const playerInputLower = rawInput.toLowerCase();
-      const allNpcDefs = this.content.getAllNpcs();
-      let overrideNpcId: string | null = null;
-
-      // Pass 1: 실명 또는 별칭 전체 매칭
-      for (const npcDef of allNpcDefs) {
-        if (
-          npcDef.name &&
-          playerInputLower.includes(npcDef.name.toLowerCase())
-        ) {
-          overrideNpcId = npcDef.npcId;
-          break;
-        }
-        if (
-          npcDef.unknownAlias &&
-          playerInputLower.includes(npcDef.unknownAlias.toLowerCase())
-        ) {
-          overrideNpcId = npcDef.npcId;
-          break;
-        }
-      }
-
-      // Pass 2: "~에게" 패턴에서 대상 NPC 추출 (가장 정확한 플레이어 의도)
-      if (!overrideNpcId) {
-        const egeMatch = rawInput.match(/(.+?)에게/);
-        if (egeMatch) {
-          const targetWord = egeMatch[1].trim().toLowerCase();
-          for (const npcDef of allNpcDefs) {
-            if (npcDef.name && targetWord.includes(npcDef.name.toLowerCase())) {
-              overrideNpcId = npcDef.npcId;
-              break;
-            }
-            const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
-            if (
-              aliasKeywords.some(
-                (kw: string) =>
-                  kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
-              )
-            ) {
-              overrideNpcId = npcDef.npcId;
-              break;
-            }
-          }
-        }
-      }
-
-      // Pass 3: "~을/를" 패턴에서 대상 NPC 추출
-      if (!overrideNpcId) {
-        const eulMatch = rawInput.match(/(.+?)(?:을|를)\s/);
-        if (eulMatch) {
-          const targetWord = eulMatch[1].trim().toLowerCase();
-          for (const npcDef of allNpcDefs) {
-            if (npcDef.name && targetWord.includes(npcDef.name.toLowerCase())) {
-              overrideNpcId = npcDef.npcId;
-              break;
-            }
-            const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
-            if (
-              aliasKeywords.some(
-                (kw: string) =>
-                  kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
-              )
-            ) {
-              overrideNpcId = npcDef.npcId;
-              break;
-            }
-          }
-        }
-      }
-
-      // Pass 4: 별칭 키워드 부분 매칭 (3자 이상만 — 오매칭 방지)
-      if (!overrideNpcId) {
-        for (const npcDef of allNpcDefs) {
-          const aliasKeywords = npcDef.unknownAlias?.split(/\s+/) ?? [];
-          if (
-            aliasKeywords.some(
-              (kw: string) =>
-                kw.length >= 3 && playerInputLower.includes(kw.toLowerCase()),
-            )
-          ) {
-            overrideNpcId = npcDef.npcId;
-            break;
-          }
-        }
-      }
+      // [arch/92 §10] 판정은 npc-override.core 정본 — 추론 매칭(Pass 2~4)을
+      // **현재 장소 재실 NPC**로 좁히고, 별칭은 **핵심 명사**로만 매칭한다.
+      // 구 구현은 팩 전체 NPC × 별칭 토큰 부분 매칭이라 "수상한 곳을 조사한다"가
+      // 창고 관리자('수상한 관리인')를 경비대 지구 화자로 세웠다 (V10 실측).
+      const presentNpcIdSet = new Set<string>([
+        ...((
+          ws.locationDynamicStates as
+            | Record<string, { presentNpcs?: string[] }>
+            | undefined
+        )?.[locationId]?.presentNpcs ?? []),
+        ...Object.entries(ws.npcLocations ?? {})
+          .filter(([, loc]) => loc === locationId)
+          .map(([id]) => id),
+      ]);
+      const overrideNpcId = resolvePlayerTargetOverride(
+        rawInput,
+        this.content.getAllNpcs(),
+        presentNpcIdSet,
+      );
 
       if (overrideNpcId) {
         const prevNpc = (event.payload as Record<string, unknown>)
