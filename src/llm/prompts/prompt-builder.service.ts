@@ -1580,14 +1580,26 @@ export class PromptBuilderService {
       filteredEvents.every((e) => e.kind === 'MOVE' || e.kind === 'SYSTEM') &&
       (inputType === 'SYSTEM' || hasMoveEvent);
     if (isMoveOnly) {
-      // [#10] 앵커 제거 + positive 단정. 과거 문구의 "배경 활동(지나가기,
-      // 일하기)까지만 허용"이 오히려 배경 인물 등장을 유도하는 앵커였고(불변식
-      // 50), 그렇게 세운 인물에 저모델이 대사를 붙여 즉흥 NPC 무명 대사가 샜다
-      // (silverdeen T2 노부인·T10 노인 실측). 예시 앵커를 지우고 "환경·분위기만"
-      // 을 앞세운 positive 단정으로 전환.
-      factsParts.push(
-        '⚠️ **새 장소 도착** 장면입니다. 직전 장소의 인물들은 그곳에 남았습니다. 이 장면은 오직 이 장소의 환경·분위기 묘사만으로 씁니다 — 등장하는 인물도, 대사도 없습니다.',
-      );
+      // [arch/92 A-3] HUB 복귀 턴은 **도착지가 없다** — 거점은 장소 노드가 아니라
+      // currentLocationId=null 인 추상 상태다. 그런데 "거점으로 돌아왔다"가 MOVE
+      // 이벤트라 아래 도착 디렉티브가 걸려 "이 장소의 환경·분위기를 묘사하라"고
+      // 명령했고, LLM은 없는 장소를 창작했다 (극야 팩에서 "밝은 햇살이 등골목
+      // 사이로 쏟아진다" 실측 — 세계관 위반). 거점은 도착이 아니라 경유로 튼다.
+      // 구체 장면 문구를 주입하지 않는 이유는 불변식 50 — 산문 앵커는 반복된다.
+      if (isHub) {
+        factsParts.push(
+          '⚠️ **이동 중** 장면입니다. 거점은 특정 건물이나 실내가 아니라 장소와 장소를 잇는 지점입니다 — 도착지를 묘사하지 말고, 직전 장소를 떠나 걸음을 옮기는 과정만 짧게 씁니다. 등장하는 인물도, 대사도 없습니다.',
+        );
+      } else {
+        // [#10] 앵커 제거 + positive 단정. 과거 문구의 "배경 활동(지나가기,
+        // 일하기)까지만 허용"이 오히려 배경 인물 등장을 유도하는 앵커였고(불변식
+        // 50), 그렇게 세운 인물에 저모델이 대사를 붙여 즉흥 NPC 무명 대사가 샜다
+        // (silverdeen T2 노부인·T10 노인 실측). 예시 앵커를 지우고 "환경·분위기만"
+        // 을 앞세운 positive 단정으로 전환.
+        factsParts.push(
+          '⚠️ **새 장소 도착** 장면입니다. 직전 장소의 인물들은 그곳에 남았습니다. 이 장면은 오직 이 장소의 환경·분위기 묘사만으로 씁니다 — 등장하는 인물도, 대사도 없습니다.',
+        );
+      }
     }
 
     // 순회 검증 ② (2026-07-12): 플레이어가 밝힌 자기 정보 — NPC가 이미 들은
@@ -1926,10 +1938,21 @@ export class PromptBuilderService {
         DUSK: '해가 기울어 그림자가 길어짐. 가로등이 하나둘 켜짐.',
         NIGHT: '어둠이 내려앉음. 달빛/가로등/등불이 주조명.',
       };
+      // [arch/92 A-6] 위 기본값은 온대 중세 도시 전제라 극야·지하 팩에서 세계관을
+      // 깬다 (별빛모래 극야 낮에 "밝은 햇살이 쏟아진다" 실측). 팩이 선언한 위상만
+      // 대체한다. 오버라이드가 있으면 모순 예시("낮에 달빛")도 그 팩에서는 틀린
+      // 지시가 되므로 추상 문구로 바꾼다.
+      const packHint =
+        this.content.getWorldMeta().phaseHints?.[
+          phase as 'DAWN' | 'DAY' | 'DUSK' | 'NIGHT'
+        ];
+      const contradictionRule = packHint
+        ? '- 서술에 이 시간대와 모순되는 조명·광원 묘사 금지.'
+        : '- 서술에 이 시간대와 모순되는 단서(예: 밤에 "햇살", 낮에 "달빛") 사용 금지.';
       factsParts.push(
         `[현재 시간대] ${phaseKr} (${phase})\n` +
-          `- ${phaseHint[phase] ?? ''}\n` +
-          `- 서술에 이 시간대와 모순되는 단서(예: 밤에 "햇살", 낮에 "달빛") 사용 금지.\n` +
+          `- ${packHint ?? phaseHint[phase] ?? ''}\n` +
+          `${contradictionRule}\n` +
           `- 시간 전환이 필요하면 "시간이 흘러", "해가 기울어" 같은 전환 문구를 먼저 명시.`,
       );
 
@@ -2409,6 +2432,12 @@ export class PromptBuilderService {
       // LOCATION 세션 없으면 글로벌 최근 이력 사용
       // 원문 제거 — THREAD 요약 또는 행동+판정만 전달 (어휘 피드백 루프 차단)
       const turnLines = ctx.recentTurns.map((t) => {
+        // [arch/92 A-4] 이동 도착 턴 — 플레이어 입력이 없으므로 "선택: \"\"" 대신
+        // 이동 사실 1줄. 이 줄이 빠져 있으면 "떠난다 → 떠난다"가 연속으로 보여
+        // LLM이 이미 떠난 장소를 다시 떠나는 서술을 낸다 (star_sand T9~T11 실측).
+        if (t.moveArrival) {
+          return `[턴 ${t.turnNo}] (이동) ${t.moveArrival}`;
+        }
         const actionLabel = t.inputType === 'ACTION' ? '행동' : '선택';
         const outcomeLabel =
           t.resolveOutcome === 'SUCCESS'

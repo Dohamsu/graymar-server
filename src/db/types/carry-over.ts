@@ -115,6 +115,14 @@ export interface ScenarioWorldMeta {
   settingLine: string;
   /** HUB 모드 지역 요약 (프롬프트 [게임 모드] 블록) */
   regionSummary: string;
+  /**
+   * [arch/92 A-6] 4상 시간대 묘사 오버라이드 (선택).
+   *
+   * 기본값은 온대 중세 도시 전제("해가 밝게 비치고 시장/거리가 활기참")라
+   * 극야·지하·상시야간 팩에서 세계관을 깬다 (별빛모래 극야에 "밝은 햇살" 실측).
+   * 팩이 선언한 위상만 대체하고, 미선언 위상은 기본값을 그대로 쓴다.
+   */
+  phaseHints?: Partial<Record<'DAWN' | 'DAY' | 'DUSK' | 'NIGHT', string>>;
 }
 
 /** 거점(허브) 메타 — go_hub 라벨/fallback 장소의 단일 소스 (architecture/63) */

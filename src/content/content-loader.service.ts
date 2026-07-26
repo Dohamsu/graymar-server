@@ -71,11 +71,14 @@ const DEFAULT_WORLD_META: ScenarioWorldMeta = {
   regionSummary:
     '그레이마르 7개 지역 자유 탐험. 선술집이 거점. Heat(경계도) 변동. 시간대별 분위기 차이.',
 };
+// [arch/92] 거점 표기는 거점 장소(LOC_TAVERN 등)의 고유명을 쓰지 않는다 —
+// 거점(추상 상태)과 거점 장소(정식 LOCATION)가 같은 이름을 공유하면 "선술집에서
+// 선술집으로 향한다"가 되고, 여관 안에서 "여관으로 돌아간다" 선택지가 뜬다.
 const DEFAULT_HUB_META: ScenarioHubMeta = {
   locationId: 'LOC_TAVERN',
-  name: '잠긴 닻 선술집',
-  returnLabel: "'잠긴 닻' 선술집으로 돌아간다",
-  returnHint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
+  name: '그레이마르 거점',
+  returnLabel: '거점으로 돌아간다',
+  returnHint: '거점에서 정보를 정리하고 다른 지역을 탐색한다',
   defaultLocationId: 'LOC_MARKET',
 };
 // atmospheres/lines 등 스크립트는 팩 scenario.json 필수 — fallback은 화자 신원만

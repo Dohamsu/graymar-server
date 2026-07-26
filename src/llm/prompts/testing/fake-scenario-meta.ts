@@ -11,9 +11,9 @@ export const FAKE_WORLD_META = {
 
 export const FAKE_HUB_META = {
   locationId: 'LOC_TAVERN',
-  name: '잠긴 닻 선술집',
-  returnLabel: "'잠긴 닻' 선술집으로 돌아간다",
-  returnHint: '선술집에서 정보를 정리하고 다른 지역을 탐색한다',
+  name: '그레이마르 거점',
+  returnLabel: '거점으로 돌아간다',
+  returnHint: '거점에서 정보를 정리하고 다른 지역을 탐색한다',
   defaultLocationId: 'LOC_MARKET',
 };
 

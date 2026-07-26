@@ -44,6 +44,62 @@ export interface RecentTurnEntry {
   rawInput: string;
   resolveOutcome?: string;
   narrative: string;
+  /**
+   * [arch/92 A-4] 이동/거점 복귀 도착 턴(SYSTEM + MOVE 이벤트). 플레이어 입력이
+   * 없어 rawInput 이 비어 있으므로 이력 렌더링을 "선택" 대신 이동 표기로 바꾼다.
+   */
+  moveArrival?: string;
+}
+
+/** selectRecentTurnEntries 입력 — recentTurns 조회 컬럼 (DB 행 shape) */
+export interface RecentTurnRow {
+  turnNo: number;
+  inputType: string;
+  rawInput: string;
+  serverResult: unknown;
+  llmOutput: string | null;
+}
+
+/** 최근 이력에 남길 턴 수 (구 SQL limit 5와 동일) */
+const RECENT_TURN_WINDOW = 5;
+
+/**
+ * [arch/92 A-4] 최근 턴 이력 선별 — **정본**.
+ *
+ * 구 동작은 SQL 단계에서 `inputType='SYSTEM'` 을 전량 제외했다. 그 결과 이동
+ * **도착** 턴이 이력에서 통째로 빠져, "go_hub(부두 이탈) → go_ss_inn" 이 연속으로
+ * 보였고 LLM 은 2턴 전에 떠난 부두를 다시 떠나는 서술을 재생했다
+ * (star_sand T9~T11 실측). 도착 턴 1줄이 그 공백을 메운다.
+ *
+ * 살리는 SYSTEM 턴은 MOVE 이벤트를 실은 것뿐 — 프롤로그·전투 전이 등 나머지
+ * SYSTEM 턴은 종전대로 제외한다 (노이즈만 늘린다).
+ *
+ * 입력은 **turnNo 내림차순**(최신 우선)을 가정한다. 호출부가 runId 로 스코프한
+ * 행만 넘겨야 한다 — 이 함수는 스코프를 검사하지 않는다.
+ */
+export function selectRecentTurnEntries(
+  rowsDesc: readonly RecentTurnRow[],
+): RecentTurnEntry[] {
+  return [...rowsDesc]
+    .reverse() // 시간순 정렬
+    .map((t) => {
+      const sr = t.serverResult as ServerResultV1 | null;
+      const moveArrival =
+        t.inputType === 'SYSTEM'
+          ? sr?.events?.find((e) => e.kind === 'MOVE')?.text
+          : undefined;
+      return {
+        turnNo: t.turnNo,
+        inputType: t.inputType,
+        rawInput: t.rawInput,
+        resolveOutcome: (sr?.ui as Record<string, unknown> | undefined)
+          ?.resolveOutcome as string | undefined,
+        narrative: t.llmOutput ?? sr?.summary?.short ?? '',
+        ...(moveArrival ? { moveArrival } : {}),
+      };
+    })
+    .filter((t) => t.inputType !== 'SYSTEM' || !!t.moveArrival)
+    .slice(-RECENT_TURN_WINDOW);
 }
 
 /**
@@ -1831,28 +1887,13 @@ export class ContextBuilderService {
         llmOutput: turns.llmOutput,
       })
       .from(turns)
-      .where(
-        and(
-          eq(turns.runId, runId),
-          ne(turns.inputType, 'SYSTEM'), // SYSTEM 입력 제외
-        ),
-      )
+      .where(eq(turns.runId, runId))
       .orderBy(desc(turns.turnNo))
-      .limit(5);
+      // [arch/92 A-4] SYSTEM 도착 턴을 살리므로 원시 조회 폭을 넓히고, 필터 후
+      // 5건으로 자른다 (구: SQL 단계에서 SYSTEM 전량 제외 + limit 5).
+      .limit(12);
 
-    const recentTurns: RecentTurnEntry[] = recentTurnRows
-      .reverse() // 시간순 정렬
-      .map((t) => {
-        const sr = t.serverResult as ServerResultV1 | null;
-        return {
-          turnNo: t.turnNo,
-          inputType: t.inputType,
-          rawInput: t.rawInput,
-          resolveOutcome: (sr?.ui as Record<string, unknown>)
-            ?.resolveOutcome as string | undefined,
-          narrative: t.llmOutput ?? sr?.summary?.short ?? '',
-        };
-      });
+    const recentTurns = selectRecentTurnEntries(recentTurnRows);
 
     // L3 확장: 현재 LOCATION 방문 전체 대화 (단기 기억)
     // COMBAT 노드인 경우 부모 LOCATION의 대화 이력도 포함 (내러티브 연속성)

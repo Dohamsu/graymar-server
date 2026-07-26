@@ -31,11 +31,22 @@ describe('ContentLoader — 시나리오 팩 계약 (architecture/63)', () => {
     ]);
   });
 
-  it('go_hub 선택지 — 라벨/힌트 단일 소스 (구 리터럴 문면)', () => {
+  it('go_hub 선택지 — 라벨/힌트 단일 소스', () => {
     const c = loader.buildGoHubChoice();
     expect(c.id).toBe('go_hub');
-    expect(c.label).toBe("'잠긴 닻' 선술집으로 돌아간다");
-    expect(c.hint).toBe('선술집에서 정보를 정리하고 다른 지역을 탐색한다');
+    expect(c.label).toBe('거점으로 돌아간다');
+    expect(c.hint).toBe('거점에서 정보를 정리하고 다른 지역을 탐색한다');
+  });
+
+  // [arch/92] 거점(추상 상태)과 거점 장소(정식 LOCATION)의 이름 충돌 금지.
+  // 같은 이름이면 "선술집에서 선술집으로 향한다" / 여관 안에서 "여관으로
+  // 돌아간다"가 뜬다. 팩 계약이므로 전 팩에 대해 기계 검증한다.
+  it('거점 표기 ≠ 거점 장소명 — 이름 충돌 금지 (팩 계약)', () => {
+    const hub = loader.getHubMeta();
+    const baseLocationName = loader.getLocationDisplayName(hub.locationId);
+    expect(hub.name).not.toBe(baseLocationName);
+    expect(hub.returnLabel).not.toContain(baseLocationName);
+    expect(hub.returnHint).not.toContain(baseLocationName);
   });
 
   it('이동 키워드 우선순위 — 범용 어휘(거점/돌아가)는 전 장소 전용 키워드 뒤 (구 배열 순서 재현)', () => {
@@ -163,6 +174,14 @@ describe('ContentLoader — 시나리오 팩 계약 (architecture/63)', () => {
     it('허브 메타 — 실버딘 고유 값', () => {
       expect(loader.getHubMeta().locationId).toBe('LOC_SD_INN');
       expect(loader.getPrologueMeta().npcId).toBe('NPC_SD_INNKEEP');
+    });
+
+    it('거점 표기 ≠ 거점 장소명 — 이름 충돌 금지 (팩 계약)', () => {
+      const hub = loader.getHubMeta();
+      const baseLocationName = loader.getLocationDisplayName(hub.locationId);
+      expect(hub.name).not.toBe(baseLocationName);
+      expect(hub.returnLabel).not.toContain(baseLocationName);
+      expect(hub.returnHint).not.toContain(baseLocationName);
     });
   });
 });

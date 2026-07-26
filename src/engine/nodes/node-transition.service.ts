@@ -219,6 +219,8 @@ export class NodeTransitionService {
       arcState,
       questState,
     );
+    const hubMeta = this.content.getHubMeta();
+    const hubName = hubMeta.name;
 
     const enterResult: ServerResultV1 = {
       version: 'server_result_v1',
@@ -230,14 +232,16 @@ export class NodeTransitionService {
         state: 'NODE_ACTIVE',
       },
       summary: {
-        short: '[장소] 거점으로 돌아왔다. 도시의 소식을 정리한다.',
-        display: '거점으로 돌아왔다.',
+        // [arch/92 A-5] 구 '도시의 소식을 정리한다' 하드코딩 제거 — 해안 마을·
+        // 산악 광산 팩에 '도시'가 새던 불변식 45 위반. 표기는 hub 메타 파생.
+        short: `[장소] ${hubName}${korParticleRo(hubName)} 돌아왔다. ${hubMeta.returnHint}`,
+        display: `${hubName}${korParticleRo(hubName)} 돌아왔다.`,
       },
       events: [
         {
           id: `hub_return_${nextIndex}`,
           kind: 'MOVE',
-          text: '거점으로 돌아왔다.',
+          text: `${hubName}${korParticleRo(hubName)} 돌아왔다.`,
           tags: ['HUB_RETURN'],
         },
       ],
