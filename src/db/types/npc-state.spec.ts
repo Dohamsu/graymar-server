@@ -1,6 +1,8 @@
 import {
   replaceNpcNameWithAlias,
   sanitizeNpcNamesForTurn,
+  computeFamiliarity,
+  shouldCallPlayerName,
   shouldIntroduce,
   type NPCState,
 } from './npc-state.js';
@@ -286,5 +288,174 @@ describe('sanitizeNpcNamesForTurn', () => {
     expect(
       sanitizeNpcNamesForTurn('토브렌이 브렌 대위를 불렀다.', states, def, 3),
     ).toBe('수더분한 창고지기이 단정한 장교를 불렀다.');
+  });
+});
+
+// ── arch/91: 친밀도 + 플레이어 이름 호명 게이트 ──
+
+describe('computeFamiliarity', () => {
+  it('방문 수 + 서술 등장 절반을 합산', () => {
+    expect(
+      computeFamiliarity(npc({ encounterCount: 1, appearanceCount: 0 })),
+    ).toBe(1);
+    expect(
+      computeFamiliarity(npc({ encounterCount: 1, appearanceCount: 3 })),
+    ).toBe(2);
+    expect(
+      computeFamiliarity(npc({ encounterCount: 1, appearanceCount: 6 })),
+    ).toBe(4);
+  });
+
+  it('실측 케이스: 이렌(방문 1 / 서술 15) → 깊은 관계 단계(7+)', () => {
+    expect(
+      computeFamiliarity(npc({ encounterCount: 1, appearanceCount: 15 })),
+    ).toBeGreaterThanOrEqual(7);
+  });
+
+  it('스쳐 지나간 인물(서술 1회)은 첫 만남 단계(≤1) 유지', () => {
+    expect(
+      computeFamiliarity(npc({ encounterCount: 1, appearanceCount: 1 })),
+    ).toBe(1);
+  });
+
+  it('undefined/미조우는 0', () => {
+    expect(computeFamiliarity(undefined)).toBe(0);
+    expect(computeFamiliarity(npc())).toBe(0);
+  });
+});
+
+describe('shouldCallPlayerName', () => {
+  // 통성명 완료 + 친밀도 2 이상(서술 3회) — 타이밍만 케이스별로 달리한다
+  const known = (o: Partial<NPCState> = {}) =>
+    npc({
+      knowsPlayerName: true,
+      playerNameLearnedTurn: 3,
+      encounterCount: 1,
+      appearanceCount: 3,
+      ...o,
+    });
+
+  it('① 통성명 직후 턴 → 허용', () => {
+    expect(
+      shouldCallPlayerName(
+        known({ playerNameLearnedTurn: 9 }),
+        '에반',
+        10,
+        'CORE',
+      ),
+    ).toBe(true);
+  });
+
+  it('② 새 방문 첫 조우 턴 → 허용', () => {
+    expect(
+      shouldCallPlayerName(
+        known({ lastEncounterTurn: 10 }),
+        '에반',
+        10,
+        'CORE',
+      ),
+    ).toBe(true);
+  });
+
+  it('통성명 2턴 뒤 + 방문 중간 턴 → 차단 (매 턴 호명 방지)', () => {
+    expect(
+      shouldCallPlayerName(
+        known({ playerNameLearnedTurn: 8, lastEncounterTurn: 6 }),
+        '에반',
+        10,
+        'CORE',
+      ),
+    ).toBe(false);
+  });
+
+  it('소개 당일 → 차단 (자기소개 대사가 이미 되받음)', () => {
+    expect(
+      shouldCallPlayerName(
+        known({ playerNameLearnedTurn: 10 }),
+        '에반',
+        10,
+        'CORE',
+      ),
+    ).toBe(false);
+  });
+
+  it('이름 미지정 런 → 항상 false', () => {
+    const st = known({ lastEncounterTurn: 10 });
+    expect(shouldCallPlayerName(st, '', 10, 'CORE')).toBe(false);
+    expect(shouldCallPlayerName(st, null, 10, 'CORE')).toBe(false);
+    expect(shouldCallPlayerName(st, '   ', 10, 'CORE')).toBe(false);
+  });
+
+  it('통성명하지 않은 NPC → false (첫 만남 무근거 호명 차단)', () => {
+    expect(
+      shouldCallPlayerName(
+        known({ knowsPlayerName: false, lastEncounterTurn: 10 }),
+        '에반',
+        10,
+        'CORE',
+      ),
+    ).toBe(false);
+    expect(shouldCallPlayerName(undefined, '에반', 10, 'CORE')).toBe(false);
+  });
+
+  it('BACKGROUND 티어 → false', () => {
+    expect(
+      shouldCallPlayerName(
+        known({ lastEncounterTurn: 10 }),
+        '에반',
+        10,
+        'BACKGROUND',
+      ),
+    ).toBe(false);
+  });
+
+  it('FRIENDLY 첫 조우 소개(친밀도 1)도 통성명했으면 호명 — 하를런 T20 실측', () => {
+    expect(
+      shouldCallPlayerName(
+        known({
+          encounterCount: 1,
+          appearanceCount: 1,
+          playerNameLearnedTurn: 9,
+        }),
+        '에반',
+        10,
+        'CORE',
+      ),
+    ).toBe(true);
+  });
+
+  it('프롤로그 의뢰인(learnedTurn=-1)도 새 방문 첫 턴에 호명', () => {
+    expect(
+      shouldCallPlayerName(
+        known({ playerNameLearnedTurn: -1, lastEncounterTurn: 10 }),
+        '에반',
+        10,
+        'CORE',
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('computeFamiliarity — 통성명 보정 (arch/91)', () => {
+  it('통성명한 상대는 최소 재회 단계(2) 보장 — 첫 만남 경계 지시와의 모순 제거', () => {
+    expect(
+      computeFamiliarity(
+        npc({ encounterCount: 1, appearanceCount: 1, knowsPlayerName: true }),
+      ),
+    ).toBe(2);
+  });
+
+  it('이미 친밀도가 높으면 그대로 (하향 없음)', () => {
+    expect(
+      computeFamiliarity(
+        npc({ encounterCount: 2, appearanceCount: 15, knowsPlayerName: true }),
+      ),
+    ).toBe(9);
+  });
+
+  it('통성명 전이면 보정 없음', () => {
+    expect(
+      computeFamiliarity(npc({ encounterCount: 1, appearanceCount: 1 })),
+    ).toBe(1);
   });
 });

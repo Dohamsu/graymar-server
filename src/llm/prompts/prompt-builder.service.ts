@@ -7,8 +7,10 @@ import type { ServerResultV1 } from '../../db/types/index.js';
 import type { NpcEmotionalState, NPCState } from '../../db/types/npc-state.js';
 import {
   computeEffectivePosture,
+  computeFamiliarity,
   getNpcDisplayName,
   condenseSpeechStyle,
+  shouldCallPlayerName,
 } from '../../db/types/npc-state.js';
 import {
   getNpcSchedulePhaseEntry,
@@ -1096,6 +1098,9 @@ export class PromptBuilderService {
           : npcDef.unknownAlias || '이번 턴 NPC';
         // 재등장 + llmSummary가 있으면 간소 말투, 첫 등장이면 풀 speechStyle
         const npcState = ctx.npcStates?.[npcId];
+        // arch/91 검토: 친밀도로 넓히면 간소 말투(condenseSpeechStyle 압축본)로
+        //   전환되는 턴이 급증한다. 어체는 반복 회귀 영역(arch/69 C·82 A)이라
+        //   정보량을 줄이는 변경은 이 트랙의 목적과 무관 — 방문 기준 유지.
         const isReEncounter = (npcState?.encounterCount ?? 0) > 1;
         const speechGuide =
           isReEncounter && npcState?.llmSummary?.behaviorGuide
@@ -2029,7 +2034,11 @@ export class PromptBuilderService {
         // npcPostures 가 비어있어 sceneNpcIds 에서 빠질 수 있으니, focused NPC 는 강제 포함
         sceneNpcIds.add(focused);
       }
-      const npcEmotionalBlock = this.buildNpcEmotionalBlock(ctx, sceneNpcIds);
+      const npcEmotionalBlock = this.buildNpcEmotionalBlock(
+        ctx,
+        sceneNpcIds,
+        sr.turnNo,
+      );
       if (npcEmotionalBlock) {
         memoryParts.push(
           `[NPC 감정 상태]\n${npcEmotionalBlock}\n⚠️ NPC의 현재 감정 상태에 맞는 톤으로 대사와 행동을 묘사하세요. 위 행동 힌트를 반드시 반영하세요.`,
@@ -3489,6 +3498,7 @@ export class PromptBuilderService {
   private buildNpcEmotionalBlock(
     ctx: LlmContext,
     targetNpcIds: Set<string>,
+    turnNo: number,
   ): string | null {
     const npcStates = ctx.npcStates;
     if (!npcStates) return null;
@@ -3553,7 +3563,11 @@ export class PromptBuilderService {
       if (em.attachment > 30) hints.push('당신에게 개인적 유대를 느끼고 있다');
 
       // personality 기반 행동 힌트 (핵심: posture와 personality 조합)
-      // 첫 등장 판정: encounterCount 기반 (이전의 narrative 텍스트 매칭 대신 정확한 카운터 사용)
+      // 첫 등장 판정 — **방문 기준 유지**(arch/91 검토). 아래 두 소비처가 모두
+      //   "같은 방문 안에서 오래 얘기했다고 완화하면 안 되는" 성격이다:
+      //   ① #7 개방 깊이 티어(arch/82) — 완화하면 "첫 조우 3~4턴 만에 목격 비리
+      //      고백"이라는, 그 트랙이 실측으로 막았던 과다 개방이 되살아난다.
+      //   ② 프로필 풀/간소 분기 — 간소 전환 급증은 어체 정보 손실(위 주석).
       const isFirstEncounter = (npc.encounterCount ?? 0) <= 1;
       const llmSummary = npc.llmSummary;
 
@@ -3577,6 +3591,17 @@ export class PromptBuilderService {
 
       const behaviorParts: string[] = [];
 
+      // arch/91 — 이번 턴 이름 호명이 열렸는가. R4(권장 호칭)보다 먼저 계산해
+      //   두 지시를 하나로 합친다. 분리해 두면 R4의 "항상 X로 부른다"가 뒤에
+      //   와서 호명 지시를 덮어썼다(하를런 T19 실측: 지시 주입됐으나 전 대사
+      //   "형제"). 경쟁시키지 말고 예외를 명시하는 편이 저모델 준수율이 높다.
+      const canCallPlayerName = shouldCallPlayerName(
+        npc,
+        ctx.playerName,
+        turnNo,
+        npcDef?.tier,
+      );
+
       // architecture/51 §B (R4) — NPC 권장 호칭 명시 (첫 등장/재등장 공통).
       // speechStyle/signature 텍스트에서 호칭 단어를 추출, 가장 빈번한 호칭을
       // "권장 호칭"으로 명시 → LLM이 한 답변 안에 여러 호칭 혼용하지 않도록 유도.
@@ -3595,7 +3620,9 @@ export class PromptBuilderService {
             (a, b) => b[1] - a[1],
           )[0][0];
           behaviorParts.push(
-            `⚠️ 권장 호칭: "${dominant}" — 이 NPC는 사용자를 항상 "${dominant}"(으)로 부른다. 한 답변 안에 여러 호칭(그대/너/당신 등) 혼용 금지.`,
+            canCallPlayerName
+              ? `⚠️ 권장 호칭: "${dominant}" — 이 NPC는 사용자를 "${dominant}"(으)로 부른다. 단 이번 턴 첫 대사에서만 이름("${ctx.playerName}")으로 부르고, 이후는 "${dominant}". 한 답변 안에 여러 호칭(그대/너/당신 등) 혼용 금지.`
+              : `⚠️ 권장 호칭: "${dominant}" — 이 NPC는 사용자를 항상 "${dominant}"(으)로 부른다. 한 답변 안에 여러 호칭(그대/너/당신 등) 혼용 금지.`,
           );
         }
       }
@@ -3712,8 +3739,12 @@ export class PromptBuilderService {
         }
       }
 
-      // encounterCount 기반 관계 깊이 단계 가이드
-      const encCount = npc.encounterCount ?? 0;
+      // 관계 깊이 단계 가이드 — arch/91 A안: encounterCount 단독에서 친밀도로.
+      //   방문 단위 카운터(arch/88 C)는 실플레이에서 1에 고착해 전 NPC가 영구히
+      //   "첫 만남"으로 굳었다(실유저 런 실측: 서술 15회 등장한 NPC도 1).
+      //   그 결과 "첫 만남이라 경계한다"와 "마음을 열기 시작했다"가 한 프롬프트에
+      //   동시 주입되는 자기모순이 9턴 연속 발생. 서술 등장을 합산해 해소한다.
+      const encCount = computeFamiliarity(npc);
       let depthGuide = '';
       if (encCount <= 1) {
         depthGuide =
@@ -3737,12 +3768,20 @@ export class PromptBuilderService {
 
       // Player-First: BG NPC 전용 서술 가이드
       const npcTier = npcDef?.tier ?? 'SUB';
+
+      // arch/91 — 통성명한 상대의 재회 첫 인사에서만 이름 호명 허용.
+      //   구체 호칭 예시("○○ 님/씨")는 넣지 않는다 — 불변식 42(어구 예시가
+      //   그대로 고착). 어체 규칙만 참조시킨다.
+      const nameCallGuide = canCallPlayerName
+        ? `\n    ⚠️ 이 인물은 당신의 이름 "${ctx.playerName}"을 안다 — 이번 턴 **첫 대사 한 번만** 이름으로 부른다. 호칭 형태는 이 인물의 어체를 따른다. 그 뒤의 문장과 서술 본문에서는 이름을 쓰지 않는다(주인공 지칭은 "당신").`
+        : '';
+
       const bgGuide =
         npcTier === 'BACKGROUND'
           ? `\n    ⚠️ [배경 인물] 이 인물은 ${npcDef?.role ?? '일반인'}입니다. 직업과 일상에 맞는 소소한 정보만 전달합니다. 핵심 비밀이나 퀘스트 정보는 모릅니다. 개성과 말투를 자연스럽게 표현하되, 대화가 길어지면 "잘 모르겠다"며 자연스럽게 마무리하세요.`
           : '';
       emotionalLines.push(
-        `- ${displayName} [${posture}]${depthGuide}${hintText}${behaviorText}${moodText}${bgGuide}`,
+        `- ${displayName} [${posture}]${depthGuide}${nameCallGuide}${hintText}${behaviorText}${moodText}${bgGuide}`,
       );
     }
 

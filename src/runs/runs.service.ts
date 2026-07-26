@@ -363,6 +363,13 @@ export class RunsService {
       if (npcDef.npcId === this.content.getPrologueMeta().npcId) {
         npcStates[npcDef.npcId].introduced = true;
         npcStates[npcDef.npcId].introducedAtTurn = -1; // 턴0 이전에 소개됨
+        // architecture/91 A3 — 프롤로그에서 통성명({NAME_ASK} 왕복)까지 끝나므로
+        // 의뢰인은 처음부터 플레이어 이름을 안다. 이름 미지정 런은 왕복 자체가
+        // 스크립트에서 제거되므로 여기도 켜지 않는다.
+        if (characterName?.trim()) {
+          npcStates[npcDef.npcId].knowsPlayerName = true;
+          npcStates[npcDef.npcId].playerNameLearnedTurn = -1;
+        }
       }
     }
 
@@ -777,10 +784,23 @@ export class RunsService {
             // architecture/71: 이월 런은 프리셋이 없어 hook 부재 — {HOOK} 라인을
             // 통째로 생략한다 (빈 따옴표 대사 방지, 화자 어체 훼손 없음).
             const hook = preset?.prologueHook ?? '';
+            // architecture/91 A2: 통성명 왕복은 {NAME_ASK} 토큰으로 한 덩어리로
+            // 묶는다 — 이름 미지정 런(실측 41%)에서 "뭐라 부르면 됩니까" 만
+            // 남고 대답이 사라지는 반쪽 대화를 막기 위함. 빈 줄에도 토큰을
+            // 붙여 함께 걷어낸다.
+            const pName = characterName?.trim() ?? '';
             const lines = (pMeta.lines ?? [])
               .filter((l) => hook !== '' || !l.includes('{HOOK}'))
-              .map((l) => l.replace('{HOOK}', hook));
-            const display = [atmo, '', ...lines].join('\n');
+              .filter((l) => pName !== '' || !l.includes('{NAME_ASK}'))
+              .map((l) =>
+                l
+                  .replace('{NAME_ASK}', '')
+                  .replace('{HOOK}', hook)
+                  .replace('{CHARACTER_NAME}', pName),
+              );
+            const display = [atmo, '', ...lines]
+              .join('\n')
+              .replace(/\n{3,}/g, '\n\n');
             return {
               short: pMeta.summaryShort ?? '프롤로그 — 의뢰를 받다.',
               display,

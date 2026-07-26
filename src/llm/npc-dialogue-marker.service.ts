@@ -123,6 +123,10 @@ export class NpcDialogueMarkerService {
     fallbackNpcId?: string,
     eventNpcIds?: string[],
     rawInput?: string,
+    /** arch/91 — 런별 플레이어 캐릭터 이름. 재회 호명이 열리면 대사·서술에
+     *  등장하므로 화자 후보에서 배제한다 (static PLAYER_ALIASES는 런별 값을
+     *  담을 수 없어 인자로 흘린다). */
+    playerName?: string | null,
   ): { text: string; unmatchedCount: number } {
     const candidateNpcs = this.buildCandidateList(npcStates, eventNpcIds);
     if (candidateNpcs.length === 0) {
@@ -134,6 +138,7 @@ export class NpcDialogueMarkerService {
       narrative,
       candidateNpcs,
       fallbackNpcId,
+      playerName,
     );
     if (colonResult) {
       this.logger.debug(
@@ -181,6 +186,7 @@ export class NpcDialogueMarkerService {
         before,
         after,
         candidateNpcs,
+        playerName,
       );
       if (directMatch) {
         d.npcId = directMatch.npcId;
@@ -251,6 +257,7 @@ export class NpcDialogueMarkerService {
     narrative: string,
     candidates: NpcCandidate[],
     fallbackNpcId?: string,
+    playerName?: string | null,
   ): { text: string; convertedCount: number; unmatchedCount: number } | null {
     // 줄 시작에서 "NPC별칭: "대사"" 패턴 매칭
     // 별칭: 2자 이상, 콜론/따옴표 불포함
@@ -270,7 +277,7 @@ export class NpcDialogueMarkerService {
       if (alias.length > 20) continue;
       // 별칭이 플레이어 지칭이면 제외
       if (
-        NpcDialogueMarkerService.PLAYER_ALIASES.has(alias) ||
+        NpcDialogueMarkerService.isPlayerAlias(alias, playerName) ||
         /^(?:당신|그대|플레이어|용병|주인공)/.test(alias)
       )
         continue;
@@ -689,9 +696,29 @@ export class NpcDialogueMarkerService {
     before: string,
     after: string,
     candidates: NpcCandidate[],
+    playerName?: string | null,
   ): { npcId: string } | null {
     let bestMatch: { npcId: string; distance: number } | null = null;
     const speechVerb = new RegExp(`(?:${SPEECH_VERBS})`);
+
+    // arch/91 — 플레이어 이름이 NPC 이름을 부분 포함하면(예: 플레이어 "브렌"
+    // vs NPC "브렌 대위"의 alias "브렌") 플레이어를 호명한 문맥이 그 NPC의
+    // 발화로 귀속된다. 매칭 구간이 플레이어 이름 출현 구간과 겹치면 버린다.
+    const pName = playerName?.trim();
+    const overlapsPlayerName = (
+      hay: string,
+      idx: number,
+      len: number,
+    ): boolean => {
+      if (!pName) return false;
+      let from = 0;
+      for (;;) {
+        const pi = hay.indexOf(pName, from);
+        if (pi < 0) return false;
+        if (idx < pi + pName.length && pi < idx + len) return true;
+        from = pi + 1;
+      }
+    };
 
     for (const candidate of candidates) {
       for (const name of candidate.names) {
@@ -699,7 +726,10 @@ export class NpcDialogueMarkerService {
 
         // 1차: 정확한 문자열 매칭
         const beforeIdx = before.lastIndexOf(name);
-        if (beforeIdx >= 0) {
+        if (
+          beforeIdx >= 0 &&
+          !overlapsPlayerName(before, beforeIdx, name.length)
+        ) {
           let distance = before.length - beforeIdx - name.length;
           if (distance > 100) continue;
           const afterName = before.slice(beforeIdx + name.length);
@@ -719,7 +749,11 @@ export class NpcDialogueMarkerService {
             `[가-힣\\s]{0,6}${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[가-힣\\s]{0,6}`,
           );
           const fuzzyMatch = before.match(fuzzyRegex);
-          if (fuzzyMatch && fuzzyMatch.index != null) {
+          if (
+            fuzzyMatch &&
+            fuzzyMatch.index != null &&
+            !overlapsPlayerName(before, fuzzyMatch.index, fuzzyMatch[0].length)
+          ) {
             let distance =
               before.length - fuzzyMatch.index - fuzzyMatch[0].length;
             if (distance > 100) continue;
@@ -738,7 +772,11 @@ export class NpcDialogueMarkerService {
 
         // after 매칭
         const afterIdx = after.indexOf(name);
-        if (afterIdx >= 0 && afterIdx < 30) {
+        if (
+          afterIdx >= 0 &&
+          afterIdx < 30 &&
+          !overlapsPlayerName(after, afterIdx, name.length)
+        ) {
           const distance = afterIdx + 100;
           if (!bestMatch || distance < bestMatch.distance) {
             bestMatch = { npcId: candidate.npcId, distance };
@@ -750,6 +788,17 @@ export class NpcDialogueMarkerService {
   }
 
   // 플레이어 지칭은 NPC 마커 대상이 아님
+  /** 플레이어 지칭(2인칭 별칭 + 런 캐릭터 이름) 여부 — arch/91 */
+  private static isPlayerAlias(
+    alias: string | undefined,
+    playerName?: string | null,
+  ): boolean {
+    if (!alias) return false;
+    if (NpcDialogueMarkerService.PLAYER_ALIASES.has(alias)) return true;
+    const p = playerName?.trim();
+    return !!p && alias === p;
+  }
+
   private static readonly PLAYER_ALIASES = new Set([
     '당신',
     '그대',
@@ -834,14 +883,18 @@ export class NpcDialogueMarkerService {
     return covered / aliasLen >= 0.8;
   }
 
-  private extractSpeakerAlias(before: string, after: string): string | null {
+  private extractSpeakerAlias(
+    before: string,
+    after: string,
+    playerName?: string | null,
+  ): string | null {
     // 발화자→대사 패턴: "XX가/이/은/는 + 발화동사"
     const beforeMatch = before.match(
       new RegExp(`([가-힣]{2,6})[이가은는]\\s*(?:${SPEECH_VERBS})\\S{0,10}`),
     );
     if (
       beforeMatch &&
-      !NpcDialogueMarkerService.PLAYER_ALIASES.has(beforeMatch[1])
+      !NpcDialogueMarkerService.isPlayerAlias(beforeMatch[1], playerName)
     )
       return beforeMatch[1];
 
@@ -851,7 +904,7 @@ export class NpcDialogueMarkerService {
     );
     if (
       afterMatch &&
-      !NpcDialogueMarkerService.PLAYER_ALIASES.has(afterMatch[1])
+      !NpcDialogueMarkerService.isPlayerAlias(afterMatch[1], playerName)
     )
       return afterMatch[1];
 
@@ -861,7 +914,7 @@ export class NpcDialogueMarkerService {
     );
     if (
       descriptiveMatch &&
-      !NpcDialogueMarkerService.PLAYER_ALIASES.has(descriptiveMatch[1])
+      !NpcDialogueMarkerService.isPlayerAlias(descriptiveMatch[1], playerName)
     )
       return descriptiveMatch[1];
 

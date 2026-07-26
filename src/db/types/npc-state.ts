@@ -74,12 +74,27 @@ export interface NPCState {
   pendingIntroduction?: boolean;
   /** 소개 연출 실패(IntroRollback) 누적 — 경로 선택에 사용 (architecture/64 튜닝) */
   introAttempts?: number;
+  /**
+   * architecture/91 — 이 NPC가 플레이어의 이름을 안다 (통성명 성립).
+   * introduced(= NPC가 자기 이름을 밝힘)의 역방향이며 파생값이 아니다:
+   * 이월 런은 소개 상태만 넘어오고(carry-over), 후속 트리거(플레이어 자발
+   * 발화)를 붙일 때 파생식이 깨지므로 실필드로 둔다.
+   * 세팅 지점은 3곳뿐 — ① 프롤로그 의뢰인(runs.service) ② 자기소개 성사 턴
+   * (llm-worker, introduced와 같은 CAS 패치) ③ (후속) 플레이어 자발 발화.
+   */
+  knowsPlayerName?: boolean;
+  /** 이름을 알게 된 턴. 소개 턴 당일 호명을 막는다 (arch/66 2턴 분리와 대칭). */
+  playerNameLearnedTurn?: number;
   encounterCount: number;
   /** 이 NPC의 encounterCount를 마지막으로 증가시킨 LOCATION 노드 instance id.
    *  per-visit 1회 증가 dedup을 actionHistory.primaryNpcId 스캔 대신 명시 플래그로 —
    *  워커 LockSeed(서술 화자 백필, llm-worker.service.ts)가 커밋 후 actionHistory를
    *  오염시켜 조우 카운트가 영구 스킵되던 버그 차단. LOCATION 방문=노드 instance 1개. */
   lastEncounterNodeId?: string;
+  /** encounterCount를 마지막으로 증가시킨 턴 번호 (arch/91) — lastEncounterNodeId와 짝.
+   *  증가가 방문 단위 1회이므로 "이 값 === 현재 턴" = 이번 방문의 첫 조우 턴.
+   *  재회 인사 1회 호명 게이트에 쓰인다. */
+  lastEncounterTurn?: number;
   // LLM 서술에 @마커로 등장한 누적 횟수 — encounterCount와 별개로
   // 반복 호칭 고착 방지용. 임계치 이상이면 posture 무관 강제 소개.
   appearanceCount?: number;
@@ -475,6 +490,76 @@ export function shouldIntroduce(
     default:
       return count >= 2;
   }
+}
+
+/**
+ * architecture/91 A안 — 관계 친밀도 파생 지표.
+ *
+ * 배경: arch/88이 encounterCount를 "방문(노드 instance) 단위 1회"로 정확히
+ * 고친 뒤, 이 값의 의미는 **서로 다른 방문에서 만난 횟수**가 됐다. 그런데
+ * 실플레이는 한 장소에 오래 머물며 한 NPC와 깊이 대화하는 패턴이라 값이 1에
+ * 고착한다(arch/88 이후 실유저 런 5개 전수: 이렌 encounterCount 1 / 서술 등장
+ * 15회, 재회 0건). 그 결과 이 값을 쓰던 관계 깊이 4단계가 전원 "첫 만남"으로
+ * 굳어, "첫 만남이라 경계한다" + "마음을 열기 시작했다"가 한 프롬프트에 동시
+ * 주입되는 자기모순이 9턴 연속 실측됐다.
+ *
+ * 해결: encounterCount(방문 수)는 그대로 두고 — arch/88이 고친 정확성을
+ * 보존한다 — 소비 측이 쓰는 "얼마나 겪었나"를 별도 파생값으로 분리한다.
+ * 서술 등장(appearanceCount)은 같은 방문 안의 반복도 세므로 2회를 1로 환산.
+ *
+ * 임계는 기존 관계 깊이 단계와 동일: ≤1 첫 만남 / 2~3 재회 / 4~6 안면 / 7+ 깊은 관계.
+ * BACKGROUND는 appearanceCount가 증가하지 않아 자연히 첫 만남에 머문다.
+ */
+export function computeFamiliarity(
+  npcState:
+    | Pick<NPCState, 'encounterCount' | 'appearanceCount' | 'knowsPlayerName'>
+    | undefined,
+): number {
+  if (!npcState) return 0;
+  const base =
+    (npcState.encounterCount ?? 0) +
+    Math.floor((npcState.appearanceCount ?? 0) / 2);
+  // 통성명은 관계 진전의 명시 이벤트다. 이름을 주고받은 상대를 "첫 만남 —
+  // 경계하며 최소한의 반응"으로 서술하면 자기모순이 된다(하를런 T21 실측:
+  // 같은 프롬프트에 "이름을 안다"와 "첫 만남이라 경계"가 공존 → LLM이 호명
+  // 지시를 버리고 "형제"로 대체). 최소 '재회' 단계는 보장한다.
+  return npcState.knowsPlayerName ? Math.max(base, 2) : base;
+}
+
+/**
+ * architecture/91 — 이번 턴 이 NPC가 플레이어를 이름으로 부를 수 있는가.
+ *
+ * 게이트를 좁게 잡은 이유(불변식 50): 이름은 강한 anchor라 상시 허용하면
+ * 저모델이 매 대사마다 붙이고, 서술 본문 3인칭 사용은 규칙 E(2인칭 몰입)를
+ * 깬다. **호명은 "대화가 새로 시작되는 순간" 1회**로 묶어야 실제 화법과 맞는다.
+ *
+ * 발동 타이밍 2가지 (A안 — 재회 단독은 실플레이 도달률이 0에 가까웠다):
+ *  ① 통성명 직후 턴 — 막 이름을 주고받았으니 한 번 불러보는 게 자연스럽다.
+ *     소개 당일(같은 턴)은 이미 자기소개 대사가 이름을 되받으므로 제외한다.
+ *  ② 새 방문의 첫 조우 턴 — 재회 인사. lastEncounterTurn === currentTurn이
+ *     방문 단위 1회 갱신이라(arch/88 C) 같은 장소에 머무는 동안 재발동 없다.
+ *
+ * 친밀도 하한은 두지 않는다. knowsPlayerName 자체가 "소개가 성사됐고
+ * BACKGROUND가 아니다"를 이미 통과한 강한 신호이기 때문 — 하한을 걸면
+ * FRIENDLY NPC(첫 조우에 소개, familiarity 1)가 통성명하고도 영영 이름을
+ * 못 부르는 모순이 생긴다(하를런 T20 실측).
+ */
+export function shouldCallPlayerName(
+  npcState: NPCState | undefined,
+  playerName: string | null | undefined,
+  currentTurn: number,
+  npcTier?: string,
+): boolean {
+  if (!playerName?.trim()) return false;
+  if (!npcState?.knowsPlayerName) return false;
+  if (npcTier === 'BACKGROUND') return false;
+
+  const learned = npcState.playerNameLearnedTurn ?? -1;
+  if (learned >= currentTurn) return false; // 소개 당일 제외
+
+  const justExchanged = learned === currentTurn - 1; // ①
+  const newVisitFirstTurn = npcState.lastEncounterTurn === currentTurn; // ②
+  return justExchanged || newVisitFirstTurn;
 }
 
 // ── NPC 개인 기록 유틸리티 ──

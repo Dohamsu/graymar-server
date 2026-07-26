@@ -115,6 +115,8 @@ export interface LlmContext {
   newlyEncounteredNpcIds: string[]; // 이번 턴 처음 만나는 NPC
   /** 이름 공개 기획(arch/65): 첫 만남 소개 턴의 사전 확정 자기소개 대사 (워커가 주입) */
   introDialogue?: { npcId: string; text: string } | null;
+  /** arch/91: 플레이어 캐릭터 이름 (미지정 런은 null) — 통성명한 NPC의 재회 호명·마커 배제용 */
+  playerName: string | null;
   /** 순회 검증 ②(2026-07-12): 플레이어가 밝힌 자기 정보 — NPC 모순 질문 방지 */
   playerDisclosures?: Array<{ text: string; turnNo: number }>;
   // Structured Memory v2
@@ -1037,6 +1039,12 @@ export class ContextBuilderService {
 
     return {
       theme: memory?.theme ?? [],
+      // arch/91 — L0 테마 문자열에 박혀 들어가던 이름을 명시 필드로도 노출.
+      // 프롬프트 호명 게이트(shouldCallPlayerName)와 마커 화자 배제가 쓴다.
+      playerName:
+        (typeof runState?.characterName === 'string'
+          ? runState.characterName.trim()
+          : '') || null,
       storySummary: sanitize(memory?.storySummary ?? null),
       nodeFacts: nodeMem?.nodeFacts ?? [],
       recentSummaries: recents.map((r) => r.summary),

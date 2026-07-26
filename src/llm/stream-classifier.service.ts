@@ -60,9 +60,26 @@ export class StreamClassifierService {
   private pendingParagraphStart = false;
   private consecutiveEmptyNewlines = 0;
 
-  constructor(candidates: NpcCandidate[], primaryNpcId: string | null) {
+  /** arch/91 — 런별 플레이어 캐릭터 이름. 호명이 허용되면 서술·대사에
+   *  등장하므로 NPC 화자 후보에서 배제해야 한다 (static Set으로는 런별 값을
+   *  담을 수 없어 인스턴스로 받는다). */
+  private playerName: string | null;
+
+  constructor(
+    candidates: NpcCandidate[],
+    primaryNpcId: string | null,
+    playerName?: string | null,
+  ) {
     this.candidates = candidates;
     this.primaryNpcId = primaryNpcId;
+    this.playerName = playerName?.trim() || null;
+  }
+
+  /** 플레이어 지칭(2인칭 별칭 + 런 캐릭터 이름) 여부 */
+  private isPlayerAlias(s: string): boolean {
+    return (
+      PLAYER_ALIASES.has(s) || (!!this.playerName && s === this.playerName)
+    );
   }
 
   /**
@@ -392,7 +409,7 @@ export class StreamClassifierService {
     const speakerMatch = before.match(
       new RegExp(`([가-힣]{2,6})[이가은는]\\s*(?:${SPEECH_VERBS})`),
     );
-    if (speakerMatch && !PLAYER_ALIASES.has(speakerMatch[1])) {
+    if (speakerMatch && !this.isPlayerAlias(speakerMatch[1])) {
       // 추출된 호칭으로 NPC 후보 매칭
       const alias = speakerMatch[1];
       const found = this.candidates.find((c) =>

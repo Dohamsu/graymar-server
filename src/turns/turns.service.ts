@@ -3093,6 +3093,9 @@ export class TurnsService {
         npcStates[npcId].encounterCount =
           (npcStates[npcId].encounterCount ?? 0) + 1;
         npcStates[npcId].lastEncounterNodeId = currentNodeId;
+        // arch/91 — 증가 턴을 남긴다. 증가가 방문 단위 1회이므로 이 값이
+        // 곧 "이번 방문의 첫 조우 턴" = 재회 인사 호명 게이트.
+        npcStates[npcId].lastEncounterTurn = turnNo;
       }
 
       // 첫 실제 만남 감지: 새로 생성되었거나, encounterCount가 0→1로 변한 경우

@@ -456,6 +456,8 @@ export class DialogueGeneratorService {
     npcState: NPCState | undefined;
     situationContext: string;
     turnNo: number;
+    /** arch/91 — 플레이어 캐릭터 이름. 있으면 상호 통성명 형태로 유도한다. */
+    playerName?: string | null;
   }): Promise<{ text: string; source: 'llm' | 'template' } | null> {
     const npcDef = this.content.getNpc(input.npcId);
     if (!npcDef?.name) return null;
@@ -494,6 +496,13 @@ export class DialogueGeneratorService {
       `이 인물이 상대에게 처음으로 자기 이름을 밝히는 자기소개 대사 1~2문장을 쓰세요.`,
       `필수: 대사 안에 실명 "${name}"이 정확히 포함되어야 합니다. 별칭·직함으로 대체 금지.`,
       `자기소개에만 집중하세요 — 상대의 행동을 평가·승인·허락하는 내용 금지 (예: "가져가셔도 좋습니다" ✗).`,
+      // arch/91 — 상호 통성명. validate()에 플레이어 이름 포함을 강제하지는
+      // 않는다(조건을 늘리면 2회 재시도 실패 → 템플릿 fallback률만 오른다).
+      ...(input.playerName?.trim()
+        ? [
+            `상대는 이 자리에서 자기 이름을 "${input.playerName.trim()}"이라고 밝혔습니다. 그 이름을 한 번 되받아 부르며 자기 이름을 밝히세요.`,
+          ]
+        : []),
       `대사 본문만 출력 (따옴표·설명 없이).`,
     ].join('\n');
 

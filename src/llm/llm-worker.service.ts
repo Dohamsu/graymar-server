@@ -21,7 +21,10 @@ import {
 import { ContextBuilderService } from './context-builder.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { korParticle } from '../common/korean.js';
-import { sanitizeNpcNamesForTurn } from '../db/types/npc-state.js';
+import {
+  sanitizeNpcNamesForTurn,
+  shouldCallPlayerName,
+} from '../db/types/npc-state.js';
 import { PromptBuilderService } from './prompts/prompt-builder.service.js';
 import { stripLeakedPromptBlocks } from './prompts/injected-block-headers.js';
 import {
@@ -780,6 +783,54 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
   // appearanceCount·pendingIntroduction 승격·제스처 이력 축적.
   // CAS 패치(applyRunStatePatch) 호출 구조를 그대로 보존한 통째 이동 —
   // 패치 단위·시맨틱 불변(P4.0 금지선 준수). 변조된 narrative를 반환.
+  /**
+   * arch/91 B8 — 미허용 플레이어 호명 계측 (제거 아님).
+   *   L0 세계관 기억에는 이름이 계속 노출되므로, 통성명하지 않은 NPC가 이름을
+   *   부르는 누수가 남을 수 있다(실측 기준선 800턴 중 1건 — 첫 만남 구두닦이가
+   *   "김리 영감!"). 후처리 삭제는 문장 파괴 위험이 있어(LLM 원칙 4) 먼저
+   *   빈도만 관찰하고, 유의미하면 arch/64 R7 같은 새니타이즈로 승격한다.
+   */
+  private auditPlayerNameLeak(
+    narrative: string | null | undefined,
+    llmContext: {
+      playerName: string | null;
+      npcStates?: unknown;
+      newlyIntroducedNpcIds?: string[];
+    },
+    turnNo: number,
+  ): void {
+    const pName = llmContext.playerName;
+    if (!narrative || !pName || !narrative.includes(pName)) return;
+
+    // 이번 턴 소개 연출 대상이 있으면 상호 통성명 대사(B6 "카일이라 하였소?
+    // 내 이름은 …")가 정상 등장한다. npcStates는 턴 시작 스냅샷이라 5.11 CAS가
+    // 방금 쓴 knowsPlayerName/playerNameLearnedTurn이 보이지 않으므로, 같은
+    // 스냅샷에 들어 있는 소개 대상 목록으로 판정한다.
+    if ((llmContext.newlyIntroducedNpcIds ?? []).length > 0) return;
+
+    const states = (llmContext.npcStates ?? {}) as Record<
+      string,
+      import('../db/types/npc-state.js').NPCState
+    >;
+    const anyAllowed = Object.entries(states).some(([id, st]) =>
+      shouldCallPlayerName(
+        st,
+        pName,
+        turnNo,
+        (this.content.getNpc(id) as Record<string, unknown> | undefined)
+          ?.tier as string | undefined,
+      ),
+    );
+    if (anyAllowed) return;
+
+    const at = narrative.indexOf(pName);
+    this.logger.warn(
+      `[PlayerNameLeak] turn=${turnNo} — 통성명 NPC 없이 이름 등장: "${narrative
+        .slice(Math.max(0, at - 40), at + 40)
+        .replace(/\n/g, ' ')}"`,
+    );
+  }
+
   private async rollbackOrConfirmIntroductions(params: {
     narrative: string;
     serverResult: ServerResultV1;
@@ -1041,6 +1092,36 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
                   }
                 }
               }
+            }
+          }
+
+          // arch/91 B2(b) — 통성명 성립.
+          //   이번 턴 소개가 확정된(롤백되지 않은) NPC는 플레이어 이름도 알게
+          //   된다. 자기소개 대사가 상대 이름을 되받는 형태로 생성되므로
+          //   (dialogue-generator playerName) 서사적으로 상호 교환이다.
+          //   introduced와 같은 CAS 패치 안에서 처리 — 별도 패치로 나누면
+          //   lost update (arch/60 P0와 동일 함정).
+          const playerNameForIntro =
+            typeof rs.characterName === 'string' ? rs.characterName.trim() : '';
+          if (playerNameForIntro && npcStatesRef) {
+            for (const npcId of newlyIntroduced) {
+              if (rolledBackThisTurn.has(npcId)) continue;
+              const st = npcStatesRef[npcId] as
+                | { knowsPlayerName?: boolean; playerNameLearnedTurn?: number }
+                | undefined;
+              if (!st || st.knowsPlayerName) continue;
+              const tier = (
+                this.content.getNpc(npcId) as
+                  | Record<string, unknown>
+                  | undefined
+              )?.tier as string | undefined;
+              if (tier === 'BACKGROUND') continue;
+              st.knowsPlayerName = true;
+              st.playerNameLearnedTurn = pending.turnNo;
+              changed = true;
+              this.logger.log(
+                `[PlayerNameExchange] turn=${pending.turnNo} ${npcId} — 소개 성사와 함께 통성명 (다음 재회부터 호명 허용)`,
+              );
             }
           }
 
@@ -1894,6 +1975,11 @@ ${npcList}`,
               fallbackNpcId,
               eventNpcIds,
               pending.rawInput ?? undefined,
+              // arch/91 — 재회 호명이 열리면 플레이어 이름이 대사·서술에 등장한다.
+              // NPC 화자 후보에서 배제하지 않으면 퍼지 매칭이 근접 이름 NPC로
+              // 오귀속시킨다 (실측 DB에 "김리"/"김진원" 공존).
+              (runSession?.runState as Record<string, unknown> | undefined)
+                ?.characterName as string | undefined,
             );
             narrative = regexResult.text;
             // 남은 @[UNMATCHED] 제거
@@ -2992,6 +3078,8 @@ ${npcList}`,
               // 실측) — 장소 중심 중립 문맥으로 전달
               situationContext,
               turnNo: pending.turnNo,
+              // arch/91 B6 — 상호 통성명 유도 (이름 미지정 런은 undefined → 무동작)
+              playerName: llmContext.playerName,
             });
             if (gen) {
               introDialogue = { npcId: firstMeetIntroId, text: gen.text };
@@ -3130,7 +3218,13 @@ ${npcList}`,
                 | Record<string, unknown>
                 | undefined
             )?.primaryNpcId as string | null) ?? null;
-          classifier = new StreamClassifierService(candidates, primaryNpcId);
+          classifier = new StreamClassifierService(
+            candidates,
+            primaryNpcId,
+            // arch/91 — 스트림 화자 판정에서도 플레이어 이름 배제
+            (runSession?.runState as Record<string, unknown> | undefined)
+              ?.characterName as string | undefined,
+          );
         }
 
         try {
@@ -3968,6 +4062,9 @@ ${npcList}`,
       if (narrative) {
         narrative = this.sanitizeAliasArtifacts(narrative);
       }
+
+      // 5.14.5 arch/91 B8 — 미허용 플레이어 호명 계측
+      this.auditPlayerNameLeak(narrative, llmContext, pending.turnNo);
 
       // 5.15 + arch/69 C2 — 화자 인지 어체 정규화(R5v2) 후 위반 계측.
       //   등장 후보 NPC(llmContext.npcStates)의 표시명으로 라벨을 해소해
