@@ -9,6 +9,7 @@ import { AdminRunsController } from './admin-runs.controller.js';
 import { AdminStatsController } from './admin-stats.controller.js';
 import { AdminStatsService } from './admin-stats.service.js';
 import { AdminUsersController } from './admin-users.controller.js';
+import { PublicStatsController } from './public-stats.controller.js';
 
 /**
  * 어드민 콘솔 관제 모듈 — arch/87 §4.
@@ -23,6 +24,7 @@ import { AdminUsersController } from './admin-users.controller.js';
     AdminUsersController,
     AdminRunsController,
     AdminLlmController,
+    PublicStatsController,
   ],
   providers: [AdminStatsService, AdminOpsService, AdminOpenRouterService],
 })

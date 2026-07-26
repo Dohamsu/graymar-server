@@ -64,6 +64,40 @@ export class AdminStatsService {
     return sql`date_trunc('day', now()) - make_interval(days => (${days - 1})::int)`;
   }
 
+  /** 공개 마케팅 집계 캐시 — 무인증 경로(랜딩 ISR)라 10분 TTL로 DB 보호. arch/90 P4 */
+  private publicStatsCache: {
+    value: { totalTurns: number; totalRuns: number; generatedAt: string };
+    expiresAt: number;
+  } | null = null;
+
+  /** 랜딩 사회적 증명용 누적 총량 2종 — 테스터 제외, 어드민 KPI와 별개 경로. arch/90 P4 */
+  async publicStats() {
+    const now = Date.now();
+    if (this.publicStatsCache && this.publicStatsCache.expiresAt > now) {
+      return this.publicStatsCache.value;
+    }
+    const [turnAgg, runAgg] = await Promise.all([
+      this.one<{ n: number }>(sql`
+          SELECT count(*)::int AS n
+          FROM turns t
+          JOIN run_sessions r ON r.id = t.run_id
+          JOIN users u ON u.id = r.user_id
+          WHERE ${notTesterSql('u.email')}`),
+      this.one<{ n: number }>(sql`
+          SELECT count(*)::int AS n
+          FROM run_sessions rs
+          JOIN users u ON u.id = rs.user_id
+          WHERE ${notTesterSql('u.email')}`),
+    ]);
+    const value = {
+      totalTurns: turnAgg.n ?? 0,
+      totalRuns: runAgg.n ?? 0,
+      generatedAt: new Date().toISOString(),
+    };
+    this.publicStatsCache = { value, expiresAt: now + 10 * 60 * 1000 };
+    return value;
+  }
+
   /** 핵심 KPI 1콜 — arch/87 §4.1 */
   async overview() {
     const [
