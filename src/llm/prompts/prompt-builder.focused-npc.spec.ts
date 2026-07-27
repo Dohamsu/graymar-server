@@ -259,7 +259,7 @@ describe('PromptBuilderService — 보조 NPC 끼어들기 억제 directive', ()
     const text = promptText(
       promptBuilder.buildNarrativePrompt(ctx, sr, '도박 빚?', 'ACTION'),
     );
-    expect(text).toContain('직전 턴에 이미 끼어든 인물');
+    expect(text).toContain('직전 턴 발화한 보조 인물');
     expect(text).toContain('조용한 문서 실무자');
   });
 
@@ -337,7 +337,7 @@ describe('PromptBuilderService — 보조 NPC 끼어들기 억제 directive', ()
       promptBuilder.buildNarrativePrompt(ctx, sr, '도박 빚?', 'ACTION'),
     );
     // 동적 차단 라인이 발화하고, 차단 키워드 목록이 그대로 들어가야 함
-    expect(text).toMatch(/직전 3턴에 이미 등장한 다음 단역 신원\/소품/);
+    expect(text).toMatch(/사용 금지 단역 신원\/소품 \(직전 3턴 기등장\)/);
     expect(text).toContain('실무자');
     expect(text).toContain('서류 뭉치');
   });
@@ -352,7 +352,7 @@ describe('PromptBuilderService — 보조 NPC 끼어들기 억제 directive', ()
     const text = promptText(
       promptBuilder.buildNarrativePrompt(ctx, sr, '안녕하시오', 'ACTION'),
     );
-    expect(text).not.toMatch(/직전 3턴에 이미 등장한 다음 단역 신원\/소품/);
+    expect(text).not.toMatch(/사용 금지 단역 신원\/소품 \(직전 3턴 기등장\)/);
   });
 
   it('focusedNpcId null + recentAuxIdentities 있음 → focused 블록 자체가 안 뜨므로 차단 라인 미발화', () => {
@@ -368,7 +368,7 @@ describe('PromptBuilderService — 보조 NPC 끼어들기 억제 directive', ()
       promptBuilder.buildNarrativePrompt(ctx, sr, '이동', 'ACTION'),
     );
     expect(text).not.toContain('[1인 응답 강제 — 보조 NPC 끼어들기 금지]');
-    expect(text).not.toMatch(/직전 3턴에 이미 등장한 다음 단역 신원\/소품/);
+    expect(text).not.toMatch(/사용 금지 단역 신원\/소품 \(직전 3턴 기등장\)/);
   });
 
   it('focusedNpcId null + conversationLock 만 set → lock 블록은 단일 NPC 응답 강제 그대로 유지 (focused 없으면 lock 이 전담)', () => {
