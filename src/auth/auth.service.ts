@@ -44,6 +44,7 @@ export class AuthService {
       })
       .returning({
         id: users.id,
+        memberNo: users.memberNo,
         email: users.email,
         nickname: users.nickname,
       });
@@ -77,7 +78,34 @@ export class AuthService {
 
     return {
       token,
-      user: { id: user.id, email: user.email, nickname: user.nickname },
+      user: {
+        id: user.id,
+        memberNo: user.memberNo,
+        email: user.email,
+        nickname: user.nickname,
+      },
+    };
+  }
+
+  /**
+   * 현재 로그인 유저 정보. 회원번호는 로그인 응답에도 담기지만, 이미 로그인해
+   * 있던 세션은 localStorage 캐시에 그 필드가 없다 — 재로그인 없이 조회할 수
+   * 있도록 별도 경로를 둔다.
+   */
+  async me(userId: string) {
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+    if (!user) {
+      throw new UnauthorizedError('로그인이 필요합니다. 다시 로그인해주세요.');
+    }
+    return {
+      id: user.id,
+      memberNo: user.memberNo,
+      email: user.email,
+      nickname: user.nickname,
+      role: user.role,
+      createdAt: user.createdAt,
     };
   }
 }

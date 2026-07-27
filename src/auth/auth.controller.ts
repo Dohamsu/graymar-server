@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Post,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ZodError } from 'zod';
@@ -12,6 +14,8 @@ import type { Response } from 'express';
 import { AuthService } from './auth.service.js';
 import { RegisterBodySchema, LoginBodySchema } from './dto/auth.dto.js';
 import { BadRequestError } from '../common/errors/game-errors.js';
+import { AuthGuard } from '../common/guards/auth.guard.js';
+import { UserId } from '../common/decorators/user-id.decorator.js';
 
 const COOKIE_NAME = 'graymar_token';
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -54,6 +58,13 @@ export class AuthController {
     const result = await this.authService.login(parsed);
     setAuthCookie(res, result.token);
     return result;
+  }
+
+  /** 현재 로그인 유저 정보 (회원번호 포함) */
+  @Get('me')
+  @UseGuards(AuthGuard)
+  async me(@UserId() userId: string) {
+    return this.authService.me(userId);
   }
 
   private safeParse<T>(schema: { parse(data: unknown): T }, data: unknown): T {
