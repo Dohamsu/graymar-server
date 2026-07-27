@@ -554,6 +554,101 @@ export class DialogueGeneratorService {
   }
 
   /**
+   * [spike/dialogue-precommit — arch/95 §4.2 역전 설계 파일럿]
+   * 이번 턴 primary NPC의 핵심 응답 대사 1~2문장을 메인 서술 LLM 호출 전에
+   * 사전 확정한다. 어체 검증 실패 시 null 반환 → 주입 생략(현행 파이프라인
+   * 자연 격하)이 킬스위치. 자기소개 경로(generateIntroDialogue)와 달리
+   * 템플릿 fallback 없음 — 어긋난 대사를 강제 주입할 이유가 없다.
+   */
+  async generatePrecommitDialogue(input: {
+    npcId: string;
+    npcState: NPCState | undefined;
+    playerInput: string;
+    resolveOutcome?: string | null;
+    reaction?: {
+      reactionType?: string;
+      refusalLevel?: string;
+      immediateGoal?: string;
+      dialogueHint?: string;
+    } | null;
+    turnNo: number;
+  }): Promise<{ text: string } | null> {
+    const npcDef = this.content.getNpc(input.npcId);
+    if (!npcDef?.name) return null;
+    const register =
+      ((npcDef.personality as Record<string, unknown>)
+        ?.speechRegister as string) ?? 'HAOCHE';
+    const rule = REGISTER_RULES[register] ?? REGISTER_RULES['HAOCHE'];
+    const posture =
+      input.npcState?.posture ?? (npcDef as { posture?: string }).posture ?? '';
+
+    const validate = (d: string): boolean =>
+      d.length >= 5 && d.length <= 200 && validateSpeechRegister(d, register);
+
+    const dialogueModel =
+      process.env.LLM_DIALOGUE_MODEL ??
+      process.env.LLM_ALTERNATE_MODEL ??
+      this.configService.getLightModelConfig().model;
+    const r = input.reaction ?? {};
+    const introduced = input.npcState?.introduced === true;
+    const userMsg = [
+      `[NPC] ${npcDef.name} — ${npcDef.role ?? ''} (태도: ${posture})`,
+      `[어체] ${rule.name} — 문장은 반드시 ${rule.endings} 중 하나로 끝냅니다. 금지: ${rule.forbidden}`,
+      r.reactionType ? `[반응 방향] ${r.reactionType}${r.refusalLevel ? ` / 거절 강도 ${r.refusalLevel}` : ''}` : '',
+      r.immediateGoal ? `[이번 턴 속내] ${r.immediateGoal}` : '',
+      r.dialogueHint ? `[대사 방향] ${r.dialogueHint}` : '',
+      input.resolveOutcome ? `[판정] ${input.resolveOutcome}` : '',
+      `[상대의 말/행동] "${input.playerInput.slice(0, 200)}"`,
+      '',
+      `이 인물이 상대에게 답하는 핵심 대사 1~2문장을 쓰세요.`,
+      `- 반응 방향·속내와 일치할 것. 상대의 말을 그대로 복창하지 말 것.`,
+      introduced
+        ? `- 자기소개는 하지 마세요 (이미 통성명한 사이).`
+        : `- 자기 이름·상대 이름을 언급하지 마세요 (아직 통성명 전).`,
+      `대사 본문만 출력 (따옴표·설명·지문 없이).`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await this.llmCaller.call(
+        {
+          messages: [
+            { role: 'system', content: DIALOGUE_SYSTEM },
+            {
+              role: 'user',
+              content:
+                attempt === 0
+                  ? userMsg
+                  : userMsg + `\n\n⚠️ 이전 출력의 어체가 틀렸습니다. 반드시 ${rule.endings} 종결로만 쓰세요.`,
+            },
+          ],
+          maxTokens: 150,
+          temperature: 0.7,
+          model: dialogueModel,
+          timeoutMs: 10000,
+        },
+        'dialogue',
+      );
+      if (result.success && result.response?.text) {
+        const d = result.response.text
+          .trim()
+          .replace(/^[""“]+|[""”]+$/g, '');
+        if (validate(d)) {
+          this.logger.log(
+            `[Precommit] T${input.turnNo} ${input.npcId} 생성: "${d.slice(0, 60)}"`,
+          );
+          return { text: d.slice(0, 200) };
+        }
+      }
+    }
+    this.logger.warn(
+      `[Precommit] T${input.turnNo} ${input.npcId} 생성 실패 (2회) — 주입 생략, 현행 경로 격하`,
+    );
+    return null;
+  }
+
+  /**
    * Fallback 대사 생성 (LLM 실패 시)
    */
   private buildFallback(input: DialogueGenInput): DialogueGenResult {

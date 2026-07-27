@@ -22,6 +22,7 @@ import { ContextBuilderService } from './context-builder.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { korParticle } from '../common/korean.js';
 import {
+  getNpcDisplayName,
   sanitizeNpcNamesForTurn,
   shouldCallPlayerName,
 } from '../db/types/npc-state.js';
@@ -3088,6 +3089,70 @@ ${npcList}`,
           } catch (err) {
             this.logger.warn(
               `[IntroDialogue] 사전 생성 실패 (기존 경로 fallback): ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        }
+      }
+
+      // 3.45. [spike/dialogue-precommit — arch/95 §4.2 역전 설계 파일럿]
+      //   대화 계열 LOCATION 턴에서 primary NPC 핵심 대사를 사전 확정해 주입.
+      //   자기소개 턴(introDialogue)과 중복 주입 금지, 실패 시 무주입 자연 격하.
+      //   채택률 계측은 오프라인([Precommit] 로그 ↔ llm_output 대조)으로 수행.
+      if (
+        process.env.DIALOGUE_PRECOMMIT_ENABLED === 'true' &&
+        serverResult.node.type === 'LOCATION' &&
+        !introDialogue &&
+        npcReaction &&
+        reactionNpcIdUsed
+      ) {
+        const acPre =
+          ((serverResult.ui as Record<string, unknown>)?.actionContext as
+            | { parsedType?: string; dialogueAct?: string }
+            | undefined) ?? {};
+        const PRECOMMIT_ACTIONS = new Set([
+          'TALK',
+          'PERSUADE',
+          'THREATEN',
+          'BRIBE',
+          'HELP',
+          'TRADE',
+        ]);
+        if (
+          PRECOMMIT_ACTIONS.has(acPre.parsedType ?? '') &&
+          acPre.dialogueAct !== 'FAREWELL'
+        ) {
+          try {
+            const preNpcState = llmContext.npcStates?.[reactionNpcIdUsed];
+            const gen = await this.dialogueGenerator.generatePrecommitDialogue({
+              npcId: reactionNpcIdUsed,
+              npcState: preNpcState,
+              playerInput: pending.rawInput ?? '',
+              resolveOutcome:
+                ((serverResult.ui as Record<string, unknown>)
+                  ?.resolveOutcome as string | undefined) ?? null,
+              reaction: {
+                reactionType: npcReaction.reactionType,
+                refusalLevel: npcReaction.refusalLevel,
+                immediateGoal: npcReaction.immediateGoal,
+                dialogueHint: npcReaction.dialogueHint,
+              },
+              turnNo: pending.turnNo,
+            });
+            if (gen) {
+              const preDef = this.content.getNpc(reactionNpcIdUsed);
+              const preDisplay =
+                preNpcState && preDef
+                  ? getNpcDisplayName(preNpcState, preDef, pending.turnNo)
+                  : (preDef?.unknownAlias ?? preDef?.name ?? '상대');
+              llmContext.precommitDialogue = {
+                npcId: reactionNpcIdUsed,
+                displayName: preDisplay,
+                text: gen.text,
+              };
+            }
+          } catch (err) {
+            this.logger.warn(
+              `[Precommit] 사전 생성 실패 (현행 경로 격하): ${err instanceof Error ? err.message : err}`,
             );
           }
         }

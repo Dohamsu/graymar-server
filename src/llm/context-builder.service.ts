@@ -171,6 +171,13 @@ export interface LlmContext {
   newlyEncounteredNpcIds: string[]; // 이번 턴 처음 만나는 NPC
   /** 이름 공개 기획(arch/65): 첫 만남 소개 턴의 사전 확정 자기소개 대사 (워커가 주입) */
   introDialogue?: { npcId: string; text: string } | null;
+  /** [spike/dialogue-precommit — arch/95 §4.2 역전 설계 파일럿] 서버가 사전
+   *  확정한 이번 턴 primary NPC 핵심 대사. 워커가 프롬프트 조립 직전 주입. */
+  precommitDialogue?: {
+    npcId: string;
+    displayName: string;
+    text: string;
+  } | null;
   /** arch/91: 플레이어 캐릭터 이름 (미지정 런은 null) — 통성명한 NPC의 재회 호명·마커 배제용 */
   playerName: string | null;
   /** 순회 검증 ②(2026-07-12): 플레이어가 밝힌 자기 정보 — NPC 모순 질문 방지 */

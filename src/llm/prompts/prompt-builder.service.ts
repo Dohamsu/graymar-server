@@ -305,6 +305,21 @@ export class PromptBuilderService {
       factsParts.push(this.buildNpcReactionBlock(npcReaction));
     }
 
+    // [spike/dialogue-precommit — arch/95 §4.2 역전 설계 파일럿]
+    //   서버가 사전 확정한 primary NPC 핵심 대사를 positive 주입. 어체·호칭은
+    //   생성 단계에서 이미 기계 검증됨 — 메인 LLM은 연출만 담당한다.
+    if (ctx.precommitDialogue) {
+      factsParts.push(
+        [
+          `[⚠️ P0 — NPC 확정 대사 (서버 사전 결정, 그대로 사용)]`,
+          `${ctx.precommitDialogue.displayName}은(는) 이번 턴에 반드시 아래 대사를 말합니다:`,
+          `"${ctx.precommitDialogue.text}"`,
+          `- 이 대사를 표현 그대로 사용하세요 (어미·조사 변형 금지). 서술은 이 대사가 자연스럽게 나오는 장면으로 구성하세요.`,
+          `- 이 대사 앞뒤로 같은 인물의 짧은 부속 발화 1문장까지만 추가 허용.`,
+        ].join('\n'),
+      );
+    }
+
     // NPC 반응 블록 (목격자의 능동 반응) — 방관 NPC 한정 (architecture/72).
     // 대화 상대의 태도는 [P0 NPC 즉시 반응 결정]이 단일 권한 — 서버가 이미
     // 대화 상대를 목록에서 제외하지만, 프롬프트에도 스코프를 명시해 이중 방어.
