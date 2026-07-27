@@ -19,11 +19,15 @@ export const TOKEN_BUDGET = {
 
 /**
  * [arch/79 P3-C] 프롬프트 총량 백스톱 — 전 메시지 합산 문자 상한.
- * 실측 보정: 한국어 프롬프트 ≈1.64자/tok → 16,000자 ≈ 9.7k tok (예산 10k).
- * 11k tok부터 soft 문체 지시 준수 절벽 (arch/79 §6 — 1,556턴 회고).
+ * 실측 보정: 한국어 프롬프트 ≈1.64자/tok → 16,500자 ≈ 10.06k tok.
+ * 11k tok부터 soft 문체 지시 준수 절벽 (arch/79 §6 — 1,556턴 회고) — 마진 ≈0.9k tok.
  * 예산 달성의 주 수단은 P3-A/B(정적 압축)이며 이 상한은 예외 턴 안전판.
+ *
+ * [arch/79 2차 2026-07-27] 16,000→16,500 상향: 압축 7종+백스톱 순서 교체 후에도
+ * 대화 연속 후반 턴(방문 대화 원문·공개 정보 누적)이 상한을 ~500자 근소 초과해
+ * [NPC 일상] 잡담 화제 블록이 상시 삭제되던 것 해소. 재상향 전에 반드시 압축 먼저.
  */
-export const GRAND_TOTAL_CHAR_BUDGET = 16000;
+export const GRAND_TOTAL_CHAR_BUDGET = 16500;
 
 export type BudgetBlock = keyof Omit<
   typeof TOKEN_BUDGET,
