@@ -1190,7 +1190,10 @@ export class PromptBuilderService {
     if (total <= GRAND_TOTAL_CHAR_BUDGET) return;
 
     // 1순위: 스냅샷성 블록 통째 제거 (매 턴 서버가 재생성 — 기억 삭제 아님)
-    const TIER_REMOVE = ['[NPC 일상', '[세계 상태]'];
+    // [arch/79 2차 2026-07-27] 순서 교체: [NPC 일상]은 잡담 턴의 화제 유도 코어인데
+    //   1순위 제거라 대화 연속 턴마다 상시 삭제되는 부작용 실측 (D 블록 미주입 버그).
+    //   세계 스냅샷을 먼저 희생하고, [NPC 일상]은 그래도 초과일 때만 제거.
+    const TIER_REMOVE = ['[세계 상태]', '[NPC 일상'];
     for (const header of TIER_REMOVE) {
       if (total <= GRAND_TOTAL_CHAR_BUDGET) break;
       for (const m of messages) {
@@ -1847,7 +1850,7 @@ export class PromptBuilderService {
           );
         } else {
           parts.push(
-            '서술 규칙: 행동이 이미 일어난 것으로 시작하세요. "~했다", "~를 시도했다" 같은 요약문은 쓰지 마세요. NPC의 즉각적 반응(표정, 대사, 행동)이나 환경 변화로 서술을 여세요.',
+            '서술 규칙: 행동이 이미 일어난 것으로 시작 — "~했다/~를 시도했다" 요약문 금지, NPC의 즉각 반응이나 환경 변화로 열 것.',
           );
         }
         // Player-First: 턴 모드별 프롬프트 보강
