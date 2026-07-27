@@ -156,6 +156,9 @@ export class NodeTransitionService {
           hubSafety: ws.hubSafety,
           timePhase: ws.timePhase,
           currentLocationId: locationId,
+          // [arch/93] 헤더 라벨 정본. 이게 없으면 클라가 summary.display
+          // ("...에 도착했다." 문장)를 라벨로 쓰던 문제가 재발한다.
+          currentLocationName: locationName,
           reputation: ws.reputation ?? {},
         },
       },
@@ -496,6 +499,8 @@ export class NodeTransitionService {
           hubSafety: ws.hubSafety,
           timePhase: ws.timePhase,
           currentLocationId: locationId,
+          // [arch/93] 전투 복귀도 LOCATION 진입 — 헤더 라벨 정본을 채운다
+          currentLocationName: location?.name ?? locationId,
           reputation: ws.reputation ?? {},
         },
       },

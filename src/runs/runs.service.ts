@@ -1416,6 +1416,17 @@ export class RunsService {
       lastResult,
       battleState,
       npcEmotional,
+      // [arch/93] 현재 장소 표시명 복원 — 클라의 locationName은 노드 전이
+      // 시점에만 세팅되어, 이어하기 후에는 시나리오 기본 라벨로 떨어졌다
+      // (실측: currentLocationId=LOC_GUARD인데 헤더는 거점명 표기).
+      // npcEmotional·questStatus와 동일한 "복원 갭 메우기" 패턴.
+      currentLocationName: (() => {
+        const ws = (run.runState as Record<string, unknown> | null)
+          ?.worldState as Record<string, unknown> | undefined;
+        const locId = ws?.currentLocationId as string | null | undefined;
+        if (!locId) return null;
+        return this.content.getLocation(locId)?.name ?? null;
+      })(),
       // 퀘스트탭 현황판 복원 (2026-07-23) — 마지막 턴이 이동/HUB 턴이면
       // ui.questStatus가 없어 이어하기 시 탭이 비는 갭을 메운다 (npcEmotional과 동일 패턴)
       questStatus: this.questProgression.buildQuestStatus(

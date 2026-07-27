@@ -117,6 +117,12 @@ export type WorldStateUI = {
   /** 현재 일수 (1부터). 12tick = 1일 */
   day?: number;
   currentLocationId: string | null;
+  /**
+   * [arch/93] 현재 장소 표시명. 클라 헤더 라벨의 정본.
+   * 없으면 클라가 시나리오 기본 라벨로 떨어진다 — LOCATION 진입 결과에는
+   * 반드시 채운다 (HUB는 null이 정상).
+   */
+  currentLocationName?: string | null;
   /** [P2 — 73 B1] 팩 세계축 게이지 (미선언 팩은 빈 배열) */
   packMeters?: PackMeterUI[];
   locationDynamicStates?: Record<string, unknown>;
