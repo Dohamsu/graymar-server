@@ -3098,8 +3098,12 @@ ${npcList}`,
       //   대화 계열 LOCATION 턴에서 primary NPC 핵심 대사를 사전 확정해 주입.
       //   자기소개 턴(introDialogue)과 중복 주입 금지, 실패 시 무주입 자연 격하.
       //   채택률 계측은 오프라인([Precommit] 로그 ↔ llm_output 대조)으로 수행.
+      //   재시도 증폭 방지 (2026-07-28 배터리 실측): 프로바이더 폭풍 시 워커가
+      //   같은 턴을 재처리할 때마다 precommit이 재생성돼(동일 턴 3~4회 실측)
+      //   time-to-DONE을 늘리고 폴링 타임아웃을 증폭시켰다 — 첫 시도에만 생성.
       if (
         process.env.DIALOGUE_PRECOMMIT_ENABLED === 'true' &&
+        (pending.llmAttempts ?? 0) === 0 &&
         serverResult.node.type === 'LOCATION' &&
         !introDialogue &&
         npcReaction &&
