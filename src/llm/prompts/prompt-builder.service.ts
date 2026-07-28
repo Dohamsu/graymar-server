@@ -34,7 +34,7 @@ import {
   GRAND_TOTAL_CHAR_BUDGET,
 } from '../token-budget.service.js';
 import { collectRecentNpcUtterances } from '../npc-utterance.util.js';
-import { buildRegisterLines } from './speech-register.js';
+import { buildRegisterLines, getRegisterRule } from './speech-register.js';
 import { isQuestionInput } from '../../common/dialogue-act.js';
 import {
   aggregateRecentThemes,
@@ -617,9 +617,18 @@ export class PromptBuilderService {
       factsParts.push(
         [
           // [arch/79 2차 재압축 2026-07-27] 규칙 3줄→1줄 (의미 보존)
+          // [3차 2026-07-28] 최근 4건만 전문 — 이전 건은 키워드 요약 1줄 (누적 성장 캡)
           `[이미 공개된 정보 — 반복 금지]`,
           `${npcDisplayName}이(가) 이미 플레이어에게 알려준 정보:`,
-          ...facts.map((f, i) => `${i + 1}. "${f}"`),
+          ...(facts.length > 4
+            ? [
+                `(이전 공개 ${facts.length - 4}건 — 재언급 금지: ${facts
+                  .slice(0, -4)
+                  .map((f) => f.slice(0, 18))
+                  .join(' / ')})`,
+              ]
+            : []),
+          ...facts.slice(-4).map((f, i) => `${i + 1}. "${f}"`),
           `⚠️ 위 정보 재언급 금지 — "아시다시피"류 메타 접두어를 붙인 반복도 반복이다. 새로운 화제(감정·평가·후속 상황·질문)로 대화를 전진시킬 것.`,
         ].join('\n'),
       );
@@ -1386,9 +1395,18 @@ export class PromptBuilderService {
             // 어체(speechRegister) 규칙 — Dual-Track: LLM이 직접 대사 생성하므로 필수
             // CLAUDE.md LLM 설계 원칙: Positive framing 우선 + 경계 강화. 짧은 경고 외에
             // 관찰·질문·설명 문형 예시로 확장해 긴 대사도 일관된 어미 유지.
+            // [arch/79 3차 2026-07-28] 풀 세트(규칙+예시 4문형 ≈250자)는 발화 주체에게만 —
+            //   focused 턴의 보조 NPC는 따옴표 대사 금지(1인 응답 강제)라 예시 불필요.
             const register = (personality as Record<string, unknown>)
               .speechRegister as string | undefined;
-            parts.push(...buildRegisterLines(register));
+            if (!ctx.focusedNpcId || npcId === ctx.focusedNpcId) {
+              parts.push(...buildRegisterLines(register));
+            } else {
+              const rr = getRegisterRule(register);
+              parts.push(
+                `    어체: ${rr.name} · 지칭 ${rr.playerRef} (이 턴 이 인물은 서술만 — 따옴표 대사 금지)`,
+              );
+            }
 
             if (personality.speechStyle) {
               const speechParts = personality.speechStyle
@@ -2682,9 +2700,12 @@ export class PromptBuilderService {
         } else if (isNewlyEncountered && !isNewlyIntroduced) {
           return `- "${alias}" ${idTag}: ${npc.role} [첫 만남 — 이름 미공개] 첫 등장 시 "${alias}"로 지칭하고, 이후에는 "${pronoun}", "${pronoun} 인물" 등 짧은 대명사로 대체하세요. 실명 사용 금지.`;
         } else if (isIntroduced) {
-          const knowledgeEntries = (ctx.npcKnowledge ?? {})[npc.npcId];
+          // [arch/79 3차 2026-07-28] knowledge 최근 3개만 — 5개 만재 시 NPC당
+          //   ~400자로 [등장 가능 NPC 목록]이 max 800자까지 비대해지던 것 캡.
+          const knowledgeEntries = ((ctx.npcKnowledge ?? {})[npc.npcId] ?? [])
+            .slice(-3);
           const knowledgePart =
-            knowledgeEntries && knowledgeEntries.length > 0
+            knowledgeEntries.length > 0
               ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`
               : '';
           return `- ${npc.name}${title} ${idTag}: ${npc.role} [이미 소개됨, 대명사: ${pronoun}]${knowledgePart}`;
