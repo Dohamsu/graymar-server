@@ -3556,18 +3556,17 @@ export class PromptBuilderService {
       }
 
       // fear 기반 (높을수록 성격/말투를 오버라이드)
+      // [arch/79 3차 2026-07-28] 문면 축약 — 의미 보존, 반복 부연 제거
       if (em.fear > 40) {
         hints.push(
-          '⚠️ [감정 우선] 겁에 질려 있다 — 판단력이 흐려지고 몸이 굳는다. 말투가 무너지고 더듬거린다. 이 공포가 posture/speechStyle보다 우선 반영되어야 한다',
+          '⚠️ [감정 우선] 겁에 질림 — 몸이 굳고 말이 무너지며 더듬는다. posture/speechStyle보다 우선',
         );
       } else if (em.fear > 30) {
         hints.push(
-          '⚠️ [감정 우선] 두려움이 뚜렷하다 — 몸을 움츠리고 시선을 피한다. 평소 말투가 흔들리며 짧고 경계적으로 말한다. 이 감정이 speechStyle보다 우선한다',
+          '⚠️ [감정 우선] 뚜렷한 두려움 — 움츠리고 시선을 피하며 짧고 경계적으로 말한다. speechStyle보다 우선',
         );
       } else if (em.fear > 15) {
-        hints.push(
-          '불안해하고 있다 — 말을 더듬거나 시선을 피한다. 평소보다 짧고 조심스럽게 말한다',
-        );
+        hints.push('불안 — 말을 더듬거나 시선을 피하고 평소보다 짧게 말한다');
       }
 
       // respect 기반
@@ -3640,10 +3639,11 @@ export class PromptBuilderService {
           const dominant = [...counts.entries()].sort(
             (a, b) => b[1] - a[1],
           )[0][0];
+          // [arch/79 3차 2026-07-28] 문면 축약 — 규칙 보존
           behaviorParts.push(
             canCallPlayerName
-              ? `⚠️ 권장 호칭: "${dominant}" — 이 NPC는 사용자를 "${dominant}"(으)로 부른다. 단 이번 턴 첫 대사에서만 이름("${ctx.playerName}")으로 부르고, 이후는 "${dominant}". 한 답변 안에 여러 호칭(그대/너/당신 등) 혼용 금지.`
-              : `⚠️ 권장 호칭: "${dominant}" — 이 NPC는 사용자를 항상 "${dominant}"(으)로 부른다. 한 답변 안에 여러 호칭(그대/너/당신 등) 혼용 금지.`,
+              ? `⚠️ 권장 호칭 "${dominant}" — 이번 턴 첫 대사만 이름("${ctx.playerName}"), 이후는 "${dominant}". 한 답변 내 호칭 혼용 금지.`
+              : `⚠️ 권장 호칭 "${dominant}" — 항상 이 호칭만 사용, 한 답변 내 호칭 혼용 금지.`,
           );
         }
       }
@@ -3799,7 +3799,7 @@ export class PromptBuilderService {
 
       const bgGuide =
         npcTier === 'BACKGROUND'
-          ? `\n    ⚠️ [배경 인물] 이 인물은 ${npcDef?.role ?? '일반인'}입니다. 직업과 일상에 맞는 소소한 정보만 전달합니다. 핵심 비밀이나 퀘스트 정보는 모릅니다. 개성과 말투를 자연스럽게 표현하되, 대화가 길어지면 "잘 모르겠다"며 자연스럽게 마무리하세요.`
+          ? `\n    ⚠️ [배경 인물] ${npcDef?.role ?? '일반인'} — 직업·일상 수준의 소소한 정보만 알고, 핵심 비밀·퀘스트 정보는 모른다. 대화가 길어지면 모른다며 자연스럽게 마무리.`
           : '';
       emotionalLines.push(
         `- ${displayName} [${posture}]${depthGuide}${nameCallGuide}${hintText}${behaviorText}${moodText}${bgGuide}`,
