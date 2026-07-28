@@ -8,6 +8,7 @@ import { ContentLoaderService } from '../content/content-loader.service.js';
 import type { NPCState } from '../db/types/npc-state.js';
 import { getNpcDisplayName } from '../db/types/npc-state.js';
 import { korParticle } from '../common/korean.js';
+import { extractKoreanKeywords } from '../common/text-utils.js';
 
 /** dialogue_slot의 의도 enum */
 export type DialogueIntent =
@@ -591,6 +592,12 @@ export class DialogueGeneratorService {
       this.configService.getLightModelConfig().model;
     const r = input.reaction ?? {};
     const introduced = input.npcState?.introduced === true;
+    // [파일럿 보완 2026-07-28] 응답률 급락(에드릭 70→30% 실측) 대응 — 상대
+    // 발화의 핵심 명사를 추출해 되받기를 positive로 지시 (A51 R2 패턴 재사용).
+    // 플레이어 자신의 어휘라 불변식 50(정적 풀 anchor)과 무관.
+    const echoKw = [...extractKoreanKeywords(input.playerInput)]
+      .filter((k) => k.length >= 2)
+      .slice(0, 2);
     const userMsg = [
       `[NPC] ${npcDef.name} — ${npcDef.role ?? ''} (태도: ${posture})`,
       `[어체] ${rule.name} — 문장은 반드시 ${rule.endings} 중 하나로 끝냅니다. 금지: ${rule.forbidden}`,
@@ -601,7 +608,10 @@ export class DialogueGeneratorService {
       `[상대의 말/행동] "${input.playerInput.slice(0, 200)}"`,
       '',
       `이 인물이 상대에게 답하는 핵심 대사 1~2문장을 쓰세요.`,
-      `- 반응 방향·속내와 일치할 것. 상대의 말을 그대로 복창하지 말 것.`,
+      `- 반응 방향·속내와 일치할 것.`,
+      echoKw.length > 0
+        ? `- 상대의 말에 실제로 답하세요: 상대가 쓴 단어 ${echoKw.map((k) => `"${k}"`).join('·')} 중 하나를 자연스럽게 되받아 응답에 녹일 것. 단 상대 문장 전체를 그대로 복창하지는 말 것.`
+        : `- 상대의 말에 실제로 답하되, 문장 전체를 그대로 복창하지는 말 것.`,
       introduced
         ? `- 자기소개는 하지 마세요 (이미 통성명한 사이).`
         : `- 자기 이름·상대 이름을 언급하지 마세요 (아직 통성명 전).`,
