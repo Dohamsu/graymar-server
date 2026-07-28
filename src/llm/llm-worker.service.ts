@@ -3143,7 +3143,15 @@ ${npcList}`,
       let alternateModel: string | undefined;
       const altModel = process.env.LLM_ALTERNATE_MODEL;
       const mainAltModel = process.env.LLM_MAIN_ALTERNATE_MODEL;
-      if (!isCombat && altModel && pending.turnNo % 2 === 0) {
+      // 교차 비율 5:5 → 3:7 (소유자 결정 2026-07-28) — DeepSeek 어미 열세
+      // (64~66% vs Gemma 82~85%, arch/95 §7 실측) 완화. 어휘 편향 상쇄라는
+      // 도입 목적은 유지하되 노출을 10턴 주기 3회(간격 3~4턴)로 제한.
+      const ALT_TURN_SLOTS = [2, 5, 8]; // turnNo % 10 기준 — 결정론 유지
+      if (
+        !isCombat &&
+        altModel &&
+        ALT_TURN_SLOTS.includes(pending.turnNo % 10)
+      ) {
         alternateModel = altModel;
         this.logger.debug(
           `[ModelAlternate] turn=${pending.turnNo} → alternate model: ${altModel}`,
