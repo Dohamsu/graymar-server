@@ -852,13 +852,13 @@ export class PromptBuilderService {
           (chatNpcState?.llmSummary?.recentTopics ?? []).map((t) => t.topic),
         );
         const fresh = dailyTopics.filter((t) => !usedTopicIds.has(t.topicId));
-        const pool = fresh.length > 0 ? fresh : dailyTopics;
-        // 입력 키워드 매칭 우선
+        // 입력 키워드 매칭 우선 — 입력이 특정 주제를 물으면 사용 이력과 무관하게
+        // 전체 풀에서 응답 (물은 것에 답하는 게 재탕 회피보다 우선)
         const inputForTopic = (sr.summary?.short as string | undefined) ?? '';
         const inputKwForTopic = new Set(
           inputForTopic.match(/[가-힣]{2,}/g) ?? [],
         );
-        const matched = pool.filter((t) =>
+        const matched = dailyTopics.filter((t) =>
           (t.keywords ?? []).some((kw) => {
             if (kw.length < 2) return false;
             if (inputKwForTopic.has(kw)) return true;
@@ -868,9 +868,14 @@ export class PromptBuilderService {
             return false;
           }),
         );
-        const candidates = matched.length > 0 ? matched : pool;
+        // [Task#1 A-1 2026-07-30] 풀 소진 시 전체 리셋 재탕 폐지 — 매칭도 없고
+        // fresh도 없으면 picked=null → 즉석 화제 프레이밍으로 폴백 (아래).
+        // 화제 다양성 25% 고착의 원인이 "10턴 잡담 > 풀 5개 → 6턴째부터 재탕".
+        const candidates = matched.length > 0 ? matched : fresh;
         const picked =
-          candidates[Math.floor(Math.random() * candidates.length)];
+          candidates.length > 0
+            ? candidates[Math.floor(Math.random() * candidates.length)]
+            : null;
         const chatDisplayName = chatNpcDef?.name ?? chatNpcId;
         // arch/69 B2 — 현재 활동(schedule)을 화제에 결합. 화제만 툭 던지지
         // 않고 "지금 하는 일에 얹힌 잡담"으로 삶의 맥락을 준다 (공용 헬퍼 재사용).
@@ -882,13 +887,24 @@ export class PromptBuilderService {
         if (chatActivity) {
           chatLines.push(`${chatDisplayName}은(는) 지금 ${chatActivity} 중.`);
         }
-        chatLines.push(
-          `평소 화제 (참고): ${picked.text}`,
-          chatActivity
-            ? `→ 하던 일(${chatActivity})을 이어가며 이 화제를 NPC 말투로 짧게(1~3문장) 흘리듯 녹이세요. 화제만 던지지 말고 지금 상황·손짓에 얹으세요.`
-            : `이 화제를 NPC 말투로 짧게 (1~3문장) 자연스럽게 녹이세요. 강요 금지.`,
-          `※ 단서/사건/임무를 화두로 만들지 마세요. 이번 턴은 일상 대화입니다.`,
-        );
+        if (picked) {
+          chatLines.push(
+            `평소 화제 (참고): ${picked.text}`,
+            chatActivity
+              ? `→ 하던 일(${chatActivity})을 이어가며 이 화제를 NPC 말투로 짧게(1~3문장) 흘리듯 녹이세요. 화제만 던지지 말고 지금 상황·손짓에 얹으세요.`
+              : `이 화제를 NPC 말투로 짧게 (1~3문장) 자연스럽게 녹이세요. 강요 금지.`,
+            `※ 단서/사건/임무를 화두로 만들지 마세요. 이번 턴은 일상 대화입니다.`,
+          );
+        } else {
+          // [Task#1 A-1] 풀 소진 폴백 — 재탕 대신 현재 활동·직업에서 파생되는
+          // 즉석 화제를 생성하게 함 (이미 다룬 주제는 recentTopics 블록이 차단)
+          chatLines.push(
+            chatActivity
+              ? `준비된 화제는 모두 다뤘습니다 — 지금 하는 일(${chatActivity})에서 자연스럽게 파생되는 새 화제(오늘 겪은 사소한 일·몸 상태·날씨 체감·일감 걱정)를 NPC 말투로 1~3문장 만들어 꺼내세요.`
+              : `준비된 화제는 모두 다뤘습니다 — 이 인물의 직업·일상에서 파생되는 새 화제를 NPC 말투로 짧게(1~3문장) 만들어 꺼내세요. 이미 다룬 주제와 다른 각도로.`,
+            `※ 단서/사건/임무를 화두로 만들지 마세요. 이번 턴은 일상 대화입니다.`,
+          );
+        }
         factsParts.push(chatLines.join('\n'));
 
         // arch/69 B4 — 관계 근황 발화: 화자가 아는 다른 NPC 소식/관계를 잡담에
@@ -3666,6 +3682,23 @@ export class PromptBuilderService {
               ? `⚠️ 권장 호칭 "${dominant}" — 이번 턴 첫 대사만 이름("${ctx.playerName}"), 이후는 "${dominant}". 한 답변 내 호칭 혼용 금지.`
               : `⚠️ 권장 호칭 "${dominant}" — 항상 이 호칭만 사용, 한 답변 내 호칭 혼용 금지.`,
           );
+        } else {
+          // [Task#1 A-2 2026-07-30] speechStyle에 호칭 미정의 → 어체 기본 호칭
+          // 폴백 (이중 안전망 — 42/48 NPC 미정의로 R4가 사실상 죽어 호칭이
+          // 42~100% 널뛰던 실측, arch/95 세션). 콘텐츠 정의가 정본이며 이 폴백은
+          // 신규·동적 NPC 커버용.
+          const fbRegister = (personality as Record<string, unknown>)
+            ?.speechRegister as string | undefined;
+          const fbRef = getRegisterRule(fbRegister).playerRef.match(
+            /(그대|자네|당신|너희|너|그쪽|손님|친구|형제|동무)/,
+          )?.[0];
+          if (fbRef) {
+            behaviorParts.push(
+              canCallPlayerName
+                ? `⚠️ 권장 호칭 "${fbRef}" — 이번 턴 첫 대사만 이름("${ctx.playerName}"), 이후는 "${fbRef}". 한 답변 내 호칭 혼용 금지.`
+                : `⚠️ 권장 호칭 "${fbRef}" — 항상 이 호칭만 사용, 한 답변 내 호칭 혼용 금지.`,
+            );
+          }
         }
       }
 
