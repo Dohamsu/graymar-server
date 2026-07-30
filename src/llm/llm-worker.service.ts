@@ -2900,7 +2900,7 @@ ${npcList}`,
                 }),
               );
               // P4 — 서버 기본 go_hub와 라벨·payload 통일 (Track 2와 동일)
-              nanoChoices.push(this.content.buildGoHubChoice());
+              nanoChoices.push(this.goHubChoiceFor(serverResult));
               // llmChoices에 저장 (DB 업데이트는 아래에서 함께)
               this.pendingNanoChoices.set(
                 `${pending.runId}:${pending.turnNo}`,
@@ -3668,7 +3668,7 @@ ${npcList}`,
                   }),
                 );
               if (parsed.length > 0) {
-                parsed.push(this.content.buildGoHubChoice());
+                parsed.push(this.goHubChoiceFor(serverResult));
                 llmChoices = parsed;
               }
             }
@@ -3804,7 +3804,7 @@ ${npcList}`,
             );
             narrative = choiceResult.cleanedNarrative;
             if (choiceResult.choices) {
-              choiceResult.choices.push(this.content.buildGoHubChoice());
+              choiceResult.choices.push(this.goHubChoiceFor(serverResult));
               llmChoices = choiceResult.choices;
             }
           }
@@ -4316,7 +4316,7 @@ ${npcList}`,
               // P4 — 서버 기본 go_hub와 라벨·payload 통일. 기존 "다른 장소로
               // 이동한다"(MOVE_LOCATION)는 클릭 시 실제로는 선술집 복귀라
               // 라벨-결과가 불일치했다.
-              nanoChoices2.push(this.content.buildGoHubChoice());
+              nanoChoices2.push(this.goHubChoiceFor(serverResult));
               this.pendingNanoChoices.set(
                 `${pending.runId}:${pending.turnNo}`,
                 nanoChoices2,
@@ -5258,6 +5258,18 @@ ${npcList}`,
    */
   // [arch/77 P4.0 금지선] fire-and-forget CAS 패치 — fresh 재조회 + 워커 소유
   // 필드만 반영하는 lost-update 방벽(cede95d3). 호출 지점·패치 단위 변경 금지.
+  /** [Task#2 B-2b 2026-07-30] 서버 기본 choices의 go_hub 프레이밍(퀘스트 전환
+   *  '보고하러' 리라벨 등)을 nano 최종 선택지에도 보존 — 워커 4곳이 기본 라벨로
+   *  재생성하며 덮던 것 수정. */
+  private goHubChoiceFor(
+    serverResult: ServerResultV1,
+  ): import('../db/types/server-result.js').ChoiceItem {
+    const serverGoHub = (serverResult.choices ?? []).find(
+      (c) => c.id === 'go_hub',
+    );
+    return serverGoHub ?? this.content.buildGoHubChoice();
+  }
+
   private async applyRunStatePatch(
     runId: string,
     label: string,

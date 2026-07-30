@@ -5870,18 +5870,25 @@ export class TurnsService {
       const questTransitionedThisTurn =
         (updatedRunState as unknown as { questState?: string }).questState !==
         questStateBeforeProgress;
-      if (
-        questTransitionedThisTurn &&
-        !choices.some((c) => c.id === 'go_hub')
-      ) {
-        choices = [
-          ...choices,
-          {
-            ...this.content.buildGoHubChoice(),
-            label: '의뢰인에게 보고하러 돌아간다',
-            hint: '진전을 알리면 사례금이 정산된다',
-          },
-        ];
+      if (questTransitionedThisTurn) {
+        // buildFollowUpChoices가 go_hub를 기본 포함하므로 있으면 리라벨,
+        // 없으면 추가. (워커 nano 경로는 goHubChoiceFor가 이 프레이밍을 보존)
+        const reportLabel = '의뢰인에게 보고하러 돌아간다';
+        const reportHint = '진전을 알리면 사례금이 정산된다';
+        const idx = choices.findIndex((c) => c.id === 'go_hub');
+        choices =
+          idx >= 0
+            ? choices.map((c, i) =>
+                i === idx ? { ...c, label: reportLabel, hint: reportHint } : c,
+              )
+            : [
+                ...choices,
+                {
+                  ...this.content.buildGoHubChoice(),
+                  label: reportLabel,
+                  hint: reportHint,
+                },
+              ];
       }
     }
 
