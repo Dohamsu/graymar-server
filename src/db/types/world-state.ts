@@ -81,6 +81,10 @@ export type WorldState = {
   globalClock: number; // 전역 틱 카운터 (0부터 시작, 매 스텝마다 증가)
   day: number; // 현재 일수 (1부터 시작, 12tick = 1일)
   phaseV2: TimePhaseV2; // 4상 시간 (DAWN/DAY/DUSK/NIGHT)
+  /** [Task#2 B-1 2026-07-30] 대화 지연 틱 적립 카운터 — 대화(timeCost 0) 턴마다
+   *  +1, DIALOGUE_TICK_ACCRUAL_TURNS 도달분은 다음 비대화·이동 턴에 틱으로 발효.
+   *  대화 중 시간대 전환 금지(불변식 49)를 지키며 시간 동면(arch/91 §9.6) 해소. */
+  dialogueTickAccrual?: number;
   activeIncidents: IncidentRuntime[]; // 활성 Incident 목록
   npcGoals: Record<string, NpcGoalState>; // NPC 자율 목표
   signalFeed: SignalFeedItem[]; // 시그널 피드 (최근 N개)

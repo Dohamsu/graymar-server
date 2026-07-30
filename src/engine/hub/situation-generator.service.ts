@@ -38,6 +38,8 @@ export interface Situation {
 export class SituationGeneratorService {
   // P3: generate() 호출 시 설정, findTemplatePreferFact에서 참조
   private _discoveredFacts?: Set<string>;
+  /** [Task#2 B-2a] 플레이어가 아는 NPC(조우·소개 이력) — NPC_ACTIVITY 우선 선택용 */
+  private _knownNpcIds?: Set<string>;
 
   constructor(
     @Inject(ContentLoaderService)
@@ -58,8 +60,14 @@ export class SituationGeneratorService {
     incidentDefs: IncidentDef[],
     recentPrimaryNpcIds?: string[],
     discoveredFacts?: Set<string>,
+    knownNpcIds?: Set<string>,
   ): Situation | null {
     this._discoveredFacts = discoveredFacts;
+    // [Task#2 B-2a 2026-07-30] 재회 가중 — 플레이어가 아는 NPC(조우·소개 이력)를
+    // NPC_ACTIVITY 상황의 주인공으로 우선 선택해, 축적된 개인 기억(재회 호명·
+    // knownFacts 회상)이 소비될 기회를 만든다. 로테이션(sortByRecency 3턴 가드)이
+    // 같은 NPC 연속 등장은 기존대로 차단.
+    this._knownNpcIds = knownNpcIds;
     // Layer 1: Landmark Event (스토리 체크포인트)
     const landmark = this.tryLandmark(ws, locationId, allEvents);
     if (landmark) return landmark;
@@ -436,7 +444,16 @@ export class SituationGeneratorService {
     bgNpcs: string[] = [],
   ): Situation | null {
     // 첫 번째 CORE/SUB NPC의 활동 기반 상황
-    const npcId = primaryNpcs[0];
+    // [Task#2 B-2a] 아는 NPC 우선 — stable sort라 known/unknown 그룹 내부의
+    // 기존(recency) 순서는 보존된다.
+    const orderedNpcs = this._knownNpcIds
+      ? [...primaryNpcs].sort(
+          (a, b) =>
+            (this._knownNpcIds!.has(b) ? 1 : 0) -
+            (this._knownNpcIds!.has(a) ? 1 : 0),
+        )
+      : primaryNpcs;
+    const npcId = orderedNpcs[0];
     const npcDef = this.content.getNpc(npcId);
     if (!npcDef) return null;
 

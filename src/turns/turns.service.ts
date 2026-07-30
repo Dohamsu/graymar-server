@@ -393,6 +393,7 @@ import { computeTacticEffects } from '../engine/combat/combat-tactic.core.js';
 import { mergeInventoryItem } from './run-state-apply.core.js';
 import {
   computeTurnTimeCost,
+  DIALOGUE_TICK_ACCRUAL_TURNS,
   MOVE_TIME_COST,
   TRAVEL_LEG_TIME_COST,
 } from './time-cost.js';
@@ -1466,7 +1467,21 @@ export class TurnsService {
 
     // 행동 가중 시간 비용 (time-cost.ts 정본) — 대화 계열·사교 발화는 시간 정지(0),
     // 시간이 걸리는 행동만 1tick, 휴식 2. 대화 중 시간대 전환을 원천 차단한다.
-    const timeCost = computeTurnTimeCost(intent.actionType, dialogueAct);
+    let timeCost = computeTurnTimeCost(intent.actionType, dialogueAct);
+
+    // [Task#2 B-1 2026-07-30] 대화 지연 틱 — 대화 턴은 적립만, 비대화 턴에서
+    // 적립분(6턴=1tick)을 얹어 발효. 대화 중 시간대 전환 금지(불변식 49)는
+    // 발효 시점이 비대화 턴뿐이므로 무손상.
+    {
+      let accrual = ws.dialogueTickAccrual ?? 0;
+      if (timeCost === 0) {
+        accrual += 1;
+      } else if (accrual >= DIALOGUE_TICK_ACCRUAL_TURNS) {
+        timeCost += Math.floor(accrual / DIALOGUE_TICK_ACCRUAL_TURNS);
+        accrual = accrual % DIALOGUE_TICK_ACCRUAL_TURNS;
+      }
+      ws = { ...ws, dialogueTickAccrual: accrual };
+    }
 
     // 전환 감지용 — 틱 이전 4상 시간대 캡처.
     const prevPhaseV2 = ws.phaseV2;
@@ -4188,6 +4203,20 @@ export class TurnsService {
                     (h) =>
                       (h as Record<string, unknown>).primaryNpcId as string,
                   );
+                // [Task#2 B-2a] 아는 NPC(조우·소개 이력) — SitGen 재회 가중용
+                const knownNpcIds = new Set(
+                  Object.entries(
+                    (updatedRunState.npcStates ?? {}) as Record<
+                      string,
+                      NPCState
+                    >,
+                  )
+                    .filter(
+                      ([, s]) =>
+                        (s?.encounterCount ?? 0) >= 1 || s?.introduced,
+                    )
+                    .map(([id]) => id),
+                );
                 const situation = this.situationGenerator.generate(
                   ws,
                   locationId,
@@ -4196,6 +4225,7 @@ export class TurnsService {
                   incidentDefs,
                   recentPrimaryNpcIds,
                   discoveredFacts,
+                  knownNpcIds,
                 );
                 if (situation) {
                   matchedEvent = situation.eventDef;
@@ -5687,6 +5717,11 @@ export class TurnsService {
 
     // [arch/77 P3.7] Quest Progression — processQuestProgression으로 추출.
     // updatedRunState는 내부에서 제자리 변조(discoveredQuestFacts/questState 등).
+    // [Task#2 B-2b] 전환 감지용 사전 캡처 — processQuestProgression이
+    // updatedRunState.questState를 제자리 갱신한다.
+    const questStateBeforeProgress = (
+      updatedRunState as unknown as { questState?: string }
+    ).questState;
     const questOutcome = this.processQuestProgression({
       updatedRunState,
       resolveResult,
@@ -5827,6 +5862,29 @@ export class TurnsService {
         event.eventId,
       );
     }
+    // [Task#2 B-2b 2026-07-30] 퀘스트 단계 전환 턴 — 의뢰인 보고 동선 선택지.
+    // 재방문 18% 실측(축적 기억이 재회로 소비될 기회 부족)의 저비용 보완:
+    // 적립 사례금 정산 트리거(거점 복귀·의뢰인 대면, arch/89)와 정확히 맞물린다.
+    // go_hub 정본 재사용이라 신규 처리 경로 0 — 라벨만 보고 프레이밍.
+    {
+      const questTransitionedThisTurn =
+        (updatedRunState as unknown as { questState?: string }).questState !==
+        questStateBeforeProgress;
+      if (
+        questTransitionedThisTurn &&
+        !choices.some((c) => c.id === 'go_hub')
+      ) {
+        choices = [
+          ...choices,
+          {
+            ...this.content.buildGoHubChoice(),
+            label: '의뢰인에게 보고하러 돌아간다',
+            hint: '진전을 알리면 사례금이 정산된다',
+          },
+        ];
+      }
+    }
+
     // NanoEventDirector 선택지 → LLM Worker에서 비동기 생성 후 llmChoices에 저장
     // 턴 응답에서는 서버 기본 선택지 사용
 

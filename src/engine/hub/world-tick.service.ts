@@ -6,6 +6,7 @@ import type {
   IncidentImpactPatch,
 } from '../../db/types/index.js';
 import { deriveTimePhaseFromV2 } from '../../db/types/index.js';
+import { DIALOGUE_TICK_ACCRUAL_TURNS } from '../../turns/time-cost.js';
 import { IncidentManagementService } from './incident-management.service.js';
 import { SignalFeedService } from './signal-feed.service.js';
 import { NpcScheduleService } from './npc-schedule.service.js';
@@ -268,10 +269,19 @@ export class WorldTickService {
     const prevPhase: TimePhaseV2 =
       ws.phaseV2 ?? (ws.timePhase === 'NIGHT' ? 'NIGHT' : 'DAY');
 
+    // [Task#2 B-1 2026-07-30] 대화 지연 틱 발효 — 이동도 비대화 시간 소유
+    // 경로이므로 적립분(6대화턴=1tick)을 여기서도 소화한다.
+    let accrual = ws.dialogueTickAccrual ?? 0;
+    if (accrual >= DIALOGUE_TICK_ACCRUAL_TURNS) {
+      ticks += Math.floor(accrual / DIALOGUE_TICK_ACCRUAL_TURNS);
+      accrual = accrual % DIALOGUE_TICK_ACCRUAL_TURNS;
+    }
+
     let updated: WorldState = {
       ...ws,
       phaseV2: prevPhase,
       globalClock: ws.globalClock + ticks,
+      dialogueTickAccrual: accrual,
     };
     updated = this.advancePhaseV2(updated);
     updated = {
