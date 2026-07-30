@@ -794,7 +794,13 @@ export function buildNpcLlmSummary(
     lastDialogueSnippet: (lastDialogueSnippet ?? '').slice(0, 50),
     currentConcern,
     updatedAtTurn: turnNo,
-    // recentTopics는 buildNpcLlmSummary에서 생성하지 않음 — addRecentTopic으로 별도 관리
+    // recentTopics는 addRecentTopic으로 별도 관리하되, 재구성 시 기존 이력을
+    // carry-over 한다. [Task#1 A-1 2026-07-30] 기존엔 여기서 필드를 누락해
+    // llmSummary 갱신 턴마다 이력이 통째로 증발 — recentTopics가 항상 1개로
+    // 고착돼 '이미 다룬 주제'·화제 dedup 창이 사실상 1턴이던 실측 버그.
+    ...(npcState.llmSummary?.recentTopics
+      ? { recentTopics: npcState.llmSummary.recentTopics }
+      : {}),
   };
 }
 

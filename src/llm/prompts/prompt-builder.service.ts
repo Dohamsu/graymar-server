@@ -875,8 +875,11 @@ export class PromptBuilderService {
         );
         // [Task#1 A-1 2026-07-30] 풀 소진 시 전체 리셋 재탕 폐지 — 매칭도 없고
         // fresh도 없으면 picked=null → 즉석 화제 프레이밍으로 폴백 (아래).
-        // 화제 다양성 25% 고착의 원인이 "10턴 잡담 > 풀 5개 → 6턴째부터 재탕".
-        const candidates = matched.length > 0 ? matched : fresh;
+        // 매칭 경로도 fresh 우선 — generic 키워드('시장' 등)가 매 턴 같은 화제를
+        // 재소환하던 우회로 차단 (실측: '빵' 화제 3회/7턴). 진짜 재질문의 맥락은
+        // 직전 발언·[이미 공개된 정보] 블록이 담당.
+        const matchedFresh = matched.filter((t) => !usedTopicIds.has(t.topicId));
+        const candidates = matchedFresh.length > 0 ? matchedFresh : fresh;
         const picked =
           candidates.length > 0
             ? candidates[Math.floor(Math.random() * candidates.length)]
