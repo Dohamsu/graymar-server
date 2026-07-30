@@ -171,6 +171,10 @@ export interface LlmContext {
   newlyEncounteredNpcIds: string[]; // 이번 턴 처음 만나는 NPC
   /** 이름 공개 기획(arch/65): 첫 만남 소개 턴의 사전 확정 자기소개 대사 (워커가 주입) */
   introDialogue?: { npcId: string; text: string } | null;
+  /** [Task#1 A-1 2026-07-30] 출력 파라미터 — prompt-builder D 블록이 이 턴에
+   *  고른 잡담 화제. 워커가 조립 직후 읽어 recentTopics에 CAS 역기록한다.
+   *  (usedTopicIds dedup의 실제 키 — 기존 topic 필드는 topicId가 아니라 무동작) */
+  pickedDailyTopic?: { npcId: string; topicId: string } | null;
   /** arch/91: 플레이어 캐릭터 이름 (미지정 런은 null) — 통성명한 NPC의 재회 호명·마커 배제용 */
   playerName: string | null;
   /** 순회 검증 ②(2026-07-12): 플레이어가 밝힌 자기 정보 — NPC 모순 질문 방지 */

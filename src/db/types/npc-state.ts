@@ -29,6 +29,12 @@ export interface NpcTopicEntry {
    * 옵셔널 (기존 데이터 호환).
    */
   type?: 'FACT' | 'DAILY';
+  /**
+   * [Task#1 A-1 2026-07-30] D 블록이 이 턴에 고른 daily_topic의 topicId.
+   * 워커가 프롬프트 조립 후 CAS로 역기록 — usedTopicIds 중복 방지의 실제 키.
+   * (topic 필드는 sceneFrame/rawInput 요약이라 topicId 매칭이 태생부터 무동작이었음)
+   */
+  dailyTopicId?: string;
 }
 
 /** NPC LLM 요약: 재등장 시 간소 프롬프트 블록용 (규칙 기반 생성, LLM 호출 없음) */

@@ -847,9 +847,14 @@ export class PromptBuilderService {
       const dailyTopics = chatNpcDef?.daily_topics ?? [];
       if (dailyTopics.length > 0) {
         const chatNpcState = ctx.npcStates?.[chatNpcId];
-        // recentTopics 회피 — 이미 사용한 topicId/factId 제외
+        // recentTopics 회피 — 이미 사용한 화제 제외.
+        // [Task#1 A-1 2026-07-30] 기존 t.topic은 sceneFrame/rawInput 요약이라
+        // topicId와 매칭된 적이 없었다(dedup 무동작 → 복원추출 재탕 실측).
+        // 워커가 역기록하는 dailyTopicId가 실제 키.
         const usedTopicIds = new Set(
-          (chatNpcState?.llmSummary?.recentTopics ?? []).map((t) => t.topic),
+          (chatNpcState?.llmSummary?.recentTopics ?? [])
+            .map((t) => t.dailyTopicId)
+            .filter((id): id is string => !!id),
         );
         const fresh = dailyTopics.filter((t) => !usedTopicIds.has(t.topicId));
         // 입력 키워드 매칭 우선 — 입력이 특정 주제를 물으면 사용 이력과 무관하게
@@ -888,6 +893,9 @@ export class PromptBuilderService {
           chatLines.push(`${chatDisplayName}은(는) 지금 ${chatActivity} 중.`);
         }
         if (picked) {
+          // [Task#1 A-1] 선택 화제를 출력 파라미터로 노출 — 워커가 recentTopics에
+          // dailyTopicId를 CAS 역기록해 다음 턴 dedup의 키로 쓴다.
+          ctx.pickedDailyTopic = { npcId: chatNpcId, topicId: picked.topicId };
           chatLines.push(
             `평소 화제 (참고): ${picked.text}`,
             chatActivity

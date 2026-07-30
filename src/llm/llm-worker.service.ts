@@ -3129,6 +3129,36 @@ ${npcList}`,
         npcReaction,
       );
 
+      // [Task#1 A-1 2026-07-30] D 블록이 고른 잡담 화제 topicId를 recentTopics에
+      // CAS 역기록 — usedTopicIds dedup의 실제 키 (기존 topic 필드는 sceneFrame
+      // 요약이라 dedup이 태생부터 무동작 → 10개 풀에서도 복원추출 재탕 실측).
+      // fire-and-forget: 실패해도 soft 데이터 — 다음 턴 재탕 확률만 소폭 상승.
+      if (llmContext.pickedDailyTopic) {
+        const pdt = llmContext.pickedDailyTopic;
+        const pdtTurnNo = pending.turnNo;
+        void this.applyRunStatePatch(pending.runId, 'dailyTopicPick', (rs) => {
+          const ns = rs.npcStates as
+            | Record<
+                string,
+                {
+                  llmSummary?: {
+                    recentTopics?: Array<{
+                      turnNo: number;
+                      dailyTopicId?: string;
+                    }>;
+                  };
+                }
+              >
+            | undefined;
+          const entry = ns?.[pdt.npcId]?.llmSummary?.recentTopics?.find(
+            (t) => t.turnNo === pdtTurnNo,
+          );
+          if (!entry || entry.dailyTopicId) return false;
+          entry.dailyTopicId = pdt.topicId;
+          return true;
+        });
+      }
+
       // 4. LLM 호출 (재시도/fallback 포함)
       // COMBAT 턴은 경량 모델(nano) 사용 — 정형화된 짧은 전투 서술이라 충분
       const lightConfig = isCombat
