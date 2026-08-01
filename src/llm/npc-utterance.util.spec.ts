@@ -226,4 +226,45 @@ describe('normalizeUtteranceRegistersCore (R5v2)', () => {
     // "합니다만" — 종결 아님 → 불변
     expect(r.text).toContain('"합니다만 두고 볼 일이오."');
   });
+
+  // ── 2026-07-31 확장 — DeepSeek 잔존 위반 주류(하게체·반말 침투) 교정 ──
+
+  it('HAOCHE 화자의 하게체·의문형 침투 교정 (라네/더군/겠나/인가/십니까)', () => {
+    const narrative =
+      '@[날카로운 회계사|/x.webp] "그건 아니라네. 서류가 사라졌다더군. 자네도 보겠나? 대체 무엇인가? 어디 가십니까?"';
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toContain(
+      '"그건 아니라오. 서류가 사라졌다더구려. 자네도 보겠소? 대체 무엇이오? 어디 가시오?"',
+    );
+  });
+
+  it('HAOCHE — "누군가"(문장 종결)는 인가 규칙에 오치환되지 않는다', () => {
+    const narrative = '@[날카로운 회계사|/x.webp] "범인은 이 안의 누군가."';
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toContain('"범인은 이 안의 누군가."');
+  });
+
+  it('HAPSYO 화자의 반말 침투 교정 (이야/었어/있네)', () => {
+    const narrative =
+      '@[조용한 실무자|/y.webp] "사무소 안쪽 방이야. 피로가 배었어. 책임자가 기다리고 있네."';
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toContain(
+      '"사무소 안쪽 방입니다. 피로가 배었습니다. 책임자가 기다리고 있습니다."',
+    );
+  });
+
+  it('HAEYO 화자의 반말 침투 교정 (은데/었나/더군)', () => {
+    const narrative =
+      '@[말 많은 행상|/z.webp] "표정이 심상치 않은데. 무슨 일 있었나? 오래 머물렀더군."';
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toContain(
+      '"표정이 심상치 않은데요. 무슨 일 있었나요? 오래 머물렀더군요."',
+    );
+  });
+
+  it('HAEYO — 문장 중간 "는데,"(쉼표)는 교정하지 않는다', () => {
+    const narrative = '@[말 많은 행상|/z.webp] "가려던 참인데, 잘 왔어요."';
+    const r = normalizeUtteranceRegistersCore(narrative, resolve);
+    expect(r.text).toContain('"가려던 참인데, 잘 왔어요."');
+  });
 });
