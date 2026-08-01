@@ -10,7 +10,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { ContentLoaderService } from '../content/content-loader.service.js';
-import type { SceneCutEntry } from '../content/asset-pool.js';
 
 import { LlmCallerService } from './llm-caller.service.js';
 
@@ -23,6 +22,8 @@ export interface SceneCutMatch {
   id: string;
   imageUrl: string;
   confidence: number;
+  /** 후보 출처 — scene(상황 컷) | portrait(등장 인물) | location(현재 장소) */
+  kind: 'scene' | 'portrait' | 'location';
 }
 
 export interface SceneCutMatchParams {
@@ -34,6 +35,22 @@ export interface SceneCutMatchParams {
   sceneCutState?: { lastTurn: number; usedIds: string[] };
   /** MOVE 진입 턴 — 장소 이미지(클라)와 이중 삽입 방지 */
   isMoveTurn: boolean;
+  /**
+   * [확장 2026-08-01] 인물 후보 — 이번 서술에 실제 등장한 **introduced** NPC의
+   * 배정 초상만 (불변식 15 — 미소개 초상 삽입 금지는 호출측 필터가 보장).
+   */
+  appearedNpcs?: Array<{ npcId: string; name: string; portraitUrl: string }>;
+  /** 이번 턴 소개 카드(ui.npcPortrait) 존재 — 인물 컷 중복 노출 방지 */
+  hasPortraitCard?: boolean;
+}
+
+/** 통합 후보 (scenes + 인물 + 장소) */
+interface Candidate {
+  id: string;
+  url: string;
+  keywords: string[];
+  kind: 'scene' | 'portrait' | 'location';
+  time?: 'day' | 'night';
 }
 
 @Injectable()
@@ -55,18 +72,70 @@ export class SceneCutMatcherService {
     if (params.isMoveTurn) return null;
     if (!params.narrative || params.narrative.length < 80) return null;
 
-    const cuts = this.content.getSceneCuts();
-    if (cuts.length === 0) return null;
-
-    // 쿨다운
+    // 쿨다운 (kind 무관 단일 — 이미지 과다 삽입 방지)
     const last = params.sceneCutState?.lastTurn;
     if (last != null && params.turnNo - last < COOLDOWN_TURNS) return null;
 
     const used = new Set(params.sceneCutState?.usedIds ?? []);
     const phase = params.currentTimePhase?.toUpperCase() ?? null;
+    const locNameForFilter = params.currentLocationId
+      ? (this.content.getLocation(params.currentLocationId)?.name ?? '')
+      : '';
+
+    // ── 통합 후보 조립 ──
+    const pool: Candidate[] = [];
+
+    // ① 장면 컷 (scenes)
+    for (const c of this.content.getSceneCuts()) {
+      pool.push({
+        id: c.id,
+        url: c.url,
+        keywords: c.keywords,
+        kind: 'scene',
+        time: c.time,
+      });
+    }
+
+    // ② 인물 컷 — 등장 introduced NPC의 배정 초상 (런당 인물별 1회).
+    //    소개 카드가 뜨는 턴엔 스킵 (같은 턴 초상 2회 노출 방지)
+    if (!params.hasPortraitCard) {
+      for (const npc of params.appearedNpcs ?? []) {
+        if (!npc.portraitUrl || !npc.name) continue;
+        pool.push({
+          id: `POR_${npc.npcId}`,
+          url: npc.portraitUrl,
+          keywords: [npc.name],
+          kind: 'portrait',
+        });
+      }
+    }
+
+    // ③ 장소 컷 — 팩 매니페스트 locations 중 **현재 장소** 매칭 엔트리만
+    //    (타 장소 컷 삽입 = 혼란. 진입 턴은 isMoveTurn에서 이미 차단).
+    if (locNameForFilter || params.currentLocationId) {
+      const locEntries = this.content.getAssetManifest()?.locations ?? [];
+      locEntries.forEach((e, i) => {
+        const matchesHere = e.keywords.some(
+          (kw) =>
+            kw.length >= 2 &&
+            (locNameForFilter.includes(kw) ||
+              (params.currentLocationId ?? '').toLowerCase().includes(
+                kw.toLowerCase(),
+              )),
+        );
+        if (matchesHere) {
+          pool.push({
+            id: `LOCIMG_${i + 1}`,
+            url: e.url,
+            keywords: e.keywords,
+            kind: 'location',
+          });
+        }
+      });
+    }
 
     // 1차 필터: 시간대 + 런 내 중복
-    const eligible = cuts.filter((c) => {
+    const eligible = pool.filter((c) => {
       if (used.has(c.id)) return false;
       if (c.time === 'day' && phase === 'NIGHT') return false;
       if (c.time === 'night' && phase === 'DAY') return false;
@@ -77,16 +146,16 @@ export class SceneCutMatcherService {
     // 2차 렉시컬 프리스크린: 태그가 서술에 부분 등장하는 후보만.
     // 겹침 0이면 nano를 부르지 않는다 (비용 절약 + 억지 매칭 차단 —
     // 의미 확장 매칭은 태그 풀이 쌓인 뒤 임계와 함께 재평가).
+    // 인물·장소는 서술 본문 등장만 인정 (장소명 보너스는 scene 전용 —
+    // 장소 컷이 "그 장소에 있다"는 이유만으로 매 턴 후보가 되는 것 방지).
     const narrative = params.narrative;
-    const locName = params.currentLocationId
-      ? (this.content.getLocation(params.currentLocationId)?.name ?? '')
-      : '';
     const scored = eligible
       .map((c) => {
         let hits = 0;
         for (const kw of c.keywords) {
-          if (kw.length >= 2 && (narrative.includes(kw) || locName.includes(kw)))
-            hits++;
+          if (kw.length < 2) continue;
+          if (narrative.includes(kw)) hits++;
+          else if (c.kind === 'scene' && locNameForFilter.includes(kw)) hits++;
         }
         return { cut: c, hits };
       })
@@ -111,23 +180,33 @@ export class SceneCutMatcherService {
     if (!cut) return null;
 
     this.logger.log(
-      `[SceneCut] turn=${params.turnNo} 삽입 ${cut.id} (conf=${picked.confidence}, tags=${cut.keywords.join(',')})`,
+      `[SceneCut] turn=${params.turnNo} 삽입 ${cut.id} (kind=${cut.kind}, conf=${picked.confidence}, tags=${cut.keywords.join(',')})`,
     );
-    return { id: cut.id, imageUrl: cut.url, confidence: picked.confidence };
+    return {
+      id: cut.id,
+      imageUrl: cut.url,
+      confidence: picked.confidence,
+      kind: cut.kind,
+    };
   }
 
   private async nanoPick(
     narrative: string,
-    candidates: SceneCutEntry[],
+    candidates: Candidate[],
   ): Promise<{ id: string; confidence: number } | null> {
+    const KIND_LABEL: Record<Candidate['kind'], string> = {
+      scene: '장면',
+      portrait: '인물',
+      location: '장소',
+    };
     const list = candidates
-      .map((c) => `- ${c.id}: [${c.keywords.join(', ')}]`)
+      .map((c) => `- ${c.id} (${KIND_LABEL[c.kind]}): [${c.keywords.join(', ')}]`)
       .join('\n');
     const messages = [
       {
         role: 'system',
         content:
-          '당신은 소설 삽화 편집자입니다. 서술 장면과 이미지 태그를 대조해, 이 장면에 삽화로 넣기에 어울리는 이미지가 있는지 판정하세요. 태그가 장면의 핵심 상황·분위기와 실제로 맞을 때만 선택하고, 애매하면 null을 답하세요. JSON만 출력: {"id": "SCN_xx" 또는 null, "confidence": 0.0~1.0}',
+          '당신은 소설 삽화 편집자입니다. 서술 장면과 이미지 후보를 대조해, 이 장면에 삽화로 넣기에 어울리는 이미지가 있는지 판정하세요. (장면)은 상황·분위기가 실제로 맞을 때만, (인물)은 그 인물이 이 장면의 중심일 때만, (장소)는 장소 자체의 묘사가 두드러질 때만 선택하세요. 애매하면 null. JSON만 출력: {"id": "후보 id" 또는 null, "confidence": 0.0~1.0}',
       },
       {
         role: 'user',

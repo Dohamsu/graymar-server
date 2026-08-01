@@ -29,11 +29,17 @@ function makeService(opts?: {
   cuts?: SceneCutEntry[];
   nanoResponse?: string;
   onCall?: () => void;
+  manifestLocations?: Array<{ url: string; kind: string; keywords: string[] }>;
 }) {
   const content = {
     getSceneCuts: () => opts?.cuts ?? CUTS,
     getLocation: (id: string) =>
       id === 'LOC_MARKET' ? { name: '시장 거리' } : undefined,
+    getAssetManifest: () =>
+      opts?.manifestLocations
+        ? { packId: 'test', portraits: [], locations: opts.manifestLocations }
+        : null,
+    getNpc: () => undefined,
   };
   const caller = {
     callLight: async () => {
@@ -69,6 +75,7 @@ describe('SceneCutMatcherService (arch/96)', () => {
       id: 'SCN_02',
       imageUrl: '/pack-assets/test/scenes/scene_02.webp',
       confidence: 0.9,
+      kind: 'scene',
     });
   });
 
@@ -161,5 +168,81 @@ describe('SceneCutMatcherService (arch/96)', () => {
   it('짧은 서술(80자 미만)은 스킵', async () => {
     const svc = makeService();
     expect(await svc.match({ ...BASE, narrative: '짧은 서술.' })).toBeNull();
+  });
+
+  // ── 확장 2026-08-01 — 인물·장소 후보 편입 ──
+
+  it('인물 컷 — 서술 등장 introduced NPC 초상이 후보로 매칭된다', async () => {
+    const svc = makeService({
+      cuts: [],
+      nanoResponse: '{"id": "POR_NPC_RONEN", "confidence": 0.85}',
+    });
+    const r = await svc.match({
+      ...BASE,
+      narrative:
+        '로넨이 굳은 얼굴로 다가와 낮은 목소리로 말했다. 그의 손끝이 미세하게 떨리고 있었고, 서기관 특유의 잉크 얼룩이 소맷단에 짙게 번져 있었다. 당신은 그의 불안을 읽었다.',
+      appearedNpcs: [
+        { npcId: 'NPC_RONEN', name: '로넨', portraitUrl: '/p/ronen.webp' },
+      ],
+    });
+    expect(r).toEqual({
+      id: 'POR_NPC_RONEN',
+      imageUrl: '/p/ronen.webp',
+      confidence: 0.85,
+      kind: 'portrait',
+    });
+  });
+
+  it('인물 컷 — 소개 카드 뜨는 턴엔 후보 제외 (중복 노출 방지)', async () => {
+    let called = false;
+    const svc = makeService({ cuts: [], onCall: () => (called = true) });
+    const r = await svc.match({
+      ...BASE,
+      narrative:
+        '로넨이 굳은 얼굴로 다가와 낮은 목소리로 말했다. 그의 손끝이 미세하게 떨리고 있었고, 잉크 얼룩이 소맷단에 짙게 번져 있었다. 당신은 그의 불안을 조용히 읽어 내렸다.',
+      appearedNpcs: [
+        { npcId: 'NPC_RONEN', name: '로넨', portraitUrl: '/p/ronen.webp' },
+      ],
+      hasPortraitCard: true,
+    });
+    expect(r).toBeNull();
+    expect(called).toBe(false);
+  });
+
+  it('장소 컷 — 현재 장소 매칭 매니페스트 엔트리만 후보', async () => {
+    const svc = makeService({
+      cuts: [],
+      nanoResponse: '{"id": "LOCIMG_1", "confidence": 0.8}',
+      manifestLocations: [
+        { url: '/pa/loc1.webp', kind: 'location', keywords: ['시장'] },
+        { url: '/pa/loc2.webp', kind: 'location', keywords: ['부두'] },
+      ],
+    });
+    const r = await svc.match({
+      ...BASE,
+      narrative:
+        '시장 좌판 사이의 그림자가 길게 늘어졌다. 상인들의 외침이 좁은 골목을 가득 채우고, 시장 특유의 향신료 냄새가 사방에서 진동했다. 당신은 인파 속을 헤치며 나아갔다.',
+    });
+    expect(r?.id).toBe('LOCIMG_1');
+    expect(r?.kind).toBe('location');
+  });
+
+  it('장소 컷 — 타 장소 엔트리는 후보 자체가 안 된다', async () => {
+    let called = false;
+    const svc = makeService({
+      cuts: [],
+      onCall: () => (called = true),
+      manifestLocations: [
+        { url: '/pa/loc2.webp', kind: 'location', keywords: ['부두'] },
+      ],
+    });
+    // 서술에 '부두'가 나와도 현재 장소(시장)와 무관한 장소 컷은 배제
+    const r = await svc.match({
+      ...BASE,
+      narrative:
+        '부두 쪽에서 왔다는 상인이 시장 어귀에서 좌판을 펴고 있었다. 소금기 어린 바람 냄새가 그의 옷자락에 배어 있었다.',
+    });
+    expect(r).toBeNull();
+    expect(called).toBe(false);
   });
 });

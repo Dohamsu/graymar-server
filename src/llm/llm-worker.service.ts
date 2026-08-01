@@ -4235,6 +4235,19 @@ ${npcList}`,
               e.kind === 'MOVE' ||
               (e as { tags?: string[] }).tags?.includes('LOCATION_ENTER'),
           );
+          // [확장 2026-08-01] 인물 후보 — 등장 + introduced NPC의 배정 초상만
+          // (불변식 15 — 미소개 초상 삽입 원천 차단)
+          const appearedNpcsForCut = [..._appearedNpcIds]
+            .filter(
+              (id) =>
+                _npcStatesRef?.[id]?.introduced === true && !!_portraits[id],
+            )
+            .map((id) => ({
+              npcId: id,
+              // introduced 확정 필터 뒤라 실명 사용 가능 (동적 NPC는 getNpc 미등재 → id 폴백)
+              name: this.content.getNpc(id)?.name ?? id,
+              portraitUrl: _portraits[id],
+            }));
           const cutMatch = await this.sceneCutMatcher.match({
             narrative,
             currentLocationId: llmContext.currentLocationId ?? null,
@@ -4242,6 +4255,9 @@ ${npcList}`,
             turnNo: pending.turnNo,
             sceneCutState: rsForCut?.sceneCutState,
             isMoveTurn,
+            appearedNpcs: appearedNpcsForCut,
+            hasPortraitCard: !!(serverResult.ui as Record<string, unknown>)
+              ?.npcPortrait,
           });
           if (cutMatch) {
             // ui 영속 (npcPortrait reconcile과 동일 패턴 — ui 갱신 전용 UPDATE)
