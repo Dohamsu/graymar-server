@@ -879,9 +879,15 @@ export class PromptBuilderService {
         // 재소환하던 우회로 차단 (실측: '빵' 화제 3회/7턴). 진짜 재질문의 맥락은
         // 직전 발언·[이미 공개된 정보] 블록이 담당.
         const matchedFresh = matched.filter((t) => !usedTopicIds.has(t.topicId));
+        // [응답률 개선 2026-08-01] 질문 턴 + 화제 무매칭 = 플레이어가 풀 밖의
+        // 화제를 물은 턴 — 이때 랜덤 새 화제를 꺼내게 하면 [질문 우선] 지시와
+        // 경쟁해 응답이 밀린다 (audit_chat-edric 응답률 60%: 스튜/어젯밤 등
+        // 풀 밖 질문 턴이 미응답 주류). 새 화제 주입을 멈추고 입력 화제에
+        // 머무르게 한다. 입력 낱말은 턴마다 다른 동적 데이터라 anchor 아님.
+        const stayOnUserTopic = isQuestionTurn && matched.length === 0;
         const candidates = matchedFresh.length > 0 ? matchedFresh : fresh;
         const picked =
-          candidates.length > 0
+          !stayOnUserTopic && candidates.length > 0
             ? candidates[Math.floor(Math.random() * candidates.length)]
             : null;
         const chatDisplayName = chatNpcDef?.name ?? chatNpcId;
@@ -895,7 +901,22 @@ export class PromptBuilderService {
         if (chatActivity) {
           chatLines.push(`${chatDisplayName}은(는) 지금 ${chatActivity} 중.`);
         }
-        if (picked) {
+        if (stayOnUserTopic) {
+          const inputEcho = [...inputKwForTopic]
+            .filter((w) => w.length >= 2)
+            .slice(0, 4);
+          chatLines.push(
+            `플레이어가 방금 화제를 꺼내 물었습니다 — 이번 턴은 준비된 화제를 꺼내지 말고 그 화제에 머무르세요.`,
+          );
+          if (inputEcho.length > 0) {
+            chatLines.push(
+              `입력의 화제어: ${inputEcho.join(', ')} — 이 중 하나를 첫 대사에서 자연스럽게 되받으며 답하세요.`,
+            );
+          }
+          chatLines.push(
+            `※ 단서/사건/임무를 화두로 만들지 마세요. 이번 턴은 일상 대화입니다.`,
+          );
+        } else if (picked) {
           // [Task#1 A-1] 선택 화제를 출력 파라미터로 노출 — 워커가 recentTopics에
           // dailyTopicId를 CAS 역기록해 다음 턴 dedup의 키로 쓴다.
           ctx.pickedDailyTopic = { npcId: chatNpcId, topicId: picked.topicId };
@@ -922,7 +943,9 @@ export class PromptBuilderService {
         // 곁들여 "다른 NPC도 각자의 삶을 산다"는 감각을 준다. introduced 대상만
         // 후보(불변식 15), 목격 대상 중복 제외, 잡담 recentTopics로 회피.
         const speakerRelations = chatNpcDef?.personality?.npcRelations;
-        if (speakerRelations) {
+        // [응답률 개선 2026-08-01] 입력 화제에 머무는 턴엔 관계 근황도 보류 —
+        // 화자 주도 화제가 하나라도 끼면 질문 응답이 밀리는 경쟁 재발.
+        if (speakerRelations && !stayOnUserTopic) {
           const introducedNpcIds = new Set<string>(
             Object.entries(ctx.npcStates ?? {})
               .filter(([, s]) => s?.introduced)
