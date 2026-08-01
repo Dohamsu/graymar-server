@@ -187,11 +187,10 @@ export class LobbyService {
       .set({ status: 'IN_DUNGEON', updatedAt: new Date() })
       .where(eq(parties.id, partyId));
 
-    // 모든 멤버의 준비 상태 초기화
-    await this.db
-      .update(partyMembers)
-      .set({ isReady: 'false' })
-      .where(eq(partyMembers.partyId, partyId));
+    // ※ 준비 상태 초기화는 여기서 하지 않는다 (2026-08-01 파티 QA 실측) —
+    // 런 생성 전에 리셋하면 프리셋 검증 등으로 런 생성이 실패했을 때
+    // endDungeon 롤백이 status만 복구해 전원 레디가 소모된다 (SSE 미통지로
+    // UI·서버 어긋남 동반). 리셋은 런 생성 성공 후 controller가 수행.
 
     const memberUserIds = state.members.map((m) => m.userId);
 

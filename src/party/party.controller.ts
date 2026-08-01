@@ -347,6 +347,13 @@ export class PartyController {
       throw err;
     }
 
+    // 런 생성 성공 후에만 준비 상태 초기화 (2026-08-01 파티 QA — 실패 시
+    // 레디 소모 방지, initiateDungeonStart의 사전 리셋을 이곳으로 이동)
+    await this.db
+      .update(partyMembers)
+      .set({ isReady: 'false' })
+      .where(eq(partyMembers.partyId, partyId));
+
     const runId = run.run.id;
 
     // runState에 파티 멤버 프로필 저장 (4인 판정/서술용)
