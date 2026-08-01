@@ -49,11 +49,14 @@ export class ClaudeProvider implements LlmProvider {
         default: new (opts: {
           apiKey?: string;
           timeout?: number;
+          maxRetries?: number;
         }) => AnthropicClient;
       };
       this.client = new Anthropic({
         apiKey: this.config.claudeApiKey,
         timeout: this.config.timeoutMs,
+        // 재시도 권한은 앱 레이어 단일 소유 (openai.provider와 동일 근거)
+        maxRetries: 0,
       });
     }
     return this.client;

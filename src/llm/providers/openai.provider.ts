@@ -51,6 +51,7 @@ export class OpenAIProvider implements LlmProvider {
             apiKey?: string;
             baseURL?: string;
             timeout?: number;
+            maxRetries?: number;
           }) => import('openai').default;
         }
       ).default;
@@ -61,6 +62,10 @@ export class OpenAIProvider implements LlmProvider {
           ? { baseURL: this.config.openaiBaseUrl }
           : {}),
         timeout: this.config.timeoutMs,
+        // 재시도 권한은 앱 레이어(llm-caller 분류 기반) 단일 소유 — SDK 기본 2회가
+        // 겹치면 timeoutMs 상한이 (1+2)회×백오프로 부풀어 nano 5초 컷이 19~40초로
+        // 관측됨 (2026-07-31 llm_call_logs 실측)
+        maxRetries: 0,
       });
     }
     return this.client;
@@ -296,6 +301,13 @@ export class OpenAIProvider implements LlmProvider {
       process.env.LLM_FIRST_TOKEN_TIMEOUT_MS ?? '5000',
       10,
     );
+    // 스트림 정체 타임아웃 — 첫 토큰 이후 콘텐츠 델타가 이 시간 동안 없으면 절단.
+    // 첫 토큰 타임아웃만으론 "열리고 시작한 뒤 기어가는" 스트림(narrative max 270s
+    // 실측, 2026-07-31)을 못 끊는다. 절단 시 caller의 non-stream fallback 경로 재사용.
+    const stallTimeoutMs = parseInt(
+      process.env.LLM_STREAM_STALL_TIMEOUT_MS ?? '20000',
+      10,
+    );
     const firstTokenAbort = new AbortController();
 
     const stream = await client.chat.completions.create(
@@ -332,6 +344,7 @@ export class OpenAIProvider implements LlmProvider {
     let providerName: string | undefined;
 
     let firstTokenTimedOut = false;
+    let stallTimedOut = false;
     let firstTokenTimer: ReturnType<typeof setTimeout> | null =
       firstTokenTimeoutMs > 0
         ? setTimeout(() => {
@@ -339,6 +352,17 @@ export class OpenAIProvider implements LlmProvider {
             firstTokenAbort.abort();
           }, firstTokenTimeoutMs)
         : null;
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    const armStallTimer = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer =
+        stallTimeoutMs > 0
+          ? setTimeout(() => {
+              stallTimedOut = true;
+              firstTokenAbort.abort();
+            }, stallTimeoutMs)
+          : null;
+    };
 
     type RawStreamChunk = {
       choices?: Array<{ delta?: { content?: string | null } }>;
@@ -366,17 +390,23 @@ export class OpenAIProvider implements LlmProvider {
               `첫 토큰 타임아웃(${firstTokenTimeoutMs}ms) — model=${model}, non-stream fallback 전환`,
             );
           }
+          if (stallTimedOut) {
+            throw new Error(
+              `스트림 정체 타임아웃(${stallTimeoutMs}ms 무델타) — model=${model}, ${fullText.length}자 수신 후 절단, non-stream fallback 전환`,
+            );
+          }
           throw err;
         }
         if (next.done) break;
         const chunk = next.value;
         const delta = chunk.choices?.[0]?.delta?.content;
         if (delta) {
-          // 첫 콘텐츠 도착 — 타임아웃 해제
+          // 첫 콘텐츠 도착 — 첫 토큰 타임아웃 해제, 이후 델타마다 정체 감시 재장전
           if (firstTokenTimer) {
             clearTimeout(firstTokenTimer);
             firstTokenTimer = null;
           }
+          armStallTimer();
           fullText += delta;
           yield { type: 'token', text: delta };
         }
@@ -397,6 +427,7 @@ export class OpenAIProvider implements LlmProvider {
       }
     } finally {
       if (firstTokenTimer) clearTimeout(firstTokenTimer);
+      if (stallTimer) clearTimeout(stallTimer);
     }
 
     // 빈 스트림 방어 (arch/25 D-8): 프로바이더가 콘텐츠 없이 스트림을 정상 종료하면
