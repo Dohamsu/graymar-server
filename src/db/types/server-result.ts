@@ -292,6 +292,8 @@ export type UIBundle = {
   playerThreads?: PlayerThread[];
   /** 엔딩 확정 턴 결과 (turns.service 기록, llm-worker·prompt-builder 소비 — arch/65 부록 D) */
   endingResult?: import('./ending.js').EndingResult;
+  /** [arch/96] 장면 컷 — 워커가 서술 최종본과 태그 매칭해 삽입 (표시 전용) */
+  sceneCut?: { id: string; imageUrl: string };
 };
 
 // --- Choice ---

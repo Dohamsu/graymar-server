@@ -51,6 +51,7 @@ import {
 } from './nano-director.service.js';
 import { FactExtractorService } from './fact-extractor.service.js';
 import { NanoEventDirectorService } from './nano-event-director.service.js';
+import { SceneCutMatcherService } from './scene-cut-matcher.service.js';
 import { PlotDirectorService } from './plot-director.service.js';
 import { isPlotDirectorEnabled } from '../engine/hub/quest-balance.config.js';
 import {
@@ -685,6 +686,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly nanoEventDirector: NanoEventDirectorService,
     @Optional() private readonly plotDirector: PlotDirectorService,
     @Optional() private readonly streamBroker: LlmStreamBrokerService,
+    @Optional() private readonly sceneCutMatcher: SceneCutMatcherService,
     @Optional()
     private readonly npcReactionDirector?: NpcReactionDirectorService,
     // arch/85 §4.4 — D5 실패 턴 환불
@@ -4219,6 +4221,53 @@ ${npcList}`,
         }
       }
 
+      // [arch/96] 장면 컷 매칭 — 서술 최종본 기준, DONE 커밋 직전(클라가 폴링
+      // 완료 시 serverResult.ui와 함께 수령). 실패·무매칭 = 무삽입, 턴 무영향.
+      if (narrative && this.sceneCutMatcher && !isEndingTurn) {
+        try {
+          const rsForCut = runSession?.runState as
+            | import('../db/types/permanent-stats.js').RunState
+            | undefined;
+          // 클라 locationImage 부착 기준(LOCATION_ENTER 태그)과 동일 신호 —
+          // 같은 턴 이미지 2장(장소 컷 + 장면 컷) 방지의 정확한 판정
+          const isMoveTurn = (serverResult.events ?? []).some(
+            (e) =>
+              e.kind === 'MOVE' ||
+              (e as { tags?: string[] }).tags?.includes('LOCATION_ENTER'),
+          );
+          const cutMatch = await this.sceneCutMatcher.match({
+            narrative,
+            currentLocationId: llmContext.currentLocationId ?? null,
+            currentTimePhase: llmContext.currentTimePhase ?? null,
+            turnNo: pending.turnNo,
+            sceneCutState: rsForCut?.sceneCutState,
+            isMoveTurn,
+          });
+          if (cutMatch) {
+            // ui 영속 (npcPortrait reconcile과 동일 패턴 — ui 갱신 전용 UPDATE)
+            const uiForCut = (serverResult.ui ?? {}) as Record<string, unknown>;
+            uiForCut.sceneCut = { id: cutMatch.id, imageUrl: cutMatch.imageUrl };
+            serverResult.ui = uiForCut as ServerResultV1['ui'];
+            await this.db
+              .update(turns)
+              .set({ serverResult: serverResult as unknown as ServerResultV1 })
+              .where(eq(turns.id, pending.id));
+            // 쿨다운·중복 방지 상태 — CAS 경유 (불변식 2 소프트 상태)
+            await this.applyRunStatePatch(pending.runId, 'SceneCut', (rs) => {
+              const prev = (rs as { sceneCutState?: { usedIds?: string[] } })
+                .sceneCutState;
+              rs.sceneCutState = {
+                lastTurn: pending.turnNo,
+                usedIds: [...(prev?.usedIds ?? []), cutMatch.id].slice(-50),
+              };
+              return true;
+            });
+          }
+        } catch (err) {
+          this.logger.warn(`[SceneCut] error (skip): ${err}`);
+        }
+      }
+
       // llmChoices 는 Track 2 (서술 기반 nano 선택지 재생성) 완료 후
       // 최종 finalChoices 로 한 번만 저장한다. 여기서 미리 저장하면
       // DB 는 Track 1 결과, stream emit 은 Track 2 결과로 desync 가 발생함.
@@ -4368,11 +4417,16 @@ ${npcList}`,
         .set({ llmChoices: finalChoices })
         .where(eq(turns.id, pending.id));
 
-      // 스트리밍 완료 이벤트 전송 (후처리 완료된 최종 서술 + 선택지)
+      // 스트리밍 완료 이벤트 전송 (후처리 완료된 최종 서술 + 선택지 + 장면 컷)
       if (this.streamBroker) {
         this.streamBroker.emit(pending.runId, pending.turnNo, 'done', {
           narrative,
           choices: finalChoices,
+          // [arch/96] 장면 컷 — 스트림 경로 클라도 폴링 없이 수령
+          sceneCut:
+            ((serverResult.ui as Record<string, unknown> | undefined)
+              ?.sceneCut as { id: string; imageUrl: string } | undefined) ??
+            null,
         });
       }
       // P3-S6: 해당 턴의 nano choices 임시 보관 정리

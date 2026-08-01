@@ -1470,6 +1470,8 @@ export class RunsService {
           }),
         ),
         displaySummary: t.serverResult?.summary?.display ?? null,
+        // [arch/96] 장면 컷 — 이력 복원 시 인라인 이미지 재현
+        sceneCut: t.serverResult?.ui?.sceneCut ?? null,
       })),
       setDefinitions: this.content.getAllSets(),
       page: {

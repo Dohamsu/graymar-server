@@ -84,6 +84,8 @@ export interface RunState {
   npcRelations?: Record<string, number>; // npcId -> 0~100
   eventCooldowns?: Record<string, number>; // eventId -> lastUsedTurnNo
   actionHistory?: ActionHistoryEntry[]; // 고집(insistence) 시스템용 행동 이력
+  /** [arch/96] 장면 컷 삽입 상태 — 쿨다운·런 내 중복 방지 (워커 CAS 경유 소프트 상태) */
+  sceneCutState?: { lastTurn: number; usedIds: string[] };
   /** 순회 검증 ② (2026-07-12): 플레이어가 밝힌 자기 정보 (최근 5건) — NPC 모순 질문 방지용 프롬프트 주입 */
   playerDisclosures?: Array<{ text: string; turnNo: number }>;
   /**

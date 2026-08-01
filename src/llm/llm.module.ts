@@ -25,6 +25,7 @@ import { LlmStreamBrokerService } from './llm-stream-broker.service.js';
 import { ThemeClassifierService } from './theme-classifier.service.js';
 import { ChallengeClassifierService } from './challenge-classifier.service.js';
 import { NpcReactionDirectorService } from './npc-reaction-director.service.js';
+import { SceneCutMatcherService } from './scene-cut-matcher.service.js';
 import { PlotSeedGeneratorService } from './plot-seed-generator.service.js';
 import { PlotDirectorService } from './plot-director.service.js';
 import { HubEngineModule } from '../engine/hub/hub-engine.module.js';
@@ -36,6 +37,7 @@ import { ContentModule } from '../content/content.module.js';
   providers: [
     ContextBuilderService,
     LlmWorkerService,
+    SceneCutMatcherService,
     LlmConfigService,
     PromptBuilderService,
     LlmCallerService,

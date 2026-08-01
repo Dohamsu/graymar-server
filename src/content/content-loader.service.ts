@@ -984,6 +984,11 @@ export class ContentLoaderService implements OnModuleInit {
     return this.pack().assetManifest;
   }
 
+  /** arch/96: 장면 컷 풀 (assets.json scenes — 없으면 빈 배열) */
+  getSceneCuts(): import('./asset-pool.js').SceneCutEntry[] {
+    return this.pack().assetManifest?.scenes ?? [];
+  }
+
   /** arch/80: 저작 NPC 초상화 풀 배정 (NPC_PORTRAITS 정적 맵에 없는 팩용) */
   getAuthoredPortrait(npcId: string): string | null {
     return this.pack().authoredPortraits.get(npcId) ?? null;

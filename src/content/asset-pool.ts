@@ -8,15 +8,26 @@
 
 export interface PackAssetEntry {
   url: string;
-  kind: 'portrait' | 'location';
+  kind: 'portrait' | 'location' | 'scene';
   keywords: string[];
   gender?: 'male' | 'female';
+}
+
+/** [arch/96] 장면 컷 — 소유자 사전 제작·태그 풀. 서술 태그 매칭으로 인라인 삽입 */
+export interface SceneCutEntry extends PackAssetEntry {
+  kind: 'scene';
+  /** 안정 식별자 (SCN_01 …) — 런 내 중복 삽입 방지 키 */
+  id: string;
+  /** 시간대 제한 (파일명 day/night 토큰) — 없으면 전 시간대 후보 */
+  time?: 'day' | 'night';
 }
 
 export interface PackAssetManifest {
   packId: string;
   portraits: PackAssetEntry[];
   locations: PackAssetEntry[];
+  /** arch/96 장면 컷 (선택 — 구 매니페스트엔 없음) */
+  scenes?: SceneCutEntry[];
 }
 
 export interface PortraitTarget {
