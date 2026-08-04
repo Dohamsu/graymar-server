@@ -39,6 +39,8 @@ export class ScenariosController {
         description: p.description,
         playstyleHint: p.playstyleHint,
         stats: p.stats,
+        // [arch/97] 배경 시그니처 특성 — 클라 뱃지 표시용
+        defaultTraitId: p.defaultTraitId ?? null,
         startingGold: p.startingGold,
         // 클라 표시용 — 아이템 ID를 팩 items.json 이름으로 해석
         startingItems: p.startingItems.map((si) => ({

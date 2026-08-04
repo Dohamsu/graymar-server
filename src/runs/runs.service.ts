@@ -184,7 +184,12 @@ export class RunsService {
     // 이월 런은 traitDef를 해석하지 않는다 (architecture/71): traitId는 첫 팩 로컬 ID라
     // 다른 팩에선 미해석이고, 같은 ID가 우연히 존재하면 maxHpBonus가 이월 스탯에
     // 이중 적용된다. 런타임 효과는 identity.traitEffects 스냅샷으로 대체.
-    const traitId = carriedIdentity?.traitId ?? options?.traitId;
+    // [arch/97] traitId 미지정 시 배경 시그니처 특성(defaultTraitId) 자동 적용 —
+    // 생성 간략화 클라·파티·플레이테스트 경로 전부 특성을 받는다.
+    const traitId =
+      carriedIdentity?.traitId ??
+      options?.traitId ??
+      (isFirstScenario ? preset?.defaultTraitId : undefined);
     const traitDef =
       isFirstScenario && traitId ? this.content.getTrait(traitId) : undefined;
     if (isFirstScenario && options?.traitId && !traitDef) {

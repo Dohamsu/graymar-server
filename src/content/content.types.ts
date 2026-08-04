@@ -124,6 +124,8 @@ export type PresetDefinition = {
   protagonistTheme: string;
   prologueHook?: string;
   stats: PlayerDefaults['stats'];
+  /** [arch/97] 배경 시그니처 특성 — traitId 미지정 생성 시 서버가 자동 적용 */
+  defaultTraitId?: string;
   startingGold: number;
   startingItems: Array<{ itemId: string; qty: number }>;
   /** 프리셋별 NPC 초기 posture/trust 오버라이드 (optional) */
