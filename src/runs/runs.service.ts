@@ -587,6 +587,28 @@ export class RunsService {
       arcState,
     );
 
+    // [arch/96 반복 개선 A] 장면 컷 노출 이력 런 간 이월 — 직전 런에서 본
+    // 최근 컷을 새 런의 초기 usedIds로 시드해 "재시작 직후 같은 컷" 재등장을
+    // 막는다. usedIds는 하드 제외라 풀 소진 방지를 위해 최근 10개만 이월.
+    // 타 팩 컷 id는 새 팩 후보 풀에 없어 자연 무효 — 팩 필터 불필요.
+    try {
+      const prevRun = await this.db.query.runSessions.findFirst({
+        where: eq(runSessions.userId, userId),
+        orderBy: [desc(runSessions.startedAt)],
+        columns: { runState: true },
+      });
+      const prevUsed = (prevRun?.runState as RunState | null)?.sceneCutState
+        ?.usedIds;
+      if (prevUsed?.length) {
+        initialRunState.sceneCutState = {
+          lastTurn: -999, // 쿨다운은 런 내부 개념 — 이월분은 중복 방지 전용
+          usedIds: prevUsed.slice(-10),
+        };
+      }
+    } catch {
+      // 이월 실패는 무해 — 무이월(백지)로 진행
+    }
+
     // [P3 — 75 §3 · 핫픽스] AUTONOMOUS 진상(Plot Seed)은 생성 레이턴시(~20초,
     // 메인 모델)를 런 응답에서 숨기려 **트랜잭션 후 백그라운드 생성**한다(E2E 실측:
     // 동기 생성 시 런 생성이 20~55초라 클라가 타임아웃→타이틀 복귀). 프롤로그는

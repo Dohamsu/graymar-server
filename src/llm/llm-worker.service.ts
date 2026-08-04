@@ -22,6 +22,7 @@ import { ContextBuilderService } from './context-builder.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { korParticle } from '../common/korean.js';
 import {
+  getNpcDisplayName,
   sanitizeNpcNamesForTurn,
   shouldCallPlayerName,
 } from '../db/types/npc-state.js';
@@ -4235,17 +4236,20 @@ ${npcList}`,
               e.kind === 'MOVE' ||
               (e as { tags?: string[] }).tags?.includes('LOCATION_ENTER'),
           );
-          // [확장 2026-08-01] 인물 후보 — 등장 + introduced NPC의 배정 초상만
-          // (불변식 15 — 미소개 초상 삽입 원천 차단)
+          // [확장 2026-08-01, 소개 조건 해제 2026-08-04] 인물 후보 — 등장 NPC의
+          // 배정 초상 전체. 미소개 NPC는 얼굴만 노출(실명 무접촉 — URL은 ASCII
+          // 슬러그, 키워드는 표시명 게이트 경유 별칭)이라 불변식 15와 무충돌.
           const appearedNpcsForCut = [..._appearedNpcIds]
-            .filter(
-              (id) =>
-                _npcStatesRef?.[id]?.introduced === true && !!_portraits[id],
-            )
+            .filter((id) => !!_portraits[id] && !!_npcStatesRef?.[id])
             .map((id) => ({
               npcId: id,
-              // introduced 확정 필터 뒤라 실명 사용 가능 (동적 NPC는 getNpc 미등재 → id 폴백)
-              name: this.content.getNpc(id)?.name ?? id,
+              // 미소개는 별칭, 소개 완료는 실명 — 서술 등장 표기와 일치해야
+              // 렉시컬 프리스크린이 잡는다 (동적 NPC는 getNpc 미등재 → id 폴백)
+              name: getNpcDisplayName(
+                _npcStatesRef![id]!,
+                this.content.getNpc(id),
+                pending.turnNo,
+              ),
               portraitUrl: _portraits[id],
             }));
           const cutMatch = await this.sceneCutMatcher.match({
@@ -4253,6 +4257,7 @@ ${npcList}`,
             currentLocationId: llmContext.currentLocationId ?? null,
             currentTimePhase: llmContext.currentTimePhase ?? null,
             turnNo: pending.turnNo,
+            runId: pending.runId,
             sceneCutState: rsForCut?.sceneCutState,
             isMoveTurn,
             appearedNpcs: appearedNpcsForCut,

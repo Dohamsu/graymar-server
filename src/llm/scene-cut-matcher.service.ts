@@ -32,12 +32,15 @@ export interface SceneCutMatchParams {
   /** v1 미러 (DAY/NIGHT) — phaseV2 파생 */
   currentTimePhase: string | null;
   turnNo: number;
+  /** [반복 개선 B] 동점 셔플 시드 — 없으면 turnNo만으로 시드 */
+  runId?: string;
   sceneCutState?: { lastTurn: number; usedIds: string[] };
   /** MOVE 진입 턴 — 장소 이미지(클라)와 이중 삽입 방지 */
   isMoveTurn: boolean;
   /**
-   * [확장 2026-08-01] 인물 후보 — 이번 서술에 실제 등장한 **introduced** NPC의
-   * 배정 초상만 (불변식 15 — 미소개 초상 삽입 금지는 호출측 필터가 보장).
+   * [확장 2026-08-01, 소개 조건 해제 2026-08-04] 인물 후보 — 이번 서술에 실제
+   * 등장한 NPC의 배정 초상 (미소개 포함). name은 호출측이 표시명 게이트
+   * (getNpcDisplayName)로 정한 값 — 미소개는 별칭이라 실명 무접촉.
    */
   appearedNpcs?: Array<{ npcId: string; name: string; portraitUrl: string }>;
   /** 이번 턴 소개 카드(ui.npcPortrait) 존재 — 인물 컷 중복 노출 방지 */
@@ -149,6 +152,12 @@ export class SceneCutMatcherService {
     // 인물·장소는 서술 본문 등장만 인정 (장소명 보너스는 scene 전용 —
     // 장소 컷이 "그 장소에 있다"는 이유만으로 매 턴 후보가 되는 것 방지).
     const narrative = params.narrative;
+    // [반복 개선 B] 동점 후보 시드 셔플 — 같은 서술이면 항상 같은 컷이 뽑히는
+    // 결정론(퀘스트 동선 수렴 → 런 간 같은 컷 반복)을 끊는다. hits 우선순위는
+    // 유지하고 동률 안에서만 무작위화. runId+turnNo 시드라 같은 턴 재시도는
+    // 동일 순서(재현성), 런이 다르면 순서가 달라진다. nano 후보 리스트 순서도
+    // 이 셔플을 그대로 따라가 리스트 앞쪽 편향까지 함께 분산된다.
+    const tieRng = mulberry32(strHash(`${params.runId ?? ''}:${params.turnNo}`));
     const scored = eligible
       .map((c) => {
         let hits = 0;
@@ -157,10 +166,10 @@ export class SceneCutMatcherService {
           if (narrative.includes(kw)) hits++;
           else if (c.kind === 'scene' && locNameForFilter.includes(kw)) hits++;
         }
-        return { cut: c, hits };
+        return { cut: c, hits, tie: tieRng() };
       })
       .filter((s) => s.hits > 0)
-      .sort((a, b) => b.hits - a.hits)
+      .sort((a, b) => b.hits - a.hits || a.tie - b.tie)
       .slice(0, MAX_CANDIDATES);
     if (scored.length === 0) return null;
 
@@ -233,4 +242,25 @@ export class SceneCutMatcherService {
       return null;
     }
   }
+}
+
+/** FNV-1a 32bit 문자열 해시 — 동점 셔플 시드용 */
+function strHash(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** mulberry32 PRNG — 시드 고정 시 수열 재현 (같은 턴 재시도 = 같은 순서) */
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
