@@ -273,11 +273,19 @@ const CHOICE_AFF_RULES: Array<{
 }> = [
   // 금전 제안 — 질문 동반형("수고비를 얹어 묻는다")보다 먼저 평가해야 BRIBE 유지
   {
-    re: /은화|수고비|뒷돈|금화를|값을 치|대가를 (제시|얹|건네)/,
+    re: /은화|수고비|뒷돈|금화를|값을 치|대가를 (제시|얹|건네)|금전(적)? (제안|접근|대가)/,
     allowed: new Set(['BRIBE']),
     to: 'BRIBE',
   },
   { re: /위협|협박/, allowed: new Set(['THREATEN']), to: 'THREATEN' },
+  // [arch/98 후속 2026-08-05] 설득 어감 라벨의 TALK 강등 방지 — P1이 PERSUADE를
+  // 주입해도 nano가 "부드럽게 말한다"류로 쓰면 TALK로 나가던 실측 (15턴 런 t13).
+  // BRIBE 규칙(금전 제안) 뒤에 평가해 금전 제안의 PERSUADE 오승격을 막는다.
+  {
+    re: /설득|회유하|다독이|부드럽게 말|제안을 (건넨|던진)|제안한다/,
+    allowed: new Set(['PERSUADE']),
+    to: 'PERSUADE',
+  },
   {
     re: /싸움을 걸|주먹을|공격한다|후려친/,
     allowed: new Set(['FIGHT']),

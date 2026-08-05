@@ -117,3 +117,61 @@ describe('correctChoiceAffordanceCore', () => {
     expect(correctChoiceAffordanceCore(null, {}, noop)).toBeNull();
   });
 });
+
+describe('correctChoiceAffordanceCore — PERSUADE 승격 (arch/98 후속, 2026-08-05)', () => {
+  const choice = (id: string, label: string, aff: string): ChoiceItem =>
+    ({
+      id,
+      label,
+      action: { type: 'CHOICE', payload: { affordance: aff } },
+    }) as ChoiceItem;
+  const affOf = (c: ChoiceItem): string =>
+    c.action.payload.affordance as string;
+  const noop = () => undefined;
+
+  it('설득 어감 라벨 + TALK → PERSUADE 승격 (15턴 런 t13 실측)', () => {
+    const result = correctChoiceAffordanceCore(
+      [choice('nano_13_1', '경비병에게 다가가 부드럽게 말한다', 'TALK')],
+      {},
+      noop,
+    );
+    expect(affOf(result![0])).toBe('PERSUADE');
+  });
+
+  it('설득한다/제안을 던진다 라벨도 PERSUADE 승격', () => {
+    const result = correctChoiceAffordanceCore(
+      [
+        choice('nano_5_0', '그를 설득하여 정보를 얻으려고 한다', 'TALK'),
+        choice('nano_5_1', '호기심을 자극하는 제안을 던진다', 'TALK'),
+      ],
+      {},
+      noop,
+    );
+    expect(affOf(result![0])).toBe('PERSUADE');
+    expect(affOf(result![1])).toBe('PERSUADE');
+  });
+
+  it('금전 제안 라벨은 BRIBE 유지 — PERSUADE 오승격 금지 (t20 실측 라벨)', () => {
+    const result = correctChoiceAffordanceCore(
+      [
+        choice(
+          'nano_20_2',
+          '그를 향해 조금 더 가까이 다가가며 금전적 제안을 한다',
+          'BRIBE',
+        ),
+      ],
+      {},
+      noop,
+    );
+    expect(affOf(result![0])).toBe('BRIBE');
+  });
+
+  it('이미 PERSUADE인 라벨은 무수정', () => {
+    const result = correctChoiceAffordanceCore(
+      [choice('nano_14_0', '경비병에게 정직하지 못한 점을 지적한다', 'PERSUADE')],
+      {},
+      noop,
+    );
+    expect(affOf(result![0])).toBe('PERSUADE');
+  });
+});
