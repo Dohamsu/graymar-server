@@ -539,6 +539,8 @@ import {
   NanoEventDirectorService,
   type NanoEventResult,
   type NanoEventContext,
+  pickActiveAffordanceCore,
+  hashSeed,
 } from '../llm/nano-event-director.service.js';
 import type { RegionEconomy } from '../db/types/region-state.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
@@ -6150,10 +6152,36 @@ export class TurnsService {
 
     // NanoEventDirector: nanoCtx를 ui에 저장 → LLM Worker에서 비동기 호출
     if (nanoEventCtx) {
+      // [arch/98 P3] 쿨다운 리셋 — BRIBE 실행 또는 fact 공개 시 해당 NPC 재제안 허용
+      if (updatedRunState.bribeOfferHistory) {
+        if (intent.actionType === 'BRIBE' && eventPrimaryNpc) {
+          delete updatedRunState.bribeOfferHistory[eventPrimaryNpc];
+        }
+        if (questRevealThisTurn?.npcId) {
+          delete updatedRunState.bribeOfferHistory[questRevealThisTurn.npcId];
+        }
+      }
       // 정보 보류 시그널 — nano 선택지에 BRIBE(금전 접근) 1개 포함 유도 (경제 싱크).
       // nanoCtx 빌드는 fact 보류 판정보다 앞이라 부착 직전에 주입한다.
+      // [arch/98 P3] 보류 지속 시 매 턴 재주입 → 최장 5턴 연속 BRIBE 노출 실측 —
+      // 주입 후 동일 NPC BRIBE_OFFER_COOLDOWN_TURNS 휴지.
       if (bribeOpportunityNpcId) {
-        nanoEventCtx.bribeOpportunity = { npcId: bribeOpportunityNpcId };
+        const lastOffer =
+          updatedRunState.bribeOfferHistory?.[bribeOpportunityNpcId];
+        if (
+          lastOffer === undefined ||
+          turnNo - lastOffer > QUEST_BALANCE.BRIBE_OFFER_COOLDOWN_TURNS
+        ) {
+          nanoEventCtx.bribeOpportunity = { npcId: bribeOpportunityNpcId };
+          updatedRunState.bribeOfferHistory = {
+            ...(updatedRunState.bribeOfferHistory ?? {}),
+            [bribeOpportunityNpcId]: turnNo,
+          };
+        } else {
+          this.logger.debug(
+            `[BribeCooldown] ${bribeOpportunityNpcId} 노출 억제 (last=${lastOffer}, turn=${turnNo})`,
+          );
+        }
       }
       // 버그 86bff72b — NpcResolver 최종 결정 전달 (nanoCtx 빌드는 resolver보다
       // 앞이라 lockedNpcId가 직전 잠금 NPC로 남는다). 명시 지목 턴에는 nano의
@@ -6173,6 +6201,35 @@ export class TurnsService {
       ) {
         nanoEventCtx.lockedNpcId = resolvedPrimary;
         nanoEventCtx.npcLocked = true;
+      }
+      // [arch/98 P1] 적극 축 positive 주입 — BRIBE 턴(슬롯 경쟁)·작별 턴(대화
+      // 닫힘) 제외, 확률 게이트. 해시 롤은 RNG 커서 비소비 (불변식 4 보호).
+      if (!nanoEventCtx.bribeOpportunity && dialogueAct !== 'FAREWELL') {
+        const seed = hashSeed(`${run.id}:${turnNo}:activeAff`);
+        if (
+          seed % 100 <
+          QUEST_BALANCE.ACTIVE_AFFORDANCE_INJECT_CHANCE
+        ) {
+          const picked = pickActiveAffordanceCore({
+            presentNpcs: nanoEventCtx.presentNpcs,
+            primaryNpcId:
+              nanoEventCtx.lockedNpcId ?? nanoEventCtx.lastNpcId ?? null,
+            hubSafety: nanoEventCtx.hubSafety,
+            activeConditionIds: nanoEventCtx.activeConditions.map((c) => c.id),
+            recent: updatedRunState.recentActiveAffordances ?? [],
+            seed: hashSeed(`${run.id}:${turnNo}:activeAffPick`),
+          });
+          if (picked) {
+            nanoEventCtx.suggestedActiveAffordance = picked;
+            updatedRunState.recentActiveAffordances = [
+              ...(updatedRunState.recentActiveAffordances ?? []),
+              picked,
+            ].slice(-2);
+            this.logger.debug(
+              `[ActiveAffordance] 주입 축=${picked} (recent=${(updatedRunState.recentActiveAffordances ?? []).join(',')})`,
+            );
+          }
+        }
       }
       (result.ui as any).nanoEventCtx = nanoEventCtx;
     }

@@ -40,6 +40,16 @@ export const QUEST_BALANCE = {
   BRIBE_DEFAULT_COST_SUCCESS: 6,
   BRIBE_DEFAULT_COST_PARTIAL: 3,
 
+  /** [arch/98 P1] 적극 축 positive 주입 확률 (0~100). 매 턴 강제 시 적극
+   *  선택지가 새 상용구가 되는 역편중 방지 — 60~70% 밴드 권장. */
+  ACTIVE_AFFORDANCE_INJECT_CHANCE: 65,
+
+  /** [arch/98 P3] BRIBE 선택지 노출 후 동일 NPC 휴지 턴 수.
+   *  보류 상태 지속 시 매 턴 재주입 → 최장 5턴 연속 BRIBE 노출 실측(2026-08-04).
+   *  주입 턴 T 기준 T+1~T+COOLDOWN 억제, T+COOLDOWN+1부터 재허용.
+   *  BRIBE 실행/fact 공개 시 즉시 리셋. */
+  BRIBE_OFFER_COOLDOWN_TURNS: 2,
+
   /** architecture/71 §4.4: 캠페인 이월 시 소모품 골드 환산율 (sellPrice 기준 배수).
    *  sellPrice 미정의 시 buyPrice의 절반을 기준가로 사용. */
   CARRY_CONSUMABLE_GOLD_RATE: 1.0,

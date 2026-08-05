@@ -331,6 +331,76 @@ export function correctChoiceAffordanceCore(
   return choices;
 }
 
+/**
+ * [arch/98 P2] 서술 꼬리 NPC 질문 추출 정본 코어.
+ * NPC가 질문으로 턴을 닫은 13턴 중 12턴(92%)에 응답 선택지가 없던 실측 —
+ * 질문이 500자 미리보기에 섞여 있으면 nano가 인지하지 못한다. arch/66 사다리
+ * 패턴(추출 → 명시 주입)의 1단. 기계 교체(2단)는 1단 실측 후에만 재검토.
+ * 조건: 마지막 따옴표 대사가 물음표로 끝나고, 그 뒤 잔여 서술이 120자 이내
+ * (= 장면이 사실상 질문으로 닫힘).
+ */
+export function extractPendingNpcQuestionCore(
+  narrative: string | null | undefined,
+): { npcName: string; question: string } | null {
+  if (!narrative) return null;
+  const text = narrative.trimEnd();
+  const quoteRe = /["“]([^"”]{2,160})["”]/g;
+  let last: { q: string; end: number } | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = quoteRe.exec(text))) last = { q: m[1], end: quoteRe.lastIndex };
+  if (!last) return null;
+  if (text.length - last.end > 120) return null;
+  const sentences = last.q.split(/(?<=[.!?…。？])\s+/);
+  const lastSent = (sentences[sentences.length - 1] ?? '').trim();
+  if (!/[?？]$/.test(lastSent)) return null;
+  // 인용 직전의 마지막 @마커에서 화자 표시명
+  const markerRe = /@\[([^\]|]+)(?:\|[^\]]*)?\]/g;
+  let npcName = '상대';
+  let mm: RegExpExecArray | null;
+  while ((mm = markerRe.exec(text))) {
+    if (mm.index < last.end) npcName = mm[1].trim();
+    else break;
+  }
+  return { npcName, question: lastSent.slice(0, 80) };
+}
+
+/** [arch/98 P2 계측] 응답형 라벨 감지 — 질문 주입 턴의 준수율 센서용.
+ *  동사형(답한다/거절한다) 외에 평서 응답형도 커버 — 실측 t5 "그 일에 관심이
+ *  있다"/"아니오, 관심 없다"가 응답인데 미감지(false-miss)되던 것 보정:
+ *  응답 개시어(그렇/아니/맞/알겠/좋) + 평서 종결(있다/없다/하겠다 등 —
+ *  일반 라벨은 "~한다" 통일 규칙이라 평서 종결 자체가 응답 신호다). */
+export const ANSWER_LABEL_RE =
+  /답한|답변|대답|들려준|들려주|설명한|설명해|밝힌|말해준|수락|거절|동의|부인|되묻|인정한|털어놓|응한다|^(그렇|아니|맞[다소]|알겠|좋[다소])|(있다|없다|않겠다|하겠다|모른다|싶다)$/;
+
+/**
+ * [arch/98 P4] 라벨 폴리싱 정본 코어 — 저비용 방어 3종 (빈도 미미 확인분).
+ * ① 끝 마침표 제거 (3/377 실측) ② 콜론 → " — " (콜론+인용 라벨 투박)
+ * ③ 이동 암시 라벨 + 비이동 affordance 조합 경고 로그 (0.3% — 데이터 축적용).
+ * nano/choice_ 생성 선택지만 대상.
+ */
+export function polishChoiceLabelsCore(
+  choices: ChoiceItem[] | null,
+  log: (msg: string) => void,
+): ChoiceItem[] | null {
+  if (!choices) return choices;
+  for (const c of choices) {
+    if (!c.id.startsWith('nano_') && !c.id.startsWith('choice_')) continue;
+    const before = c.label;
+    c.label = c.label
+      .replace(/\s*[:：]\s*/g, ' — ')
+      .replace(/[.。]\s*$/, '')
+      .trim();
+    if (c.label !== before) log(`라벨 폴리싱: "${before}" → "${c.label}"`);
+    if (
+      /(으로|로|에)\s*(가서|간다|향한다|이동한다|찾아간다)/.test(c.label) &&
+      !(c.action?.payload as Record<string, unknown> | undefined)?.returnToHub
+    ) {
+      log(`[ChoiceLabelWatch] 이동 암시 라벨 (비이동 payload): "${c.label}"`);
+    }
+  }
+  return choices;
+}
+
 // ─── 후처리 정본 코어 (spec 직접 import — 복제 drift 방지, 테스트 감사 2026-07-13) ───
 // 인라인 블록/private 메서드로 있던 순수 문자열 로직을 export 함수로 추출.
 // 클래스 쪽은 위임만 하고, content/logger 의존은 인자로 주입받는다.
@@ -4351,6 +4421,14 @@ ${npcList}`,
             // 서술 텍스트를 NanoEventDirector에 전달
             (nanoCtx2 as unknown as Record<string, unknown>).narrativeText =
               narrative;
+            // [arch/98 P2] 서술 꼬리 NPC 질문 추출 → [NPC의 질문] 명시 주입
+            nanoCtx2.pendingNpcQuestion =
+              extractPendingNpcQuestionCore(narrative);
+            if (nanoCtx2.pendingNpcQuestion) {
+              this.logger.debug(
+                `[ChoiceQuestion] turn=${pending.turnNo} 질문 주입: ${nanoCtx2.pendingNpcQuestion.npcName} "${nanoCtx2.pendingNpcQuestion.question.slice(0, 40)}"`,
+              );
+            }
             const nanoResult2 = await this.nanoEventDirector.generate(nanoCtx2);
             if (nanoResult2 && nanoResult2.choices.length >= 3) {
               // P5 — 서버 기본 선택지에만 붙던 예상 보정치(modifier) 중 프리셋
@@ -4416,22 +4494,48 @@ ${npcList}`,
           : undefined) ??
         {};
       const finalChoices = this.sanitizeNanoChoiceNpcs(
-        correctChoiceAffordanceCore(
-          dedupeChoicesAgainstPreviousCore(
-            this.pendingNanoChoices.get(`${pending.runId}:${pending.turnNo}`) ??
-              llmChoices,
-            previousChoiceLabels ?? [],
+        polishChoiceLabelsCore(
+          correctChoiceAffordanceCore(
+            dedupeChoicesAgainstPreviousCore(
+              this.pendingNanoChoices.get(
+                `${pending.runId}:${pending.turnNo}`,
+              ) ?? llmChoices,
+              previousChoiceLabels ?? [],
+              (msg) =>
+                this.logger.log(`[ChoiceDedupe] turn=${pending.turnNo} ${msg}`),
+            ),
+            presetBonusesForFix,
             (msg) =>
-              this.logger.log(`[ChoiceDedupe] turn=${pending.turnNo} ${msg}`),
+              this.logger.log(`[ChoiceAffFix] turn=${pending.turnNo} ${msg}`),
           ),
-          presetBonusesForFix,
           (msg) =>
-            this.logger.log(`[ChoiceAffFix] turn=${pending.turnNo} ${msg}`),
+            this.logger.log(`[ChoicePolish] turn=${pending.turnNo} ${msg}`),
         ),
         serverResult,
         pending.turnNo,
         npcFarewellDetectedThisTurn,
       );
+
+      // [arch/98 P2 계측] 질문 주입 턴의 응답 선택지 포함 여부 — 미포함이어도
+      // 기계 교체(투박함 역행)는 하지 않고 준수율만 감시 (1단 실측 후 재설계).
+      {
+        const injectedQ = (
+          (serverResult.ui as Record<string, unknown> | undefined)
+            ?.nanoEventCtx as
+            | { pendingNpcQuestion?: { question: string } | null }
+            | undefined
+        )?.pendingNpcQuestion;
+        if (injectedQ && finalChoices) {
+          const hasAnswer = finalChoices.some((c) =>
+            ANSWER_LABEL_RE.test(c.label),
+          );
+          if (!hasAnswer) {
+            this.logger.warn(
+              `[ChoiceQuestionMiss] turn=${pending.turnNo} 질문 주입에도 응답 선택지 부재: "${injectedQ.question.slice(0, 40)}"`,
+            );
+          }
+        }
+      }
 
       await this.db
         .update(turns)

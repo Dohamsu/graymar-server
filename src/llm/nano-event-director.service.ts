@@ -79,6 +79,171 @@ export interface NanoEventContext {
   resolvedPrimaryNpcId?: string | null;
   /** 버그 86bff72b — NpcResolver 결정 근거 (STRONG_EXPLICIT_NAME 등) */
   npcResolutionSource?: string | null;
+  /** [arch/98 P1] 서버 선정 적극 축 — 선택지 3개 중 1개를 이 affordance 계열로
+   *  positive 강제 (bribeOpportunity와 동일 메커니즘의 일반화). TALK/OBSERVE/
+   *  INVESTIGATE 91% 편중 실측(2026-08-04) 대응. BRIBE 턴·작별 턴 미주입. */
+  suggestedActiveAffordance?: string | null;
+  /** [arch/98 P2] 서술 꼬리에서 추출한 NPC의 미응답 질문 (Track2 전용).
+   *  질문 종결 13턴 중 12턴 응답 선택지 부재 실측 — 명시 주입 사다리 1단. */
+  pendingNpcQuestion?: { npcName: string; question: string } | null;
+}
+
+/** [arch/98 P1] 결정론 시드 해시 — RNG 커서를 소비하지 않는 보조 롤 전용.
+ *  (rng.range 사용 시 이후 소비처의 seed+cursor 재현열이 밀린다 — 불변식 4) */
+export function hashSeed(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/** [arch/98 P1] 적극 축 후보 풀 — 기본 가중치. 소극 3종(TALK/OBSERVE/INVESTIGATE)
+ *  수렴을 깨는 positive 유도용. 가드로 상황 부적합 축을 제거한 뒤 가중 추첨. */
+export const ACTIVE_AFFORDANCE_WEIGHTS: Record<string, number> = {
+  PERSUADE: 30,
+  TRADE: 20,
+  HELP: 20,
+  SNEAK: 15,
+  THREATEN: 10,
+  STEAL: 5,
+};
+
+export interface ActiveAffordancePickInput {
+  /** 현장 NPC (posture 가드용) */
+  presentNpcs: Array<{ npcId: string; posture: string }>;
+  /** 잠금/지목 NPC — posture 가드 기준 (없으면 presentNpcs 전체 최우호 기준) */
+  primaryNpcId: string | null;
+  hubSafety: string;
+  activeConditionIds: string[];
+  /** 최근 주입 축 (연속 중복 회피) */
+  recent: string[];
+  /** hashSeed 산출값 */
+  seed: number;
+}
+
+/**
+ * [arch/98 P1] 적극 축 선정 정본 코어.
+ * 가드: ① 대상 NPC posture FRIENDLY/CAUTIOUS → THREATEN·STEAL 제외 (관계 파괴
+ * 유도 금지) ② DANGER/봉쇄·순찰 강화 → SNEAK·STEAL 제외 ③ FEARFUL NPC 존재 →
+ * HELP 가중 ×2 ④ 최근 주입 축 제외. 전부 소거되면 null (미주입).
+ */
+export function pickActiveAffordanceCore(
+  input: ActiveAffordancePickInput,
+): string | null {
+  const weights = new Map(Object.entries(ACTIVE_AFFORDANCE_WEIGHTS));
+  const primary =
+    input.presentNpcs.find((n) => n.npcId === input.primaryNpcId) ?? null;
+  const guardPostures = new Set(['FRIENDLY', 'CAUTIOUS']);
+  const postureGuard = primary
+    ? guardPostures.has(primary.posture)
+    : input.presentNpcs.some((n) => guardPostures.has(n.posture));
+  if (postureGuard) {
+    weights.delete('THREATEN');
+    weights.delete('STEAL');
+  }
+  const stealthBlocked =
+    input.hubSafety === 'DANGER' ||
+    input.activeConditionIds.some((id) =>
+      ['LOCKDOWN', 'INCREASED_PATROLS', 'CURFEW'].includes(id),
+    );
+  if (stealthBlocked) {
+    weights.delete('SNEAK');
+    weights.delete('STEAL');
+  }
+  if (input.presentNpcs.some((n) => n.posture === 'FEARFUL')) {
+    const h = weights.get('HELP');
+    if (h) weights.set('HELP', h * 2);
+  }
+  for (const r of input.recent) weights.delete(r);
+  const entries = [...weights.entries()];
+  const total = entries.reduce((s, [, w]) => s + w, 0);
+  if (total <= 0) return null;
+  let roll = input.seed % total;
+  for (const [aff, w] of entries) {
+    if (roll < w) return aff;
+    roll -= w;
+  }
+  return entries[entries.length - 1]?.[0] ?? null;
+}
+
+/**
+ * ChoiceNpcIdNorm 정본 코어 — nano 선택지 npcId 정규화 (validate 4단계).
+ *
+ * 메인 npcId는 presentNpcs 대조 검증(validate 1단계)이 있었지만
+ * choices[].npcId는 문자열이기만 하면 무검증 통과하던 갭. nano가 Track2 서술
+ * 미리보기의 @마커에서 초상화 URL·slug를 복제하는 실측 (실유저 14일 표본 2.1%:
+ * "/npc-portraits/mirela.webp" · "null" 문자열 · "harbor_route_broker" ·
+ * "star_sand_v1/whaleoil_lamp_artisan"). 오염 payload는 클릭 시 NpcResolver
+ * Step 0(CHOICE_EXPLICIT)이 신뢰하는 값이라 화자 결정까지 오염된다.
+ *
+ * 해석 순서: 정본 ID 일치 → 표시명 일치 → bare ID(NPC_ 접두 제거) → 초상화
+ * 파일명 슬러그. 미해석 시 null(명시 NPC 없는 선택지로 강등 — 안전 폴백).
+ */
+export function normalizeChoiceNpcIdCore(
+  raw: string | null,
+  presentNpcs: Array<{ npcId: string; displayName: string }>,
+  portraitUrlOf: (npcId: string) => string,
+): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed || ['null', 'none', 'unknown'].includes(trimmed.toLowerCase()))
+    return null;
+  for (const n of presentNpcs) if (n.npcId === trimmed) return trimmed;
+  // 경로·확장자 제거 슬러그: "/npc-portraits/a/b.webp" → "b"
+  const slug = (trimmed.split('/').filter(Boolean).pop() ?? '')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .toLowerCase();
+  if (!slug) return null;
+  for (const n of presentNpcs) {
+    if (n.displayName === trimmed) return n.npcId;
+    const lower = n.npcId.toLowerCase();
+    if (lower === slug || lower.replace(/^npc_/, '') === slug) return n.npcId;
+    const portrait = portraitUrlOf(n.npcId);
+    if (portrait) {
+      const pslug = (portrait.split('/').filter(Boolean).pop() ?? '')
+        .replace(/\.[a-z0-9]+$/i, '')
+        .toLowerCase();
+      if (pslug && pslug === slug) return n.npcId;
+    }
+  }
+  return null;
+}
+
+/**
+ * ChoiceNpcIdNorm 라벨 방어 — 라벨에 남은 raw ID/슬러그 토큰을 표시명으로 치환.
+ * 실측: "mirela에게 더 물어본다"가 실유저 화면에 그대로 노출 (표시명
+ * "약초 파는 노부인"이어야 함). ASCII 3자 이상 토큰만 대상, 단어 경계 필수
+ * (한글 조사 앞은 경계로 취급되므로 "mirela에게" 매치됨).
+ */
+export function sanitizeChoiceLabelNpcTokensCore(
+  label: string,
+  presentNpcs: Array<{ npcId: string; displayName: string }>,
+  portraitUrlOf: (npcId: string) => string,
+): string {
+  if (!/[A-Za-z_]{3,}/.test(label)) return label;
+  let out = label;
+  for (const n of presentNpcs) {
+    const tokens = new Set<string>([n.npcId, n.npcId.replace(/^NPC_/i, '')]);
+    const portrait = portraitUrlOf(n.npcId);
+    if (portrait) {
+      const pslug = (portrait.split('/').filter(Boolean).pop() ?? '').replace(
+        /\.[a-z0-9]+$/i,
+        '',
+      );
+      if (pslug) tokens.add(pslug);
+    }
+    for (const token of tokens) {
+      if (token.length < 3) continue;
+      const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      out = out.replace(
+        new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, 'gi'),
+        n.displayName,
+      );
+    }
+  }
+  return out;
 }
 
 const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
@@ -265,6 +430,36 @@ export class NanoEventDirectorService {
         `선택지 3개 중 정확히 1개는 이 인물에게 대가를 제시하는 금전 접근으로 만드세요 — affordance "BRIBE", npcId "${ctx.bribeOpportunity.npcId}".`,
         `라벨에 "뇌물"이라는 단어를 쓰지 마세요. 대신 지금 장면에 있는 사물·상황(탁자 위 물건, 상대의 소지품, 방금 오간 대화 등)을 끌어들인 완곡한 금전 제안 행동 문장으로 서술하세요 — 장면이 다르면 라벨도 달라야 합니다.`,
         `⚠️ 이 금전 접근은 '선택지'로만 제시하세요. concept·opening·npcGesture(서술 방향)에는 뇌물/은화 지불 장면을 넣지 마세요 — 플레이어는 아직 뇌물을 주지 않았습니다. 서술 방향은 플레이어의 이번 행동("${ctx.rawInput}", ${ctx.actionType})을 따릅니다.`,
+      );
+    }
+
+    // [arch/98 P1] 적극 축 positive 주입 — 소극 3종(TALK/OBSERVE/INVESTIGATE)
+    // 91% 편중 대응. bribeOpportunity와 동일한 "정확히 1개 강제" 메커니즘
+    // (실준수 검증됨 — BRIBE 6% 실노출). BRIBE 턴에는 서버가 미주입(슬롯 경쟁 방지).
+    if (ctx.suggestedActiveAffordance && !ctx.bribeOpportunity) {
+      const AFF_DESC: Record<string, string> = {
+        PERSUADE: '상대를 설득하거나 제안을 던지는',
+        TRADE: '거래·흥정을 시도하는',
+        HELP: '상대를 거들거나 돕는',
+        SNEAK: '은밀하게 접근·잠입하는',
+        THREATEN: '상대를 압박하는',
+        STEAL: '몰래 손에 넣는',
+      };
+      const desc = AFF_DESC[ctx.suggestedActiveAffordance] ?? '적극적인';
+      parts.push(
+        ``,
+        `[접근 다양화] 선택지 3개 중 정확히 1개는 ${desc} 행동으로 만드세요 — affordance "${ctx.suggestedActiveAffordance}". 현재 장면의 사물·인물·정황을 끌어온 구체 행동 문장으로. 나머지 2개는 자유.`,
+      );
+    }
+
+    // [arch/98 P2] NPC 미응답 질문 명시 주입 (Track2) — 질문이 500자 미리보기에
+    // 섞여 있으면 nano가 질문 존재를 인지 못한다 (질문 턴 92% 응답 선택지 부재
+    // 실측). arch/66 사다리 패턴: 추출 → 명시 주입.
+    if (ctx.pendingNpcQuestion) {
+      parts.push(
+        ``,
+        `[NPC의 질문] ${ctx.pendingNpcQuestion.npcName}이(가) 방금 물었다: "${ctx.pendingNpcQuestion.question}"`,
+        `선택지 3개 중 정확히 1개는 이 질문에 직접 응답하는 행동(긍정/부정/되물음 중 맥락에 맞는 것)으로 만드세요.`,
       );
     }
 
@@ -481,8 +676,49 @@ export class NanoEventDirectorService {
       'TALK',
       'SEARCH',
     ]);
+    const portraitUrlOf = (npcId: string) =>
+      this.content.getNpcPortraitUrl(npcId);
+    // 검증 대상 NPC 목록 — presentNpcs 외에 잠금·지목·직전·bribe NPC도 정본이다
+    // (이벤트·상황 생성 NPC는 장소 상주 목록에 없을 수 있음 — NPC_RENNICK이
+    // presentNpcs 부재로 null 강등되던 실측 2026-08-05).
+    const knownNpcs: Array<{ npcId: string; displayName: string }> = [
+      ...ctx.presentNpcs,
+    ];
+    const extraIds = [
+      ctx.lockedNpcId,
+      ctx.targetNpcId,
+      ctx.lastNpcId,
+      ctx.resolvedPrimaryNpcId,
+      ctx.bribeOpportunity?.npcId,
+      result.npcId,
+    ];
+    for (const id of extraIds) {
+      if (!id || knownNpcs.some((n) => n.npcId === id)) continue;
+      const def = this.content.getNpc(id);
+      knownNpcs.push({
+        npcId: id,
+        displayName: def?.unknownAlias ?? def?.name ?? id,
+      });
+    }
     for (const choice of result.choices) {
       if (!VALID_AFF.has(choice.affordance)) choice.affordance = 'TALK';
+      // ChoiceNpcIdNorm — 초상화 URL·"null" 문자열·slug 오염 정규화 + 라벨 ID 노출 방어
+      const normalized = normalizeChoiceNpcIdCore(
+        choice.npcId,
+        knownNpcs,
+        portraitUrlOf,
+      );
+      if (normalized !== choice.npcId) {
+        this.logger.debug(
+          `[NanoEventDirector] 선택지 npcId 정규화: "${choice.npcId}" → ${normalized} (label="${choice.label.slice(0, 24)}")`,
+        );
+        choice.npcId = normalized;
+      }
+      choice.label = sanitizeChoiceLabelNpcTokensCore(
+        choice.label,
+        knownNpcs,
+        portraitUrlOf,
+      );
     }
     while (result.choices.length < 3) {
       result.choices.push({

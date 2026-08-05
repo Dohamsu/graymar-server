@@ -170,6 +170,15 @@ export interface RunState {
   actionBonuses?: Record<string, number>;
   /** architecture/44 §이슈② — 런 전역 NPC 대사 테마 이력 (최근 10턴, FIFO) */
   narrativeThemes?: import('./narrative-theme.js').NarrativeThemeEntry[];
+  /**
+   * [arch/98 P3] BRIBE 선택지 노출 쿨다운 — npcId → 마지막 주입 턴.
+   * 보류 상태 지속 시 매 턴 재주입되어 최장 5턴 연속 BRIBE 노출 실측(2026-08-04)
+   * 대응. 주입 후 BRIBE_OFFER_COOLDOWN_TURNS 휴지, BRIBE 실행/fact 공개 시
+   * 해당 NPC 엔트리 삭제(재제안 허용). 턴 동기 경로 소유.
+   */
+  bribeOfferHistory?: Record<string, number>;
+  /** [arch/98 P1] 최근 주입한 적극 축 (최대 2개 FIFO) — 연속 중복 회피용. */
+  recentActiveAffordances?: string[];
 }
 
 /** 장소별 개인 기록 — 방문 횟수, 체류턴, 주요 사건, 발견한 비밀, 평판 메모 */
