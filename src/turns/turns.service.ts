@@ -876,6 +876,7 @@ export class TurnsService {
         `마음을 정했다 — ${commit.label}`,
         hubChoices,
         ws,
+        updatedRunState,
       );
       result.events.push({
         id: `arc_commit_${turnNo}`,
@@ -944,6 +945,13 @@ export class TurnsService {
         turnNo,
         currentNode,
         `${locName}${korParticleRo(locName)} 향한다.`,
+      );
+      // [arch/99] 이동 턴에도 퀘스트탭 번들 부착 — 이동 시간 소요(day 변동)의
+      // 시한 표시 지연 방지 (newWs = 이동 tick 반영분)
+      this.attachQuestUiBundle(
+        hubResult,
+        updatedRunState,
+        updatedRunState.worldState!,
       );
       await this.commitTurnRecord(
         run,
@@ -1039,6 +1047,7 @@ export class TurnsService {
         '협력자에게 연락하여 열기를 식혔다.',
         hubChoices,
         updatedRunState.worldState!,
+        updatedRunState,
       );
 
       await this.commitTurnRecord(
@@ -1083,6 +1092,7 @@ export class TurnsService {
         `금화 ${cost}으로 열기를 해소했다.`,
         hubChoices,
         updatedRunState.worldState!,
+        updatedRunState,
       );
 
       await this.commitTurnRecord(
@@ -1158,6 +1168,9 @@ export class TurnsService {
           this.content.getNpcPortraitUrl(prologueMeta.npcId) ||
           prologueMeta.imageUrl,
       };
+
+      // [arch/99] 의뢰 수락 턴부터 퀘스트탭 현황판 노출
+      this.attachQuestUiBundle(result, updatedRunState, ws);
 
       await this.commitTurnRecord(
         run,
@@ -3620,20 +3633,35 @@ export class TurnsService {
       }
     }
 
+    // Quest UI 번들 (playerThreads·arcState·marks·clock·day·questStatus)
+    this.attachQuestUiBundle(result, updatedRunState, ws);
+  }
+
+  /**
+   * [arch/99] 퀘스트탭 UI 번들 부착 — LOCATION 턴(assembleResultUi)뿐 아니라
+   * HUB 턴(arc_commit·accept_quest·contact_ally·pay_cost·장소 이동)에서도 호출한다.
+   * 노선 확정이 정작 HUB에서 일어나는데 번들이 LOCATION 턴 전용이라 커밋 직후
+   * ~다음 LOCATION 행동까지 탭이 스테일하던 결함의 수정.
+   */
+  private attachQuestUiBundle(
+    result: ServerResultV1,
+    runState: RunState,
+    ws: WorldState,
+  ): void {
     // PlayerThread UI 번들에 포함
     if (ws.playerThreads && ws.playerThreads.length > 0) {
       (result.ui as any).playerThreads = ws.playerThreads;
     }
 
     // Quest UI 번들: arcState, narrativeMarks, mainArcClock, day
-    (result.ui as any).arcState = updatedRunState.arcState ?? null;
+    (result.ui as any).arcState = runState.arcState ?? null;
     (result.ui as any).narrativeMarks = ws.narrativeMarks ?? [];
     (result.ui as any).mainArcClock = ws.mainArcClock ?? null;
     (result.ui as any).day = ws.day ?? 1;
     // 퀘스트탭 현황판 (2026-07-23) — 의뢰 단계·발견 단서·다음 지역 이정표
     if (this.questProgression) {
       (result.ui as any).questStatus =
-        this.questProgression.buildQuestStatus(updatedRunState);
+        this.questProgression.buildQuestStatus(runState);
     }
   }
 
@@ -7740,8 +7768,9 @@ export class TurnsService {
     text: string,
     choices: ServerResultV1['choices'],
     ws: WorldState,
+    runState?: RunState,
   ): ServerResultV1 {
-    return {
+    const result: ServerResultV1 = {
       ...this.buildSystemResult(turnNo, node, text),
       ui: {
         availableActions: ['CHOICE'],
@@ -7766,6 +7795,11 @@ export class TurnsService {
       },
       choices,
     };
+    // [arch/99] HUB 턴에도 퀘스트탭 번들 부착 — arc_commit 직후 노선 스테일 방지
+    if (runState) {
+      this.attachQuestUiBundle(result, runState, ws);
+    }
+    return result;
   }
 
   /**

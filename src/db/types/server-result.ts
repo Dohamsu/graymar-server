@@ -253,6 +253,8 @@ export type QuestStatusUI = {
   factionNames: Record<string, string>;
   /** 아크 노선 팩별 라벨 (quest.json arcRoutes — routeId → label). 클라 하드코딩 대체 */
   arcRouteLabels: Record<string, string>;
+  /** 팩에 노선 커밋 동선(arc_events routeCommitChoices) 존재 여부 — 클라 노선 섹션 게이팅 (arch/99) */
+  hasArcCommit: boolean;
 };
 
 export type UIBundle = {

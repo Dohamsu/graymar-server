@@ -427,6 +427,9 @@ export class QuestProgressionService {
       terminal: this.isTerminalState(state),
       factionNames,
       arcRouteLabels,
+      // 노선 커밋 동선 보유 팩만 클라가 노선 섹션을 노출한다 (arch/99 —
+      // silverdeen처럼 routeCommitChoices 없는 팩의 "미정" 영구 표시 방지)
+      hasArcCommit: this.content.getArcRouteCommitChoices().length > 0,
     };
   }
 
