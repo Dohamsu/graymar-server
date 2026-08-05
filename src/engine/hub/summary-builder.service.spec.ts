@@ -614,14 +614,14 @@ describe('SummaryBuilderService', () => {
       });
     });
 
-    it('characterName이 비어있어도 fallback "이름 없는 용병"을 사용한다', () => {
+    it('characterName이 비어있어도 fallback "이름 없는 이방인"을 사용한다', () => {
       const { service } = makeService();
       const s = service.buildEndingSummary(
         baseRun,
         makeRunState({ characterName: undefined }),
         makeEndingResult(),
       );
-      expect(s.characterName).toBe('이름 없는 용병');
+      expect(s.characterName).toBe('이름 없는 이방인');
     });
   });
 });

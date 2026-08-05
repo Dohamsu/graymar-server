@@ -943,6 +943,8 @@ export class RunsService {
         startedAt: result.run.startedAt,
         // architecture/63 ⑥: 클라 시나리오 인지 (HUB 라벨·프리셋 표기)
         scenarioId: result.run.scenarioId ?? null,
+        // 팩 인지형 UI 크롬 — 헤더 타이틀·호외 등이 시나리오 표시명을 쓴다 (2026-08-05)
+        scenarioName: this.content.getScenarioMeta()?.name ?? null,
         // architecture/71: 이월 캐릭터 표시용 — 실제 프리셋(class 라벨)·확정 스탯.
         // 이월 런은 startCampaignRun이 프리셋을 안 넘기므로 응답으로 전달.
         presetId: result.run.presetId ?? null,
@@ -1428,6 +1430,8 @@ export class RunsService {
         gender: run.gender ?? 'male',
         // architecture/63 ⑥: 클라 시나리오 인지
         scenarioId: run.scenarioId ?? null,
+        // 팩 인지형 UI 크롬 — 이어하기 복원 경로에도 시나리오 표시명 전달 (2026-08-05)
+        scenarioName: this.content.getScenarioMeta()?.name ?? null,
       },
       stats: profile?.permanentStats ?? null,
       currentNode: currentNode

@@ -198,13 +198,13 @@ export class SummaryBuilderService {
 
   constructor(private readonly content: ContentLoaderService) {}
 
-  /** presetId → 한글 라벨. 미매핑 시 프리셋의 name 필드 fallback, 그것도 없으면 '이름 없는 용병'. */
+  /** presetId → 한글 라벨. 미매핑 시 프리셋의 name 필드 fallback, 그것도 없으면 '이름 없는 이방인'. */
   private resolvePresetLabel(presetId: string | null | undefined): string {
-    if (!presetId) return '이름 없는 용병';
+    if (!presetId) return '이름 없는 이방인';
     const staticLabel = PRESET_LABELS[presetId];
     if (staticLabel) return staticLabel;
     const def = this.content.getPreset(presetId);
-    return def?.name ?? '이름 없는 용병';
+    return def?.name ?? '이름 없는 이방인';
   }
 
   /** arcRoute 값 정규화 (null/알 수 없는 값 → 'NONE'). */
@@ -233,7 +233,7 @@ export class SummaryBuilderService {
     const presetLabel = this.resolvePresetLabel(run.presetId);
     const characterName =
       (runState.characterName && runState.characterName.trim()) ||
-      '이름 없는 용병';
+      '이름 없는 이방인';
     const gender: 'male' | 'female' =
       run.gender === 'female' ? 'female' : 'male';
 
