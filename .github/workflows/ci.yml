@@ -1,0 +1,27 @@
+# CI — 무비용 게이트 (arch/99 후속, 하네스 보강 #1)
+# 유닛 1,672케이스는 DB·env 없이 완주함을 실측 확인 (2026-08-05):
+#   - 가짜 DATABASE_URL로도 통과 (DB 미접속)
+#   - .env 파일 제거 상태로도 통과
+# LLM 실비용이 드는 playtest/E2E는 CI에 넣지 않는다 — 로컬 정본 유지.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm jest --ci
