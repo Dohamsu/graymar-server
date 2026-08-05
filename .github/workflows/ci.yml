@@ -2,6 +2,10 @@
 # 유닛 1,672케이스는 DB·env 없이 완주함을 실측 확인 (2026-08-05):
 #   - 가짜 DATABASE_URL로도 통과 (DB 미접속)
 #   - .env 파일 제거 상태로도 통과
+# 단, content-loader 팩 계약 스펙은 콘텐츠 팩이 필요하다 —
+# CONTENT_BASE = join(cwd, '..', 'content') (content-loader.service.ts:191)
+# 이라 로컬 배치(graymar 루트 하위 server/)를 재현: server를 server/에,
+# 콘텐츠 소스인 graymar-docs(PUBLIC)를 docs/에 받고 content 심링크를 건다.
 # LLM 실비용이 드는 playtest/E2E는 CI에 넣지 않는다 — 로컬 정본 유지.
 name: CI
 
@@ -10,11 +14,24 @@ on:
     branches: [main]
   pull_request:
 
+defaults:
+  run:
+    working-directory: server
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: server
+      - uses: actions/checkout@v4
+        with:
+          repository: Dohamsu/graymar-docs
+          path: docs
+      - name: Link content packs (../content 레이아웃 재현)
+        working-directory: .
+        run: ln -s "$GITHUB_WORKSPACE/docs/content" "$GITHUB_WORKSPACE/content"
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -22,6 +39,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: server/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm jest --ci
