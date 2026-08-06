@@ -1686,11 +1686,27 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
         // 스트리밍 모드: StreamClassifier가 실시간 처리하므로 Step A 스킵
         // JSON 모드: JSON에서 이미 파싱됨
         const isJsonResidue = /"segments"\s*:/.test(narrative);
+        // \uC2A4\uD2B8\uB9AC\uBC0D \uD134 \uBC31\uD544 \uAC8C\uC774\uD2B8 (\uBC84\uADF8\uB9AC\uD3EC\uD2B8 e6251702) \u2014 \uAD50\uCC28 \uBAA8\uB378(DeepSeek) \uD134\uC774
+        // \uB2E4\uD654\uC790 \uC11C\uC220\uC5D0 @\uB9C8\uCEE4 0\uAC1C\uB97C \uB0B4\uBA74 \uC800\uC7A5\uBCF8\uC758 \uBAA8\uB4E0 \uB9E8\uB530\uC634\uD45C \uB300\uC0AC\uAC00 \uD074\uB77C
+        // speakingNpc fallback\uC73C\uB85C \uD55C \uD654\uC790\uC5D0 \uBCD1\uD569\u00B7\uC624\uADC0\uC18D\uB41C\uB2E4. \uBB34\uB9C8\uCEE4 \uB300\uC0AC\uAC00
+        // \uB0A8\uC544 \uC788\uC73C\uBA74 \uC2A4\uD2B8\uB9AC\uBC0D \uBAA8\uB4DC\uC5D0\uC11C\uB3C4 regex \uBC31\uD544\uB9CC \uC218\uD589\uD55C\uB2E4 (nano\uB294 \uC2A4\uD0B5).
+        const hasUnmarkedDialogue = ((): boolean => {
+          const quoteRe = /["\u201C]/g;
+          let qm: RegExpExecArray | null;
+          while ((qm = quoteRe.exec(narrative)) !== null) {
+            const beforeQuote = narrative.slice(
+              Math.max(0, qm.index - 30),
+              qm.index,
+            );
+            if (!/@(?:[A-Z_]+|\[[^\]]*\])\s*$/.test(beforeQuote)) return true;
+          }
+          return false;
+        })();
         const hasDialogue =
           !jsonModeParsed &&
-          !isStreamingMode &&
           !isJsonResidue &&
-          /["\u201C\u201D]/.test(narrative);
+          /["\u201C\u201D]/.test(narrative) &&
+          (!isStreamingMode || hasUnmarkedDialogue);
         this.logger.debug(
           `[DialogueMarker] turn=${pending.turnNo} hasDialogue=${hasDialogue} len=${narrative.length}`,
         );
@@ -1785,7 +1801,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
           let nanoSuccess = false;
 
           // A-1: nano LLM으로 모든 대사 발화자 일괄 판단 (주 파이프라인)
-          if (dialogueEntries.length > 0 && npcList) {
+          // 스트리밍 백필 경로는 nano 스킵 — 결정론 regex만 (비용·지연 0 추가)
+          if (dialogueEntries.length > 0 && npcList && !isStreamingMode) {
             try {
               const lightConfig = this.configService.getLightModelConfig();
               const dialoguePrompt = dialogueEntries
@@ -2061,6 +2078,9 @@ ${npcList}`,
               // 오귀속시킨다 (실측 DB에 "김리"/"김진원" 공존).
               (runSession?.runState as Record<string, unknown> | undefined)
                 ?.characterName as string | undefined,
+              // 스트리밍 백필은 고신뢰 매칭만 (버그리포트 e6251702) — 오귀속
+              // 마커가 무마커보다 해롭다. 비스트리밍 fallback은 기존 동작 유지.
+              { strict: isStreamingMode },
             );
             narrative = regexResult.text;
             // 남은 @[UNMATCHED] 제거
@@ -4340,7 +4360,7 @@ ${npcList}`,
               // 미소개는 별칭, 소개 완료는 실명 — 서술 등장 표기와 일치해야
               // 렉시컬 프리스크린이 잡는다 (동적 NPC는 getNpc 미등재 → id 폴백)
               name: getNpcDisplayName(
-                _npcStatesRef![id]!,
+                _npcStatesRef![id],
                 this.content.getNpc(id),
                 pending.turnNo,
               ),
@@ -4361,7 +4381,10 @@ ${npcList}`,
           if (cutMatch) {
             // ui 영속 (npcPortrait reconcile과 동일 패턴 — ui 갱신 전용 UPDATE)
             const uiForCut = (serverResult.ui ?? {}) as Record<string, unknown>;
-            uiForCut.sceneCut = { id: cutMatch.id, imageUrl: cutMatch.imageUrl };
+            uiForCut.sceneCut = {
+              id: cutMatch.id,
+              imageUrl: cutMatch.imageUrl,
+            };
             serverResult.ui = uiForCut as ServerResultV1['ui'];
             await this.db
               .update(turns)

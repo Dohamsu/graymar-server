@@ -191,3 +191,90 @@ describe('NpcDialogueMarkerService — 환각 융합 별칭 차단', () => {
     });
   });
 });
+
+// 버그리포트 e6251702 — 스트리밍 저장본 백필 strict 모드
+// 교차 모델(DeepSeek) 턴이 @마커 0개 다화자 서술을 낸 실측 원문(run 9db4250d
+// turn 12)으로 검증: 발화동사 동반/단일 후보 대사만 마커 삽입, 두 실명이 한
+// 문장에 공존하는 모호 대사("정보상은 미렐라가 사라진 자리를…")는 무마커 유지.
+describe('NpcDialogueMarkerService — insertMarkers strict 백필', () => {
+  const defs: Record<
+    string,
+    { name: string; unknownAlias: string; gender: string }
+  > = {
+    NPC_MIRELA: {
+      name: '미렐라',
+      unknownAlias: '약초 파는 노부인',
+      gender: 'female',
+    },
+    NPC_INFO_BROKER: {
+      name: '쉐도우',
+      unknownAlias: '후드 쓴 정보상',
+      gender: 'male',
+    },
+  };
+  const contentMock = {
+    getNpc: (id: string) => defs[id],
+  } as unknown as ConstructorParameters<typeof NpcDialogueMarkerService>[0];
+  const npcStates = {
+    NPC_MIRELA: {} as never,
+    NPC_INFO_BROKER: {} as never,
+  };
+
+  const narrative = [
+    '시장의 어둑한 빛이 희미하게 비추며 서늘하다. 표식이 가리키는 방향으로 걸음을 옮기자, 발밑의 돌바닥은 저녁 안개로 축축하게 젖어 있다.',
+    '약초 노점의 미렐라가 인기척도 없이 그 자리에 서 있었다. 주변을 한 바퀴 훑은 그녀는 목소리를 극도로 낮춰 속삭였다.',
+    '"그 문양, 동쪽 창고 쪽으로 나 있는 것 맞소. 하지만 조심하시오."',
+    '말을 마친 미렐라는 곧바로 제 노점으로 돌아가 버렸다. 후드 쓴 정보상은 미렐라가 사라진 자리를 물끄러미 바라보았다. 잠시 침묵이 흘렀다.',
+    '"약초 노부인이 그대에게 꽤 호의적이군."',
+    '돌아서려는 정보상의 옷자락을 붙잡았다. 몇 푼의 대가를 건네자, 그는 잠시 머뭇거리다가 입을 열었다.',
+    '"표식 하나 더 보여주겠소. 직접 확인해 보시오."',
+  ].join('\n\n');
+
+  it('발화동사 인접 실명 대사에 마커를 재삽입한다 (미렐라 "속삭였다")', () => {
+    const svc = new NpcDialogueMarkerService(contentMock);
+    const { text } = svc.insertMarkers(
+      narrative,
+      npcStates,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { strict: true },
+    );
+    expect(text).toContain('@NPC_MIRELA "그 문양');
+  });
+
+  it('두 실명 공존 + 발화동사 부재 대사는 무마커 유지 (오귀속 방지)', () => {
+    const svc = new NpcDialogueMarkerService(contentMock);
+    const { text } = svc.insertMarkers(
+      narrative,
+      npcStates,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { strict: true },
+    );
+    expect(text).not.toMatch(/@\S+\s*"약초 노부인이/);
+  });
+
+  it('단일 후보 창에서는 발화동사 동반 시 마커 삽입 (정보상 "입을 열었다")', () => {
+    const svc = new NpcDialogueMarkerService(contentMock);
+    const { text } = svc.insertMarkers(
+      narrative,
+      npcStates,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { strict: true },
+    );
+    expect(text).toContain('@NPC_INFO_BROKER "표식 하나 더');
+  });
+
+  it('비 strict(기존 fallback) 경로 동작은 변하지 않는다 — 마커 삽입 발생', () => {
+    const svc = new NpcDialogueMarkerService(contentMock);
+    const { text } = svc.insertMarkers(narrative, npcStates);
+    expect(text).toContain('@NPC_MIRELA "그 문양');
+  });
+});

@@ -127,7 +127,13 @@ export class NpcDialogueMarkerService {
      *  등장하므로 화자 후보에서 배제한다 (static PLAYER_ALIASES는 런별 값을
      *  담을 수 없어 인자로 흘린다). */
     playerName?: string | null,
+    /** 버그리포트 e6251702 — 스트리밍 저장본 백필 전용 고신뢰 모드.
+     *  이름 매칭은 발화동사 동반 또는 창 내 단일 후보일 때만 인정하고,
+     *  일반명사(3단계)·직업명(4단계) 교차매칭은 끈다. 오귀속된 마커는
+     *  무마커보다 해롭다(잘못된 실명 말풍선) — 확신 없으면 무명으로 남긴다. */
+    opts?: { strict?: boolean },
   ): { text: string; unmatchedCount: number } {
+    const strict = opts?.strict === true;
     const candidateNpcs = this.buildCandidateList(npcStates, eventNpcIds);
     if (candidateNpcs.length === 0) {
       return { text: narrative, unmatchedCount: 0 };
@@ -187,6 +193,7 @@ export class NpcDialogueMarkerService {
         after,
         candidateNpcs,
         playerName,
+        strict,
       );
       if (directMatch) {
         d.npcId = directMatch.npcId;
@@ -206,6 +213,9 @@ export class NpcDialogueMarkerService {
         // lastMatchedNpcId는 유지 (같은 NPC 연속)
         continue;
       }
+
+      // 3·4단계 교차매칭은 strict 모드에서 제외 (간접 단서 → 오귀속 위험)
+      if (strict) continue;
 
       // 3단계: 일반명사 교차매칭 (사내→남성NPC, 여인→여성NPC)
       const nounMatch = this.matchByNoun(before, after, candidateNpcs);
@@ -697,8 +707,17 @@ export class NpcDialogueMarkerService {
     after: string,
     candidates: NpcCandidate[],
     playerName?: string | null,
+    /** strict — 발화동사 동반 또는 창 내 단일 후보일 때만 매칭 인정.
+     *  "정보상은 미렐라가 사라진 자리를 바라보았다" 뒤 대사가 거리 우선으로
+     *  미렐라에 오귀속되는 패턴 차단 (백필 경로 전용). */
+    strict?: boolean,
   ): { npcId: string } | null {
-    let bestMatch: { npcId: string; distance: number } | null = null;
+    let bestMatch: {
+      npcId: string;
+      distance: number;
+      hadVerb: boolean;
+    } | null = null;
+    const matchedNpcIds = new Set<string>();
     const speechVerb = new RegExp(`(?:${SPEECH_VERBS})`);
 
     // arch/91 — 플레이어 이름이 NPC 이름을 부분 포함하면(예: 플레이어 "브렌"
@@ -733,11 +752,13 @@ export class NpcDialogueMarkerService {
           let distance = before.length - beforeIdx - name.length;
           if (distance > 100) continue;
           const afterName = before.slice(beforeIdx + name.length);
-          if (speechVerb.test(afterName)) {
+          const hadVerb = speechVerb.test(afterName);
+          if (hadVerb) {
             distance = Math.max(0, distance - 20);
           }
+          matchedNpcIds.add(candidate.npcId);
           if (!bestMatch || distance < bestMatch.distance) {
-            bestMatch = { npcId: candidate.npcId, distance };
+            bestMatch = { npcId: candidate.npcId, distance, hadVerb };
           }
         }
 
@@ -761,11 +782,13 @@ export class NpcDialogueMarkerService {
             const afterName = before.slice(
               fuzzyMatch.index + fuzzyMatch[0].length,
             );
-            if (speechVerb.test(afterName)) {
+            const hadVerb = speechVerb.test(afterName);
+            if (hadVerb) {
               distance = Math.max(0, distance - 20);
             }
+            matchedNpcIds.add(candidate.npcId);
             if (!bestMatch || distance < bestMatch.distance) {
-              bestMatch = { npcId: candidate.npcId, distance };
+              bestMatch = { npcId: candidate.npcId, distance, hadVerb };
             }
           }
         }
@@ -778,11 +801,21 @@ export class NpcDialogueMarkerService {
           !overlapsPlayerName(after, afterIdx, name.length)
         ) {
           const distance = afterIdx + 100;
+          // 대사 뒤 "…" 미렐라가 말했다 패턴 — 이름 뒤 발화동사면 고신뢰
+          const hadVerb = speechVerb.test(
+            after.slice(afterIdx + name.length, afterIdx + name.length + 14),
+          );
+          matchedNpcIds.add(candidate.npcId);
           if (!bestMatch || distance < bestMatch.distance) {
-            bestMatch = { npcId: candidate.npcId, distance };
+            bestMatch = { npcId: candidate.npcId, distance, hadVerb };
           }
         }
       }
+    }
+    // strict — 창 내 후보가 2명 이상인데 최적 매칭에 발화동사 단서가 없으면
+    // 판단 보류 (무마커 유지). 단일 후보면 동사 없어도 인정.
+    if (strict && bestMatch && !bestMatch.hadVerb && matchedNpcIds.size > 1) {
+      return null;
     }
     return bestMatch;
   }
