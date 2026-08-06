@@ -6113,11 +6113,15 @@ export class TurnsService {
             }
           : {}),
       },
-      isNonChallenge,
+      // 주사위 8 고정 표시 수정 (2026-08-06): FREE 자동 성공은 주사위를 굴리지
+      // 않는데(buildAutoSuccess score 8 하드코딩·diceRoll 없음) resolveOutcome을
+      // 실으면 클라 점수 배너가 "8"을 상시 표시했다. FREE는 hideResolve로 숨기고
+      // 아래 resolveSkipped 표식(생략 안내)만 내보낸다.
+      isNonChallenge || challengeDecision.result === 'FREE',
       // arch/89 — HUD 골드 변화는 적립액이 아니라 이번 턴 실지급(정산)액
       totalGoldDelta + settledGold,
       locationReward.items,
-      isNonChallenge
+      isNonChallenge || challengeDecision.result === 'FREE'
         ? undefined
         : {
             diceRoll: resolveResult.diceRoll!,
