@@ -2967,10 +2967,20 @@ ${npcList}`,
 
             // nano 선택지를 llmChoices에 저장 (클라이언트 폴링 시 반환)
             if (nanoResult.choices.length >= 3) {
+              // Track2와 동일 — 프리셋 특기 보너스를 예상 보정치(modifier)로 부착
+              // (이벤트 의존 보정은 다음 턴 이벤트 미확정이라 제외)
+              const track1PresetBonuses =
+                ((runSession?.runState as Record<string, unknown> | undefined)
+                  ?.actionBonuses as Record<string, number> | undefined) ??
+                (runSession?.presetId
+                  ? this.content.getPreset(runSession.presetId)?.actionBonuses
+                  : undefined) ??
+                {};
               const nanoChoices: ChoiceItem[] = nanoResult.choices.map(
                 (nc, idx) => ({
                   id: `nano_${pending.turnNo}_${idx}`,
                   label: nc.label,
+                  ...(nc.hint ? { hint: nc.hint } : {}),
                   action: {
                     type: 'CHOICE',
                     payload: {
@@ -2978,6 +2988,9 @@ ${npcList}`,
                       sourceNpcId: nc.npcId ?? nanoResult.npcId,
                     },
                   },
+                  ...(track1PresetBonuses[nc.affordance]
+                    ? { modifier: track1PresetBonuses[nc.affordance] }
+                    : {}),
                 }),
               );
               // P4 — 서버 기본 go_hub와 라벨·payload 통일 (Track 2와 동일)
@@ -3742,6 +3755,9 @@ ${npcList}`,
                   ) => ({
                     id: `choice_${idx}`,
                     label: c.label,
+                    // hint는 top-level이 정본 (클라 c.hint 소비) — payload.hint는
+                    // 구버전 호환용으로 병기 유지
+                    ...(c.hint ? { hint: c.hint.slice(0, 60) } : {}),
                     action: {
                       type: 'CHOICE' as const,
                       payload: { affordance: c.affordance, hint: c.hint },
@@ -4457,6 +4473,7 @@ ${npcList}`,
                 (nc, idx) => ({
                   id: `nano_${pending.turnNo}_${idx}`,
                   label: nc.label,
+                  ...(nc.hint ? { hint: nc.hint } : {}),
                   action: {
                     type: 'CHOICE',
                     payload: {
