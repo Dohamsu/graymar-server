@@ -385,6 +385,7 @@ import { korParticle, korParticleRo } from '../common/korean.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 import { decideWitnessReaction } from './witness-reaction.core.js';
 import { resolvePlayerTargetOverride } from './npc-override.core.js';
+import { decideChoiceChallengeCore } from './choice-challenge.core.js';
 import {
   agitationCooldownActive,
   decideAgitatedBehavior,
@@ -574,6 +575,13 @@ import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
 @Injectable()
 export class TurnsService {
   private readonly logger = new Logger(TurnsService.name);
+
+  /** 호외 기사 캐시 — `${runId}:${signalId}` → 변환된 기사 본문.
+   * 시그널이 signalFeed에 남아있는 동안 매 턴 동일 시그널을 nano로 재변환하며
+   * 턴 제출을 ~2초 블로킹하던 것 제거 (2026-08-06 실측). 인메모리라 재시작 시
+   * 소실되지만 해당 시그널은 1회만 재생성. FIFO 상한으로 무한 증식 방지. */
+  private readonly newsHeadlineCache = new Map<string, string>();
+  private static readonly NEWS_HEADLINE_CACHE_MAX = 500;
 
   constructor(
     @Inject(DB) private readonly db: DrizzleDB,
@@ -3424,6 +3432,7 @@ export class TurnsService {
     prevSafety: string;
     ws: WorldState;
     turnNo: number;
+    runId: string;
   }): Promise<void> {
     const {
       result,
@@ -3443,6 +3452,7 @@ export class TurnsService {
       prevSafety,
       ws,
       turnNo,
+      runId,
     } = params;
     // === Speaking NPC: 대사 주체 정보 (클라이언트 DialogueBubble용) ===
     // PROCEDURAL/SIT_ 이벤트에서 injectedNpc가 override한 경우 → 원래 이벤트의 primaryNpcId 사용
@@ -3500,7 +3510,11 @@ export class TurnsService {
     })) as SignalFeedItemUI[];
     (result.ui as any).signalFeed = signalFeedUI;
 
-    // 호외 헤드라인: severity 3+ 시그널을 nano로 신문 기사 변환 (비동기, 실패 무시)
+    // 호외 헤드라인: severity 3+ 시그널을 nano로 신문 기사 변환.
+    // [레이턴시 점검 2026-08-06] 시그널 id 캐시 — 이 await는 턴 제출 응답을
+    // 직접 블로킹하는데(실측 1.7~2.9s), 캐시 없이는 시그널이 signalFeed에
+    // 남아있는 동안 매 턴 동일 시그널을 재변환했다. nano 호출은 이번 턴에
+    // 처음 보는 시그널이 있을 때만 — 그 외 턴은 캐시 조회로 0ms.
     const rawSignals = (finalWs.signalFeed ?? []) as Array<{
       id: string;
       channel: string;
@@ -3511,22 +3525,46 @@ export class TurnsService {
     const importantRaw = rawSignals.filter((s) => s.severity >= 3);
     if (importantRaw.length > 0) {
       try {
-        const incDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
-        const locName =
-          this.content.getLocation(locationId)?.name ?? locationId;
-        const timePhase =
-          (finalWs as any).timePhaseV2 ?? finalWs.timePhase ?? 'DAY';
-        const newsContext = importantRaw.map((s) => ({
-          text: s.text,
-          channel: s.channel,
-          severity: s.severity,
-          location: locName,
-          incidentTitle: s.sourceIncidentId
-            ? incDefMap.get(s.sourceIncidentId)?.title
-            : undefined,
-          timePhase,
-        }));
-        const headlines = await this.generateNewsHeadlines(newsContext);
+        const cacheKey = (sigId: string) => `${runId}:${sigId}`;
+        const uncached = importantRaw.filter(
+          (s) => !this.newsHeadlineCache.has(cacheKey(s.id)),
+        );
+        if (uncached.length > 0) {
+          const incDefMap = new Map(
+            incidentDefs.map((d) => [d.incidentId, d]),
+          );
+          const locName =
+            this.content.getLocation(locationId)?.name ?? locationId;
+          const timePhase =
+            (finalWs as any).timePhaseV2 ?? finalWs.timePhase ?? 'DAY';
+          const newsContext = uncached.map((s) => ({
+            text: s.text,
+            channel: s.channel,
+            severity: s.severity,
+            location: locName,
+            incidentTitle: s.sourceIncidentId
+              ? incDefMap.get(s.sourceIncidentId)?.title
+              : undefined,
+            timePhase,
+          }));
+          const generated = await this.generateNewsHeadlines(newsContext);
+          uncached.forEach((s, i) => {
+            // generateNewsHeadlines는 입력 순서를 보존한다 (번호 유지 규칙 +
+            // 순서대로 slice). 누락분은 원문 텍스트로 채워 캐시 재시도 루프 방지.
+            this.newsHeadlineCache.set(cacheKey(s.id), generated[i] ?? s.text);
+          });
+          // 단순 FIFO 상한 — Map은 삽입 순서를 보존한다
+          while (
+            this.newsHeadlineCache.size > TurnsService.NEWS_HEADLINE_CACHE_MAX
+          ) {
+            const oldest = this.newsHeadlineCache.keys().next().value;
+            if (oldest === undefined) break;
+            this.newsHeadlineCache.delete(oldest);
+          }
+        }
+        const headlines = importantRaw
+          .map((s) => this.newsHeadlineCache.get(cacheKey(s.id)) ?? s.text)
+          .filter((h) => h.length > 0);
         if (headlines.length > 0) {
           (result.ui as any).newsHeadlines = headlines;
         }
@@ -4842,6 +4880,13 @@ export class TurnsService {
     // 판정 NPC posture는 보조 힌트라 조기 발화의 판정 영향은 미미 (대상 NPC는
     // 텍스트 매칭으로 조기 확보). 룰 게이트(RULE_FREE/CHECK)는 classify 내부 즉시 반환.
     // 발화 지점: 조기 return(EQUIP/MOVE)·intent 다운그레이드가 모두 끝난 직후.
+    //
+    // [레이턴시 점검 2026-08-06] nano 감정은 ACTION 자유 입력 전용으로 축소.
+    // CHOICE는 서버 저작 라벨이라 nano의 유일한 실질 산출물(FREE/CHECK)이
+    // 동일 라벨에도 갈리는 노이즈였다 (30일 372턴 실측 — socialImpact는 이미
+    // ACTION 전용, plausibility는 항상 NORMAL). 이벤트 매칭 확정 후 판돈 기반
+    // 룰(decideChoiceChallengeCore)로 즉결해 턴 제출에서 nano 1.5~3초를 제거.
+    const isFreeTextAction = body.input.type === 'ACTION';
     const earlyChallengeNpcId = this.extractTargetNpcFromInput(
       rawInput,
       body.input.type,
@@ -4849,32 +4894,29 @@ export class TurnsService {
     const earlyChallengeNpcDef = earlyChallengeNpcId
       ? this.content.getNpc(earlyChallengeNpcId)
       : null;
-    const challengePromise = this.challengeClassifier
-      ? this.challengeClassifier
-          .classify({
-            rawInput,
-            actionType: intent.actionType,
-            targetNpcId: earlyChallengeNpcId ?? null,
-            targetNpcName:
-              earlyChallengeNpcDef?.name ??
-              earlyChallengeNpcDef?.unknownAlias ??
-              null,
-            targetNpcPosture: null,
-            locationName: this.content.getLocation(locationId)?.name ?? null,
-            eventTitle: null, // 병렬화로 이벤트 미확정 — 보조 힌트라 생략
-          })
-          .catch(
-            (): ChallengeDecision => ({
-              result: 'CHECK',
-              reason: 'classifier error',
-              source: 'fallback',
-            }),
-          )
-      : Promise.resolve<ChallengeDecision>({
-          result: 'CHECK',
-          reason: 'classifier unavailable',
-          source: 'rule',
-        });
+    const challengePromise =
+      isFreeTextAction && this.challengeClassifier
+        ? this.challengeClassifier
+            .classify({
+              rawInput,
+              actionType: intent.actionType,
+              targetNpcId: earlyChallengeNpcId ?? null,
+              targetNpcName:
+                earlyChallengeNpcDef?.name ??
+                earlyChallengeNpcDef?.unknownAlias ??
+                null,
+              targetNpcPosture: null,
+              locationName: this.content.getLocation(locationId)?.name ?? null,
+              eventTitle: null, // 병렬화로 이벤트 미확정 — 보조 힌트라 생략
+            })
+            .catch(
+              (): ChallengeDecision => ({
+                result: 'CHECK',
+                reason: 'classifier error',
+                source: 'fallback',
+              }),
+            )
+        : null;
 
     const rng = this.rngService.create(run.seed, turnNo);
     // [arch/77 P3 트랜치 2] Step 1~3 턴 모드 결정 + 이벤트 매칭 + FREE 셸 보장 —
@@ -4981,7 +5023,40 @@ export class TurnsService {
 
     // Challenge Classifier 게이트 — 저항/결과분기 없는 자유 행동은 주사위 스킵
     // 레이턴시 #2 — 이벤트 매칭 시작 전에 발화된 병렬 분류 결과 회수.
-    const challengeDecision = await challengePromise;
+    // CHOICE/SYSTEM은 nano 미발화 — 매칭 이벤트의 판돈(단서·위험·강행동)으로 즉결.
+    let challengeDecision: ChallengeDecision;
+    if (challengePromise) {
+      challengeDecision = await challengePromise;
+    } else if (isFreeTextAction) {
+      // ACTION인데 classifier 미주입(테스트 등) — 기존 fallback 보존
+      challengeDecision = {
+        result: 'CHECK',
+        reason: 'classifier unavailable',
+        source: 'rule',
+      };
+    } else {
+      const eventFactForStake =
+        ((event.payload as Record<string, unknown> | undefined)
+          ?.discoverableFact as string | undefined) ??
+        ((event as unknown as Record<string, unknown>).discoverableFact as
+          | string
+          | undefined) ??
+        null;
+      challengeDecision = decideChoiceChallengeCore({
+        actionType: intent.actionType,
+        choiceId: body.input.choiceId ?? '',
+        choiceRiskLevel:
+          (choicePayload?.riskLevel as number | undefined) ?? null,
+        eventMatchPolicy: (event.matchPolicy as string | undefined) ?? null,
+        eventDiscoverableFact: eventFactForStake,
+        factAlreadyDiscovered: eventFactForStake
+          ? (runState.discoveredQuestFacts ?? []).includes(eventFactForStake)
+          : false,
+      });
+      this.logger.debug(
+        `[Challenge] CHOICE 룰 즉결: ${challengeDecision.result} (${challengeDecision.reason})`,
+      );
+    }
 
     // ResolveService 판정 (FREE면 주사위 스킵하고 자동 SUCCESS)
     const resolveResult =
@@ -6353,6 +6428,7 @@ export class TurnsService {
       prevSafety,
       ws,
       turnNo,
+      runId: run.id,
     });
 
     // 이벤트 추가 (sceneFrame은 actionContext에서 전달, 여기서는 행동 요약만)
