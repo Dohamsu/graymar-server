@@ -200,6 +200,51 @@ export function sanitizeNanoChoiceNpcsCore(
 }
 
 /**
+ * nano 선택지 → ChoiceItem 변환 코어 (2026-08-07 — 버그 9fc337c9 후속)
+ *
+ * 배경: Track 1(사전 생성)과 Track 2(서술 기반 교체)가 **동일한 변환 코드를
+ * 두 벌 복제**하고 있었고, Track 2가 같은 키로 pendingNanoChoices를 덮어쓰므로
+ * 실사용 정본은 Track 2다. riskLevel(A-1)을 Track 1에만 추가했더니 실런에서
+ * 필드가 통째로 누락된 실측(플레이테스트 15턴, nano 선택지 riskLevel 0건).
+ * 한 벌로 합쳐 이 계열 drift를 원천 차단한다 (export 정본 원칙).
+ */
+export function buildNanoChoiceItemsCore(
+  choices: Array<{
+    label: string;
+    affordance: string;
+    npcId: string | null;
+    hint?: string;
+    riskLevel: 1 | 2 | 3;
+  }>,
+  ctx: {
+    turnNo: number;
+    fallbackNpcId: string | null;
+    presetBonuses: Record<string, number>;
+  },
+): ChoiceItem[] {
+  return choices.map((nc, idx) => ({
+    id: `nano_${ctx.turnNo}_${idx}`,
+    label: nc.label,
+    ...(nc.hint ? { hint: nc.hint } : {}),
+    action: {
+      type: 'CHOICE' as const,
+      payload: {
+        affordance: nc.affordance,
+        sourceNpcId: nc.npcId ?? ctx.fallbackNpcId,
+        // [A-1] 판돈 — 저작 선택지 payload.riskLevel과 같은 축.
+        // choice-challenge.core가 2 이상을 주사위 대상으로 읽는다.
+        riskLevel: nc.riskLevel,
+      },
+    },
+    // 프리셋 특기 보너스를 예상 보정치로 부착 (이벤트 의존 보정은 다음 턴
+    // 이벤트 미확정이라 제외)
+    ...(ctx.presetBonuses[nc.affordance]
+      ? { modifier: ctx.presetBonuses[nc.affordance] }
+      : {}),
+  }));
+}
+
+/**
  * ChoiceDedupe 코어 (2026-07-23 — 선택지 시스템 검증 후속)
  * 직전 턴 nano 선택지 라벨과 정규화 일치 또는 2-gram Jaccard ≥ 0.7 인
  * 라벨을 폐기한다. 배경: 직전 라벨을 프롬프트 negative 목록으로 주입하던
@@ -3032,26 +3077,11 @@ ${npcList}`,
                   ? this.content.getPreset(runSession.presetId)?.actionBonuses
                   : undefined) ??
                 {};
-              const nanoChoices: ChoiceItem[] = nanoResult.choices.map(
-                (nc, idx) => ({
-                  id: `nano_${pending.turnNo}_${idx}`,
-                  label: nc.label,
-                  ...(nc.hint ? { hint: nc.hint } : {}),
-                  action: {
-                    type: 'CHOICE',
-                    payload: {
-                      affordance: nc.affordance,
-                      sourceNpcId: nc.npcId ?? nanoResult.npcId,
-                      // [A-1] 판돈 — 저작 선택지 payload.riskLevel과 같은 축.
-                      // choice-challenge.core가 2 이상을 주사위 대상으로 읽는다.
-                      riskLevel: nc.riskLevel,
-                    },
-                  },
-                  ...(track1PresetBonuses[nc.affordance]
-                    ? { modifier: track1PresetBonuses[nc.affordance] }
-                    : {}),
-                }),
-              );
+              const nanoChoices = buildNanoChoiceItemsCore(nanoResult.choices, {
+                turnNo: pending.turnNo,
+                fallbackNpcId: nanoResult.npcId,
+                presetBonuses: track1PresetBonuses,
+              });
               // P4 — 서버 기본 go_hub와 라벨·payload 통일 (Track 2와 동일)
               nanoChoices.push(this.goHubChoiceFor(serverResult));
               // llmChoices에 저장 (DB 업데이트는 아래에서 함께)
@@ -4535,22 +4565,13 @@ ${npcList}`,
                   ? this.content.getPreset(runSession.presetId)?.actionBonuses
                   : undefined) ??
                 {};
-              const nanoChoices2: ChoiceItem[] = nanoResult2.choices.map(
-                (nc, idx) => ({
-                  id: `nano_${pending.turnNo}_${idx}`,
-                  label: nc.label,
-                  ...(nc.hint ? { hint: nc.hint } : {}),
-                  action: {
-                    type: 'CHOICE',
-                    payload: {
-                      affordance: nc.affordance,
-                      sourceNpcId: nc.npcId ?? nanoResult2.npcId,
-                    },
-                  },
-                  ...(presetBonuses[nc.affordance]
-                    ? { modifier: presetBonuses[nc.affordance] }
-                    : {}),
-                }),
+              const nanoChoices2 = buildNanoChoiceItemsCore(
+                nanoResult2.choices,
+                {
+                  turnNo: pending.turnNo,
+                  fallbackNpcId: nanoResult2.npcId,
+                  presetBonuses,
+                },
               );
               // P4 — 서버 기본 go_hub와 라벨·payload 통일. 기존 "다른 장소로
               // 이동한다"(MOVE_LOCATION)는 클릭 시 실제로는 선술집 복귀라
