@@ -245,9 +245,16 @@ describe('PromptBuilderService — 보조 NPC 끼어들기 억제 directive', ()
     expect(text).toContain('INVESTIGATE');
     expect(text).toContain('SUCCESS');
     expect(text).toContain('장부 셋째 칸 넷째 줄');
-    expect(text).toContain('플레이어가');
+    // [arch/79 §11.4-①] 요약문 전문 재인용 폐지 — 금지 대상 문자열을 프롬프트에
+    // 한 번 더 심는 셈이라(불변식 50 anchor) 패턴만 금지한다. 요약문 원문은
+    // [상황 요약] 블록이 이미 갖고 있다.
     expect(text).toContain('시도하여 성공했다');
-    expect(text).toContain('그 문장을 출력하지 마세요');
+    expect(text).toContain('출력하지 마세요');
+    // 요약문이 [집중 NPC 반응 지시] 안에서 재인용되지 않아야 한다
+    const reactionBlock = text.slice(text.indexOf('[집중 NPC 반응 지시]'));
+    expect(reactionBlock).not.toContain(
+      '"플레이어가 "장부 조작 흔적을 더 압박한다"를 시도하여 성공했다."',
+    );
   });
 
   it('focusedNpcId + recentAuxSpeakers → 직전 끼어든 NPC 침묵 가이드 추가', () => {

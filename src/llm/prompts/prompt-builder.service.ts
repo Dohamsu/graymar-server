@@ -495,8 +495,11 @@ export class PromptBuilderService {
         reactionLines.push(`- 장면/단서 맥락: ${sceneFrame}`);
       }
       if (genericSummary) {
+        // arch/79 §11.4-① — 요약문 전문을 다시 인용하지 않는다. 같은 문장이
+        // [상황 요약] 블록에 이미 있고, 인용하면 금지 대상 문자열을 한 번 더
+        // 주입하는 셈이라 anchor 위험까지 겹친다(불변식 50). 패턴만 금지한다.
         reactionLines.push(
-          `- 금지 요약문: "${genericSummary}" — 그 문장을 출력하지 마세요. 같은 뜻의 "플레이어가 ... 시도하여 성공했다"식 문장도 금지입니다.`,
+          '- [상황 요약]의 "플레이어가 ... 시도하여 성공했다"식 문장을 그대로, 또는 같은 뜻으로 바꿔 출력하지 마세요.',
         );
       }
       factsParts.push(reactionLines.join('\n'));
@@ -1461,6 +1464,15 @@ export class PromptBuilderService {
             }
 
             if (personality.speechStyle) {
+              // [arch/79 §11.4-②] speechStyle 이중 주입 제거.
+              //   user 메시지 끝의 [이번 턴 NPC 말투]가 targetNpcIds[0]에게
+              //   speechStyle **전문**을 근접 위치로 주입한다. 그 NPC에게는 여기서
+              //   base 문장을 다시 쓰면 같은 문면이 한 프롬프트에 두 번 들어간다.
+              //   회전 강조(턴별로 다른 문장을 지목)는 전문에 없는 신호이므로 유지.
+              const hasTailSpeechBlock =
+                !isHub &&
+                targetNpcIds.size > 0 &&
+                npcId === [...targetNpcIds][0];
               const speechParts = personality.speechStyle
                 .split(/[.。,，]\s*/)
                 .filter((s: string) => s.trim().length > 3);
@@ -1469,8 +1481,12 @@ export class PromptBuilderService {
                 const rotateIdx = turnNo % speechParts.length;
                 const base = speechParts[0].trim();
                 const emphasis = speechParts[rotateIdx].trim();
-                parts.push(`    말투: ${base}. ⚠️ 이번 턴 강조: ${emphasis}`);
-              } else {
+                parts.push(
+                  hasTailSpeechBlock
+                    ? `    ⚠️ 이번 턴 강조: ${emphasis}`
+                    : `    말투: ${base}. ⚠️ 이번 턴 강조: ${emphasis}`,
+                );
+              } else if (!hasTailSpeechBlock) {
                 parts.push(
                   `    말투 (이 어조로 새 대사를 만들 것): ${personality.speechStyle}`,
                 );

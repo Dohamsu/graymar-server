@@ -1554,23 +1554,13 @@ export class ContextBuilderService {
         }
       }
 
-      // 5. 직전 행동 요약
-      const lastSessionTurn =
-        locationSessionTurns[locationSessionTurns.length - 1];
-      if (lastSessionTurn) {
-        const outcomeText =
-          lastSessionTurn.resolveOutcome === 'SUCCESS'
-            ? '성공'
-            : lastSessionTurn.resolveOutcome === 'PARTIAL'
-              ? '부분 성공'
-              : lastSessionTurn.resolveOutcome === 'FAIL'
-                ? '실패'
-                : '';
-        const outcomePart = outcomeText ? ` → ${outcomeText}` : '';
-        sceneParts.push(
-          `직전 행동: "${lastSessionTurn.rawInput}"${outcomePart}`,
-        );
-      }
+      // 5. (제거) 직전 행동 요약 — arch/79 §11.4-①
+      //   `직전 행동: "X" → 성공`은 [직전 턴 핵심 정보]의 `- 행동: "X" → 성공`
+      //   (prompt-builder Mod4)과 같은 turn·같은 필드·같은 판정을 문면만 바꿔
+      //   중복 주입하던 줄이다. 그쪽은 HIGH_PRIORITY_TAGS라 트리밍에서 마지막까지
+      //   살아남으므로 정보 손실 없이 이 줄만 걷는다.
+      //   (같은 행동 문자열이 한 프롬프트에 8회 등장하던 실측 — 불변식 50 anchor
+      //    관점에서도 반복 주입은 불리하다.)
 
       if (sceneParts.length > 0) {
         currentSceneContext = sceneParts.join('\n');
