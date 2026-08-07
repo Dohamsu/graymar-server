@@ -50,15 +50,33 @@ describe('AbortRunBodySchema', () => {
 
 describe('AdminUsersQuerySchema', () => {
   it('page/limit 문자열 coerce + 기본값', () => {
-    expect(AdminUsersQuerySchema.parse({})).toEqual({ page: 1, limit: 20 });
+    expect(AdminUsersQuerySchema.parse({})).toEqual({
+      page: 1,
+      limit: 20,
+      excludeTester: false,
+    });
     expect(
       AdminUsersQuerySchema.parse({ q: 'foo', page: '2', limit: '50' }),
-    ).toEqual({ q: 'foo', page: 2, limit: 50 });
+    ).toEqual({ q: 'foo', page: 2, limit: 50, excludeTester: false });
   });
   it('limit 100 초과는 거부', () => {
     expect(AdminUsersQuerySchema.safeParse({ limit: '200' }).success).toBe(
       false,
     );
+  });
+  it("excludeTester 는 '1'/'true' 만 참 (체크박스 쿼리)", () => {
+    expect(
+      AdminUsersQuerySchema.parse({ excludeTester: '1' }).excludeTester,
+    ).toBe(true);
+    expect(
+      AdminUsersQuerySchema.parse({ excludeTester: 'true' }).excludeTester,
+    ).toBe(true);
+    expect(
+      AdminUsersQuerySchema.parse({ excludeTester: '0' }).excludeTester,
+    ).toBe(false);
+    expect(
+      AdminUsersQuerySchema.parse({ excludeTester: '' }).excludeTester,
+    ).toBe(false);
   });
 });
 

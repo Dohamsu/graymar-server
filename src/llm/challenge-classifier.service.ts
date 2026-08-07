@@ -6,6 +6,7 @@
 // 비용 절감: 명백한 케이스는 룰로 즉결, 회색지대만 nano 호출.
 
 import { Injectable, Logger } from '@nestjs/common';
+import { flagValue } from '../common/runtime-flags.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 
@@ -137,19 +138,24 @@ JSON만 출력: {"tactic":"DISTRACTION","reason":"10자 이내"}`;
 @Injectable()
 export class ChallengeClassifierService {
   private readonly logger = new Logger(ChallengeClassifierService.name);
-  private readonly enabled: boolean;
-
   constructor(
     private readonly llmCaller: LlmCallerService,
     private readonly configService: LlmConfigService,
-  ) {
-    this.enabled =
-      (process.env.CHALLENGE_CLASSIFIER_ENABLED ?? 'true').toLowerCase() !==
-      'false';
+  ) {}
+
+  /**
+   * 킬스위치 — 호출 시점에 읽는다 (생성자 캐시 금지).
+   * 어드민 런타임 플래그로 끄고 켜려면 매 호출 평가가 필요하다.
+   */
+  private isEnabled(): boolean {
+    return (
+      (flagValue('CHALLENGE_CLASSIFIER_ENABLED') ?? 'true').toLowerCase() !==
+      'false'
+    );
   }
 
   async classify(ctx: ChallengeClassifierContext): Promise<ChallengeDecision> {
-    if (!this.enabled) {
+    if (!this.isEnabled()) {
       return { result: 'CHECK', reason: 'classifier disabled', source: 'rule' };
     }
 
@@ -238,9 +244,9 @@ export class ChallengeClassifierService {
     rawInput: string;
     enemySummary: string;
   }): Promise<{ tactic: CombatTacticKind; reason: string } | null> {
-    if (!this.enabled) return null;
+    if (!this.isEnabled()) return null;
     if (
-      (process.env.COMBAT_TACTIC_DISABLED ?? 'false').toLowerCase() === 'true'
+      (flagValue('COMBAT_TACTIC_DISABLED') ?? 'false').toLowerCase() === 'true'
     ) {
       return null;
     }

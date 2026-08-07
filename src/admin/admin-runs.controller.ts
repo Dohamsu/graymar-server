@@ -21,6 +21,12 @@ export class AdminRunsController {
     return this.ops.stuckRuns();
   }
 
+  /** 시나리오 필터 드롭다운용 팩 목록 (id + 표시명) — 4팩 체제 대응 */
+  @Get('scenarios')
+  async scenarios() {
+    return { scenarios: await this.ops.listScenarioOptions() };
+  }
+
   @Get()
   async list(
     @Query(new ZodValidationPipe(AdminRunsQuerySchema)) query: AdminRunsQuery,

@@ -1,20 +1,54 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { and, count, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  count,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 import { ForbiddenError, NotFoundError } from '../common/errors/game-errors.js';
+import {
+  isTesterEmail,
+  TESTER_DOMAINS_SQL_ARRAY,
+} from '../common/tester.util.js';
+import { ContentLoaderService } from '../content/content-loader.service.js';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
+import { adminAuditLogs } from '../db/schema/admin-audit-logs.js';
 import { bugReports } from '../db/schema/bug-reports.js';
+import { parties } from '../db/schema/parties.js';
+import { partyMembers } from '../db/schema/party-members.js';
 import { pointTransactions } from '../db/schema/point-transactions.js';
 import { runSessions } from '../db/schema/run-sessions.js';
 import { users } from '../db/schema/users.js';
 import { PointsService } from '../points/points.service.js';
 import { RunsService } from '../runs/runs.service.js';
 import { TurnsService } from '../turns/turns.service.js';
-import type { AdminRunsQuery, AdminUsersQuery } from './dto/admin.dto.js';
+import type {
+  AdminAuditQuery,
+  AdminPartiesQuery,
+  AdminRunsQuery,
+  AdminUsersQuery,
+} from './dto/admin.dto.js';
 
 /** 스턱 판정 임계 — arch/87 §4.1 */
 export const LLM_STALL_MINUTES = 10;
 export const IDLE_HOURS = 24;
+
+/**
+ * "테스터 아님" predicate — 이메일 도메인 기준 (tester.util 정본에서 파생).
+ * admin-stats 의 raw SQL 판 과 같은 규칙이며, 이쪽은 Drizzle 컬럼을 받는다.
+ */
+function notTesterSql(col: PgColumn): SQL {
+  return sql`lower(split_part(${col}, '@', 2)) <> ALL(${sql.raw(
+    TESTER_DOMAINS_SQL_ARRAY,
+  )})`;
+}
 
 /** 비밀번호 해싱 라운드 — auth.service 와 동일 유지 */
 const BCRYPT_ROUNDS = 12;
@@ -54,6 +88,9 @@ export function isIdleRun(
 export type StuckRunItem = {
   runId: string;
   userId: string;
+  /** 유저 식별 — runId 축약형만으로는 누구 런인지 판단할 수 없어 함께 낸다 */
+  email: string;
+  isTester: boolean;
   turnNo: number;
   llmStatus: string | null;
   sinceMinutes: number;
@@ -73,20 +110,36 @@ export class AdminOpsService {
     private readonly points: PointsService,
     private readonly runsService: RunsService,
     private readonly turnsService: TurnsService,
+    private readonly content: ContentLoaderService,
   ) {}
 
   // ── 유저 ─────────────────────────────────────────────
 
-  /** 유저 검색 목록 — passwordHash 제외 columns 명시 (보안 체크리스트) */
+  /**
+   * 유저 검색 목록 — passwordHash 제외 columns 명시 (보안 체크리스트).
+   * q 는 이메일·닉네임 부분일치에 더해 **회원번호 정확일치**를 함께 훑는다
+   * (문의 접수에서 유저가 부르는 식별자가 회원번호이므로 — memberNo 도입 목적).
+   */
   async listUsers(query: AdminUsersQuery) {
-    const { q, page, limit } = query;
-    const where = q
-      ? or(ilike(users.email, `%${q}%`), ilike(users.nickname, `%${q}%`))
-      : undefined;
+    const { q, excludeTester, page, limit } = query;
+    const conds: SQL[] = [];
+    if (q) {
+      const memberNo = /^\d+$/.test(q.trim()) ? parseInt(q.trim(), 10) : null;
+      const like: SQL[] = [
+        ilike(users.email, `%${q}%`),
+        ilike(users.nickname, `%${q}%`),
+      ];
+      if (memberNo != null) like.push(eq(users.memberNo, memberNo));
+      conds.push(or(...like)!);
+    }
+    if (excludeTester) conds.push(notTesterSql(users.email));
+    const where = conds.length > 0 ? and(...conds) : undefined;
+
     const [rows, totalRows] = await Promise.all([
       this.db
         .select({
           id: users.id,
+          memberNo: users.memberNo,
           email: users.email,
           nickname: users.nickname,
           role: users.role,
@@ -103,7 +156,10 @@ export class AdminOpsService {
         .offset((page - 1) * limit),
       this.db.select({ total: count() }).from(users).where(where),
     ]);
-    return { users: rows, total: totalRows[0]?.total ?? 0 };
+    return {
+      users: rows.map((u) => ({ ...u, isTester: isTesterEmail(u.email) })),
+      total: totalRows[0]?.total ?? 0,
+    };
   }
 
   /** 유저 상세 — 잔액 + 최근 트랜잭션 20 + 런 목록 + 버그 리포트 수 */
@@ -112,6 +168,7 @@ export class AdminOpsService {
       where: eq(users.id, id),
       columns: {
         id: true,
+        memberNo: true,
         email: true,
         nickname: true,
         role: true,
@@ -155,7 +212,7 @@ export class AdminOpsService {
     ]);
 
     return {
-      user,
+      user: { ...user, isTester: isTesterEmail(user.email) },
       transactions,
       runs,
       bugReportCount: bugCountRows[0]?.total ?? 0,
@@ -177,12 +234,39 @@ export class AdminOpsService {
 
   // ── 런 ─────────────────────────────────────────────
 
-  /** 런 목록 (updatedAt desc) — 유저 email join */
+  /**
+   * 시나리오 표시명 맵 — 팩이 4종이라 raw ID(`karnholt_v1`)만으로는 목록을 못 읽는다.
+   * 팩 스캔은 디스크 I/O 라 프로세스 수명 동안 1회만 (팩 추가 시 재시작 필요 — 배포 단위와 동일).
+   */
+  private scenarioNameCache: Map<string, string> | null = null;
+
+  private async scenarioNames(): Promise<Map<string, string>> {
+    if (this.scenarioNameCache) return this.scenarioNameCache;
+    const metas = await this.content.listAvailableScenarios();
+    this.scenarioNameCache = new Map(
+      metas.map((m) => [m.scenarioId, m.name ?? m.scenarioId]),
+    );
+    return this.scenarioNameCache;
+  }
+
+  /** 어드민 필터 드롭다운용 시나리오 목록 (id + 표시명) */
+  async listScenarioOptions(): Promise<
+    Array<{ scenarioId: string; name: string }>
+  > {
+    const map = await this.scenarioNames();
+    return [...map.entries()].map(([scenarioId, name]) => ({
+      scenarioId,
+      name,
+    }));
+  }
+
+  /** 런 목록 (updatedAt desc) — 유저 email join + 시나리오 표시명 */
   async listRuns(query: AdminRunsQuery) {
-    const { status, scenarioId, page, limit } = query;
+    const { status, scenarioId, excludeTester, page, limit } = query;
     const conds: SQL[] = [];
     if (status) conds.push(eq(runSessions.status, status));
     if (scenarioId) conds.push(eq(runSessions.scenarioId, scenarioId));
+    if (excludeTester) conds.push(notTesterSql(users.email));
     const where = conds.length > 0 ? and(...conds) : undefined;
 
     const [rows, totalRows] = await Promise.all([
@@ -204,18 +288,44 @@ export class AdminOpsService {
         .orderBy(desc(runSessions.updatedAt))
         .limit(limit)
         .offset((page - 1) * limit),
-      this.db.select({ total: count() }).from(runSessions).where(where),
+      this.db
+        .select({ total: count() })
+        .from(runSessions)
+        .innerJoin(users, eq(users.id, runSessions.userId))
+        .where(where),
     ]);
-    return { runs: rows, total: totalRows[0]?.total ?? 0 };
+    const names = await this.scenarioNames();
+    return {
+      runs: rows.map((r) => ({
+        ...r,
+        scenarioName: r.scenarioId
+          ? (names.get(r.scenarioId) ?? r.scenarioId)
+          : null,
+        isTester: isTesterEmail(r.email),
+      })),
+      total: totalRows[0]?.total ?? 0,
+    };
   }
 
-  /** 스턱 런 감지 — LLM_STALLED(10분+) + IDLE_24H. 각 최대 50건. arch/87 §4.1 */
-  async stuckRuns(): Promise<{ stuck: StuckRunItem[] }> {
+  /**
+   * 스턱 런 감지 — LLM_STALLED(10분+) + IDLE_24H. 각 최대 50건. arch/87 §4.1
+   *
+   * 두 종류는 **심각도가 다르다**: LLM_STALLED 는 워커가 물린 실장애이고,
+   * IDLE_24H 는 유저가 그냥 안 돌아온 방치 런이다 (실측 활성 런의 대부분).
+   * scripts/health-monitor.py 도 LLM_STALLED 만 경보한다 — 소비처(UI)가 같은
+   * 기준으로 나눠 쓸 수 있도록 kind 별로 분리해서 낸다.
+   */
+  async stuckRuns(): Promise<{
+    stuck: StuckRunItem[];
+    stalled: StuckRunItem[];
+    idle: StuckRunItem[];
+  }> {
     const now = new Date();
     const [stalledRes, idleRes] = await Promise.all([
       // 런별 최신 턴만 (DISTINCT ON) — PENDING/RUNNING 10분+ 정체
       this.db.execute(sql`
-        SELECT t.run_id AS "runId", r.user_id AS "userId", t.turn_no AS "turnNo",
+        SELECT t.run_id AS "runId", r.user_id AS "userId", u.email AS "email",
+               t.turn_no AS "turnNo",
                t.llm_status AS "llmStatus", t.created_at AS "createdAt"
         FROM (
           SELECT DISTINCT ON (run_id) run_id, turn_no, llm_status, created_at
@@ -223,14 +333,16 @@ export class AdminOpsService {
           ORDER BY run_id, turn_no DESC
         ) t
         JOIN run_sessions r ON r.id = t.run_id
+        JOIN users u ON u.id = r.user_id
         WHERE t.llm_status IN ('PENDING', 'RUNNING')
           AND t.created_at < now() - make_interval(mins => ${LLM_STALL_MINUTES})
         ORDER BY t.created_at ASC
         LIMIT 50`),
       this.db.execute(sql`
-        SELECT r.id AS "runId", r.user_id AS "userId",
+        SELECT r.id AS "runId", r.user_id AS "userId", u.email AS "email",
                r.current_turn_no AS "turnNo", r.updated_at AS "updatedAt"
         FROM run_sessions r
+        JOIN users u ON u.id = r.user_id
         WHERE r.status = 'RUN_ACTIVE'
           AND r.updated_at < now() - make_interval(hours => ${IDLE_HOURS})
         ORDER BY r.updated_at ASC
@@ -241,6 +353,7 @@ export class AdminOpsService {
       stalledRes.rows as Array<{
         runId: string;
         userId: string;
+        email: string;
         turnNo: number;
         llmStatus: string;
         createdAt: Date | string;
@@ -251,6 +364,8 @@ export class AdminOpsService {
       .map<StuckRunItem>((r) => ({
         runId: r.runId,
         userId: r.userId,
+        email: r.email,
+        isTester: isTesterEmail(r.email),
         turnNo: r.turnNo,
         llmStatus: r.llmStatus,
         sinceMinutes: minutesSince(r.createdAt, now),
@@ -261,19 +376,167 @@ export class AdminOpsService {
       idleRes.rows as Array<{
         runId: string;
         userId: string;
+        email: string;
         turnNo: number;
         updatedAt: Date | string;
       }>
     ).map<StuckRunItem>((r) => ({
       runId: r.runId,
       userId: r.userId,
+      email: r.email,
+      isTester: isTesterEmail(r.email),
       turnNo: r.turnNo,
       llmStatus: null,
       sinceMinutes: minutesSince(r.updatedAt, now),
       kind: 'IDLE_24H',
     }));
 
-    return { stuck: [...stalled, ...idle] };
+    // stuck 은 기존 소비처 호환용 합본 (신규 UI 는 stalled/idle 을 쓴다)
+    return { stuck: [...stalled, ...idle], stalled, idle };
+  }
+
+  // ── 파티 ─────────────────────────────────────────────
+
+  /**
+   * 파티 목록 — 이름/초대코드 검색. 멤버 수·활성 런 수는 상관 서브쿼리로 함께 낸다
+   * (파티당 추가 왕복 없이 목록 한 번에 판단 가능하도록).
+   */
+  async listParties(query: AdminPartiesQuery) {
+    const { q, page, limit } = query;
+    const where = q
+      ? or(ilike(parties.name, `%${q}%`), ilike(parties.inviteCode, `%${q}%`))
+      : undefined;
+
+    const [rows, totalRows] = await Promise.all([
+      this.db
+        .select({
+          id: parties.id,
+          name: parties.name,
+          status: parties.status,
+          inviteCode: parties.inviteCode,
+          maxMembers: parties.maxMembers,
+          leaderId: parties.leaderId,
+          leaderEmail: users.email,
+          leaderNickname: users.nickname,
+          createdAt: parties.createdAt,
+          updatedAt: parties.updatedAt,
+          memberCount: sql<number>`(
+            SELECT count(*)::int FROM party_members pm WHERE pm.party_id = ${parties.id}
+          )`,
+          activeRunCount: sql<number>`(
+            SELECT count(*)::int FROM run_sessions rs
+            WHERE rs.party_id = ${parties.id} AND rs.status = 'RUN_ACTIVE'
+          )`,
+        })
+        .from(parties)
+        .innerJoin(users, eq(users.id, parties.leaderId))
+        .where(where)
+        .orderBy(desc(parties.updatedAt))
+        .limit(limit)
+        .offset((page - 1) * limit),
+      this.db.select({ total: count() }).from(parties).where(where),
+    ]);
+    return { parties: rows, total: totalRows[0]?.total ?? 0 };
+  }
+
+  /** 파티 상세 — 멤버(온라인·레디 포함) + 파티 런 목록 */
+  async getParty(partyId: string) {
+    const party = await this.db.query.parties.findFirst({
+      where: eq(parties.id, partyId),
+    });
+    if (!party) throw new NotFoundError('Party not found');
+
+    const [members, runs] = await Promise.all([
+      this.db
+        .select({
+          userId: partyMembers.userId,
+          email: users.email,
+          nickname: users.nickname,
+          memberNo: users.memberNo,
+          role: partyMembers.role,
+          isOnline: partyMembers.isOnline,
+          isReady: partyMembers.isReady,
+          joinedAt: partyMembers.joinedAt,
+        })
+        .from(partyMembers)
+        .innerJoin(users, eq(users.id, partyMembers.userId))
+        .where(eq(partyMembers.partyId, partyId))
+        .orderBy(partyMembers.joinedAt),
+      this.db
+        .select({
+          id: runSessions.id,
+          status: runSessions.status,
+          scenarioId: runSessions.scenarioId,
+          currentTurnNo: runSessions.currentTurnNo,
+          partyRunMode: runSessions.partyRunMode,
+          startedAt: runSessions.startedAt,
+          updatedAt: runSessions.updatedAt,
+        })
+        .from(runSessions)
+        .where(eq(runSessions.partyId, partyId))
+        .orderBy(desc(runSessions.updatedAt))
+        .limit(20),
+    ]);
+
+    const names = await this.scenarioNames();
+    return {
+      party,
+      members,
+      runs: runs.map((r) => ({
+        ...r,
+        scenarioName: r.scenarioId
+          ? (names.get(r.scenarioId) ?? r.scenarioId)
+          : null,
+      })),
+    };
+  }
+
+  // ── 감사 로그 ─────────────────────────────────────────
+
+  /**
+   * 어드민 행위 감사 로그 조회 — AdminAuditInterceptor 가 쌓기만 하고
+   * 볼 경로가 없던 것을 연다 (arch/87 §3.2 의 통제를 실사용 가능하게).
+   */
+  async listAuditLogs(query: AdminAuditQuery) {
+    const { action, page, limit } = query;
+    const where = action
+      ? ilike(adminAuditLogs.action, `%${action}%`)
+      : undefined;
+    const [rows, totalRows] = await Promise.all([
+      this.db
+        .select()
+        .from(adminAuditLogs)
+        .where(where)
+        .orderBy(desc(adminAuditLogs.createdAt))
+        .limit(limit)
+        .offset((page - 1) * limit),
+      this.db.select({ total: count() }).from(adminAuditLogs).where(where),
+    ]);
+
+    // actor 가 userId(JWT 경로)면 이메일로 해석해 읽을 수 있게 만든다.
+    // uuid 형태만 걸러서 조회한다 — 'token' 같은 비-uuid 를 uuid 컬럼과 비교하면
+    // Postgres 가 캐스팅 단계에서 터진다 (조회 하나 때문에 목록 전체가 500).
+    const UUID_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const actorIds = [
+      ...new Set(rows.map((r) => r.actor).filter((a) => UUID_RE.test(a))),
+    ];
+    const actorMap = new Map<string, string>();
+    if (actorIds.length > 0) {
+      const actorRows = await this.db
+        .select({ id: users.id, email: users.email })
+        .from(users)
+        .where(inArray(users.id, actorIds));
+      for (const a of actorRows) actorMap.set(a.id, a.email);
+    }
+
+    return {
+      logs: rows.map((r) => ({
+        ...r,
+        actorEmail: actorMap.get(r.actor) ?? null,
+      })),
+      total: totalRows[0]?.total ?? 0,
+    };
   }
 
   /**
@@ -358,7 +621,7 @@ export class AdminOpsService {
    *  - run_sessions → users(user_id), parties(party_id)
    *  - run children(run_id): turns·ai_turn_logs·battle_states·entity_facts·
    *    llm_call_logs·node_instances·node_memories·recent_summaries·run_memories·
-   *    scene_images·bug_reports·party_turn_actions·run_participants
+   *    scene_images·bug_reports·party_turn_actions·run_participants·playtest_results
    *  - parties children(party_id): chat_messages·party_members·party_votes·run_sessions
    *  - users children: 위 + campaigns·code_redemptions·hub_states·player_profiles·
    *    point_transactions·redeem_codes(created_by)·parties(leader_id)
@@ -389,6 +652,8 @@ export class AdminOpsService {
         'bug_reports',
         'party_turn_actions',
         'run_participants',
+        // FK 는 없지만 run_id 를 들고 있어 삭제 후 고아 행으로 남던 테이블
+        'playtest_results',
       ]) {
         await tx.execute(
           sql`DELETE FROM ${sql.raw(t)} WHERE run_id IN ${runIds}`,

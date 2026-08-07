@@ -1,6 +1,7 @@
 // LLM 설정 서비스 — .env 기본값 + 런타임 변경 지원
 
 import { Injectable, Logger } from '@nestjs/common';
+import { flagValue } from '../common/runtime-flags.js';
 import type { LlmConfig } from './types/index.js';
 
 /** PATCH /v1/settings/llm 에서 변경 가능한 필드 */
@@ -101,7 +102,7 @@ export class LlmConfigService {
   } {
     return {
       provider: process.env.LLM_LIGHT_PROVIDER ?? 'openai',
-      model: process.env.LLM_LIGHT_MODEL ?? 'gpt-4.1-nano',
+      model: flagValue('LLM_LIGHT_MODEL') ?? 'gpt-4.1-nano',
       timeoutMs: parseInt(process.env.LLM_LIGHT_TIMEOUT_MS ?? '5000', 10),
     };
   }

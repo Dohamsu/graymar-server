@@ -9,6 +9,7 @@
 //   - 실패 = 무삽입 (턴 진행 무영향, LLM narrative-only 원칙)
 import { Injectable, Logger } from '@nestjs/common';
 
+import { flagValue } from '../common/runtime-flags.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 
 import { LlmCallerService } from './llm-caller.service.js';
@@ -66,12 +67,12 @@ export class SceneCutMatcherService {
   ) {}
 
   private minConfidence(): number {
-    const v = parseFloat(process.env.SCENE_CUT_MIN_CONFIDENCE ?? '0.65');
+    const v = parseFloat(flagValue('SCENE_CUT_MIN_CONFIDENCE') ?? '0.65');
     return Number.isFinite(v) ? v : 0.65;
   }
 
   async match(params: SceneCutMatchParams): Promise<SceneCutMatch | null> {
-    if (process.env.INLINE_IMAGE_MATCH_DISABLED === '1') return null;
+    if (flagValue('INLINE_IMAGE_MATCH_DISABLED') === '1') return null;
     if (params.isMoveTurn) return null;
     if (!params.narrative || params.narrative.length < 80) return null;
 

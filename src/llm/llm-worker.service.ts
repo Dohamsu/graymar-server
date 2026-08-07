@@ -21,6 +21,7 @@ import {
 import { ContextBuilderService } from './context-builder.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
 import { korParticle } from '../common/korean.js';
+import { flagValue } from '../common/runtime-flags.js';
 import {
   getNpcDisplayName,
   sanitizeNpcNamesForTurn,
@@ -747,6 +748,38 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
    */
   private readonly pendingNanoChoices = new Map<string, ChoiceItem[]>();
 
+  /**
+   * 워커 하트비트 — 어드민 헬스(arch/87 §4.1 "LLM 워커 최근 처리 시각")용.
+   * 폴 루프가 죽으면 lastPollAt 이 멈추므로 "서버는 살아있는데 워커만 정지"를 구분한다.
+   */
+  private lastPollAt: Date | null = null;
+  private lastTurnCompletedAt: Date | null = null;
+  private processedTurnCount = 0;
+
+  getHeartbeat(): {
+    workerId: string;
+    running: boolean;
+    pollIntervalMs: number;
+    lastPollAt: string | null;
+    lastTurnCompletedAt: string | null;
+    processedTurnCount: number;
+    secondsSinceLastPoll: number | null;
+  } {
+    const since =
+      this.lastPollAt == null
+        ? null
+        : Math.floor((Date.now() - this.lastPollAt.getTime()) / 1000);
+    return {
+      workerId: WORKER_ID,
+      running: this.timer != null,
+      pollIntervalMs: POLL_INTERVAL_MS,
+      lastPollAt: this.lastPollAt?.toISOString() ?? null,
+      lastTurnCompletedAt: this.lastTurnCompletedAt?.toISOString() ?? null,
+      processedTurnCount: this.processedTurnCount,
+      secondsSinceLastPoll: since,
+    };
+  }
+
   constructor(
     @Inject(DB) private readonly db: DrizzleDB,
     private readonly contextBuilder: ContextBuilderService,
@@ -801,6 +834,7 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async poll(): Promise<void> {
+    this.lastPollAt = new Date();
     // 타임아웃 복구: locked_at + 60s 초과한 RUNNING → PENDING 리셋
     await this.db
       .update(turns)
@@ -851,6 +885,8 @@ export class LlmWorkerService implements OnModuleInit, OnModuleDestroy {
       try {
         await this.processTurnInner(pending);
       } finally {
+        this.lastTurnCompletedAt = new Date();
+        this.processedTurnCount += 1;
         const store = currentTurnStore();
         if (store && store.calls.length > 0) {
           // fire-and-forget — 턴 레이턴시 비차단
@@ -3289,8 +3325,8 @@ ${npcList}`,
       // 같은 모델의 재등장 간격을 2턴 → 4턴으로 늘린다 (어휘 편향 상쇄).
       // 패턴: main → alt → mainAlt → alt → main → ... (env 미설정 시 기존 동작)
       let alternateModel: string | undefined;
-      const altModel = process.env.LLM_ALTERNATE_MODEL;
-      const mainAltModel = process.env.LLM_MAIN_ALTERNATE_MODEL;
+      const altModel = flagValue('LLM_ALTERNATE_MODEL');
+      const mainAltModel = flagValue('LLM_MAIN_ALTERNATE_MODEL');
       // 교차 비율 5:5 → 3:7 (소유자 결정 2026-07-28) — DeepSeek 어미 열세
       // (64~66% vs Gemma 82~85%, arch/95 §7 실측) 완화. 어휘 편향 상쇄라는
       // 도입 목적은 유지하되 노출을 10턴 주기 3회(간격 3~4턴)로 제한.
@@ -4760,7 +4796,7 @@ ${npcList}`,
         if (
           locationId &&
           traceAc?.physicalImpact === true &&
-          (process.env.PROPS_TRACE_DISABLED ?? '').toLowerCase() !== '1'
+          (flagValue('PROPS_TRACE_DISABLED') ?? '').toLowerCase() !== '1'
         ) {
           void this.extractAndStoreSceneTrace(
             pending.runId,

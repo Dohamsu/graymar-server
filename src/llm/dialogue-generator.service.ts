@@ -2,6 +2,7 @@
 // dialogue_slot → NPC 프로필 + intent + context → 하오체 대사 텍스트
 
 import { Injectable, Logger } from '@nestjs/common';
+import { flagValue } from '../common/runtime-flags.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
@@ -359,8 +360,8 @@ export class DialogueGeneratorService {
 
     // Stage B: 대사 전용 모델 — 하오체 준수를 위해 Flash 이상 모델 사용
     const dialogueModel =
-      process.env.LLM_DIALOGUE_MODEL ??
-      process.env.LLM_ALTERNATE_MODEL ??
+      flagValue('LLM_DIALOGUE_MODEL') ??
+      flagValue('LLM_ALTERNATE_MODEL') ??
       this.configService.getLightModelConfig().model;
     const result = await this.llmCaller.call(
       {
@@ -487,8 +488,8 @@ export class DialogueGeneratorService {
       validateSpeechRegister(d, register);
 
     const dialogueModel =
-      process.env.LLM_DIALOGUE_MODEL ??
-      process.env.LLM_ALTERNATE_MODEL ??
+      flagValue('LLM_DIALOGUE_MODEL') ??
+      flagValue('LLM_ALTERNATE_MODEL') ??
       this.configService.getLightModelConfig().model;
     const userMsg = [
       `[NPC] ${name} — ${npcDef.role ?? ''}`,

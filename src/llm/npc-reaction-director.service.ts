@@ -4,6 +4,7 @@
 // 메인 LLM은 추측 대신 결정된 반응을 표현만 한다.
 
 import { Injectable, Logger, Optional } from '@nestjs/common';
+import { flagValue } from '../common/runtime-flags.js';
 import { LlmCallerService } from './llm-caller.service.js';
 import { LlmConfigService } from './llm-config.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
@@ -214,20 +215,26 @@ JSON만 출력:
 @Injectable()
 export class NpcReactionDirectorService {
   private readonly logger = new Logger(NpcReactionDirectorService.name);
-  private readonly enabled: boolean;
 
   constructor(
     private readonly llmCaller: LlmCallerService,
     private readonly configService: LlmConfigService,
     @Optional() private readonly content?: ContentLoaderService,
-  ) {
-    this.enabled =
-      (process.env.NPC_REACTION_DIRECTOR_ENABLED ?? 'true').toLowerCase() !==
-      'false';
+  ) {}
+
+  /**
+   * 킬스위치 — 호출 시점에 읽는다 (생성자 캐시 금지).
+   * 어드민 런타임 플래그로 끄고 켜려면 매 호출 평가가 필요하다.
+   */
+  private isEnabled(): boolean {
+    return (
+      (flagValue('NPC_REACTION_DIRECTOR_ENABLED') ?? 'true').toLowerCase() !==
+      'false'
+    );
   }
 
   async direct(ctx: NpcReactionContext): Promise<NpcReactionResult | null> {
-    if (!this.enabled) return null;
+    if (!this.isEnabled()) return null;
 
     try {
       const userMsg = this.buildUserMessage(ctx);
@@ -680,7 +687,13 @@ export class NpcReactionDirectorService {
       immediateGoal: '',
       refusalLevel,
       openingStance: '',
-      emotionalShiftHint: { trust: 0, fear: 0, respect: 0, suspicion: 0, attachment: 0 },
+      emotionalShiftHint: {
+        trust: 0,
+        fear: 0,
+        respect: 0,
+        suspicion: 0,
+        attachment: 0,
+      },
       dialogueHint: '',
       voiceQuality: '',
       emotionalUndertone: '',

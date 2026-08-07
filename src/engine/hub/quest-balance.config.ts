@@ -3,6 +3,8 @@
  * 코드 내 하드코딩 대신 이 파일에서 관리하여 플레이테스트 시 빠른 조정 가능
  */
 
+import { flagValue } from '../../common/runtime-flags.js';
+
 export const QUEST_BALANCE = {
   /** SituationGenerator 실행 확률 (0~100). 50 = 50% */
   SITGEN_CHANCE: 50,
@@ -129,5 +131,5 @@ export const AUTONOMOUS_BALANCE = {
  * 기존 폴백 체인(SituationGenerator→EventDirector→Procedural)만으로 진행.
  */
 export function isPlotDirectorEnabled(): boolean {
-  return process.env.PLOT_DIRECTOR_DISABLED !== '1';
+  return flagValue('PLOT_DIRECTOR_DISABLED') !== '1';
 }
