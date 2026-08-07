@@ -18,6 +18,10 @@ export interface LobbyMemberState {
   gender: string | null;
   isReady: boolean;
   isOnline: boolean;
+  /** 이 멤버가 로비에서 직접 고른 값인가 (false = 최근 런에서 유추) */
+  presetFromLobby: boolean;
+  /** 로비에서 고른 시나리오 (리더 값이 런 생성에 쓰인다) */
+  scenarioId: string | null;
 }
 
 export interface LobbyStateDTO {
@@ -25,6 +29,8 @@ export interface LobbyStateDTO {
   members: LobbyMemberState[];
   allReady: boolean;
   canStart: boolean;
+  /** 프리셋이 없어 시작을 막고 있는 멤버 닉네임 — 클라 안내용 */
+  missingPresetNicknames: string[];
 }
 
 @Injectable()
@@ -89,6 +95,9 @@ export class LobbyService {
         nickname: users.nickname,
         isReady: partyMembers.isReady,
         isOnline: partyMembers.isOnline,
+        lobbyPresetId: partyMembers.lobbyPresetId,
+        lobbyGender: partyMembers.lobbyGender,
+        lobbyScenarioId: partyMembers.lobbyScenarioId,
       })
       .from(partyMembers)
       .innerJoin(users, eq(users.id, partyMembers.userId))
@@ -123,26 +132,87 @@ export class LobbyService {
     }
     const memberStates: LobbyMemberState[] = members.map((m) => {
       const last = latestRunByUser.get(m.userId);
+      // 로비 선택이 최근 런보다 우선 — 최근 런은 이력이 있을 때의 편의 기본값이다.
+      const presetId = m.lobbyPresetId ?? last?.presetId ?? null;
       return {
         userId: m.userId,
         nickname: m.nickname ?? '알 수 없는 용병',
-        presetId: last?.presetId ?? null,
-        gender: last?.gender ?? null,
+        presetId,
+        gender: m.lobbyGender ?? last?.gender ?? null,
         isReady: m.isReady === 'true',
         isOnline: m.isOnline === 'true',
+        presetFromLobby: !!m.lobbyPresetId,
+        scenarioId: m.lobbyScenarioId ?? null,
       };
     });
 
     const allReady =
       memberStates.length >= 2 && memberStates.every((m) => m.isReady);
-    const canStart = allReady;
+    // 프리셋 미확정 멤버가 있으면 시작 불가 — 과거에는 이 검사가 없어서
+    // 리더 presetId=null 인 채로 createRun 까지 갔다가 "첫 시나리오는 프리셋
+    // 선택이 필요합니다"로 터졌다 (신규 유저끼리 파티 시작 불가의 정체).
+    const missingPresetNicknames = memberStates
+      .filter((m) => !m.presetId)
+      .map((m) => m.nickname);
+    const canStart = allReady && missingPresetNicknames.length === 0;
 
     return {
       partyId,
       members: memberStates,
       allReady,
       canStart,
+      missingPresetNicknames,
     };
+  }
+
+  /**
+   * 로비 로드아웃 설정 — 멤버가 자기 프리셋·성별·시나리오를 직접 고른다.
+   * 솔로 런 이력이 없어도 파티를 시작할 수 있게 하는 경로 (arch/84 후속).
+   * 프리셋 유효성은 시나리오 스코프가 필요해 controller 가 검증한다.
+   */
+  async setLobbyLoadout(
+    userId: string,
+    partyId: string,
+    loadout: {
+      presetId: string;
+      gender?: 'male' | 'female';
+      scenarioId?: string | null;
+    },
+  ): Promise<LobbyStateDTO> {
+    const member = await this.db.query.partyMembers.findFirst({
+      where: and(
+        eq(partyMembers.partyId, partyId),
+        eq(partyMembers.userId, userId),
+      ),
+    });
+    if (!member) throw new ForbiddenError('파티 멤버가 아닙니다.');
+
+    const party = await this.db.query.parties.findFirst({
+      where: eq(parties.id, partyId),
+    });
+    if (party?.status === 'IN_DUNGEON') {
+      throw new BadRequestError('던전 진행 중에는 변경할 수 없습니다.');
+    }
+
+    await this.db
+      .update(partyMembers)
+      .set({
+        lobbyPresetId: loadout.presetId,
+        lobbyGender: loadout.gender ?? 'male',
+        lobbyScenarioId: loadout.scenarioId ?? null,
+      })
+      .where(
+        and(eq(partyMembers.partyId, partyId), eq(partyMembers.userId, userId)),
+      );
+
+    const state = await this.getLobbyState(partyId);
+    // 이벤트명은 toggleReady 와 동일하게 — 클라가 이미 구독 중인 채널을 쓴다
+    this.streamService.broadcast(
+      partyId,
+      'lobby:state_updated',
+      state as unknown as Record<string, unknown>,
+    );
+    return state;
   }
 
   /**
@@ -162,6 +232,7 @@ export class LobbyService {
       gender: 'male' | 'female';
       isLeader: boolean;
     }[];
+    leaderLobbyScenarioId: string | null;
   }> {
     const party = await this.db.query.parties.findFirst({
       where: eq(parties.id, partyId),
@@ -176,6 +247,13 @@ export class LobbyService {
 
     const state = await this.getLobbyState(partyId);
     if (!state.canStart) {
+      // 프리셋 미확정은 원인이 다르므로 문구를 분리한다 — "준비 완료인데 왜
+      // 시작이 안 되지"로 헤매던 동선을 없앤다.
+      if (state.missingPresetNicknames.length > 0) {
+        throw new BadRequestError(
+          `배경을 고르지 않은 멤버가 있습니다: ${state.missingPresetNicknames.join(', ')}`,
+        );
+      }
       throw new BadRequestError(
         '전원 준비 완료 + 2명 이상이어야 시작할 수 있습니다.',
       );
@@ -218,7 +296,17 @@ export class LobbyService {
       `Dungeon starting: party=${partyId} leader=${leaderId} members=${memberUserIds.length}`,
     );
 
-    return { partyId, memberUserIds, memberProfiles };
+    // 리더가 로비에서 시나리오를 골랐으면 그 값이 런의 팩을 정한다.
+    // (미선택이면 controller 가 리더의 최근 런 scenarioId 로 fallback)
+    const leaderLobbyScenarioId =
+      state.members.find((m) => m.userId === leaderId)?.scenarioId ?? null;
+
+    return {
+      partyId,
+      memberUserIds,
+      memberProfiles,
+      leaderLobbyScenarioId,
+    };
   }
 
   /**

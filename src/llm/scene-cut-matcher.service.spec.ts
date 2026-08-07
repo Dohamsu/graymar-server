@@ -42,9 +42,12 @@ function makeService(opts?: {
     getNpc: () => undefined,
   };
   const caller = {
-    callLight: async () => {
+    // await 없는 async — Promise.resolve 로 명시 (require-await 규칙 준수)
+    callLight: () => {
       opts?.onCall?.();
-      return opts?.nanoResponse ?? '{"id": "SCN_02", "confidence": 0.9}';
+      return Promise.resolve(
+        opts?.nanoResponse ?? '{"id": "SCN_02", "confidence": 0.9}',
+      );
     },
   };
   return new SceneCutMatcherService(content as never, caller as never);

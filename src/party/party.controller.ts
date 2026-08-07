@@ -26,7 +26,10 @@ import { VoteService } from './vote.service.js';
 import { PartyTurnService } from './party-turn.service.js';
 import { CreatePartyBodySchema } from './dto/create-party.dto.js';
 import { SendMessageBodySchema } from './dto/send-message.dto.js';
-import { ToggleReadyBodySchema } from './dto/lobby.dto.js';
+import {
+  ToggleReadyBodySchema,
+  SetLobbyLoadoutBodySchema,
+} from './dto/lobby.dto.js';
 import { SubmitActionBodySchema } from './dto/submit-action.dto.js';
 import {
   CreateVoteBodySchema,
@@ -38,6 +41,11 @@ import {
 } from '../common/errors/game-errors.js';
 import { ZodError } from 'zod';
 import { RunsService } from '../runs/runs.service.js';
+import {
+  ContentLoaderService,
+  DEFAULT_SCENARIO_ID,
+} from '../content/content-loader.service.js';
+import { runInScenarioContext } from '../content/scenario-context.js';
 import { RunParticipantsService } from './run-participants.service.js';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import { runSessions } from '../db/schema/run-sessions.js';
@@ -61,6 +69,7 @@ export class PartyController {
     private readonly partyTurnService: PartyTurnService,
     private readonly runsService: RunsService,
     private readonly runParticipantsService: RunParticipantsService,
+    private readonly contentLoader: ContentLoaderService,
     @Inject(DB) private readonly db: DrizzleDB,
   ) {}
 
@@ -313,6 +322,41 @@ export class PartyController {
     return this.lobbyService.toggleReady(userId, partyId, ready);
   }
 
+  /**
+   * 로비 로드아웃 설정 — 멤버가 배경(프리셋)·성별·시나리오를 직접 고른다.
+   * 이 경로가 없어서 솔로 런 이력이 없는 유저끼리는 던전 시작 자체가 불가했다
+   * (리더 presetId=null → createRun 이 프리셋 필수로 거부). arch/84 후속.
+   */
+  @Post(':partyId/lobby/loadout')
+  @HttpCode(HttpStatus.OK)
+  async setLobbyLoadout(
+    @UserId() userId: string,
+    @Param('partyId') partyId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    await this.partyService.assertMembership(userId, partyId);
+    const parsed = this.safeParse(SetLobbyLoadoutBodySchema, body);
+
+    // 프리셋 유효성은 팩 스코프 안에서만 판정 가능 (불변식 45 — 엔진에 콘텐츠
+    // ID 리터럴 금지). 시나리오 미지정이면 서버 기본 팩 기준으로 본다.
+    const scenarioId = parsed.scenarioId ?? DEFAULT_SCENARIO_ID;
+    await this.contentLoader.ensureScenario(scenarioId);
+    const valid = runInScenarioContext(scenarioId, () =>
+      Boolean(this.contentLoader.getPreset(parsed.presetId)),
+    );
+    if (!valid) {
+      throw new BadRequestError(
+        `이 여정에 없는 배경입니다: ${parsed.presetId}`,
+      );
+    }
+
+    return this.lobbyService.setLobbyLoadout(userId, partyId, {
+      presetId: parsed.presetId,
+      gender: parsed.gender,
+      scenarioId: parsed.scenarioId ?? scenarioId,
+    });
+  }
+
   @Post(':partyId/lobby/start')
   @HttpCode(HttpStatus.OK)
   async startDungeon(
@@ -320,7 +364,7 @@ export class PartyController {
     @Param('partyId') partyId: string,
   ) {
     await this.partyService.assertMembership(userId, partyId);
-    const { memberUserIds, memberProfiles } =
+    const { memberUserIds, memberProfiles, leaderLobbyScenarioId } =
       await this.lobbyService.initiateDungeonStart(userId, partyId);
 
     // 리더의 프리셋/성별로 런 생성.
@@ -339,7 +383,12 @@ export class PartyController {
         userId,
         leader.presetId ?? undefined,
         leader.gender,
-        { partyId, scenarioId: leaderRecentRun?.scenarioId ?? undefined },
+        {
+          partyId,
+          // 로비 선택 > 최근 런 — 신규 유저는 최근 런이 없으므로 로비 값이 정본
+          scenarioId:
+            leaderLobbyScenarioId ?? leaderRecentRun?.scenarioId ?? undefined,
+        },
       );
     } catch (err) {
       // 런 생성 실패 시 파티가 IN_DUNGEON에 갇히지 않도록 복귀
