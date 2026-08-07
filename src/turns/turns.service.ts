@@ -2,385 +2,6 @@
 // 정본: specs/HUB_system.md — Action-First 턴 파이프라인
 // Player-First Event Engine: 이벤트가 유저를 끌고가지 않고, 유저가 게임을 끌고간다
 
-/** LOCATION 턴 모드 — 이벤트 매칭 전에 결정되어 파이프라인을 분기 */
-export enum TurnMode {
-  /** 플레이어가 NPC/행동을 명시 → 이벤트 매칭 스킵, NPC 직접 상호작용 */
-  PLAYER_DIRECTED = 'PLAYER_DIRECTED',
-  /** 대화 연속 중 → 이벤트 매칭 스킵, 같은 NPC 유지 */
-  CONVERSATION_CONT = 'CONVERSATION_CONT',
-  /** 세계 이벤트 트리거 → 기존 이벤트 매칭 파이프라인 */
-  WORLD_EVENT = 'WORLD_EVENT',
-}
-
-// ── Player-First 정본 순수 함수 (spec 이 직접 import — 복제 drift 방지) ──
-
-export interface TurnModeContext {
-  earlyTargetNpcId: string | null;
-  intentV3TargetNpcId: string | null;
-  actionType: string;
-  lastPrimaryNpcId: string | null;
-  /** 직전 턴의 primaryNpcId (행동 종류 무관 — FIGHT 후에도 유지) */
-  contextNpcId: string | null;
-  isFirstTurnAtLocation: boolean;
-  incidentPressureHigh: boolean;
-  questFactTrigger: boolean;
-  /**
-   * [A2' 후속 — 73 §11] 대화 상대 없는 탐색 행동 시, 현재 장소에 이 행동으로
-   * 매칭 가능한 저작 이벤트가 있는지. true면 PLAYER_DIRECTED 대신 WORLD_EVENT로
-   * 승격해 저작 이벤트 매칭 기회를 준다(미지정 시 false → 기존 동작).
-   */
-  exploreEventAvailable?: boolean;
-  /**
-   * [P4 — arch/75 §5.1] AUTONOMOUS 팩에서 워커 선계산 비트가 신선하게 대기
-   * 중인지. true면 자유 행동을 WORLD_EVENT로 승격해 채택 기회를 준다.
-   * NPC 지목·대화 연속(우선순위 1·2)이 항상 먼저다 — Player-First 보존.
-   */
-  beatAvailable?: boolean;
-  /**
-   * [버그 d20c1de8 — 불변식 47 확장] 연속 상호작용(contextNpcId) 중일 때,
-   * 대기 비트 후보 중 그 NPC를 포함하는 것이 있는지. contextNpcId가 없으면
-   * true. false면 비트 승격(1.5·3.6)을 하지 않는다 — 무관 비트가 상호작용을
-   * 가로채는 것 차단 (구타 대상 스왑 실측).
-   */
-  beatMatchesInteraction?: boolean;
-  /**
-   * [P4 채택 개선 — §15.4] beat 강제 창(C): 마지막 채택 후 BEAT_FORCE_AFTER_TURNS
-   * 이상 경과. true면 대화 연속 중이어도 beat 우선(WORLD_EVENT). 대화 스티키니스로
-   * 채택 0이 되는 정체를 막는다. 탐색 행동(A)은 별도로 항상 우선.
-   */
-  beatForceWindow?: boolean;
-  /**
-   * [D1-a — arch/76 불변식 47] 대화 잠금 활성 턴(직전 대화 NPC + 대화 계열 행동).
-   * true면 강제창(C)이 발동해도 대화를 끊지 않는다 — 몰입 중인 대화 존중.
-   * 탐색 행동(A)에 의한 승격은 이와 무관.
-   */
-  conversationLockActive?: boolean;
-  /**
-   * [D1-b — arch/76 불변식 47] 순수 사교 발화(인사/안부/감사/작별) 또는 REST 의도.
-   * true면 이 턴은 디렉터 비트를 채택하지 않는다 — "인사·휴식하려는데 사건 끼워넣기"
-   * 패턴(조사 최다 이탈 요인) 원천 차단. beat 경로(1.5·3.6) 승격을 모두 막는다.
-   */
-  intentSuppressesBeat?: boolean;
-  /**
-   * [불변식 26 캡 강제] 직전까지 같은 NPC와 대화 계열로 연속한 턴 수.
-   * CONVERSATION_MAX_CONSECUTIVE 이상이면 대화 연속(규칙 2·2b)을 끊어
-   * 이벤트 매칭을 재개(같은 장소 다른 NPC/이벤트 롤 기회). 문서-구현 갭 봉합:
-   * 과거 CONVERSATION_CONT는 무한 유지돼 자유 ACTION 대화의 4턴 캡이 사문이었음.
-   * 플레이어 명시 지목(규칙 1)은 이보다 위에서 처리되므로 캡과 무관하게 대화 유지.
-   */
-  conversationConsecutiveTurns?: number;
-  /**
-   * [#5 상점 구매 정합] 이번 턴이 실구매(구매 표현 + 현장 상점 존재)인가.
-   * true면 대화 연속(규칙 2·2b)에서 제외 — 비상인 대화 잠금 NPC(겁먹은 고아 등)가
-   * 판매자로 오귀속되던 desync 차단. 구매는 상점 화자(primaryNpcId=null) 트랙으로
-   * 라우팅되고, 실거래는 processShopAction 이 별도로 수행한다.
-   */
-  isShopPurchase?: boolean;
-}
-
-// [불변식 26] 같은 NPC 대화 연속 캡 — 초과 시 CONVERSATION_CONT 해제.
-const CONVERSATION_MAX_CONSECUTIVE = 4;
-
-// [#9 자기소개 맥락 게이트] 적대·폭력 행동 — 이 턴엔 NPC 자기소개를 억제한다.
-// 겁먹은 피해자가 가해자에게 이름을 밝히는 부자연 차단(불변식 15 posture 임계는
-// 유지하되 적대 맥락에선 지연). shouldAvoidSelfIntro(posture)는 arch/65 강제
-// 삽입에 우회당하므로 소개 트리거 단계에서 막아야 하류 전체가 안 탄다.
-const ADVERSARIAL_ACTIONS = new Set(['FIGHT', 'THREATEN', 'STEAL', 'SNEAK']);
-
-// [A2' 후속] 세계를 탐색하는 비대화 행동 — 이 행동은 장소 저작 이벤트를 우선 탄다.
-const EXPLORE_ACTIONS = new Set(['INVESTIGATE', 'OBSERVE', 'SEARCH']);
-
-// [D1-b — arch/76] 순수 사교 발화 dialogueAct — 이 턴은 비트 채택 금지.
-const SOCIAL_SPEECH_ACTS = new Set([
-  'GREETING',
-  'WELLBEING',
-  'THANKS',
-  'FAREWELL',
-]);
-
-const SOCIAL_ACTIONS = new Set([
-  'TALK',
-  'PERSUADE',
-  'BRIBE',
-  'THREATEN',
-  'HELP',
-  'INVESTIGATE',
-  'OBSERVE',
-  'TRADE',
-]);
-
-// [#5 상점 구매 정합] 원문의 구매 표현 패턴 — SHOP 인텐트가 normalizeActionType
-// 으로 TRADE에 흡수되므로(arch/68 부록 E), 이 패턴을 실구매 신호로 본다.
-const SHOP_BUY_PATTERN = /구매|구입|매입|사겠|사고 싶|사줘|산다|[을를] 사/;
-// [#8] 부정·거절 표현 — 명시 구매 패턴이 있어도 실구매가 아닌 경우 배제.
-const SHOP_BUY_NEGATION =
-  /안\s*(사|구매|구입|매입)|사지\s*(않|말)|(구매|구입|매입)하지\s*(않|말)|거절|포기|취소/;
-
-/**
- * [#5/#8] 실구매 의도인가 — actionType에 비의존, 원문 구매 표현(부정 제외)으로 판정.
- * 배경(#8): 구매가 IntentParser의 actionType 분류(LLM 확률)에 걸려, "치료제"의
- * '치료'가 HELP 키워드와 충돌해 KW=HELP로 밀리면 TRADE 신호가 약해지고, TRADE가
- * HIGH_RISK_KW_PRIORITY에 없어 LLM 오분류(TALK)가 그대로 채택되던 실측(silverdeen
- * T5). actionType이 무엇이든 원문에 명시 구매 표현이 있으면 실구매로 본다. 현장 상점
- * 존재는 호출부(isShopPurchaseTurn·processShopAction)가 AND — 상점/아이템 없으면 no-op.
- */
-export function isShopBuyIntentCore(
-  actionType: string,
-  rawInput: string,
-): boolean {
-  if (actionType === 'SHOP') return true;
-  return SHOP_BUY_PATTERN.test(rawInput) && !SHOP_BUY_NEGATION.test(rawInput);
-}
-
-export function determineTurnModeCore(ctx: TurnModeContext): TurnMode {
-  // 1) 플레이어가 NPC를 명시적으로 지목
-  if (ctx.earlyTargetNpcId || ctx.intentV3TargetNpcId) {
-    if (ctx.isFirstTurnAtLocation) {
-      return TurnMode.WORLD_EVENT;
-    }
-    return TurnMode.PLAYER_DIRECTED;
-  }
-
-  // 1.5) [P4 채택 개선 — arch/75 §15.4] beat 우선 창 — 대화 연속(2)보다 먼저.
-  // G2 실측: 대화 스티키니스로 채택 0(조사·관찰도 SOCIAL이라 대화 연속으로 빠짐).
-  //   A(탐색 행동): 세계와 상호작용하는 행동엔 사건이 낄 자리를 준다.
-  //   C(강제 창): 마지막 채택 후 N턴 이상 정체 시 대화 중이어도 하나 넣는다.
-  // NPC 명시 지목(1)만 이보다 우선 — Player-First의 명시 의도는 보존.
-  // [D1 — arch/76 불변식 47] 의도 존중 가드: 사교 발화·REST 턴은 승격 금지(b),
-  // 강제창(C)은 대화 잠금 활성 턴엔 발동하지 않음(a). 탐색 행동(A)은 유지.
-  // [버그 d20c1de8 — 불변식 47 확장] 연속 상호작용 중 무관 비트는 승격 금지.
-  if (
-    ctx.beatAvailable &&
-    !ctx.intentSuppressesBeat &&
-    ctx.beatMatchesInteraction !== false &&
-    (EXPLORE_ACTIONS.has(ctx.actionType) ||
-      (ctx.beatForceWindow && !ctx.conversationLockActive))
-  ) {
-    return TurnMode.WORLD_EVENT;
-  }
-
-  // [불변식 26 캡] 같은 NPC와 대화 계열로 4턴 연속 → CONVERSATION_CONT 해제.
-  // 무한 유지되던 자유 ACTION 대화 잠금을 끊어 이벤트 매칭을 재개(같은 장소의
-  // 다른 NPC/이벤트 롤 기회). 사교 발화(작별 등, intentSuppressesBeat)는 대화
-  // 자연 종료 턴이므로 캡 예외 — 마무리 대사를 사건으로 덮지 않는다(불변식 47).
-  // 명시 지목(규칙 1)은 이 위에서 처리되므로 플레이어가 원하면 대화는 계속 유지된다.
-  const conversationCapReached =
-    (ctx.conversationConsecutiveTurns ?? 0) >= CONVERSATION_MAX_CONSECUTIVE &&
-    !ctx.intentSuppressesBeat;
-
-  // [#5 상점 구매 정합] 실구매 턴은 대화 연속(2·2b)에서 제외 — TRADE 가
-  // SOCIAL_ACTIONS 라 대화 잠금 NPC(비상인)에게 hijack 되던 것을 차단.
-  // 구매는 아래 규칙을 거쳐 이벤트 매칭이 상점 화자 트랙으로 오버라이드한다.
-  const conversationBlocked = conversationCapReached || ctx.isShopPurchase;
-
-  // 2) 대화 연속 (SOCIAL_ACTION + 이전 대화 NPC 존재)
-  if (
-    !conversationBlocked &&
-    ctx.lastPrimaryNpcId &&
-    SOCIAL_ACTIONS.has(ctx.actionType)
-  ) {
-    if (ctx.isFirstTurnAtLocation) {
-      return TurnMode.WORLD_EVENT;
-    }
-    return TurnMode.CONVERSATION_CONT;
-  }
-
-  // 2b) 맥락 NPC 연결 — FIGHT/STEAL 후 TALK 시 직전 NPC를 대화 대상으로 유지
-  // "이게 뭔지 대답해" 같이 대상 미명시 + 직전 턴에 NPC가 있었으면 맥락 연결
-  if (
-    !conversationBlocked &&
-    ctx.contextNpcId &&
-    SOCIAL_ACTIONS.has(ctx.actionType)
-  ) {
-    if (ctx.isFirstTurnAtLocation) {
-      return TurnMode.WORLD_EVENT;
-    }
-    return TurnMode.CONVERSATION_CONT;
-  }
-
-  // 3) 강제 세계 이벤트 (축소된 조건)
-  if (
-    ctx.isFirstTurnAtLocation ||
-    ctx.incidentPressureHigh ||
-    ctx.questFactTrigger
-  ) {
-    return TurnMode.WORLD_EVENT;
-  }
-
-  // 3.5) [A2' 후속 — 73 §11] 대화 상대 없는 탐색 행동 + 장소에 매칭 가능한
-  // 저작 이벤트 존재 → WORLD_EVENT 승격. (2)에서 대화 연속이 먼저 걸러지므로
-  // 여기 도달 = 대화 상대 없는 자유 탐색. 저작 이벤트 매칭 빈도를 높인다.
-  if (EXPLORE_ACTIONS.has(ctx.actionType) && ctx.exploreEventAvailable) {
-    return TurnMode.WORLD_EVENT;
-  }
-
-  // 3.6) [P4 — arch/75 §5.1] AUTONOMOUS: 선계산 비트 대기 중 → WORLD_EVENT 승격.
-  // 채택 자체는 정합 점수 임계(selectBeatForAdoption)를 다시 통과해야 하며,
-  // 미채택 시 기존 폴백 체인으로 그 턴이 진행된다.
-  // [D1-b — arch/76 불변식 47] 사교 발화·REST 의도 턴은 비트 승격 금지.
-  // [버그 d20c1de8] 연속 상호작용 중 무관 비트도 승격 금지 (구타 대상 스왑 차단).
-  if (
-    ctx.beatAvailable &&
-    !ctx.intentSuppressesBeat &&
-    ctx.beatMatchesInteraction !== false
-  ) {
-    return TurnMode.WORLD_EVENT;
-  }
-
-  // 4) 기본값: 플레이어 주도 (이벤트 강제 없음)
-  return TurnMode.PLAYER_DIRECTED;
-}
-
-export interface TargetNpcCandidate {
-  npcId: string;
-  name?: string | null;
-  unknownAlias?: string | null;
-  shortAlias?: string | null;
-  aliases?: string[];
-}
-
-// Pass 3 환경 명사 false positive 방지 (architecture/49)
-// "냄새가" → 향수 냄새가 강한 미망인 같은 매칭은 환경 표현이지 NPC 호명 아님.
-const RISKY_FRAGMENTS = new Set([
-  '젊은',
-  '늙은',
-  '냄새가',
-  '강한',
-  '약한',
-  '큰',
-  '작은',
-  '조용한',
-  '시끄러운',
-  '빠른',
-  '느린',
-  '뜨거운',
-  '차가운',
-  '날카로운',
-  '풋풋한',
-  '투박한',
-  '거친',
-  '부드러운',
-  '다정한',
-  '향수',
-]);
-
-export function extractTargetNpcCore(
-  rawInput: string,
-  inputType: string,
-  allNpcs: TargetNpcCandidate[],
-): string | null {
-  if (inputType !== 'ACTION' || !rawInput) return null;
-
-  const inputLower = rawInput.toLowerCase();
-
-  // Pass 1: 실명/unknownAlias/aliases/shortAlias 전체 매칭 (bug 4620)
-  //   이전엔 name/unknownAlias만 검사 — aliases/shortAlias 누락으로 "하위크"
-  //   같은 단독 별칭 입력 시 타깃 NPC 식별 실패했음.
-  for (const npc of allNpcs) {
-    if (npc.name && inputLower.includes(npc.name.toLowerCase()))
-      return npc.npcId;
-    if (npc.unknownAlias && inputLower.includes(npc.unknownAlias.toLowerCase()))
-      return npc.npcId;
-    if (npc.shortAlias && inputLower.includes(npc.shortAlias.toLowerCase()))
-      return npc.npcId;
-    if (npc.aliases && npc.aliases.length > 0) {
-      for (const al of npc.aliases) {
-        if (al && al.length >= 2 && inputLower.includes(al.toLowerCase()))
-          return npc.npcId;
-      }
-    }
-  }
-
-  // Pass 2: "~에게" 패턴
-  const egeMatch = rawInput.match(/(.+?)에게/);
-  if (egeMatch) {
-    const targetWord = egeMatch[1].trim().toLowerCase();
-    for (const npc of allNpcs) {
-      if (npc.name && targetWord.includes(npc.name.toLowerCase()))
-        return npc.npcId;
-      const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
-      if (
-        aliasKw.some(
-          (kw: string) =>
-            kw.length >= 2 && targetWord.includes(kw.toLowerCase()),
-        )
-      )
-        return npc.npcId;
-      // aliases도 "에게" 패턴 타겟 비교
-      if (npc.aliases && npc.aliases.length > 0) {
-        for (const al of npc.aliases) {
-          if (al && al.length >= 2 && targetWord.includes(al.toLowerCase()))
-            return npc.npcId;
-        }
-      }
-    }
-  }
-
-  // Pass 3: 별칭 키워드 부분 매칭 (3자 이상, RISKY_FRAGMENTS 제외)
-  for (const npc of allNpcs) {
-    const aliasKw = npc.unknownAlias?.split(/\s+/) ?? [];
-    if (
-      aliasKw.some(
-        (kw: string) =>
-          kw.length >= 3 &&
-          !RISKY_FRAGMENTS.has(kw) &&
-          inputLower.includes(kw.toLowerCase()),
-      )
-    )
-      return npc.npcId;
-  }
-
-  return null;
-}
-
-/**
- * EventChoiceGate (arch/68 부록 L — 버그 185a8ddd) 정본.
- * 유저가 텍스트로 특정 NPC를 명시 지목했는데 매칭된 이벤트의 정의 NPC와
- * 다르면, 그 이벤트 고유 선택지(payload.choices — 이벤트 NPC를 전제)를
- * 폐기해야 한다 (서술은 지목 NPC, 선택지는 이벤트 NPC로 갈리는 분열 차단).
- * 실측: 정보상과 대화 중 첫 진입 WORLD_EVENT로 음유시인 조우 이벤트 매칭 →
- * 서술은 정보상, 선택지는 음유시인.
- */
-export function shouldDiscardEventChoicesCore(
-  resolvedTargetNpcId: string | null,
-  eventDefinedNpc: string | null,
-): boolean {
-  return (
-    !!resolvedTargetNpcId &&
-    !!eventDefinedNpc &&
-    resolvedTargetNpcId !== eventDefinedNpc
-  );
-}
-
-/**
- * 대화 잠금 다운그레이드 가드 스캔 (arch/46 §4.2 + 48) 정본.
- * 직전 턴이 SOCIAL NPC 대화였는지 actionHistory 역순으로 판단한다 —
- * 대화 중 "부두 쪽 사람들 의심하시오?" 같은 입력이 MOVE_LOCATION/FIGHT로
- * 오탐되면 이 NPC 기준으로 INVESTIGATE 다운그레이드해 대화 흐름을 유지.
- * 작별(dialogueAct=FAREWELL / npcFarewell)로 닫힌 대화는 잇지 않는다
- * (P2 2026-07-11). primaryNpcId 없는 엔트리는 건너뛰고, 첫 유효 엔트리에서
- * 판정을 끝낸다 (그보다 과거의 대화는 잠금 근거가 아님).
- */
-export function findDowngradeLockNpcCore(
-  actionHistory: Array<Record<string, unknown>>,
-): string | null {
-  for (let i = actionHistory.length - 1; i >= 0; i--) {
-    const prev = actionHistory[i];
-    const prevNpc = prev.primaryNpcId as string | undefined;
-    const prevAction = prev.actionType as string | undefined;
-    if (!prevNpc) continue;
-    // 작별로 닫힌 대화는 다운그레이드 가드도 잇지 않는다 (P2 2026-07-11)
-    if (prev.dialogueAct === 'FAREWELL' || prev.npcFarewell === true) {
-      return null;
-    }
-    if (SOCIAL_ACTIONS.has(prevAction ?? '')) {
-      return prevNpc;
-    }
-    return null;
-  }
-  return null;
-}
-
 import { korParticle, korParticleRo } from '../common/korean.js';
 import { NPC_PORTRAITS } from '../db/types/npc-portraits.js';
 import { decideWitnessReaction } from './witness-reaction.core.js';
@@ -390,7 +11,6 @@ import {
   agitationCooldownActive,
   decideAgitatedBehavior,
 } from './npc-agitation.core.js';
-import { computeTacticEffects } from '../engine/combat/combat-tactic.core.js';
 import { mergeInventoryItem } from './run-state-apply.core.js';
 import {
   computeTurnTimeCost,
@@ -400,12 +20,10 @@ import {
 } from './time-cost.js';
 
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import { DB, type DrizzleDB } from '../db/drizzle.module.js';
 import {
   runSessions,
   nodeInstances,
-  battleStates,
   turns,
   playerProfiles,
   runMemories,
@@ -415,10 +33,7 @@ import {
   deriveCombatStats,
 } from '../db/types/index.js';
 import type {
-  BattleStateV1,
   ServerResultV1,
-  ActionPlan,
-  ParsedIntent,
   PermanentStats,
   RunState,
   WorldState,
@@ -426,7 +41,6 @@ import type {
   ChoiceItem,
 } from '../db/types/index.js';
 import { computePBP } from '../db/types/player-behavior.js';
-import type { NodeType, LlmStatus } from '../db/types/index.js';
 import {
   ForbiddenError,
   InternalError,
@@ -441,7 +55,6 @@ import { PropMatcherService } from '../engine/combat/prop-matcher.service.js';
 import { NodeResolverService } from '../engine/nodes/node-resolver.service.js';
 import { NodeTransitionService } from '../engine/nodes/node-transition.service.js';
 import { ContentLoaderService } from '../content/content-loader.service.js';
-import { InventoryService } from '../engine/rewards/inventory.service.js';
 import {
   RewardsService,
   GOLD_ACTIONS,
@@ -543,7 +156,6 @@ import {
   pickActiveAffordanceCore,
   hashSeed,
 } from '../llm/nano-event-director.service.js';
-import type { RegionEconomy } from '../db/types/region-state.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import {
   initNPCState,
@@ -570,6 +182,37 @@ import type {
   QuestRevealUI,
 } from '../db/types/server-result.js';
 import type { SubmitTurnBody, GetTurnQuery } from './dto/submit-turn.dto.js';
+import { TurnSharedService } from './turn-shared.service.js';
+import { EquipShopTurnService } from './equip-shop-turn.service.js';
+import { DagTurnService } from './dag-turn.service.js';
+import { HubTurnService } from './hub-turn.service.js';
+import { CombatTurnService } from './combat-turn.service.js';
+
+// [파일 분할] 순수 코어는 turns.core.ts 가 정본 — 기존 import 경로 보존용 재수출
+export {
+  TurnMode,
+  isShopBuyIntentCore,
+  determineTurnModeCore,
+  extractTargetNpcCore,
+  shouldDiscardEventChoicesCore,
+  findDowngradeLockNpcCore,
+} from './turns.core.js';
+export type { TurnModeContext, TargetNpcCandidate } from './turns.core.js';
+import {
+  TurnMode,
+  SOCIAL_SPEECH_ACTS,
+  SOCIAL_ACTIONS,
+  EXPLORE_ACTIONS,
+  ADVERSARIAL_ACTIONS,
+  isShopBuyIntentCore,
+  determineTurnModeCore,
+  extractTargetNpcCore,
+  shouldDiscardEventChoicesCore,
+  findDowngradeLockNpcCore,
+} from './turns.core.js';
+import type { TurnModeContext, TargetNpcCandidate } from './turns.core.js';
+import { and, asc, eq, ne } from 'drizzle-orm';
+import type { LlmStatus } from '../db/types/index.js';
 
 /** 한국어 조사 자동 판별 — 받침 유무에 따라 을/를, 이/가 등 선택 */
 @Injectable()
@@ -585,6 +228,16 @@ export class TurnsService {
 
   constructor(
     @Inject(DB) private readonly db: DrizzleDB,
+    // [파일 분할 1단계] 진입점 4종 공용 헬퍼 (turn-shared.service.ts)
+    private readonly turnShared: TurnSharedService,
+    // [파일 분할 2단계] 장비·상점 (equip-shop-turn.service.ts)
+    private readonly equipShopTurn: EquipShopTurnService,
+    // [파일 분할 3단계] DAG 노드 턴 (dag-turn.service.ts)
+    private readonly dagTurn: DagTurnService,
+    // [파일 분할 4단계] HUB 턴 (hub-turn.service.ts)
+    private readonly hubTurn: HubTurnService,
+    // [파일 분할 5단계] 전투 턴 (combat-turn.service.ts)
+    private readonly combatTurn: CombatTurnService,
     private readonly ruleParser: RuleParserService,
     private readonly policyService: PolicyService,
     private readonly actionPlanService: ActionPlanService,
@@ -656,27 +309,6 @@ export class TurnsService {
     // arch/85 — 포인트 차감 (채팅당). 글로벌 모듈
     @Optional() private readonly points?: PointsService,
   ) {}
-
-  /** RUN_ENDED 시 캠페인 시나리오 결과 저장 (캠페인 모드일 때만) */
-  private async saveCampaignResultIfNeeded(runId: string): Promise<void> {
-    try {
-      const run = await this.db.query.runSessions.findFirst({
-        where: eq(runSessions.id, runId),
-        columns: { campaignId: true },
-      });
-      if (run?.campaignId) {
-        await this.campaignsService.saveScenarioResult(run.campaignId, runId);
-        this.logger.log(
-          `Campaign scenario result saved: campaign=${run.campaignId}, run=${runId}`,
-        );
-      }
-    } catch (err) {
-      // 캠페인 결과 저장 실패는 게임 종료에 영향 없음
-      this.logger.warn(
-        `Failed to save campaign scenario result for run ${runId}: ${(err as Error).message}`,
-      );
-    }
-  }
 
   async submitTurn(runId: string, userId: string, body: SubmitTurnBody) {
     // 1. 멱등성 체크
@@ -771,7 +403,7 @@ export class TurnsService {
 
     try {
       if (nodeType === 'HUB') {
-        return await this.handleHubTurn(
+        return await this.hubTurn.handleHubTurn(
           run,
           currentNode,
           expectedTurnNo,
@@ -789,7 +421,7 @@ export class TurnsService {
           playerStats,
         );
       } else if (nodeType === 'COMBAT') {
-        return await this.handleCombatTurn(
+        return await this.combatTurn.handleCombatTurn(
           run,
           currentNode,
           expectedTurnNo,
@@ -804,7 +436,7 @@ export class TurnsService {
           nodeType === 'SHOP' ||
           nodeType === 'EXIT')
       ) {
-        return await this.handleDagNodeTurn(
+        return await this.dagTurn.handleDagNodeTurn(
           run,
           currentNode,
           expectedTurnNo,
@@ -823,382 +455,6 @@ export class TurnsService {
       }
       throw err;
     }
-  }
-
-  // --- HUB 턴 ---
-  private async handleHubTurn(
-    run: any,
-    currentNode: any,
-    turnNo: number,
-    body: SubmitTurnBody,
-    runState: RunState,
-    _playerStats: PermanentStats,
-  ) {
-    if (body.input.type !== 'CHOICE' || !body.input.choiceId) {
-      throw new InvalidInputError('HUB requires CHOICE input');
-    }
-
-    const ws = runState.worldState ?? this.worldStateService.initWorldState();
-    const arcState = runState.arcState ?? this.arcService.initArcState();
-    const _agenda = runState.agenda ?? this.agendaService.initAgenda();
-    const updatedRunState: RunState = { ...runState };
-
-    // pendingQuestHint 만료 정리 (HUB 턴): 이월 창(arch/60 P2)을 존중해
-    // 창 초과분만 정리. HUB 방문이 발견↔다음 LOCATION 턴 사이에 끼어도
-    // [단서 방향] 힌트가 살아남아 복귀 턴에 발화된다 (리뷰 발견 반영).
-    if (
-      updatedRunState.pendingQuestHint &&
-      updatedRunState.pendingQuestHint.setAtTurn <
-        turnNo - QUEST_BALANCE.DIRECTION_HINT_CARRY_MAX_TURNS
-    ) {
-      updatedRunState.pendingQuestHint = null;
-    }
-
-    const choiceId = body.input.choiceId;
-
-    // 아크 루트 커밋 (1-A, arch/68 부록 F) — HUB 노출 arc_commit_* 선택.
-    // 정적 이벤트(arcRouteTag) 운에 의존하던 route 진입을 명시 분기로 보강.
-    if (choiceId.startsWith('arc_commit_')) {
-      const commit = this.content
-        .getArcRouteCommitChoices()
-        .find((rc) => `arc_commit_${rc.route.toLowerCase()}` === choiceId);
-      if (!commit) {
-        throw new InvalidInputError(`Unknown arc commit choice: ${choiceId}`);
-      }
-      let newArc = this.arcService.switchRoute(
-        arcState,
-        commit.route as import('../db/types/index.js').ArcRoute,
-      );
-      // 명시 선택은 강한 의지 — 초기 결의 +2 (잠금 3 직전, 배신 여지는 유지)
-      newArc = this.arcService.progressCommitment(newArc, 2);
-      updatedRunState.arcState = newArc;
-
-      const hubChoices = this.sceneShellService.buildHubChoices(
-        ws,
-        newArc,
-        updatedRunState.questState,
-      );
-      const result = this.buildHubActionResult(
-        turnNo,
-        currentNode,
-        `마음을 정했다 — ${commit.label}`,
-        hubChoices,
-        ws,
-        updatedRunState,
-      );
-      result.events.push({
-        id: `arc_commit_${turnNo}`,
-        kind: 'SYSTEM',
-        text: `[노선] ${commit.label}`,
-        tags: ['ARC_COMMIT', commit.route],
-      });
-
-      await this.commitTurnRecord(
-        run,
-        currentNode,
-        turnNo,
-        body,
-        choiceId,
-        result,
-        updatedRunState,
-        body.options?.skipLlm,
-      );
-      return {
-        accepted: true,
-        turnNo,
-        serverResult: result,
-        llm: { status: 'PENDING' as LlmStatus, narrative: null },
-        meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
-      };
-    }
-
-    // LOCATION 이동 — architecture/63: locations.json hubAccessible 파생
-    // (go_ choiceId 규약, HUB 노출 장소만 — 구 locationMap 4곳과 동일 범위)
-    const hubChoiceLoc = this.content.getHubChoiceLocation(choiceId);
-
-    if (hubChoiceLoc) {
-      const locationId = hubChoiceLoc.locationId;
-      const locName = hubChoiceLoc.name;
-      // 이동 = 시간 소요 (arch/81 2차) — HUB 경유 편도 1tick (왕복 합 = 직행 2)
-      const newWs = this.worldTick.advanceClockForTravel(
-        this.worldStateService.moveToLocation(ws, locationId),
-        TRAVEL_LEG_TIME_COST,
-      );
-      updatedRunState.worldState = newWs;
-      updatedRunState.actionHistory = []; // LOCATION 이동 시 고집 이력 초기화
-
-      // Arc unlock 체크 — [73 §11 B2] 팩 선언 언락 조건(scenario.json arcRoutes)
-      const newUnlocks = this.arcService.checkUnlockConditions(
-        newWs,
-        this.content.getScenarioMeta()?.arcRoutes ?? [],
-      );
-      if (newUnlocks.length > 0) {
-        updatedRunState.worldState = {
-          ...newWs,
-          mainArc: {
-            ...newWs.mainArc,
-            unlockedArcIds: [...newWs.mainArc.unlockedArcIds, ...newUnlocks],
-          },
-        };
-      }
-
-      // 현재 HUB 노드를 NODE_ENDED로
-      await this.db
-        .update(nodeInstances)
-        .set({ status: 'NODE_ENDED', updatedAt: new Date() })
-        .where(eq(nodeInstances.id, currentNode.id));
-
-      // HUB 선택 턴 커밋
-      const hubResult = this.buildSystemResult(
-        turnNo,
-        currentNode,
-        `${locName}${korParticleRo(locName)} 향한다.`,
-      );
-      // [arch/99] 이동 턴에도 퀘스트탭 번들 부착 — 이동 시간 소요(day 변동)의
-      // 시한 표시 지연 방지 (newWs = 이동 tick 반영분)
-      this.attachQuestUiBundle(
-        hubResult,
-        updatedRunState,
-        updatedRunState.worldState,
-      );
-      await this.commitTurnRecord(
-        run,
-        currentNode,
-        turnNo,
-        body,
-        choiceId,
-        hubResult,
-        updatedRunState,
-        body.options?.skipLlm,
-      );
-
-      // LOCATION 전환
-      const transition = await this.nodeTransition.transitionToLocation(
-        run.id,
-        currentNode.nodeIndex,
-        turnNo + 1,
-        locationId,
-        updatedRunState.worldState,
-        updatedRunState,
-      );
-
-      // 전환 턴 생성
-      transition.enterResult.turnNo = turnNo + 1;
-      await this.db.insert(turns).values({
-        runId: run.id,
-        turnNo: turnNo + 1,
-        nodeInstanceId: transition.enterResult.node.id,
-        nodeType: transition.nextNodeType,
-        inputType: 'SYSTEM',
-        rawInput: '',
-        idempotencyKey: `${run.id}_enter_${transition.nextNodeIndex}`,
-        chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
-        parsedBy: null,
-        confidence: null,
-        parsedIntent: null,
-        policyResult: 'ALLOW',
-        transformedIntent: null,
-        actionPlan: null,
-        serverResult: transition.enterResult,
-        llmStatus: 'PENDING',
-      });
-
-      await this.db
-        .update(runSessions)
-        .set({
-          currentTurnNo: turnNo + 1,
-          runState: updatedRunState,
-          updatedAt: new Date(),
-        })
-        .where(eq(runSessions.id, run.id));
-
-      return {
-        accepted: true,
-        turnNo,
-        serverResult: hubResult,
-        llm: { status: 'PENDING' as LlmStatus, narrative: null },
-        meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
-        transition: {
-          nextNodeIndex: transition.nextNodeIndex,
-          nextNodeType: transition.nextNodeType,
-          enterResult: transition.enterResult,
-          battleState: null,
-          enterTurnNo: turnNo + 1,
-        },
-      };
-    }
-
-    // Heat 해결: CONTACT_ALLY
-    if (choiceId === 'contact_ally') {
-      const relations = runState.npcRelations ?? {};
-      // 최고 관계 NPC 자동 선택
-      const bestNpc = Object.entries(relations).sort(
-        ([, a], [, b]) => b - a,
-      )[0];
-      if (bestNpc) {
-        const { ws: newWs } = this.heatService.resolveByAlly(
-          ws,
-          bestNpc[0],
-          relations,
-        );
-        updatedRunState.worldState =
-          this.worldStateService.updateHubSafety(newWs);
-      }
-      const hubChoices = this.sceneShellService.buildHubChoices(
-        updatedRunState.worldState!,
-        arcState,
-        updatedRunState.questState,
-      );
-      const result = this.buildHubActionResult(
-        turnNo,
-        currentNode,
-        '협력자에게 연락하여 열기를 식혔다.',
-        hubChoices,
-        updatedRunState.worldState!,
-        updatedRunState,
-      );
-
-      await this.commitTurnRecord(
-        run,
-        currentNode,
-        turnNo,
-        body,
-        choiceId,
-        result,
-        updatedRunState,
-        body.options?.skipLlm,
-      );
-      return {
-        accepted: true,
-        turnNo,
-        serverResult: result,
-        llm: { status: 'PENDING' as LlmStatus, narrative: null },
-        meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
-      };
-    }
-
-    // Heat 해결: PAY_COST
-    if (choiceId === 'pay_cost') {
-      const usageCount = 0; // TODO: track usage
-      const { cost, ws: newWs } = this.heatService.resolveByCost(
-        ws,
-        usageCount,
-      );
-      if (runState.gold >= cost) {
-        updatedRunState.gold -= cost;
-        updatedRunState.worldState =
-          this.worldStateService.updateHubSafety(newWs);
-      }
-      const hubChoices = this.sceneShellService.buildHubChoices(
-        updatedRunState.worldState!,
-        arcState,
-        updatedRunState.questState,
-      );
-      const result = this.buildHubActionResult(
-        turnNo,
-        currentNode,
-        `금화 ${cost}으로 열기를 해소했다.`,
-        hubChoices,
-        updatedRunState.worldState!,
-        updatedRunState,
-      );
-
-      await this.commitTurnRecord(
-        run,
-        currentNode,
-        turnNo,
-        body,
-        choiceId,
-        result,
-        updatedRunState,
-        body.options?.skipLlm,
-      );
-      return {
-        accepted: true,
-        turnNo,
-        serverResult: result,
-        llm: { status: 'PENDING' as LlmStatus, narrative: null },
-        meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
-      };
-    }
-
-    // 프롤로그 의뢰 수락
-    if (choiceId === 'accept_quest') {
-      const hubChoices = this.sceneShellService.buildHubChoices(
-        ws,
-        arcState,
-        updatedRunState.questState,
-      );
-      const result: ServerResultV1 = {
-        ...this.buildSystemResult(turnNo, currentNode, '의뢰를 수락했다.'),
-        // architecture/63: scenario.json prologue.accept 스크립트
-        summary: (() => {
-          const accept = this.content.getPrologueMeta().accept;
-          return {
-            short: (accept?.instructionLines ?? ['의뢰를 수락했다.']).join(
-              '\n',
-            ),
-            display: accept?.display ?? '당신은 의뢰를 수락했다.',
-          };
-        })(),
-        ui: {
-          availableActions: ['CHOICE'],
-          targetLabels: [],
-          actionSlots: { base: 2, bonusAvailable: false, max: 3 },
-          toneHint: 'calm',
-          worldState: {
-            hubHeat: ws.hubHeat,
-            hubSafety: ws.hubSafety,
-            timePhase: ws.timePhase,
-            phaseV2: ws.phaseV2,
-            day: ws.day,
-            currentLocationId: null,
-            locationDynamicStates: ws.locationDynamicStates ?? {},
-            playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
-            reputation: ws.reputation ?? {},
-            packMeters: buildPackMetersUI(
-              ws.packMeters,
-              this.content.getScenarioMeta()?.meters,
-            ),
-          },
-        },
-        choices: hubChoices,
-      };
-
-      // HUB accept_quest: speakingNpc를 프롤로그 화자로 고정 (LLM이 다른 NPC로 마킹 방지)
-      // architecture/63: scenario.json prologue 필드
-      // arch/80: 이미지는 에셋 풀 리졸버 우선 — 콘텐츠 하드코딩(실루엣)은 풀 미배정 시 fallback
-      const prologueMeta = this.content.getPrologueMeta();
-      (result.ui as any).speakingNpc = {
-        npcId: prologueMeta.npcId,
-        displayName: prologueMeta.displayName,
-        imageUrl:
-          this.content.getNpcPortraitUrl(prologueMeta.npcId) ||
-          prologueMeta.imageUrl,
-      };
-
-      // [arch/99] 의뢰 수락 턴부터 퀘스트탭 현황판 노출
-      this.attachQuestUiBundle(result, updatedRunState, ws);
-
-      await this.commitTurnRecord(
-        run,
-        currentNode,
-        turnNo,
-        body,
-        choiceId,
-        result,
-        updatedRunState,
-      );
-      return {
-        accepted: true,
-        turnNo,
-        serverResult: result,
-        llm: { status: 'PENDING' as LlmStatus, narrative: null },
-        meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
-      };
-    }
-
-    throw new InvalidInputError(`Unknown HUB choice: ${choiceId}`);
   }
 
   // --- LOCATION 턴 ---
@@ -1241,7 +497,7 @@ export class TurnsService {
     runState: RunState,
   ) {
     // 패배 엔딩 생성
-    const result = this.buildSystemResult(
+    const result = this.turnShared.buildSystemResult(
       turnNo,
       currentNode,
       '더 이상 버틸 수 없다...',
@@ -1312,9 +568,9 @@ export class TurnsService {
       .where(eq(runSessions.id, run.id));
 
     // Campaign: 시나리오 결과 저장
-    await this.saveCampaignResultIfNeeded(run.id);
+    await this.turnShared.saveCampaignResultIfNeeded(run.id);
 
-    await this.commitTurnRecord(
+    await this.turnShared.commitTurnRecord(
       run,
       currentNode,
       turnNo,
@@ -1380,14 +636,18 @@ export class TurnsService {
       .set({ status: 'NODE_ENDED', updatedAt: new Date() })
       .where(eq(nodeInstances.id, currentNode.id));
 
-    const result = this.buildSystemResult(turnNo, currentNode, systemText);
+    const result = this.turnShared.buildSystemResult(
+      turnNo,
+      currentNode,
+      systemText,
+    );
     if (hubSettlement) {
       result.events.push(
         ...this.buildSettlementEvents(turnNo, hubSettlement, 'SENT'),
       );
       result.diff.inventory.goldDelta += hubSettlement.gold;
     }
-    await this.commitTurnRecord(
+    await this.turnShared.commitTurnRecord(
       run,
       currentNode,
       turnNo,
@@ -1695,7 +955,7 @@ export class TurnsService {
         updatedRunState.equipmentBag.push(inst);
         allEquipmentAdded.push(inst);
         // Phase 3: ItemMemory — 전설 보상 기록
-        this.recordItemMemory(
+        this.turnShared.recordItemMemory(
           updatedRunState,
           inst,
           turnNo,
@@ -2825,7 +2085,7 @@ export class TurnsService {
           updatedRunState.equipmentBag.push(inst);
           allEquipmentAdded.push(inst);
           // Phase 3: ItemMemory — LOCATION 드랍 기록
-          this.recordItemMemory(
+          this.turnShared.recordItemMemory(
             updatedRunState,
             inst,
             turnNo,
@@ -2848,200 +2108,6 @@ export class TurnsService {
     }
 
     return { locationReward, totalGoldDelta, locationEquipDropEvents };
-  }
-
-  // [arch/77 P3.9] Phase 4b: RegionEconomy — SHOP 액션 + priceIndex + 재고 갱신 +
-  // 구매 처리(arch/68 부록 E TRADE+구매 표현 진입 확장).
-  // updatedRunState·allEquipmentAdded·intent.target 제자리 변조, 이벤트 목록 반환.
-  private processShopAction(params: {
-    updatedRunState: RunState;
-    ws: WorldState;
-    intent: Awaited<ReturnType<LlmIntentParserService['parseWithInsistence']>>;
-    rawInput: string;
-    locationId: string;
-    turnNo: number;
-    runSeed: string;
-    allEquipmentAdded: import('../db/types/equipment.js').ItemInstance[];
-  }): Array<{
-    id: string;
-    kind: 'GOLD' | 'LOOT' | 'SYSTEM';
-    text: string;
-    tags: string[];
-  }> {
-    const {
-      updatedRunState,
-      ws,
-      intent,
-      rawInput,
-      locationId,
-      turnNo,
-      runSeed,
-      allEquipmentAdded,
-    } = params;
-    // === Phase 4b: RegionEconomy — SHOP 액션 + priceIndex + 재고 갱신 ===
-    const shopActionEvents: Array<{
-      id: string;
-      kind: 'GOLD' | 'LOOT' | 'SYSTEM';
-      text: string;
-      tags: string[];
-    }> = [];
-    if (this.shopService) {
-      let economy: RegionEconomy = updatedRunState.regionEconomy ?? {
-        priceIndex: 1.0,
-        shopStocks: {},
-      };
-
-      // priceIndex 재계산: heat 기반 (heat 50 기준, ±25% 변동)
-      const locState = ws.locationStates?.[locationId];
-      const avgCrime = locState?.crime ?? 30;
-      economy = {
-        ...economy,
-        priceIndex: this.shopService.calculatePriceIndex(ws.tension, avgCrime),
-      };
-
-      // 재고 갱신: 각 상점별 refreshInterval 체크
-      const allShopDefs = this.content.getShopsByLocation(locationId);
-      for (const shopDef of allShopDefs) {
-        const currentStock = economy.shopStocks[shopDef.shopId];
-        const refreshed = this.shopService.refreshStock(
-          shopDef,
-          currentStock,
-          turnNo,
-          runSeed,
-        );
-        if (refreshed !== currentStock) {
-          economy = {
-            ...economy,
-            shopStocks: { ...economy.shopStocks, [shopDef.shopId]: refreshed },
-          };
-        }
-      }
-
-      // SHOP 액션 시 구매/판매 처리
-      // arch/68 부록 E — 구매 경로 부활: KW·LLM 파서 모두 구매 입력을
-      // TRADE로 정규화(normalizeActionType)해 SHOP 분기가 도달 불능이었다
-      // (전 DB SHOP 인텐트 0건·[상점] 이벤트 0건 실측). TRADE라도 원문에
-      // 구매 표현이 있으면 상점 구매를 시도한다.
-      const isBuyIntent = isShopBuyIntentCore(intent.actionType, rawInput);
-      // 구매 대상 확정 — 파서의 target 추출은 불안정하다(문자열 "null" 미추출,
-      // 또는 "체력 강장제를 구매한다"에서 대상을 "광산 감독관" 같은 엉뚱한 명사로
-      // 오추출하는 케이스 실측). 원문에 현 장소 재고 아이템명이 그대로 있으면
-      // 그것을 권위 있는 대상으로 삼아 파서 target을 덮어쓴다(null·오추출 모두 방어).
-      if (isBuyIntent) {
-        const stockNameInInput = this.content
-          .getShopsByLocation(locationId)
-          .flatMap((sd) => economy.shopStocks[sd.shopId]?.items ?? [])
-          .map((si) => this.content.getItem(si.itemId)?.name)
-          .find((nm): nm is string => !!nm && rawInput.includes(nm));
-        if (stockNameInInput) intent.target = stockNameInInput;
-      }
-      if (isBuyIntent && intent.target) {
-        const targetItemId = intent.target.toUpperCase().replace(/\s+/g, '_');
-        // 현재 장소의 상점에서 아이템 찾기
-        const locationShops = this.content.getShopsByLocation(locationId);
-        let purchased = false;
-
-        for (const shopDef of locationShops) {
-          const stock = economy.shopStocks[shopDef.shopId];
-          if (!stock) continue;
-
-          // 아이템 ID 직접 매칭 또는 부분 매칭
-          const matchedItem = stock.items.find(
-            (si) =>
-              si.itemId === targetItemId ||
-              si.itemId.includes(targetItemId) ||
-              (this.content.getItem(si.itemId)?.name ?? '').includes(
-                intent.target!,
-              ),
-          );
-
-          if (matchedItem && matchedItem.qty > 0) {
-            const { result: purchaseResult, updatedStock } =
-              this.shopService.purchase(
-                stock,
-                matchedItem.itemId,
-                updatedRunState.gold,
-                economy.priceIndex,
-              );
-
-            if (purchaseResult.success) {
-              // 골드 감소
-              updatedRunState.gold = Math.max(
-                0,
-                updatedRunState.gold - purchaseResult.goldSpent,
-              );
-
-              // 아이템 추가 (장비 vs 소비)
-              const itemDef = this.content.getItem(matchedItem.itemId);
-              if (itemDef?.type === 'EQUIPMENT') {
-                if (!updatedRunState.equipmentBag)
-                  updatedRunState.equipmentBag = [];
-                const instance = {
-                  instanceId: `${matchedItem.itemId}_${turnNo}`,
-                  baseItemId: matchedItem.itemId,
-                  displayName: itemDef.name,
-                  affixes: [],
-                };
-                updatedRunState.equipmentBag.push(instance);
-                allEquipmentAdded.push(instance);
-                // Phase 3: ItemMemory — 상점 구매 기록
-                this.recordItemMemory(
-                  updatedRunState,
-                  instance,
-                  turnNo,
-                  '상점 구매',
-                  locationId,
-                );
-                shopActionEvents.push({
-                  id: `shop_buy_eq_${turnNo}`,
-                  kind: 'LOOT',
-                  text: `[상점] ${itemDef.name}${korParticle(itemDef.name, '을', '를')} ${purchaseResult.goldSpent}G에 구매했다.`,
-                  tags: ['SHOP', 'BUY', 'EQUIPMENT'],
-                });
-              } else {
-                mergeInventoryItem(
-                  updatedRunState.inventory,
-                  matchedItem.itemId,
-                  1,
-                );
-                shopActionEvents.push({
-                  id: `shop_buy_${turnNo}`,
-                  kind: 'GOLD',
-                  text: `[상점] ${itemDef?.name ?? matchedItem.itemId}${korParticle(itemDef?.name ?? '', '을', '를')} ${purchaseResult.goldSpent}G에 구매했다.`,
-                  tags: ['SHOP', 'BUY'],
-                });
-              }
-
-              // 재고 업데이트
-              economy = {
-                ...economy,
-                shopStocks: {
-                  ...economy.shopStocks,
-                  [shopDef.shopId]: updatedStock,
-                },
-              };
-              purchased = true;
-              break;
-            }
-          }
-        }
-
-        if (!purchased && locationShops.length > 0) {
-          // 상점 없는 장소의 은유 표현("정보를 산다")에는 침묵 — 일반
-          // TRADE 서사가 담당. 상점 앞에서의 실구매 실패만 안내.
-          shopActionEvents.push({
-            id: `shop_fail_${turnNo}`,
-            kind: 'SYSTEM',
-            text: `[상점] 해당 물건을 구매할 수 없다.`,
-            tags: ['SHOP', 'FAIL'],
-          });
-        }
-      }
-
-      updatedRunState.regionEconomy = economy;
-    }
-
-    return shopActionEvents;
   }
 
   // [arch/77 P3.10] primary NPC 감정 영향 + 소개/조우 + agitation 행동화(D3-c\u2032) +
@@ -3689,35 +2755,7 @@ export class TurnsService {
     }
 
     // Quest UI 번들 (playerThreads·arcState·marks·clock·day·questStatus)
-    this.attachQuestUiBundle(result, updatedRunState, ws);
-  }
-
-  /**
-   * [arch/99] 퀘스트탭 UI 번들 부착 — LOCATION 턴(assembleResultUi)뿐 아니라
-   * HUB 턴(arc_commit·accept_quest·contact_ally·pay_cost·장소 이동)에서도 호출한다.
-   * 노선 확정이 정작 HUB에서 일어나는데 번들이 LOCATION 턴 전용이라 커밋 직후
-   * ~다음 LOCATION 행동까지 탭이 스테일하던 결함의 수정.
-   */
-  private attachQuestUiBundle(
-    result: ServerResultV1,
-    runState: RunState,
-    ws: WorldState,
-  ): void {
-    // PlayerThread UI 번들에 포함
-    if (ws.playerThreads && ws.playerThreads.length > 0) {
-      (result.ui as any).playerThreads = ws.playerThreads;
-    }
-
-    // Quest UI 번들: arcState, narrativeMarks, mainArcClock, day
-    (result.ui as any).arcState = runState.arcState ?? null;
-    (result.ui as any).narrativeMarks = ws.narrativeMarks ?? [];
-    (result.ui as any).mainArcClock = ws.mainArcClock ?? null;
-    (result.ui as any).day = ws.day ?? 1;
-    // 퀘스트탭 현황판 (2026-07-23) — 의뢰 단계·발견 단서·다음 지역 이정표
-    if (this.questProgression) {
-      (result.ui as any).questStatus =
-        this.questProgression.buildQuestStatus(runState);
-    }
+    this.turnShared.attachQuestUiBundle(result, updatedRunState, ws);
   }
 
   // [arch/77 P3.12] PR-A: orchestration 주입 NPC 보충 처리 — eventPrimaryNpc가
@@ -4811,7 +3849,7 @@ export class TurnsService {
       (intent.actionType === 'EQUIP' || intent.actionType === 'UNEQUIP') &&
       (body.input.type === 'ACTION' || body.input.type === 'CHOICE')
     ) {
-      return this.handleEquipAction(
+      return this.equipShopTurn.handleEquipAction(
         run,
         currentNode,
         turnNo,
@@ -5268,121 +4306,22 @@ export class TurnsService {
     );
 
     // 전투 트리거?
+    // [파일 분할 6단계] 전투 전이 — 본문 116줄을 메서드로 (누출 0, 순수 sink)
     if (resolveResult.triggerCombat && resolveResult.combatEncounterId) {
-      // LOCATION 노드 유지, COMBAT 서브노드 삽입
-      ws = this.heatService.applyHeatDelta(ws, resolveResult.heatDelta);
-      ws = this.worldStateService.advanceTime(ws);
-      ws = this.worldStateService.updateHubSafety(ws);
-      ws = { ...ws, combatWindowCount: ws.combatWindowCount + 1 };
-      updatedRunState.worldState = ws;
-
-      // [arch/76 후속] 전투 전이 턴도 행동 이력에 기록 — 조기 커밋이 정상
-      // 기록 지점(이 분기 아래쪽)을 건너뛰어 FIGHT 턴이 이력에서 빠지고,
-      // 대화 잠금이 직전 TALK 기준으로 오산출되던 버그 (전투 중 장소 NPC가
-      // 유일 화자로 강제되던 FEINT 오웬 등판 실측, 2026-07-16).
-      updatedRunState.actionHistory = [
-        ...actionHistory,
-        {
-          turnNo,
-          actionType: intent.actionType,
-          secondaryActionType: intent.secondaryActionType,
-          suppressedActionType: intent.suppressedActionType,
-          inputText: rawInput,
-          eventId: event.eventId,
-          choiceId:
-            body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
-          primaryNpcId:
-            ((event.payload as Record<string, unknown>)?.primaryNpcId as
-              | string
-              | undefined) ?? undefined,
-          resolveOutcome: resolveResult.outcome,
-        },
-      ].slice(-10);
-
-      const combatSceneFrame = resolveNpcPlaceholders(
-        event.payload.sceneFrame,
-        runState.npcStates ?? {},
-        (id) => this.content.getNpc(id),
-      );
-      const preResult = this.buildLocationResult(
-        turnNo,
-        currentNode,
-        `${combatSceneFrame} — 전투가 시작된다!`,
-        resolveResult.outcome,
-        [],
-        ws,
-      );
-      await this.commitTurnRecord(
-        run,
-        currentNode,
-        turnNo,
-        body,
+      return await this.applyCombatTransition({
+        actionHistory,
+        event,
+        intent,
         rawInput,
-        preResult,
+        resolveResult,
         updatedRunState,
-        body.options?.skipLlm,
-      );
-
-      const transition = await this.nodeTransition.insertCombatSubNode(
-        run.id,
-        currentNode.id,
-        currentNode.nodeIndex,
-        turnNo + 1,
-        resolveResult.combatEncounterId,
-        currentNode.environmentTags ?? [],
-        run.seed,
-        updatedRunState.hp,
-        updatedRunState.stamina,
-      );
-      transition.enterResult.turnNo = turnNo + 1;
-
-      // 전투 진입 summary에 트리거 행동 컨텍스트 추가 (LLM 내러티브 연속성)
-      const triggerContext = `플레이어가 "${rawInput}"${korParticle(rawInput, '을', '를')} 시도했으나 실패하여 전투가 발생했다.`;
-      transition.enterResult.summary = {
-        short: `${triggerContext} ${transition.enterResult.summary.short}`,
-        display: transition.enterResult.summary.display,
-      };
-      await this.db.insert(turns).values({
-        runId: run.id,
-        turnNo: turnNo + 1,
-        nodeInstanceId: transition.enterResult.node.id,
-        nodeType: 'COMBAT',
-        inputType: 'SYSTEM',
-        rawInput: '',
-        idempotencyKey: `${run.id}_combat_${turnNo + 1}`,
-        chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
-        parsedBy: null,
-        confidence: null,
-        parsedIntent: null,
-        policyResult: 'ALLOW',
-        transformedIntent: null,
-        actionPlan: null,
-        serverResult: transition.enterResult,
-        llmStatus: 'PENDING',
-      });
-      await this.db
-        .update(runSessions)
-        .set({
-          currentTurnNo: turnNo + 1,
-          runState: updatedRunState,
-          updatedAt: new Date(),
-        })
-        .where(eq(runSessions.id, run.id));
-
-      return {
-        accepted: true,
+        ws,
+        body,
+        currentNode,
+        run,
+        runState,
         turnNo,
-        serverResult: preResult,
-        llm: { status: 'PENDING' as LlmStatus, narrative: null },
-        meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
-        transition: {
-          nextNodeIndex: transition.nextNodeIndex,
-          nextNodeType: 'COMBAT',
-          enterResult: transition.enterResult,
-          battleState: transition.battleState ?? null,
-          enterTurnNo: turnNo + 1,
-        },
-      };
+      });
     }
 
     // 비전투 → WorldState 업데이트
@@ -5728,7 +4667,7 @@ export class TurnsService {
     // [arch/77 P3.9] SHOP 액션 — processShopAction으로 추출.
     // updatedRunState(gold/inventory/equipmentBag/regionEconomy)·allEquipmentAdded·
     // intent.target(구매 대상 보충) 제자리 변조.
-    const shopActionEvents = this.processShopAction({
+    const shopActionEvents = this.equipShopTurn.processShopAction({
       updatedRunState,
       ws,
       intent,
@@ -6603,149 +5542,35 @@ export class TurnsService {
 
     // 엔딩 조건 충족 시 — commitTurnRecord 이전에 endingResult를 result.ui에 주입해야
     // DB에 저장되고 이후 재조회·재접속에서도 EndingScreen 데이터가 복원 가능함.
+    // [파일 분할 6단계] 런 종료 처리 — 본문 140줄을 메서드로 (누출 0, 순수 sink)
     if (shouldEnd && endReason) {
-      // Fixplan3-P1: RUN_ENDED 전 structuredMemory 통합 (go_hub 없이 런 종료 시 누락 방지)
-      try {
-        const locMemEnd = await this.memoryIntegration.finalizeVisit(
-          run.id,
-          currentNode.id,
-          postTickRunState,
-          turnNo,
-        );
-        if (locMemEnd) postTickRunState.locationMemories = locMemEnd;
-      } catch {
-        /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */
-      }
-
-      // [arch/89 B′] 정산 트리거 ③ — 런 종료. 미수령분이 사장되지 않도록
-      // 마지막에 정산한다(여정 아카이브 최종 골드 정합).
-      const endSettlement = this.settlePendingQuestReward({
-        runState: postTickRunState,
-        turnNo,
-        rng,
+      return await this.finalizeRunEnding({
+        actionHistory,
+        arcState,
+        autonomousClearance,
+        autonomousGaugeEnd,
+        endWs,
+        intent,
         locationId,
-        source: 'RUN_END',
-      });
-      if (endSettlement) {
-        result.events.push(
-          ...this.buildSettlementEvents(turnNo, endSettlement, 'CLOSED'),
-        );
-        result.diff.inventory.goldDelta += endSettlement.gold;
-      }
-
-      // 엔딩 생성
-      // User-Driven System v3: playerThreads를 엔딩 입력에 전달
-      const endingThreads = (endWs.playerThreads ?? []).map((t) => ({
-        approachVector: t.approachVector,
-        goalCategory: t.goalCategory,
-        actionCount: t.actionCount,
-        successCount: t.successCount,
-        status: t.status,
-      }));
-      const endingInput = this.endingGenerator.gatherEndingInputs(
-        endWs.activeIncidents ?? [],
-        postTickRunState.npcStates ?? {},
-        endWs.narrativeMarks ?? [],
-        endWs as unknown as Record<string, unknown>,
-        postTickRunState.arcState ?? null,
-        postTickRunState.actionHistory ?? [],
-        endingThreads,
-      );
-      const endingResult = this.endingGenerator.generateEnding(
-        endingInput,
-        endReason as Parameters<EndingGeneratorService['generateEnding']>[1],
-        turnNo,
-      );
-
-      // [P5 — 75 §6] AUTONOMOUS: 규명율×게이지 → endingTone 오버레이.
-      // truth 불변(신규 불변식 A) — 엔딩은 "얼마나 규명했나"만 반영, 진상은 안 바꾼다.
-      if (autonomousClearance !== null && updatedRunState.plotSeed) {
-        const band = clearanceBand(autonomousClearance);
-        const tone = selectEndingTone(
-          band,
-          autonomousGaugeEnd,
-          this.content.getScenarioMeta()?.endingTones,
-        );
-        const er = endingResult as unknown as Record<string, unknown>;
-        er.endingType = tone.endingType;
-        er.closingLine = tone.tone;
-        er.clearanceRate = autonomousClearance;
-        er.clearanceBand = band;
-        this.logger.log(
-          `[PlotEnding] endingTone=${tone.endingType} band=${band} gaugeEnd=${autonomousGaugeEnd}`,
-        );
-      }
-
-      // 엔딩 결과를 UI + 이벤트에 노출 (commitTurnRecord 이전에 수행)
-      (result.ui as any).endingResult = endingResult;
-      result.events.push({
-        id: `ending_${turnNo}`,
-        kind: 'SYSTEM',
-        text: `[엔딩] ${endingResult.closingLine}`,
-        tags: ['RUN_ENDED'],
-        data: { endingResult },
-      });
-
-      // Journey Archive Phase 1: EndingSummary 조립 (템플릿 기반, 실패해도 엔딩 진행)
-      let endingSummary: ReturnType<
-        SummaryBuilderService['buildEndingSummary']
-      > | null = null;
-      try {
-        const now = new Date();
-        endingSummary = this.summaryBuilder.buildEndingSummary(
-          {
-            id: run.id,
-            presetId: run.presetId ?? null,
-            gender: (run.gender as 'male' | 'female' | null) ?? null,
-            updatedAt: now,
-            currentTurnNo: turnNo,
-          },
-          postTickRunState,
-          endingResult,
-        );
-      } catch (e) {
-        this.logger.warn(
-          `EndingSummary build failed (NATURAL/DEADLINE) runId=${run.id}: ${String(e)}`,
-        );
-      }
-
-      await this.commitTurnRecord(
-        run,
-        currentNode,
-        turnNo,
-        body,
+        npcStates,
+        postTickRunState,
         rawInput,
         result,
-        postTickRunState,
-        body.options?.skipLlm,
-        intent,
-      );
-
-      // RUN_ENDED로 상태 변경 + Campaign 저장 (commit 후 side-effect만 남김)
-      await this.db
-        .update(runSessions)
-        .set({
-          status: 'RUN_ENDED',
-          updatedAt: new Date(),
-          ...(endingSummary ? { endingSummary } : {}),
-        })
-        .where(eq(runSessions.id, run.id));
-      await this.saveCampaignResultIfNeeded(run.id);
-
-      return {
-        accepted: true,
+        rng,
+        source,
+        status,
+        updatedRunState,
+        body,
+        currentNode,
+        endReason,
+        run,
+        runState,
         turnNo,
-        serverResult: result,
-        llm: {
-          status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus,
-          narrative: null,
-        },
-        meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
-      };
+      });
     }
 
     // 일반(non-ending) 경로 — commitTurnRecord 호출
-    await this.commitTurnRecord(
+    await this.turnShared.commitTurnRecord(
       run,
       currentNode,
       turnNo,
@@ -6769,250 +5594,135 @@ export class TurnsService {
     };
   }
 
-  // --- DAG 노드 턴 (EVENT/REST/SHOP/EXIT in DAG mode) ---
-  private async handleDagNodeTurn(
-    run: any,
-    currentNode: any,
-    turnNo: number,
-    body: SubmitTurnBody,
-    runState: RunState,
-    playerStats: PermanentStats,
-  ) {
-    const nodeType = currentNode.nodeType as NodeType;
-    const rawInput = body.input.text ?? body.input.choiceId ?? '';
-    const updatedRunState: RunState = { ...runState };
-
-    // NodeResolver로 노드 처리
-    // ⚠️ [DAG 노드 경로] — 아래 COMBAT 경로(handleCombatTurn)에 유사 블록이
-    // 하나 더 있다. 편집 전 어느 경로인지 확인할 것 (arch/77 P3.X 오배치 방지).
-    const resolveResult = this.nodeResolver.resolve({
-      turnNo,
-      nodeId: currentNode.id,
-      nodeIndex: currentNode.nodeIndex,
-      nodeType,
-      nodeMeta: currentNode.nodeMeta as import('../db/types/index.js').NodeMeta,
-      envTags: currentNode.environmentTags ?? [],
-      inputType: body.input.type,
+  /**
+   * [파일 분할 6단계 — arch/77 §5 후속, 2026-08-07]
+   * handleLocationTurnInner 본문에서 떼어낸 전투 전이 처리. 원본에서 이 블록은
+   * 뒤로 새어나가는 지역변수가 0개인 순수 sink 였다 (참조 객체만 변형).
+   */
+  private async applyCombatTransition(c: {
+    actionHistory: any;
+    event: any;
+    intent: any;
+    rawInput: any;
+    resolveResult: any;
+    updatedRunState: any;
+    ws: any;
+    body: any;
+    currentNode: any;
+    run: any;
+    runState: any;
+    turnNo: any;
+  }): Promise<any> {
+    const {
+      actionHistory,
+      event,
+      intent,
       rawInput,
-      choiceId: body.input.choiceId,
-      playerStats,
-      playerHp: runState.hp,
-      playerMaxHp: runState.maxHp,
-      playerStamina: runState.stamina,
-      playerMaxStamina: runState.maxStamina,
-      playerGold: runState.gold,
-      inventoryCount: runState.inventory.length,
-      inventoryMax: 20,
-      nodeState: (currentNode.nodeState ?? {}) as Record<string, unknown>,
-      traitEffects: runState.traitEffects,
-    });
+      resolveResult,
+      updatedRunState,
+      body,
+      currentNode,
+      run,
+      runState,
+      turnNo,
+    } = c;
+    // 블록 안에서 재대입되지만 이 헬퍼는 항상 return 하므로 호출부로 전파될 필요가 없다
+    let ws = c.ws;
+    // LOCATION 노드 유지, COMBAT 서브노드 삽입
+    ws = this.heatService.applyHeatDelta(ws, resolveResult.heatDelta);
+    ws = this.worldStateService.advanceTime(ws);
+    ws = this.worldStateService.updateHubSafety(ws);
+    ws = { ...ws, combatWindowCount: ws.combatWindowCount + 1 };
+    updatedRunState.worldState = ws;
 
-    // RunState 반영 (gold, hp, stamina 변동)
-    // [arch/77 P3.X 기록 결함 수정] 골드 0-바닥 — LOCATION/COMBAT 경로는 모두
-    // Math.max(0,…)인데 DAG만 무바닥 += 라 이론상 음수 골드 가능했다 (SHOP
-    // 리졸버의 잔액 검증은 있으나 타 노드 goldDelta 방어선 부재). 경로 통일.
-    if (resolveResult.goldDelta)
-      updatedRunState.gold = Math.max(
-        0,
-        updatedRunState.gold + resolveResult.goldDelta,
-      );
-    if (resolveResult.hpDelta) {
-      updatedRunState.hp = Math.max(
-        0,
-        Math.min(
-          updatedRunState.maxHp,
-          updatedRunState.hp + resolveResult.hpDelta,
-        ),
-      );
-    }
-    if (resolveResult.staminaDelta) {
-      updatedRunState.stamina = Math.max(
-        0,
-        Math.min(
-          updatedRunState.maxStamina,
-          updatedRunState.stamina + resolveResult.staminaDelta,
-        ),
-      );
-    }
-    if (resolveResult.itemsBought) {
-      for (const item of resolveResult.itemsBought) {
-        mergeInventoryItem(updatedRunState.inventory, item.itemId, item.qty);
-      }
-    }
+    // [arch/76 후속] 전투 전이 턴도 행동 이력에 기록 — 조기 커밋이 정상
+    // 기록 지점(이 분기 아래쪽)을 건너뛰어 FIGHT 턴이 이력에서 빠지고,
+    // 대화 잠금이 직전 TALK 기준으로 오산출되던 버그 (전투 중 장소 NPC가
+    // 유일 화자로 강제되던 FEINT 오웬 등판 실측, 2026-07-16).
+    updatedRunState.actionHistory = [
+      ...actionHistory,
+      {
+        turnNo,
+        actionType: intent.actionType,
+        secondaryActionType: intent.secondaryActionType,
+        suppressedActionType: intent.suppressedActionType,
+        inputText: rawInput,
+        eventId: event.eventId,
+        choiceId:
+          body.input.type === 'CHOICE' ? body.input.choiceId : undefined,
+        primaryNpcId:
+          ((event.payload as Record<string, unknown>)?.primaryNpcId as
+            | string
+            | undefined) ?? undefined,
+        resolveOutcome: resolveResult.outcome,
+      },
+    ].slice(-10);
 
-    // 턴 커밋
-    const llmStatus: LlmStatus = body.options?.skipLlm ? 'SKIPPED' : 'PENDING';
+    const combatSceneFrame = resolveNpcPlaceholders(
+      event.payload.sceneFrame,
+      runState.npcStates ?? {},
+      (id) => this.content.getNpc(id),
+    );
+    const preResult = this.buildLocationResult(
+      turnNo,
+      currentNode,
+      `${combatSceneFrame} — 전투가 시작된다!`,
+      resolveResult.outcome,
+      [],
+      ws,
+    );
+    await this.turnShared.commitTurnRecord(
+      run,
+      currentNode,
+      turnNo,
+      body,
+      rawInput,
+      preResult,
+      updatedRunState,
+      body.options?.skipLlm,
+    );
+
+    const transition = await this.nodeTransition.insertCombatSubNode(
+      run.id,
+      currentNode.id,
+      currentNode.nodeIndex,
+      turnNo + 1,
+      resolveResult.combatEncounterId,
+      currentNode.environmentTags ?? [],
+      run.seed,
+      updatedRunState.hp,
+      updatedRunState.stamina,
+    );
+    transition.enterResult.turnNo = turnNo + 1;
+
+    // 전투 진입 summary에 트리거 행동 컨텍스트 추가 (LLM 내러티브 연속성)
+    const triggerContext = `플레이어가 "${rawInput}"${korParticle(rawInput, '을', '를')} 시도했으나 실패하여 전투가 발생했다.`;
+    transition.enterResult.summary = {
+      short: `${triggerContext} ${transition.enterResult.summary.short}`,
+      display: transition.enterResult.summary.display,
+    };
     await this.db.insert(turns).values({
       runId: run.id,
-      turnNo,
-      nodeInstanceId: currentNode.id,
-      nodeType,
-      inputType: body.input.type,
-      rawInput,
-      idempotencyKey: body.idempotencyKey,
+      turnNo: turnNo + 1,
+      nodeInstanceId: transition.enterResult.node.id,
+      nodeType: 'COMBAT',
+      inputType: 'SYSTEM',
+      rawInput: '',
+      idempotencyKey: `${run.id}_combat_${turnNo + 1}`,
+      chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
       parsedBy: null,
       confidence: null,
       parsedIntent: null,
       policyResult: 'ALLOW',
       transformedIntent: null,
       actionPlan: null,
-      serverResult: resolveResult.serverResult,
-      llmStatus,
+      serverResult: transition.enterResult,
+      llmStatus: 'PENDING',
     });
-
-    // NODE_ENDED → DAG 다음 노드 전환
-    if (
-      resolveResult.nodeOutcome === 'NODE_ENDED' ||
-      resolveResult.nodeOutcome === 'RUN_ENDED'
-    ) {
-      // 현재 노드 종료
-      await this.db
-        .update(nodeInstances)
-        .set({
-          status: 'NODE_ENDED',
-          nodeState: resolveResult.nextNodeState ?? null,
-          updatedAt: new Date(),
-        })
-        .where(eq(nodeInstances.id, currentNode.id));
-
-      if (resolveResult.nodeOutcome === 'RUN_ENDED' || nodeType === 'EXIT') {
-        await this.db
-          .update(runSessions)
-          .set({
-            status: 'RUN_ENDED',
-            currentTurnNo: turnNo,
-            runState: updatedRunState,
-            updatedAt: new Date(),
-          })
-          .where(eq(runSessions.id, run.id));
-        await this.saveCampaignResultIfNeeded(run.id);
-        return {
-          accepted: true,
-          turnNo,
-          serverResult: resolveResult.serverResult,
-          llm: { status: llmStatus, narrative: null },
-          meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
-        };
-      }
-
-      // RouteContext 구성
-      const dagRouteContext: import('../db/types/index.js').RouteContext = {
-        lastChoiceId: resolveResult.selectedChoiceId ?? body.input.choiceId,
-        routeTag: run.routeTag ?? undefined,
-        randomSeed: this.rngService.create(run.seed, turnNo + 1).next(),
-      };
-
-      const ws =
-        updatedRunState.worldState ?? this.worldStateService.initWorldState();
-      const dagTransition = await this.nodeTransition.transitionByGraphNode(
-        run.id,
-        run.currentGraphNodeId,
-        dagRouteContext,
-        turnNo + 1,
-        ws,
-        updatedRunState.hp,
-        updatedRunState.stamina,
-        run.seed,
-      );
-
-      if (!dagTransition || dagTransition.nextNodeType === 'EXIT') {
-        // 그래프 종료 → RUN_ENDED
-        await this.db
-          .update(runSessions)
-          .set({
-            status: 'RUN_ENDED',
-            currentTurnNo: turnNo,
-            runState: updatedRunState,
-            updatedAt: new Date(),
-          })
-          .where(eq(runSessions.id, run.id));
-        await this.saveCampaignResultIfNeeded(run.id);
-
-        const response: any = {
-          accepted: true,
-          turnNo,
-          serverResult: resolveResult.serverResult,
-          llm: { status: llmStatus, narrative: null },
-          meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
-        };
-        if (dagTransition) {
-          response.transition = {
-            nextNodeIndex: dagTransition.nextNodeIndex,
-            nextNodeType: dagTransition.nextNodeType,
-            enterResult: dagTransition.enterResult,
-            battleState: null,
-            enterTurnNo: turnNo + 1,
-          };
-        }
-        return response;
-      }
-
-      // routeTag가 결정된 경우 runState에도 반영
-      if (dagTransition.routeTag) {
-        updatedRunState.worldState = {
-          ...(updatedRunState.worldState ??
-            this.worldStateService.initWorldState()),
-        };
-      }
-
-      dagTransition.enterResult.turnNo = turnNo + 1;
-      await this.db.insert(turns).values({
-        runId: run.id,
-        turnNo: turnNo + 1,
-        nodeInstanceId: dagTransition.enterResult.node.id,
-        nodeType: dagTransition.nextNodeType,
-        inputType: 'SYSTEM',
-        rawInput: '',
-        idempotencyKey: `${run.id}_dag_${dagTransition.nextNodeIndex}`,
-        chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
-        parsedBy: null,
-        confidence: null,
-        parsedIntent: null,
-        policyResult: 'ALLOW',
-        transformedIntent: null,
-        actionPlan: null,
-        serverResult: dagTransition.enterResult,
-        llmStatus: 'PENDING',
-      });
-      await this.db
-        .update(runSessions)
-        .set({
-          currentTurnNo: turnNo + 1,
-          runState: updatedRunState,
-          updatedAt: new Date(),
-        })
-        .where(eq(runSessions.id, run.id));
-
-      return {
-        accepted: true,
-        turnNo,
-        serverResult: resolveResult.serverResult,
-        llm: { status: llmStatus, narrative: null },
-        meta: { nodeOutcome: 'NODE_ENDED', policyResult: 'ALLOW' },
-        transition: {
-          nextNodeIndex: dagTransition.nextNodeIndex,
-          nextNodeType: dagTransition.nextNodeType,
-          enterResult: dagTransition.enterResult,
-          battleState: dagTransition.battleState ?? null,
-          enterTurnNo: turnNo + 1,
-        },
-      };
-    }
-
-    // ONGOING — 노드 상태 업데이트
-    if (resolveResult.nextNodeState) {
-      await this.db
-        .update(nodeInstances)
-        .set({
-          nodeState: resolveResult.nextNodeState,
-          updatedAt: new Date(),
-        })
-        .where(eq(nodeInstances.id, currentNode.id));
-    }
     await this.db
       .update(runSessions)
       .set({
-        currentTurnNo: turnNo,
+        currentTurnNo: turnNo + 1,
         runState: updatedRunState,
         updatedAt: new Date(),
       })
@@ -7021,895 +5731,201 @@ export class TurnsService {
     return {
       accepted: true,
       turnNo,
-      serverResult: resolveResult.serverResult,
-      llm: { status: llmStatus, narrative: null },
+      serverResult: preResult,
+      llm: { status: 'PENDING' as LlmStatus, narrative: null },
       meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
+      transition: {
+        nextNodeIndex: transition.nextNodeIndex,
+        nextNodeType: 'COMBAT',
+        enterResult: transition.enterResult,
+        battleState: transition.battleState ?? null,
+        enterTurnNo: turnNo + 1,
+      },
     };
   }
 
-  // --- COMBAT 턴 (기존 전투 엔진 재사용) ---
-  // [arch/77 C2] 전투 입력 파이프라인 — RuleParser→Policy(DENY 조기 커밋)→
-  // ActionPlan→PropMatch Tier(arch/41)→기만 전술 nano(arch/76 D3-b\u2032-combat).
-  // battleState.usedTactics 제자리 변조, DENY면 커밋된 응답을 denyResponse로 반환.
-  private async buildCombatActionPlan(params: {
-    run: any;
+  /**
+   * [파일 분할 6단계] 런 종료(엔딩) 처리. 동일하게 누출 0 인 순수 sink 로,
+   * result/updatedRunState 등 참조 객체에만 기록한다.
+   */
+  private async finalizeRunEnding(c: {
+    actionHistory: any;
+    arcState: any;
+    autonomousClearance: any;
+    autonomousGaugeEnd: any;
+    endWs: any;
+    intent: any;
+    locationId: any;
+    npcStates: any;
+    postTickRunState: any;
+    rawInput: any;
+    result: any;
+    rng: any;
+    source: any;
+    status: any;
+    updatedRunState: any;
+    body: any;
     currentNode: any;
-    turnNo: number;
-    body: SubmitTurnBody;
-    rawInput: string;
-    battleState: BattleStateV1;
-    playerStats: PermanentStats;
-  }) {
+    endReason: any;
+    run: any;
+    runState: any;
+    turnNo: any;
+  }): Promise<any> {
     const {
+      autonomousClearance,
+      autonomousGaugeEnd,
+      endWs,
+      intent,
+      locationId,
+      postTickRunState,
+      rawInput,
+      result,
+      rng,
+      updatedRunState,
+      body,
+      currentNode,
+      endReason,
+      run,
+      turnNo,
+    } = c;
+    // Fixplan3-P1: RUN_ENDED 전 structuredMemory 통합 (go_hub 없이 런 종료 시 누락 방지)
+    try {
+      const locMemEnd = await this.memoryIntegration.finalizeVisit(
+        run.id,
+        currentNode.id,
+        postTickRunState,
+        turnNo,
+      );
+      if (locMemEnd) postTickRunState.locationMemories = locMemEnd;
+    } catch {
+      /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */
+    }
+
+    // [arch/89 B′] 정산 트리거 ③ — 런 종료. 미수령분이 사장되지 않도록
+    // 마지막에 정산한다(여정 아카이브 최종 골드 정합).
+    const endSettlement = this.settlePendingQuestReward({
+      runState: postTickRunState,
+      turnNo,
+      rng,
+      locationId,
+      source: 'RUN_END',
+    });
+    if (endSettlement) {
+      result.events.push(
+        ...this.buildSettlementEvents(turnNo, endSettlement, 'CLOSED'),
+      );
+      result.diff.inventory.goldDelta += endSettlement.gold;
+    }
+
+    // 엔딩 생성
+    // User-Driven System v3: playerThreads를 엔딩 입력에 전달
+    const endingThreads = (endWs.playerThreads ?? []).map((t) => ({
+      approachVector: t.approachVector,
+      goalCategory: t.goalCategory,
+      actionCount: t.actionCount,
+      successCount: t.successCount,
+      status: t.status,
+    }));
+    const endingInput = this.endingGenerator.gatherEndingInputs(
+      endWs.activeIncidents ?? [],
+      postTickRunState.npcStates ?? {},
+      endWs.narrativeMarks ?? [],
+      endWs as unknown as Record<string, unknown>,
+      postTickRunState.arcState ?? null,
+      postTickRunState.actionHistory ?? [],
+      endingThreads,
+    );
+    const endingResult = this.endingGenerator.generateEnding(
+      endingInput,
+      endReason as Parameters<EndingGeneratorService['generateEnding']>[1],
+      turnNo,
+    );
+
+    // [P5 — 75 §6] AUTONOMOUS: 규명율×게이지 → endingTone 오버레이.
+    // truth 불변(신규 불변식 A) — 엔딩은 "얼마나 규명했나"만 반영, 진상은 안 바꾼다.
+    if (autonomousClearance !== null && updatedRunState.plotSeed) {
+      const band = clearanceBand(autonomousClearance);
+      const tone = selectEndingTone(
+        band,
+        autonomousGaugeEnd,
+        this.content.getScenarioMeta()?.endingTones,
+      );
+      const er = endingResult as unknown as Record<string, unknown>;
+      er.endingType = tone.endingType;
+      er.closingLine = tone.tone;
+      er.clearanceRate = autonomousClearance;
+      er.clearanceBand = band;
+      this.logger.log(
+        `[PlotEnding] endingTone=${tone.endingType} band=${band} gaugeEnd=${autonomousGaugeEnd}`,
+      );
+    }
+
+    // 엔딩 결과를 UI + 이벤트에 노출 (commitTurnRecord 이전에 수행)
+    result.ui.endingResult = endingResult;
+    result.events.push({
+      id: `ending_${turnNo}`,
+      kind: 'SYSTEM',
+      text: `[엔딩] ${endingResult.closingLine}`,
+      tags: ['RUN_ENDED'],
+      data: { endingResult },
+    });
+
+    // Journey Archive Phase 1: EndingSummary 조립 (템플릿 기반, 실패해도 엔딩 진행)
+    let endingSummary: ReturnType<
+      SummaryBuilderService['buildEndingSummary']
+    > | null = null;
+    try {
+      const now = new Date();
+      endingSummary = this.summaryBuilder.buildEndingSummary(
+        {
+          id: run.id,
+          presetId: run.presetId ?? null,
+          gender: (run.gender as 'male' | 'female' | null) ?? null,
+          updatedAt: now,
+          currentTurnNo: turnNo,
+        },
+        postTickRunState,
+        endingResult,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `EndingSummary build failed (NATURAL/DEADLINE) runId=${run.id}: ${String(e)}`,
+      );
+    }
+
+    await this.turnShared.commitTurnRecord(
       run,
       currentNode,
       turnNo,
       body,
       rawInput,
-      battleState,
-      playerStats,
-    } = params;
-    let parsedIntent: ParsedIntent | undefined;
-    let actionPlan: ActionPlan | undefined;
-    let policyResult: 'ALLOW' | 'TRANSFORM' | 'PARTIAL' | 'DENY' = 'ALLOW';
-    let transformedIntent: ParsedIntent | undefined;
-    // [arch/76 후속] 기만 전술 의미 단서 — resolve 후 serverResult.ui에 부착
-    let combatAppraisalNote: string | null = null;
+      result,
+      postTickRunState,
+      body.options?.skipLlm,
+      intent,
+    );
 
-    if (body.input.type === 'ACTION') {
-      parsedIntent = this.ruleParser.parse(rawInput);
-      const policyCheck = this.policyService.check(
-        parsedIntent,
-        currentNode.nodeType,
-        currentNode.status as 'NODE_ACTIVE' | 'NODE_ENDED',
-        battleState.player?.stamina ?? playerStats.maxStamina,
-      );
-      policyResult = policyCheck.result;
-      if (policyCheck.transformedIntents)
-        transformedIntent = policyCheck.transformedIntents;
-
-      if (policyResult === 'DENY') {
-        const denyResult = this.buildDenyResult(
-          turnNo,
-          currentNode,
-          policyCheck.reason ?? 'Policy denied',
-        );
-        const denyResponse = await this.commitCombatTurn(
-          run,
-          currentNode,
-          turnNo,
-          body,
-          rawInput,
-          parsedIntent,
-          policyResult,
-          transformedIntent,
-          undefined,
-          denyResult,
-          battleState,
-          body.options?.skipLlm,
-        );
-        return { denyResponse } as const;
-      }
-
-      const effectiveIntent = transformedIntent ?? parsedIntent;
-      actionPlan = this.actionPlanService.buildPlan(
-        effectiveIntent,
-        policyResult,
-        battleState.player?.stamina ?? playerStats.maxStamina,
-      );
-
-      // 창의 전투 Tier 1~5 분류 (architecture/41)
-      const propMatch = this.propMatcher.classify(
-        rawInput,
-        battleState.environmentProps ?? [],
-      );
-      actionPlan.tier = propMatch.tier;
-      if (propMatch.prop) actionPlan.prop = propMatch.prop;
-      if (propMatch.improvised) actionPlan.improvised = propMatch.improvised;
-      if (propMatch.flags) actionPlan.flags = propMatch.flags;
-      // Tier 4/5 — 성향 추적 제외
-      if (propMatch.tier >= 4) {
-        actionPlan.excludeFromArcRoute = true;
-        actionPlan.excludeFromCommitment = true;
-      }
-
-      // [arch/76 D3-b′-combat] 기만·전술 감정 — 창의 입력(Tier 3/4)만 nano 1콜.
-      // Tier 1/2(프롭·카테고리 매칭)는 이미 기계 효과 보유, CHOICE 버튼 전투는
-      // 이 분기에 오지 않음 — 평타 템포 보호. 효과 수치는 서버 매핑(불변식 1).
-      if (
-        (propMatch.tier === 3 || propMatch.tier === 4) &&
-        rawInput.trim().length >= 10 &&
-        this.challengeClassifier
-      ) {
-        const aliveEnemies = battleState.enemies.filter((e) => e.hp > 0);
-        const appraisal = await this.challengeClassifier.appraiseCombatTactic({
-          rawInput,
-          enemySummary:
-            aliveEnemies
-              .map((e) => `${e.name ?? e.id}(${e.personality})`)
-              .join(', ') || '없음',
-        });
-        if (appraisal) {
-          const effects = computeTacticEffects(
-            appraisal.tactic,
-            battleState.enemies,
-            battleState.usedTactics ?? [],
-          );
-          actionPlan.tactical = effects;
-          if (!effects.reused) {
-            battleState.usedTactics = [
-              ...(battleState.usedTactics ?? []),
-              appraisal.tactic,
-            ];
-          }
-          this.logger.log(
-            `[CombatTactic] ${appraisal.tactic} flee+${effects.fleeBonus} debuff=${Object.keys(effects.accDebuff).length}적 hit+${effects.playerHitBonus}${effects.reused ? ' (재사용 — 효과 0)' : ''}`,
-          );
-          // [arch/76 후속] 의미 단서 — prompt-builder 답변 가이드가 소비하는
-          // appraisalNote(LOCATION nano reason과 동일 채널)에 기만 성격 전달.
-          combatAppraisalNote = `상대를 속이기 위한 ${appraisal.reason || '기만 행동'} — 발화·동작의 내용은 실제가 아니다`;
-        }
-      }
-    }
-
-    if (body.input.type === 'CHOICE' && body.input.choiceId) {
-      actionPlan = this.mapCombatChoiceToActionPlan(body.input.choiceId);
-    }
-
-    return {
-      denyResponse: null,
-      parsedIntent,
-      actionPlan,
-      policyResult,
-      transformedIntent,
-      combatAppraisalNote,
-    };
-  }
-
-  // [arch/77 C3] 적 정의(콘텐츠)에서 전투용 PermanentStats·표시명 로드.
-  private loadEnemyStatsForBattle(battleState: BattleStateV1): {
-    enemyStats: Record<string, PermanentStats>;
-    enemyNames: Record<string, string>;
-  } {
-    const enemyStats: Record<string, PermanentStats> = {};
-    const enemyNames: Record<string, string> = {};
-    for (const e of battleState.enemies) {
-      const enemyRef = e.id.replace(/_\d+$/, '');
-      const def = this.content.getEnemy(enemyRef);
-      if (def) {
-        const es = def.stats as Record<string, number>;
-        enemyStats[e.id] = {
-          maxHP: def.hp,
-          maxStamina: 5,
-          str: es.str ?? es.ATK ?? 10,
-          dex: es.dex ?? es.EVA ?? 8,
-          wit: es.wit ?? es.ACC ?? 6,
-          con: es.con ?? es.DEF ?? 10,
-          per: es.per ?? 6,
-          cha: es.cha ?? es.SPEED ?? 5,
-        };
-        enemyNames[e.id] = def.name;
-      }
-    }
-    return { enemyStats, enemyNames };
-  }
-
-  // [arch/77 C4] Phase 4a: 전투 승리 시 장비 드랍 — 시드 결정론(run.seed+_eqdrop)
-  // 유지, updatedRunState.equipmentBag·serverResult events/diff 제자리 변조.
-  private applyCombatVictoryDrops(
-    run: any,
-    currentNode: any,
-    turnNo: number,
-    resolveResult: ReturnType<NodeResolverService['resolve']>,
-    updatedRunState: RunState,
-  ): void {
-    // Phase 4a: 전투 승리 시 장비 드랍
-    if (resolveResult.combatOutcome === 'VICTORY') {
-      const locationId =
-        updatedRunState.worldState?.currentLocationId ??
-        this.content.getHubMeta().defaultLocationId;
-      const encounterEnc = currentNode.nodeMeta?.encounterId as
-        | string
-        | undefined;
-      const isBoss = !!currentNode.nodeMeta?.isBoss;
-      const enemyIds = Object.keys(
-        resolveResult.nextBattleState?.enemies ?? {},
-      );
-      const combatDropRng = this.rngService.create(
-        run.seed + '_eqdrop',
-        turnNo,
-      );
-      const equipDrop = this.rewardsService.rollCombatEquipmentDrops(
-        enemyIds,
-        encounterEnc,
-        isBoss,
-        locationId,
-        combatDropRng,
-      );
-      if (equipDrop.droppedInstances.length > 0) {
-        if (!updatedRunState.equipmentBag) updatedRunState.equipmentBag = [];
-        const combatEquipAdded: import('../db/types/equipment.js').ItemInstance[] =
-          [];
-        const acquiredFrom = isBoss ? '보스전 드랍' : '전투 보상';
-        for (const inst of equipDrop.droppedInstances) {
-          updatedRunState.equipmentBag.push(inst);
-          combatEquipAdded.push(inst);
-          // Phase 3: ItemMemory — 전투 장비 드랍 기록
-          this.recordItemMemory(
-            updatedRunState,
-            inst,
-            turnNo,
-            acquiredFrom,
-            locationId,
-          );
-          resolveResult.serverResult.events.push({
-            id: `eq_drop_${inst.instanceId.slice(0, 8)}`,
-            kind: 'LOOT',
-            text: `[장비] ${inst.displayName} 획득`,
-            tags: ['LOOT', 'EQUIPMENT_DROP'],
-            data: {
-              baseItemId: inst.baseItemId,
-              instanceId: inst.instanceId,
-              displayName: inst.displayName,
-            },
-          });
-        }
-        resolveResult.serverResult.diff.equipmentAdded = combatEquipAdded;
-      }
-    }
-  }
-
-  // [arch/77 C5] 전투 패배 → RUN_ENDED: 메모리 통합 + 엔딩 생성 + Journey
-  // summary + 캠페인 결과 저장. response(serverResult ui/events/meta) 제자리 변조.
-  private async handleCombatDefeatEnding(
-    run: any,
-    currentNode: any,
-    turnNo: number,
-    updatedRunState: RunState,
-    ws: WorldState,
-    response: unknown,
-  ): Promise<void> {
-    // structuredMemory 통합
-    try {
-      const locMemDefeat = await this.memoryIntegration.finalizeVisit(
-        run.id,
-        currentNode.id,
-        updatedRunState,
-        turnNo,
-      );
-      if (locMemDefeat) updatedRunState.locationMemories = locMemDefeat;
-    } catch {
-      /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */
-    }
-
-    // 패배 엔딩 생성
-    let endingSummaryCombat: ReturnType<
-      SummaryBuilderService['buildEndingSummary']
-    > | null = null;
-    try {
-      const endingThreads = (ws.playerThreads ?? []).map((t) => ({
-        approachVector: t.approachVector,
-        goalCategory: t.goalCategory,
-        actionCount: t.actionCount,
-        successCount: t.successCount,
-        status: t.status,
-      }));
-      const endingInput = this.endingGenerator.gatherEndingInputs(
-        ws.activeIncidents ?? [],
-        updatedRunState.npcStates ?? {},
-        ws.narrativeMarks ?? [],
-        ws as unknown as Record<string, unknown>,
-        updatedRunState.arcState ?? null,
-        updatedRunState.actionHistory ?? [],
-        endingThreads,
-      );
-      const endingResult = this.endingGenerator.generateEnding(
-        endingInput,
-        'DEFEAT',
-        turnNo,
-      );
-      const sr = (response as any).serverResult;
-      sr.ui = sr.ui ?? {};
-      sr.ui.endingResult = endingResult;
-      sr.events.push({
-        id: `ending_${turnNo}`,
-        kind: 'SYSTEM',
-        text: `[엔딩] ${endingResult.closingLine}`,
-        tags: ['RUN_ENDED'],
-        data: { endingResult },
-      });
-      // Journey Archive: summary 조립
-      try {
-        endingSummaryCombat = this.summaryBuilder.buildEndingSummary(
-          {
-            id: run.id,
-            presetId: run.presetId ?? null,
-            gender: (run.gender as 'male' | 'female' | null) ?? null,
-            updatedAt: new Date(),
-            currentTurnNo: turnNo,
-          },
-          updatedRunState,
-          endingResult,
-        );
-      } catch (se) {
-        this.logger.warn(
-          `EndingSummary build failed (COMBAT DEFEAT) runId=${run.id}: ${String(se)}`,
-        );
-      }
-    } catch (e) {
-      this.logger.warn(`DEFEAT ending generation failed: ${e}`);
-    }
-
+    // RUN_ENDED로 상태 변경 + Campaign 저장 (commit 후 side-effect만 남김)
     await this.db
       .update(runSessions)
       .set({
         status: 'RUN_ENDED',
         updatedAt: new Date(),
-        ...(endingSummaryCombat ? { endingSummary: endingSummaryCombat } : {}),
+        ...(endingSummary ? { endingSummary } : {}),
       })
       .where(eq(runSessions.id, run.id));
-
-    // Campaign: 시나리오 결과 저장
-    await this.saveCampaignResultIfNeeded(run.id);
-
-    (response as any).meta.nodeOutcome = 'RUN_ENDED';
-  }
-
-  private async handleCombatTurn(
-    run: any,
-    currentNode: any,
-    turnNo: number,
-    body: SubmitTurnBody,
-    runState: RunState,
-    playerStats: PermanentStats,
-  ) {
-    // BattleState 조회
-    const bs = await this.db.query.battleStates.findFirst({
-      where: and(
-        eq(battleStates.runId, run.id),
-        eq(battleStates.nodeInstanceId, currentNode.id),
-      ),
-    });
-    const battleState = bs?.state ?? null;
-    if (!battleState)
-      throw new InternalError('BattleState not found for COMBAT node');
-
-    // 입력 파이프라인 (기존 로직 재사용)
-    let rawInput = body.input.text ?? body.input.choiceId ?? '';
-    if (body.input.type === 'CHOICE' && body.input.choiceId) {
-      const prevTurn = await this.db.query.turns.findFirst({
-        where: and(
-          eq(turns.runId, run.id),
-          eq(turns.turnNo, run.currentTurnNo),
-        ),
-        columns: { serverResult: true },
-      });
-      const prevChoices = (prevTurn?.serverResult as ServerResultV1 | null)
-        ?.choices;
-      const matched = prevChoices?.find((c) => c.id === body.input.choiceId);
-      if (matched) rawInput = matched.label;
-    }
-
-    // [arch/77 C2] 전투 입력 파이프라인 — buildCombatActionPlan으로 추출.
-    // 파싱→정책(DENY 조기 커밋 포함)→플랜→PropMatch Tier→기만 전술 nano.
-    // battleState.usedTactics는 제자리 변조 유지.
-    const inputOutcome = await this.buildCombatActionPlan({
-      run,
-      currentNode,
-      turnNo,
-      body,
-      rawInput,
-      battleState,
-      playerStats,
-    });
-    if (inputOutcome.denyResponse) return inputOutcome.denyResponse;
-    const {
-      parsedIntent,
-      policyResult,
-      transformedIntent,
-      combatAppraisalNote,
-    } = inputOutcome;
-    const actionPlan = inputOutcome.actionPlan;
-
-    // [arch/77 C3] 적 스탯 로드 — loadEnemyStatsForBattle로 추출.
-    const { enemyStats, enemyNames } =
-      this.loadEnemyStatsForBattle(battleState);
-
-    // ⚠️ [COMBAT 경로] — 위 DAG 노드 경로(handleDagNodeTurn)에 유사 블록이
-    // 하나 더 있다. 편집 전 어느 경로인지 확인할 것 (arch/77 P3.X 오배치 방지).
-    const resolveResult = this.nodeResolver.resolve({
-      turnNo,
-      nodeId: currentNode.id,
-      nodeIndex: currentNode.nodeIndex,
-      nodeType: 'COMBAT',
-      nodeMeta: currentNode.nodeMeta ?? undefined,
-      envTags: currentNode.environmentTags ?? [],
-      inputType: body.input.type,
-      rawInput,
-      choiceId: body.input.choiceId,
-      actionPlan,
-      battleState,
-      playerStats,
-      enemyStats: Object.keys(enemyStats).length > 0 ? enemyStats : undefined,
-      enemyNames: Object.keys(enemyNames).length > 0 ? enemyNames : undefined,
-      rewardSeed: `${run.seed}_t${turnNo}`,
-      playerHp: battleState.player?.hp ?? runState.hp,
-      playerMaxHp: runState.maxHp,
-      playerStamina: battleState.player?.stamina ?? runState.stamina,
-      playerMaxStamina: runState.maxStamina,
-      playerGold: runState.gold,
-      inventory: runState.inventory,
-      inventoryCount: runState.inventory.length,
-      inventoryMax: InventoryService.DEFAULT_MAX_SLOTS,
-      nodeState: currentNode.nodeState ?? undefined,
-      traitEffects: runState.traitEffects,
-    });
-
-    // [arch/76 후속] 기만 전술 의미 단서 → prompt-builder 답변 가이드 채널
-    // (LOCATION nano appraisalNote와 동일 소비처 — ui.actionContext)
-    if (combatAppraisalNote) {
-      const srUi = resolveResult.serverResult as unknown as {
-        ui?: Record<string, unknown>;
-      };
-      srUi.ui = srUi.ui ?? {};
-      srUi.ui.actionContext = {
-        ...((srUi.ui.actionContext as Record<string, unknown>) ?? {}),
-        appraisalNote: combatAppraisalNote,
-      };
-    }
-
-    // runState 업데이트
-    const updatedRunState: RunState = { ...runState };
-    const goldDelta =
-      resolveResult.goldDelta ??
-      resolveResult.serverResult.diff.inventory.goldDelta ??
-      0;
-    updatedRunState.gold = Math.max(0, updatedRunState.gold + goldDelta);
-    if (resolveResult.nextBattleState?.player) {
-      updatedRunState.hp = resolveResult.nextBattleState.player.hp;
-      updatedRunState.stamina = resolveResult.nextBattleState.player.stamina;
-    }
-    for (const added of resolveResult.serverResult.diff.inventory.itemsAdded ??
-      []) {
-      mergeInventoryItem(updatedRunState.inventory, added.itemId, added.qty);
-    }
-
-    // [arch/77 C4] 전투 승리 장비 드랍 — applyCombatVictoryDrops로 추출.
-    // updatedRunState(equipmentBag)·resolveResult.serverResult(events/diff) 제자리 변조.
-    this.applyCombatVictoryDrops(
-      run,
-      currentNode,
-      turnNo,
-      resolveResult,
-      updatedRunState,
-    );
-
-    const response = await this.commitCombatTurn(
-      run,
-      currentNode,
-      turnNo,
-      body,
-      rawInput,
-      parsedIntent,
-      policyResult,
-      transformedIntent,
-      actionPlan ? [actionPlan] : undefined,
-      resolveResult.serverResult,
-      resolveResult.nextBattleState ?? battleState,
-      body.options?.skipLlm,
-      resolveResult.nodeOutcome,
-      resolveResult.nextNodeState,
-      updatedRunState,
-    );
-
-    // 전투 종료 처리 (VICTORY/DEFEAT/FLEE)
-    if (resolveResult.nodeOutcome === 'NODE_ENDED') {
-      const ws =
-        updatedRunState.worldState ?? this.worldStateService.initWorldState();
-      const _arcState =
-        updatedRunState.arcState ?? this.arcService.initArcState();
-
-      // [arch/77 C5] 패배 → RUN_ENDED + 엔딩 생성 — handleCombatDefeatEnding.
-      // response(serverResult ui/events/meta) 제자리 변조 + DB 커밋 포함.
-      if (resolveResult.combatOutcome === 'DEFEAT') {
-        await this.handleCombatDefeatEnding(
-          run,
-          currentNode,
-          turnNo,
-          updatedRunState,
-          ws,
-          response,
-        );
-        return response;
-      }
-
-      // DAG 모드: 승리/도주 → 다음 그래프 노드로 전환
-      if (run.currentGraphNodeId) {
-        const dagRouteContext: import('../db/types/index.js').RouteContext = {
-          combatOutcome: resolveResult.combatOutcome,
-          routeTag: run.routeTag ?? undefined,
-          randomSeed: this.rngService.create(run.seed, turnNo + 1).next(),
-        };
-
-        const dagTransition = await this.nodeTransition.transitionByGraphNode(
-          run.id,
-          run.currentGraphNodeId,
-          dagRouteContext,
-          turnNo + 1,
-          ws,
-          updatedRunState.hp,
-          updatedRunState.stamina,
-          run.seed,
-        );
-
-        if (!dagTransition || dagTransition.nextNodeType === 'EXIT') {
-          // 그래프 종료 → RUN_ENDED
-          try {
-            const locMemDag = await this.memoryIntegration.finalizeVisit(
-              run.id,
-              currentNode.id,
-              updatedRunState,
-              turnNo,
-            );
-            if (locMemDag) updatedRunState.locationMemories = locMemDag;
-          } catch {
-            /* 메모리 통합 실패는 엔딩 생성에 영향 없음 */
-          }
-          await this.db
-            .update(runSessions)
-            .set({ status: 'RUN_ENDED', updatedAt: new Date() })
-            .where(eq(runSessions.id, run.id));
-          await this.saveCampaignResultIfNeeded(run.id);
-          (response as any).meta.nodeOutcome = 'RUN_ENDED';
-          if (dagTransition) {
-            (response as any).transition = {
-              nextNodeIndex: dagTransition.nextNodeIndex,
-              nextNodeType: dagTransition.nextNodeType,
-              enterResult: dagTransition.enterResult,
-              battleState: null,
-              enterTurnNo: turnNo + 1,
-            };
-          }
-          return response;
-        }
-
-        dagTransition.enterResult.turnNo = turnNo + 1;
-        await this.db.insert(turns).values({
-          runId: run.id,
-          turnNo: turnNo + 1,
-          nodeInstanceId: dagTransition.enterResult.node.id,
-          nodeType: dagTransition.nextNodeType,
-          inputType: 'SYSTEM',
-          rawInput: '',
-          idempotencyKey: `${run.id}_dag_${dagTransition.nextNodeIndex}`,
-          chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
-          parsedBy: null,
-          confidence: null,
-          parsedIntent: null,
-          policyResult: 'ALLOW',
-          transformedIntent: null,
-          actionPlan: null,
-          serverResult: dagTransition.enterResult,
-          llmStatus: 'PENDING',
-        });
-        await this.db
-          .update(runSessions)
-          .set({
-            currentTurnNo: turnNo + 1,
-            runState: updatedRunState,
-            updatedAt: new Date(),
-          })
-          .where(eq(runSessions.id, run.id));
-
-        (response as any).transition = {
-          nextNodeIndex: dagTransition.nextNodeIndex,
-          nextNodeType: dagTransition.nextNodeType,
-          enterResult: dagTransition.enterResult,
-          battleState: dagTransition.battleState ?? null,
-          enterTurnNo: turnNo + 1,
-        };
-      } else {
-        // HUB 모드: 승리/도주 → 부모 LOCATION 복귀
-        const parentNodeId =
-          currentNode.parentNodeInstanceId ??
-          currentNode.nodeState?.parentNodeId;
-        if (parentNodeId) {
-          // 부모 노드의 index 찾기
-          const parentNode = await this.db.query.nodeInstances.findFirst({
-            where: eq(nodeInstances.id, parentNodeId),
-          });
-          const parentNodeIndex =
-            parentNode?.nodeIndex ?? currentNode.nodeIndex - 1;
-          const locationId =
-            ws.currentLocationId ?? this.content.getHubMeta().defaultLocationId;
-
-          // Heat 반영 (combatWindowCount는 전투 시작 시 이미 증가됨 — 중복 증가 방지)
-          const newWs = this.heatService.applyHeatDelta(ws, 3);
-          updatedRunState.worldState =
-            this.worldStateService.updateHubSafety(newWs);
-
-          const transition = await this.nodeTransition.returnFromCombat(
-            run.id,
-            parentNodeIndex,
-            turnNo + 1,
-            locationId,
-            updatedRunState.worldState,
-          );
-          transition.enterResult.turnNo = turnNo + 1;
-          await this.db.insert(turns).values({
-            runId: run.id,
-            turnNo: turnNo + 1,
-            nodeInstanceId: transition.enterResult.node.id,
-            nodeType: 'LOCATION',
-            inputType: 'SYSTEM',
-            rawInput: '',
-            idempotencyKey: `${run.id}_return_${turnNo + 1}`,
-            chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
-            parsedBy: null,
-            confidence: null,
-            parsedIntent: null,
-            policyResult: 'ALLOW',
-            transformedIntent: null,
-            actionPlan: null,
-            serverResult: transition.enterResult,
-            llmStatus: 'PENDING',
-          });
-          await this.db
-            .update(runSessions)
-            .set({
-              currentTurnNo: turnNo + 1,
-              runState: updatedRunState,
-              updatedAt: new Date(),
-            })
-            .where(eq(runSessions.id, run.id));
-
-          (response as any).transition = {
-            nextNodeIndex: transition.nextNodeIndex,
-            nextNodeType: 'LOCATION',
-            enterResult: transition.enterResult,
-            battleState: null,
-            enterTurnNo: turnNo + 1,
-          };
-        }
-      }
-    }
-
-    return response;
-  }
-
-  // --- Helper: 전투 턴 커밋 ---
-  private async commitCombatTurn(
-    run: any,
-    currentNode: any,
-    turnNo: number,
-    body: SubmitTurnBody,
-    rawInput: string,
-    parsedIntent: ParsedIntent | undefined,
-    policyResult: string,
-    transformedIntent: ParsedIntent | undefined,
-    actionPlan: ActionPlan[] | undefined,
-    serverResult: ServerResultV1,
-    nextBattleState: BattleStateV1 | null | undefined,
-    skipLlm: boolean | undefined,
-    nodeOutcome?: string,
-    nextNodeState?: Record<string, unknown>,
-    runStateUpdate?: RunState,
-  ) {
-    const llmStatus: LlmStatus = skipLlm ? 'SKIPPED' : 'PENDING';
-
-    await this.db.transaction(async (tx) => {
-      await tx.insert(turns).values({
-        runId: run.id,
-        turnNo,
-        nodeInstanceId: currentNode.id,
-        nodeType: currentNode.nodeType as NodeType,
-        inputType: body.input.type,
-        rawInput,
-        idempotencyKey: body.idempotencyKey,
-        parsedBy: parsedIntent?.source ?? null,
-        confidence: parsedIntent?.confidence ?? null,
-        parsedIntent: parsedIntent ?? null,
-        policyResult: policyResult as any,
-        transformedIntent: transformedIntent ?? null,
-        actionPlan: actionPlan ?? null,
-        serverResult,
-        llmStatus,
-      });
-
-      await tx
-        .update(runSessions)
-        .set({
-          currentTurnNo: turnNo,
-          updatedAt: new Date(),
-          ...(nodeOutcome === 'RUN_ENDED' ? { status: 'RUN_ENDED' } : {}),
-          ...(runStateUpdate ? { runState: runStateUpdate } : {}),
-        })
-        .where(eq(runSessions.id, run.id));
-
-      if (nodeOutcome === 'NODE_ENDED' || nodeOutcome === 'RUN_ENDED') {
-        await tx
-          .update(nodeInstances)
-          .set({
-            status: 'NODE_ENDED',
-            nodeState: nextNodeState ?? null,
-            updatedAt: new Date(),
-          })
-          .where(eq(nodeInstances.id, currentNode.id));
-      } else if (nextNodeState) {
-        await tx
-          .update(nodeInstances)
-          .set({ nodeState: nextNodeState, updatedAt: new Date() })
-          .where(eq(nodeInstances.id, currentNode.id));
-      }
-
-      if (nextBattleState && currentNode.nodeType === 'COMBAT') {
-        await tx
-          .update(battleStates)
-          .set({ state: nextBattleState, updatedAt: new Date() })
-          .where(
-            and(
-              eq(battleStates.runId, run.id),
-              eq(battleStates.nodeInstanceId, currentNode.id),
-            ),
-          );
-      }
-    });
+    await this.turnShared.saveCampaignResultIfNeeded(run.id);
 
     return {
       accepted: true,
       turnNo,
-      serverResult,
-      llm: { status: llmStatus, narrative: null },
-      meta: { nodeOutcome: nodeOutcome ?? 'ONGOING', policyResult },
+      serverResult: result,
+      llm: {
+        status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus,
+        narrative: null,
+      },
+      meta: { nodeOutcome: 'RUN_ENDED', policyResult: 'ALLOW' },
     };
-  }
-
-  // --- Helper: 일반 턴 레코드 커밋 ---
-  private async commitTurnRecord(
-    run: any,
-    currentNode: any,
-    turnNo: number,
-    body: SubmitTurnBody,
-    rawInput: string,
-    serverResult: ServerResultV1,
-    runStateUpdate: RunState,
-    skipLlm?: boolean,
-    intent?: Record<string, unknown> | null,
-  ) {
-    const llmStatus: LlmStatus = skipLlm ? 'SKIPPED' : 'PENDING';
-    await this.db.insert(turns).values({
-      chargeKey: body.idempotencyKey, // arch/85 — D5 환불 키
-      runId: run.id,
-      turnNo,
-      nodeInstanceId: currentNode.id,
-      nodeType: currentNode.nodeType as NodeType,
-      inputType: body.input.type,
-      rawInput,
-      idempotencyKey: body.idempotencyKey,
-      parsedBy: (intent?.source as any) ?? null,
-      confidence: (intent?.confidence as number) ?? null,
-      parsedIntent: (intent as any) ?? null,
-      policyResult: 'ALLOW',
-      transformedIntent: null,
-      actionPlan: null,
-      serverResult,
-      llmStatus,
-    });
-    // [P8 실측 수정 — arch/75 §19.4] AUTONOMOUS 런: 전체 되쓰기가 워커 소유
-    // 필드를 클로버하는 레이스 차단. 동기 커밋의 runState는 제출 시점 스냅샷이라,
-    // 그 사이 워커가 쓴 nextBeatCandidates(비트 선계산)·plotSeed(비동기 동결)를
-    // 낡은 값으로 되돌린다 (빠른 페이스에서 거의 매 턴 — beatAge 고착 실측).
-    // DB 수준 병합: 두 필드는 DB 현재값을 보존한다. 예외 — 이번 턴에 비트를
-    // 채택(소비)했으면 nextBeatCandidates는 payload(null)가 정본.
-    const isAutonomousCommit = this.content.getNarrativeMode() === 'AUTONOMOUS';
-    if (isAutonomousCommit) {
-      const beatConsumedThisTurn =
-        runStateUpdate.plotProgress?.lastAdoptedBeatTurn === turnNo;
-      const payloadJson = JSON.stringify(runStateUpdate);
-      const seedMerged = sql`jsonb_set(${payloadJson}::jsonb, '{plotSeed}', COALESCE(${runSessions.runState}->'plotSeed', (${payloadJson}::jsonb)->'plotSeed', 'null'::jsonb), true)`;
-      const runStateExpr = beatConsumedThisTurn
-        ? seedMerged
-        : sql`jsonb_set(${seedMerged}, '{nextBeatCandidates}', COALESCE(${runSessions.runState}->'nextBeatCandidates', (${payloadJson}::jsonb)->'nextBeatCandidates', 'null'::jsonb), true)`;
-      await this.db
-        .update(runSessions)
-        .set({
-          currentTurnNo: turnNo,
-          runState: runStateExpr as never,
-          updatedAt: new Date(),
-        })
-        .where(eq(runSessions.id, run.id));
-    } else {
-      await this.db
-        .update(runSessions)
-        .set({
-          currentTurnNo: turnNo,
-          runState: runStateUpdate,
-          updatedAt: new Date(),
-        })
-        .where(eq(runSessions.id, run.id));
-    }
-    // 레이턴시 #3 — PENDING 턴 커밋 직후 워커 즉시 킥 (평균 ~0.5초 폴링 대기 제거)
-    if (llmStatus === 'PENDING') {
-      this.llmWorker?.wake();
-    }
-  }
-
-  // --- Result builders ---
-  private buildSystemResult(
-    turnNo: number,
-    node: any,
-    text: string,
-  ): ServerResultV1 {
-    return {
-      version: 'server_result_v1',
-      turnNo,
-      node: {
-        id: node.id,
-        type: node.nodeType,
-        index: node.nodeIndex,
-        state: 'NODE_ACTIVE',
-      },
-      summary: { short: text, display: text },
-      events: [{ id: `sys_${turnNo}`, kind: 'SYSTEM', text, tags: [] }],
-      diff: {
-        player: {
-          hp: { from: 0, to: 0, delta: 0 },
-          stamina: { from: 0, to: 0, delta: 0 },
-          status: [],
-        },
-        enemies: [],
-        inventory: { itemsAdded: [], itemsRemoved: [], goldDelta: 0 },
-        meta: { battle: { phase: 'NONE' }, position: { env: [] } },
-      },
-      ui: {
-        availableActions: [],
-        targetLabels: [],
-        actionSlots: { base: 2, bonusAvailable: false, max: 3 },
-        toneHint: 'neutral',
-      },
-      choices: [],
-      flags: { bonusSlot: false, downed: false, battleEnded: false },
-    };
-  }
-
-  private buildHubActionResult(
-    turnNo: number,
-    node: any,
-    text: string,
-    choices: ServerResultV1['choices'],
-    ws: WorldState,
-    runState?: RunState,
-  ): ServerResultV1 {
-    const result: ServerResultV1 = {
-      ...this.buildSystemResult(turnNo, node, text),
-      ui: {
-        availableActions: ['CHOICE'],
-        targetLabels: [],
-        actionSlots: { base: 2, bonusAvailable: false, max: 3 },
-        toneHint: 'neutral',
-        worldState: {
-          hubHeat: ws.hubHeat,
-          hubSafety: ws.hubSafety,
-          timePhase: ws.timePhase,
-          phaseV2: ws.phaseV2,
-          day: ws.day,
-          currentLocationId: null,
-          locationDynamicStates: ws.locationDynamicStates ?? {},
-          playerGoals: (ws.playerGoals ?? []).filter((g) => !g.completed),
-          reputation: ws.reputation ?? {},
-          packMeters: buildPackMetersUI(
-            ws.packMeters,
-            this.content.getScenarioMeta()?.meters,
-          ),
-        },
-      },
-      choices,
-    };
-    // [arch/99] HUB 턴에도 퀘스트탭 번들 부착 — arc_commit 직후 노선 스테일 방지
-    if (runState) {
-      this.attachQuestUiBundle(result, runState, ws);
-    }
-    return result;
   }
 
   /**
@@ -8056,7 +6072,7 @@ export class TurnsService {
       if (!runState.equipmentBag) runState.equipmentBag = [];
       runState.equipmentBag.push(inst);
       instances.push(inst);
-      this.recordItemMemory(
+      this.turnShared.recordItemMemory(
         runState,
         inst,
         turnNo,
@@ -8078,31 +6094,6 @@ export class TurnsService {
       gold: pending.gold,
       instances,
       clientName: this.questProgression?.getQuestClientDisplayName() ?? null,
-    };
-  }
-
-  /**
-   * Phase 3: ItemMemory — RARE 이상 장비 획득 시 아이템 기록 생성.
-   * COMMON 아이템은 기록하지 않음.
-   */
-  private recordItemMemory(
-    runState: RunState,
-    inst: import('../db/types/equipment.js').ItemInstance,
-    turnNo: number,
-    acquiredFrom: string,
-    locationId: string,
-  ): void {
-    const itemDef = this.content.getItem(inst.baseItemId);
-    const rarity = itemDef?.rarity ?? 'COMMON';
-    if (rarity === 'COMMON') return;
-
-    if (!runState.itemMemories) runState.itemMemories = {};
-    runState.itemMemories[inst.instanceId] = {
-      acquiredTurn: turnNo,
-      acquiredFrom,
-      acquiredLocation: locationId,
-      usedInEvents: [],
-      narrativeNote: itemDef?.narrativeTags?.[0] ?? '',
     };
   }
 
@@ -8257,12 +6248,12 @@ export class TurnsService {
 
     // 이동 턴 커밋
     const toName = this.content.getLocationDisplayName(toLocationId);
-    const moveResult = this.buildSystemResult(
+    const moveResult = this.turnShared.buildSystemResult(
       turnNo,
       currentNode,
       `${toName}${korParticleRo(toName)} 향한다.`,
     );
-    await this.commitTurnRecord(
+    await this.turnShared.commitTurnRecord(
       run,
       currentNode,
       turnNo,
@@ -8326,223 +6317,6 @@ export class TurnsService {
         battleState: null,
         enterTurnNo: turnNo + 1,
       },
-    };
-  }
-
-  /**
-   * Phase 4a: EQUIP/UNEQUIP 처리 — 장비 착용/해제 (주사위 판정 없음)
-   * - EQUIP: equipmentBag에서 아이템을 equipped 슬롯에 장착
-   * - UNEQUIP: equipped에서 equipmentBag으로 이동
-   * - 입력 텍스트 또는 choiceId에서 대상 아이템/슬롯 추출
-   */
-  private async handleEquipAction(
-    run: any,
-    currentNode: any,
-    turnNo: number,
-    body: any,
-    rawInput: string,
-    runState: RunState,
-    intent: any,
-  ) {
-    const equipped = runState.equipped ?? {};
-    const equipmentBag = [...(runState.equipmentBag ?? [])];
-
-    let summaryText = '';
-    const events: any[] = [];
-
-    if (intent.actionType === 'EQUIP') {
-      // 대상 아이템 탐색: choiceId(instanceId)로 먼저, 없으면 텍스트 매칭
-      const targetInstanceId = body.input.choiceId ?? null;
-      let targetInstance = targetInstanceId
-        ? equipmentBag.find((i) => i.instanceId === targetInstanceId)
-        : null;
-
-      // 텍스트 매칭: displayName 또는 baseItemId 일부 매칭
-      if (!targetInstance) {
-        const normalized = rawInput.toLowerCase();
-        targetInstance = equipmentBag.find(
-          (i) =>
-            normalized.includes(i.displayName.toLowerCase()) ||
-            normalized.includes(
-              (this.content.getItem(i.baseItemId)?.name ?? '').toLowerCase(),
-            ),
-        );
-      }
-
-      if (!targetInstance) {
-        // 가방에 장비가 있으면 첫 번째 아이템 자동 선택
-        if (equipmentBag.length > 0) {
-          targetInstance = equipmentBag[0];
-        } else {
-          const result = this.buildSystemResult(
-            turnNo,
-            currentNode,
-            '장착할 장비가 가방에 없다.',
-          );
-          await this.commitTurnRecord(
-            run,
-            currentNode,
-            turnNo,
-            body,
-            rawInput,
-            result,
-            runState,
-            true,
-          );
-          return {
-            accepted: true,
-            turnNo,
-            serverResult: result,
-            llm: { status: 'SKIPPED' as LlmStatus, narrative: null },
-            meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
-          };
-        }
-      }
-
-      // 장비 착용
-      const { equipped: newEquipped, unequippedInstance } =
-        this.equipmentService.equip(equipped, targetInstance);
-      const updatedBag = equipmentBag.filter(
-        (i) => i.instanceId !== targetInstance.instanceId,
-      );
-      if (unequippedInstance) {
-        updatedBag.push(unequippedInstance);
-      }
-
-      runState.equipped = newEquipped;
-      runState.equipmentBag = updatedBag;
-      summaryText = `${targetInstance.displayName}을(를) 장착했다.`;
-      if (unequippedInstance) {
-        summaryText += ` (${unequippedInstance.displayName} 해제)`;
-      }
-      events.push({
-        id: `equip_${turnNo}`,
-        kind: 'SYSTEM',
-        text: `[장비] ${summaryText}`,
-        tags: ['EQUIP'],
-        data: {
-          equipped: targetInstance.baseItemId,
-          unequipped: unequippedInstance?.baseItemId,
-        },
-      });
-    } else {
-      // UNEQUIP: 슬롯 이름 또는 아이템 이름으로 대상 탐색
-      const { EQUIPMENT_SLOTS } = await import('../db/types/equipment.js');
-      const normalized = rawInput.toLowerCase();
-      let targetSlot: string | null = null;
-
-      // 슬롯 이름 매칭
-      const slotKeywords: Record<string, string[]> = {
-        WEAPON: ['무기', '검', '칼', '단검', '만도', '단도'],
-        ARMOR: ['갑옷', '방어구', '조끼', '망토', '경갑'],
-        TACTICAL: ['전술', '장화', '부츠', '고글', '장비'],
-        POLITICAL: ['정치', '원장', '반지', '봉인', '인장'],
-        RELIC: ['유물', '나침반', '렐릭'],
-      };
-      for (const [slot, keywords] of Object.entries(slotKeywords)) {
-        if (
-          keywords.some((kw) => normalized.includes(kw)) &&
-          equipped[slot as keyof typeof equipped]
-        ) {
-          targetSlot = slot;
-          break;
-        }
-      }
-
-      // 아이템 이름 매칭
-      if (!targetSlot) {
-        for (const slot of EQUIPMENT_SLOTS) {
-          const instance = equipped[slot];
-          if (!instance) continue;
-          if (
-            normalized.includes(instance.displayName.toLowerCase()) ||
-            normalized.includes(
-              (
-                this.content.getItem(instance.baseItemId)?.name ?? ''
-              ).toLowerCase(),
-            )
-          ) {
-            targetSlot = slot;
-            break;
-          }
-        }
-      }
-
-      if (!targetSlot) {
-        const result = this.buildSystemResult(
-          turnNo,
-          currentNode,
-          '해제할 장비를 특정할 수 없다.',
-        );
-        await this.commitTurnRecord(
-          run,
-          currentNode,
-          turnNo,
-          body,
-          rawInput,
-          result,
-          runState,
-          true,
-        );
-        return {
-          accepted: true,
-          turnNo,
-          serverResult: result,
-          llm: { status: 'SKIPPED' as LlmStatus, narrative: null },
-          meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
-        };
-      }
-
-      const { equipped: newEquipped, unequippedInstance } =
-        this.equipmentService.unequip(
-          equipped,
-          targetSlot as import('../db/types/equipment.js').EquipmentSlot,
-        );
-      if (unequippedInstance) {
-        equipmentBag.push(unequippedInstance);
-      }
-      runState.equipped = newEquipped;
-      runState.equipmentBag = equipmentBag;
-      summaryText = unequippedInstance
-        ? `${unequippedInstance.displayName}을(를) 해제했다.`
-        : '해제할 장비가 없다.';
-      if (unequippedInstance) {
-        events.push({
-          id: `unequip_${turnNo}`,
-          kind: 'SYSTEM',
-          text: `[장비] ${summaryText}`,
-          tags: ['UNEQUIP'],
-          data: { unequipped: unequippedInstance.baseItemId, slot: targetSlot },
-        });
-      }
-    }
-
-    const result = this.buildSystemResult(turnNo, currentNode, summaryText);
-    result.events = events;
-    await this.commitTurnRecord(
-      run,
-      currentNode,
-      turnNo,
-      body,
-      rawInput,
-      result,
-      runState,
-      body.options?.skipLlm,
-    );
-    await this.db
-      .update(runSessions)
-      .set({ runState, updatedAt: new Date() })
-      .where(eq(runSessions.id, run.id));
-
-    return {
-      accepted: true,
-      turnNo,
-      serverResult: result,
-      llm: {
-        status: (body.options?.skipLlm ? 'SKIPPED' : 'PENDING') as LlmStatus,
-        narrative: null,
-      },
-      meta: { nodeOutcome: 'ONGOING', policyResult: 'ALLOW' },
     };
   }
 
@@ -8869,7 +6643,7 @@ export class TurnsService {
     resolveBreakdown?: import('../db/types/index.js').ResolveBreakdown,
     equipmentAdded?: import('../db/types/equipment.js').ItemInstance[],
   ): ServerResultV1 {
-    const base = this.buildSystemResult(turnNo, node, text);
+    const base = this.turnShared.buildSystemResult(turnNo, node, text);
     if (goldDelta && goldDelta !== 0) {
       base.diff.inventory.goldDelta = goldDelta;
     }
@@ -8915,109 +6689,6 @@ export class TurnsService {
       },
       choices,
     };
-  }
-
-  private buildDenyResult(
-    turnNo: number,
-    node: any,
-    reason: string,
-  ): ServerResultV1 {
-    return {
-      ...this.buildSystemResult(turnNo, node, reason),
-      events: [
-        {
-          id: `deny_${turnNo}`,
-          kind: 'SYSTEM',
-          text: reason,
-          tags: ['POLICY_DENY'],
-        },
-      ],
-    };
-  }
-
-  // --- 전투 CHOICE 매핑 (기존 재사용) ---
-  private mapCombatChoiceToActionPlan(choiceId: string): ActionPlan {
-    if (choiceId.startsWith('combo_'))
-      return this.parseComboChoiceToActionPlan(choiceId);
-    if (choiceId === 'env_action')
-      return {
-        units: [{ type: 'INTERACT', meta: { envAction: true } }],
-        consumedSlots: { base: 2, used: 1, bonusUsed: false },
-        staminaCost: 1,
-        policyResult: 'ALLOW',
-        parsedBy: 'RULE',
-      };
-    if (choiceId === 'combat_avoid')
-      return {
-        units: [{ type: 'FLEE', meta: { isAvoid: true } }],
-        consumedSlots: { base: 2, used: 1, bonusUsed: false },
-        staminaCost: 1,
-        policyResult: 'ALLOW',
-        parsedBy: 'RULE',
-      };
-    const unit = this.parseCombatChoiceId(choiceId);
-    return {
-      units: [unit],
-      consumedSlots: { base: 2, used: 1, bonusUsed: false },
-      staminaCost: 1,
-      policyResult: 'ALLOW',
-      parsedBy: 'RULE',
-    };
-  }
-
-  private parseComboChoiceToActionPlan(choiceId: string): ActionPlan {
-    if (choiceId.startsWith('combo_double_attack_')) {
-      const targetId = choiceId.replace('combo_double_attack_', '');
-      return {
-        units: [
-          { type: 'ATTACK_MELEE', targetId },
-          { type: 'ATTACK_MELEE', targetId },
-        ],
-        consumedSlots: { base: 2, used: 2, bonusUsed: false },
-        staminaCost: 2,
-        policyResult: 'ALLOW',
-        parsedBy: 'RULE',
-      };
-    }
-    if (choiceId.startsWith('combo_attack_defend_')) {
-      const targetId = choiceId.replace('combo_attack_defend_', '');
-      return {
-        units: [{ type: 'ATTACK_MELEE', targetId }, { type: 'DEFEND' }],
-        consumedSlots: { base: 2, used: 2, bonusUsed: false },
-        staminaCost: 2,
-        policyResult: 'ALLOW',
-        parsedBy: 'RULE',
-      };
-    }
-    return {
-      units: [{ type: 'DEFEND' }],
-      consumedSlots: { base: 2, used: 1, bonusUsed: false },
-      staminaCost: 1,
-      policyResult: 'ALLOW',
-      parsedBy: 'RULE',
-    };
-  }
-
-  private parseCombatChoiceId(
-    choiceId: string,
-  ): import('../db/types/index.js').ActionUnit {
-    if (choiceId.startsWith('attack_melee_'))
-      return {
-        type: 'ATTACK_MELEE',
-        targetId: choiceId.replace('attack_melee_', ''),
-      };
-    if (choiceId === 'defend') return { type: 'DEFEND' };
-    if (choiceId === 'evade') return { type: 'EVADE' };
-    if (choiceId === 'flee') return { type: 'FLEE' };
-    if (choiceId === 'move_forward')
-      return { type: 'MOVE', direction: 'FORWARD' };
-    if (choiceId === 'move_back') return { type: 'MOVE', direction: 'BACK' };
-    if (choiceId.startsWith('use_item_'))
-      return {
-        type: 'USE_ITEM',
-        meta: { itemHint: choiceId.replace('use_item_', '') },
-      };
-    return { type: 'DEFEND' };
   }
 
   async getTurnDetail(
