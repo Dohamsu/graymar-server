@@ -878,7 +878,9 @@ export class PromptBuilderService {
         // 매칭 경로도 fresh 우선 — generic 키워드('시장' 등)가 매 턴 같은 화제를
         // 재소환하던 우회로 차단 (실측: '빵' 화제 3회/7턴). 진짜 재질문의 맥락은
         // 직전 발언·[이미 공개된 정보] 블록이 담당.
-        const matchedFresh = matched.filter((t) => !usedTopicIds.has(t.topicId));
+        const matchedFresh = matched.filter(
+          (t) => !usedTopicIds.has(t.topicId),
+        );
         // [응답률 개선 2026-08-01] 질문 턴 + 화제 무매칭 = 플레이어가 풀 밖의
         // 화제를 물은 턴 — 이때 랜덤 새 화제를 꺼내게 하면 [질문 우선] 지시와
         // 경쟁해 응답이 밀린다 (audit_chat-edric 응답률 60%: 스튜/어젯밤 등
@@ -2752,8 +2754,9 @@ export class PromptBuilderService {
         } else if (isIntroduced) {
           // [arch/79 3차 2026-07-28] knowledge 최근 3개만 — 5개 만재 시 NPC당
           //   ~400자로 [등장 가능 NPC 목록]이 max 800자까지 비대해지던 것 캡.
-          const knowledgeEntries = ((ctx.npcKnowledge ?? {})[npc.npcId] ?? [])
-            .slice(-3);
+          const knowledgeEntries = (
+            (ctx.npcKnowledge ?? {})[npc.npcId] ?? []
+          ).slice(-3);
           const knowledgePart =
             knowledgeEntries.length > 0
               ? `\n    이 인물이 알고 있는 것: ${knowledgeEntries.map((k) => `"${k.text}"`).join(', ')}\n    ⚠️ 이 인물은 위 정보를 이미 알고 있으므로, 처음 듣는 것처럼 반응하면 안 됩니다.`

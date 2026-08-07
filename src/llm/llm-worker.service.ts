@@ -3106,7 +3106,8 @@ ${npcList}`,
             shift.trust !== 0 ||
             shift.fear !== 0 ||
             shift.respect !== 0 ||
-            shift.suspicion !== 0;
+            shift.suspicion !== 0 ||
+            (shift.attachment ?? 0) !== 0;
           if (hasShift) {
             const shiftNpcId = reactionNpcIdUsed;
             void this.applyRunStatePatch(
@@ -3132,6 +3133,9 @@ ${npcList}`,
                 emo.respect = bi((emo.respect ?? 0) + shift.respect);
                 emo.fear = uni((emo.fear ?? 0) + shift.fear);
                 emo.suspicion = uni((emo.suspicion ?? 0) + shift.suspicion);
+                emo.attachment = uni(
+                  (emo.attachment ?? 0) + (shift.attachment ?? 0),
+                );
                 // 레거시 필드 동기화 (posture는 다음 턴 syncLegacyFields가 재파생)
                 st.trustToPlayer = emo.trust;
                 st.suspicion = emo.suspicion;

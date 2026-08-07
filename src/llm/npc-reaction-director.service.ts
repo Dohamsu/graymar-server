@@ -56,6 +56,8 @@ export interface NpcReactionResult {
     fear: number;
     respect: number;
     suspicion: number;
+    /** 감정 점검 2026-08-07 — 대화 축 다변화: 유대도 nano 해석 대상 */
+    attachment: number;
   };
   dialogueHint: string;
   // E안 신규 — 추상 톤 3축 (예시 없는 추상 가이드)
@@ -156,8 +158,12 @@ openingStance: NPC 첫 반응의 분위기 (10~25자, 추상 묘사)
   올바른 형태: "닫힌 자세로 거리를 둠", "긴장을 풀지 못한 채 시선만 살핌"
   ❌ 절대 금지: 구체 동작 ("안경테를 밀어 올린다" 같은 실행 가능 동작 금지)
 
-emotionalShiftHint: 이번 턴 감정 변화 (각 -3~3)
-  trust/fear/respect/suspicion
+emotionalShiftHint: 이번 턴 감정 변화 (각 -5~5)
+  trust(신뢰)/fear(공포)/respect(존경)/suspicion(의심)/attachment(유대)
+  - 행동 **내용**으로 판단해 해당하는 축만 움직여라. 신뢰에만 몰지 마라.
+    예: 캐묻기·추궁→suspicion+, 위협적 언동→fear+, 도움·공감→attachment+,
+    실력·기지 과시→respect+, 무례·기만 들킴→trust-/respect-
+  - 해당 없는 축은 0. 평범한 잡담은 전부 0~1.
 
 dialogueHint: NPC 말할 의도 방향 (20~40자, 대사 X)
   올바른 형태: "신중하게 동의하되 핵심은 흘리지 않을 것"
@@ -203,7 +209,7 @@ R3. **refusalLevel 단조성**: 플레이어가 같은 행동을 반복(같은 a
 R4. **단서 진전 (플레이어가 캐물을 때만)**: 플레이어가 이번 턴에도 정보를 캐묻고(INVESTIGATE/PERSUADE 등 정보 행동) 직전 NPC 대사에서 단서가 흘러나왔다면, immediateGoal 은 그 단서를 전제로 한 다음 단계로 둔다 ("정체 더 확인" 같은 후퇴 금지). 반대로 플레이어가 인사·잡담(사교 발화)하거나 정보를 묻지 않으면 이 규칙을 적용하지 말고 [자기 목적]으로 돌아가라 — 묻지도 않은 정보를 먼저 진전시키지 마라.
 
 JSON만 출력:
-{"reactionType":"...","refusalLevel":"...","immediateGoal":"...","openingStance":"...","emotionalShiftHint":{"trust":0,"fear":0,"respect":0,"suspicion":0},"dialogueHint":"...","voiceQuality":"...","emotionalUndertone":"...","bodyLanguageMood":"..."}`;
+{"reactionType":"...","refusalLevel":"...","immediateGoal":"...","openingStance":"...","emotionalShiftHint":{"trust":0,"fear":0,"respect":0,"suspicion":0,"attachment":0},"dialogueHint":"...","voiceQuality":"...","emotionalUndertone":"...","bodyLanguageMood":"..."}`;
 
 @Injectable()
 export class NpcReactionDirectorService {
@@ -465,15 +471,17 @@ export class NpcReactionDirectorService {
         string,
         unknown
       >;
+      // 감정 점검 2026-08-07 — 대화 감정 다변화: ±3→±5 (drift 잠식 방지) + attachment
       const clamp = (v: unknown): number => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return 0;
-        return Math.max(-3, Math.min(3, Math.round(v)));
+        return Math.max(-5, Math.min(5, Math.round(v)));
       };
       const emotionalShiftHint = {
         trust: clamp(shiftRaw.trust),
         fear: clamp(shiftRaw.fear),
         respect: clamp(shiftRaw.respect),
         suspicion: clamp(shiftRaw.suspicion),
+        attachment: clamp(shiftRaw.attachment),
       };
 
       // E안 신규 — 추상 톤 3축
@@ -672,7 +680,7 @@ export class NpcReactionDirectorService {
       immediateGoal: '',
       refusalLevel,
       openingStance: '',
-      emotionalShiftHint: { trust: 0, fear: 0, respect: 0, suspicion: 0 },
+      emotionalShiftHint: { trust: 0, fear: 0, respect: 0, suspicion: 0, attachment: 0 },
       dialogueHint: '',
       voiceQuality: '',
       emotionalUndertone: '',

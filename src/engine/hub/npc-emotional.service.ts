@@ -137,7 +137,10 @@ export class NpcEmotionalService {
 
   /**
    * 시간 경과에 따른 수동적 감정 변화 (offscreen drift).
-   * fear, suspicion은 서서히 감소. attachment는 서서히 감소.
+   * fear, suspicion은 서서히 감소. attachment는 아주 서서히 감소.
+   * 감정 점검 2026-08-07: attachment 감쇠 -0.3→-0.1 — 대화 수 턴으로 쌓은
+   * 유대(+3~5)가 십수 턴 만에 전량 소멸하던 것 완화 (관계 축적이 남게).
+   * 이번 턴 상호작용 NPC는 호출부(turns.service)가 drift에서 제외한다.
    */
   applyPassiveDrift(state: NpcEmotionalState): NpcEmotionalState {
     return {
@@ -149,7 +152,7 @@ export class NpcEmotionalService {
         CLAMP_UNIPOLAR.max,
       ),
       attachment: clamp(
-        state.attachment - 0.3,
+        state.attachment - 0.1,
         CLAMP_UNIPOLAR.min,
         CLAMP_UNIPOLAR.max,
       ),

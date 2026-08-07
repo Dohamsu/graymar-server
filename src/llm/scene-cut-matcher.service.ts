@@ -122,9 +122,9 @@ export class SceneCutMatcherService {
           (kw) =>
             kw.length >= 2 &&
             (locNameForFilter.includes(kw) ||
-              (params.currentLocationId ?? '').toLowerCase().includes(
-                kw.toLowerCase(),
-              )),
+              (params.currentLocationId ?? '')
+                .toLowerCase()
+                .includes(kw.toLowerCase())),
         );
         if (matchesHere) {
           pool.push({
@@ -157,7 +157,9 @@ export class SceneCutMatcherService {
     // 유지하고 동률 안에서만 무작위화. runId+turnNo 시드라 같은 턴 재시도는
     // 동일 순서(재현성), 런이 다르면 순서가 달라진다. nano 후보 리스트 순서도
     // 이 셔플을 그대로 따라가 리스트 앞쪽 편향까지 함께 분산된다.
-    const tieRng = mulberry32(strHash(`${params.runId ?? ''}:${params.turnNo}`));
+    const tieRng = mulberry32(
+      strHash(`${params.runId ?? ''}:${params.turnNo}`),
+    );
     const scored = eligible
       .map((c) => {
         let hits = 0;
@@ -209,7 +211,9 @@ export class SceneCutMatcherService {
       location: '장소',
     };
     const list = candidates
-      .map((c) => `- ${c.id} (${KIND_LABEL[c.kind]}): [${c.keywords.join(', ')}]`)
+      .map(
+        (c) => `- ${c.id} (${KIND_LABEL[c.kind]}): [${c.keywords.join(', ')}]`,
+      )
       .join('\n');
     const messages = [
       {

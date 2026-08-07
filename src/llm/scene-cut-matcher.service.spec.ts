@@ -47,10 +47,7 @@ function makeService(opts?: {
       return opts?.nanoResponse ?? '{"id": "SCN_02", "confidence": 0.9}';
     },
   };
-  return new SceneCutMatcherService(
-    content as never,
-    caller as never,
-  );
+  return new SceneCutMatcherService(content as never, caller as never);
 }
 
 const BASE = {

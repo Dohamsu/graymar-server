@@ -144,8 +144,8 @@ describe('polishChoiceLabelsCore (P4)', () => {
       ],
       (m) => logs.push(m),
     )!;
-    expect(out[0]!.label).toBe('그에게 명확한 설명을 요청한다');
-    expect(out[1]!.label).toBe(
+    expect(out[0].label).toBe('그에게 명확한 설명을 요청한다');
+    expect(out[1].label).toBe(
       "질문을 계속한다 — '왜 그 시간에 아무도 없었는가?'",
     );
     expect(logs.length).toBe(2);
@@ -156,7 +156,7 @@ describe('polishChoiceLabelsCore (P4)', () => {
       [mk('go_hub', '거점으로 돌아간다.')],
       () => {},
     )!;
-    expect(out[0]!.label).toBe('거점으로 돌아간다.');
+    expect(out[0].label).toBe('거점으로 돌아간다.');
   });
 
   it('이동 암시 라벨은 변경 없이 경고 로그만 남긴다', () => {
@@ -165,7 +165,7 @@ describe('polishChoiceLabelsCore (P4)', () => {
     const out = polishChoiceLabelsCore([mk('nano_2_0', label, 'SEARCH')], (m) =>
       logs.push(m),
     )!;
-    expect(out[0]!.label).toBe(label);
+    expect(out[0].label).toBe(label);
     expect(logs.some((l) => l.includes('ChoiceLabelWatch'))).toBe(true);
   });
 

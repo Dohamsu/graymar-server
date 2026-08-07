@@ -134,17 +134,29 @@ describe('NpcReactionDirectorService', () => {
       }
     });
 
-    it('emotionalShiftHint clamped to [-3, 3]', async () => {
+    it('emotionalShiftHint clamped to [-5, 5] + attachment 파싱 (감정 점검 2026-08-07)', async () => {
       mockLlmCaller.call.mockResolvedValue({
         success: true,
         response: {
-          text: '{"reactionType":"WELCOME","immediateGoal":"","refusalLevel":"NONE","openingStance":"","emotionalShiftHint":{"trust":99,"fear":-50,"respect":2,"suspicion":0},"dialogueHint":""}',
+          text: '{"reactionType":"WELCOME","immediateGoal":"","refusalLevel":"NONE","openingStance":"","emotionalShiftHint":{"trust":99,"fear":-50,"respect":2,"suspicion":0,"attachment":7},"dialogueHint":""}',
         },
       });
       const r = await service.direct(makeCtx());
-      expect(r!.emotionalShiftHint.trust).toBe(3);
-      expect(r!.emotionalShiftHint.fear).toBe(-3);
+      expect(r!.emotionalShiftHint.trust).toBe(5);
+      expect(r!.emotionalShiftHint.fear).toBe(-5);
       expect(r!.emotionalShiftHint.respect).toBe(2);
+      expect(r!.emotionalShiftHint.attachment).toBe(5);
+    });
+
+    it('emotionalShiftHint attachment 누락(구 응답 형태) → 0', async () => {
+      mockLlmCaller.call.mockResolvedValue({
+        success: true,
+        response: {
+          text: '{"reactionType":"WELCOME","immediateGoal":"","refusalLevel":"NONE","openingStance":"","emotionalShiftHint":{"trust":1,"fear":0,"respect":0,"suspicion":0},"dialogueHint":""}',
+        },
+      });
+      const r = await service.direct(makeCtx());
+      expect(r!.emotionalShiftHint.attachment).toBe(0);
     });
   });
 

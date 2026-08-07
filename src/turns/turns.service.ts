@@ -959,7 +959,7 @@ export class TurnsService {
       this.attachQuestUiBundle(
         hubResult,
         updatedRunState,
-        updatedRunState.worldState!,
+        updatedRunState.worldState,
       );
       await this.commitTurnRecord(
         run,
@@ -3188,6 +3188,25 @@ export class TurnsService {
         true,
         nanoSocialImpact,
       );
+      // [감정 점검 2026-08-07 S3] 추궁성 대화(단서 판돈 CHECK — fact stake/
+      // npc fact probe)가 매끄럽지 못하면 상대에게 경계가 남는다. TALK 테이블
+      // (trust/attachment 전용)이 심문 뉘앙스를 못 담던 갭 보강 — 판정 소스가
+      // 결정적 룰이라 FP 없음. FAIL +4 · PARTIAL +2.
+      if (
+        challengeDecision.source === 'rule' &&
+        (challengeDecision.reason === 'npc fact probe' ||
+          challengeDecision.reason.startsWith('fact stake')) &&
+        resolveResult.outcome !== 'SUCCESS'
+      ) {
+        const probeSusp = resolveResult.outcome === 'FAIL' ? 4 : 2;
+        npc.emotional = {
+          ...npc.emotional,
+          suspicion: Math.max(
+            0,
+            Math.min(100, npc.emotional.suspicion + probeSusp),
+          ),
+        };
+      }
       npcStates[npcId] = this.npcEmotional.syncLegacyFields(npc);
 
       // Posture 변화 감지 (result 선언 후 이벤트에 추가)
@@ -3530,9 +3549,7 @@ export class TurnsService {
           (s) => !this.newsHeadlineCache.has(cacheKey(s.id)),
         );
         if (uncached.length > 0) {
-          const incDefMap = new Map(
-            incidentDefs.map((d) => [d.incidentId, d]),
-          );
+          const incDefMap = new Map(incidentDefs.map((d) => [d.incidentId, d]));
           const locName =
             this.content.getLocation(locationId)?.name ?? locationId;
           const timePhase =
@@ -4273,15 +4290,9 @@ export class TurnsService {
                   );
                 // [Task#2 B-2a] 아는 NPC(조우·소개 이력) — SitGen 재회 가중용
                 const knownNpcIds = new Set(
-                  Object.entries(
-                    (updatedRunState.npcStates ?? {}) as Record<
-                      string,
-                      NPCState
-                    >,
-                  )
+                  Object.entries(updatedRunState.npcStates ?? {})
                     .filter(
-                      ([, s]) =>
-                        (s?.encounterCount ?? 0) >= 1 || s?.introduced,
+                      ([, s]) => (s?.encounterCount ?? 0) >= 1 || s?.introduced,
                     )
                     .map(([id]) => id),
                 );
@@ -6313,10 +6324,7 @@ export class TurnsService {
       // 닫힘) 제외, 확률 게이트. 해시 롤은 RNG 커서 비소비 (불변식 4 보호).
       if (!nanoEventCtx.bribeOpportunity && dialogueAct !== 'FAREWELL') {
         const seed = hashSeed(`${run.id}:${turnNo}:activeAff`);
-        if (
-          seed % 100 <
-          QUEST_BALANCE.ACTIVE_AFFORDANCE_INJECT_CHANCE
-        ) {
+        if (seed % 100 < QUEST_BALANCE.ACTIVE_AFFORDANCE_INJECT_CHANCE) {
           const picked = pickActiveAffordanceCore({
             presentNpcs: nanoEventCtx.presentNpcs,
             primaryNpcId:
@@ -6452,8 +6460,16 @@ export class TurnsService {
     );
 
     // === Narrative Engine v1: NPC passive drift (offscreen) ===
+    // 감정 점검 2026-08-07 — 이번 턴 상호작용 NPC는 drift 제외. 대화 중인
+    // 상대까지 매 턴 감쇠(-0.5/-0.5/-0.3)를 먹여 대화로 벌어들인
+    // fear/suspicion/attachment가 그 자리에서 잠식되던 비대칭 해소
+    // (실측 41명: trust 95% 변화 vs fear 2%·attachment 평균 2.7).
     if (postTickRunState.npcStates) {
+      const interactedNpcId =
+        ((event.payload as Record<string, unknown> | undefined)
+          ?.primaryNpcId as string | undefined) ?? null;
       for (const [npcId, npc] of Object.entries(postTickRunState.npcStates)) {
+        if (npcId === interactedNpcId) continue; // 대면 중 — offscreen 아님
         npc.emotional = this.npcEmotional.applyPassiveDrift(npc.emotional);
         postTickRunState.npcStates[npcId] =
           this.npcEmotional.syncLegacyFields(npc);

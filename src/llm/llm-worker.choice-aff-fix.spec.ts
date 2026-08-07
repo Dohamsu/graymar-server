@@ -168,7 +168,13 @@ describe('correctChoiceAffordanceCore — PERSUADE 승격 (arch/98 후속, 2026-
 
   it('이미 PERSUADE인 라벨은 무수정', () => {
     const result = correctChoiceAffordanceCore(
-      [choice('nano_14_0', '경비병에게 정직하지 못한 점을 지적한다', 'PERSUADE')],
+      [
+        choice(
+          'nano_14_0',
+          '경비병에게 정직하지 못한 점을 지적한다',
+          'PERSUADE',
+        ),
+      ],
       {},
       noop,
     );

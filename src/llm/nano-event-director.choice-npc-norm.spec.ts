@@ -118,16 +118,16 @@ describe('sanitizeChoiceLabelNpcTokensCore', () => {
 
   it('ASCII 토큰이 없는 정상 라벨은 건드리지 않는다', () => {
     const label = '장부의 흔적에 대해 더 묻는다';
-    expect(sanitizeChoiceLabelNpcTokensCore(label, PRESENT, portraitUrlOf)).toBe(
-      label,
-    );
+    expect(
+      sanitizeChoiceLabelNpcTokensCore(label, PRESENT, portraitUrlOf),
+    ).toBe(label);
   });
 
   it('영단어 부분 문자열은 오치환하지 않는다 (단어 경계)', () => {
     // "admirable" 안의 mirela 유사 substring 같은 오매칭 방지 — 경계 없으면 미치환
     const label = 'admirela1 문서를 살핀다';
-    expect(sanitizeChoiceLabelNpcTokensCore(label, PRESENT, portraitUrlOf)).toBe(
-      label,
-    );
+    expect(
+      sanitizeChoiceLabelNpcTokensCore(label, PRESENT, portraitUrlOf),
+    ).toBe(label);
   });
 });

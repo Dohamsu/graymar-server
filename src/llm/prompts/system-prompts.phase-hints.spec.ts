@@ -31,7 +31,9 @@ describe('buildNarrativeSystemPrompt — 시간대 규칙 (arch/92 A-6)', () => 
   it('오버라이드 여부와 무관하게 전환 문구 지시는 유지된다', () => {
     for (const world of [BASE, { ...BASE, phaseHints: { NIGHT: '어둠.' } }]) {
       // [arch/79 3차] 구 예문('해가 기울어')은 anchor 실측으로 제거 — 추상 지시 잔존만 검증
-      expect(buildNarrativeSystemPrompt(world)).toContain('시간의 흐름을 알리는 한 문장');
+      expect(buildNarrativeSystemPrompt(world)).toContain(
+        '시간의 흐름을 알리는 한 문장',
+      );
     }
   });
 });
