@@ -5053,16 +5053,30 @@ export class TurnsService {
           | string
           | undefined) ??
         null;
+      // [A-3] 라벨 주제어 ↔ 미발견 fact 매칭. fact 공개 경로(selectRevealableFact)와
+      // **같은 매칭기**를 쓴다 — 주제 매칭의 정의가 둘로 갈리면 "판정은 없는데
+      // 단서는 나오는" 역데스싱크가 생긴다. 인메모리 키워드 인덱스라 지연 없음.
+      const labelKeywords = extractKoreanKeywords(rawInput);
+      const labelFactStake =
+        labelKeywords.size > 0 &&
+        this.content.getFactsByKeywords(
+          labelKeywords,
+          new Set(runState.discoveredQuestFacts ?? []),
+        ).length > 0;
+
       challengeDecision = decideChoiceChallengeCore({
         actionType: intent.actionType,
         choiceId: body.input.choiceId ?? '',
         choiceRiskLevel:
           (choicePayload?.riskLevel as number | undefined) ?? null,
+        choiceAffordance:
+          (choicePayload?.affordance as string | undefined) ?? null,
         eventMatchPolicy: (event.matchPolicy as string | undefined) ?? null,
         eventDiscoverableFact: eventFactForStake,
         factAlreadyDiscovered: eventFactForStake
           ? (runState.discoveredQuestFacts ?? []).includes(eventFactForStake)
           : false,
+        labelFactStake,
       });
       this.logger.debug(
         `[Challenge] CHOICE 룰 즉결: ${challengeDecision.result} (${challengeDecision.reason})`,

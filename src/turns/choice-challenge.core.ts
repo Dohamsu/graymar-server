@@ -32,6 +32,18 @@ const ALWAYS_CHECK_ACTIONS = new Set([
   'PERSUADE',
 ]);
 
+/**
+ * [A-2] 조사 계열 affordance — 결과가 갈리는 행동이라 판돈으로 본다.
+ * **저작 선택지에만** 적용한다: nano 동적 선택지는 생성 단계에서 riskLevel을
+ * 함께 산출(A-1)하므로 여기서 또 승격하면 이중 승격이 된다. 실측 시뮬레이션
+ * (339턴)에서 무차별 승격은 CHECK 63%로 배포 전 nano baseline 52%를 크게
+ * 넘겼다 — 저작 한정이 baseline 근방을 유지한다.
+ */
+const STAKE_AFFORDANCES = new Set(['INVESTIGATE', 'SEARCH']);
+
+/** nano 동적 생성 선택지 id 접두 — 저작/동적 구분자 */
+const NANO_CHOICE_PREFIX = 'nano_';
+
 export interface ChoiceChallengeInput {
   /** IntentParser 확정 actionType */
   actionType: string;
@@ -39,12 +51,20 @@ export interface ChoiceChallengeInput {
   choiceId: string;
   /** 선택지 payload.riskLevel (1~3) — 2 이상이면 위험 판돈 */
   choiceRiskLevel?: number | null;
+  /** 선택지 payload.affordance — 저작 선택지의 조사 계열은 판돈 (A-2) */
+  choiceAffordance?: string | null;
   /** 매칭 이벤트 matchPolicy — BLOCK이면 방해 판돈 */
   eventMatchPolicy?: string | null;
   /** 매칭 이벤트의 discoverableFact id */
   eventDiscoverableFact?: string | null;
   /** 위 fact가 이미 발견됐는가 — 발견 완료면 판돈 아님 */
   factAlreadyDiscovered?: boolean;
+  /**
+   * [A-3] 선택지 라벨의 주제어가 **미발견** fact 키워드와 매칭됐는가.
+   * 호출부가 fact 공개 경로와 동일한 매칭기(getFactsByKeywords)로 산출한다 —
+   * "주제 매칭"의 정의를 레포에 둘로 두지 않기 위함 (불변식 27·44와 같은 기준).
+   */
+  labelFactStake?: boolean;
 }
 
 export function decideChoiceChallengeCore(
@@ -54,9 +74,11 @@ export function decideChoiceChallengeCore(
     actionType,
     choiceId,
     choiceRiskLevel,
+    choiceAffordance,
     eventMatchPolicy,
     eventDiscoverableFact,
     factAlreadyDiscovered,
+    labelFactStake,
   } = input;
 
   if (STRUCTURAL_FREE_ACTIONS.has(actionType)) {
@@ -97,6 +119,25 @@ export function decideChoiceChallengeCore(
     return {
       result: 'CHECK',
       reason: `risk level ${choiceRiskLevel}`,
+      source: 'rule',
+    };
+  }
+
+  // [A-3] 라벨이 미발견 단서의 주제를 건드린다 — 결과가 갈리는 질문/조사.
+  // 버그 9fc337c9: "밀수 루트에 대해 묻는다"(TALK·nano 선택지)가 위 조건을
+  // 전부 비껴가 무판정으로 떨어졌다. 라벨 의미를 보는 유일한 경로가 이것이다.
+  if (labelFactStake) {
+    return { result: 'CHECK', reason: 'label fact stake', source: 'rule' };
+  }
+
+  // [A-2] 저작 조사 선택지 — 저작자가 "조사"로 배치한 행동은 결과가 갈린다.
+  if (
+    !choiceId.startsWith(NANO_CHOICE_PREFIX) &&
+    STAKE_AFFORDANCES.has(String(choiceAffordance ?? ''))
+  ) {
+    return {
+      result: 'CHECK',
+      reason: `authored ${choiceAffordance} stake`,
       source: 'rule',
     };
   }

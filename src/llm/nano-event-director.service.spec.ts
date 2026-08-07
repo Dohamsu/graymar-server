@@ -345,6 +345,7 @@ describe('NanoEventDirectorService', () => {
         label: '주변을 살핀다',
         affordance: 'OBSERVE',
         npcId: null,
+        riskLevel: 1, // [A-1] 패딩 선택지는 판돈 없음
       });
     });
 

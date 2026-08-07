@@ -3042,6 +3042,9 @@ ${npcList}`,
                     payload: {
                       affordance: nc.affordance,
                       sourceNpcId: nc.npcId ?? nanoResult.npcId,
+                      // [A-1] 판돈 — 저작 선택지 payload.riskLevel과 같은 축.
+                      // choice-challenge.core가 2 이상을 주사위 대상으로 읽는다.
+                      riskLevel: nc.riskLevel,
                     },
                   },
                   ...(track1PresetBonuses[nc.affordance]

@@ -23,6 +23,14 @@ export interface NanoEventResult {
     affordance: string;
     npcId: string | null; // 같은 NPC면 대화 연속, null이면 전환 기회
     hint?: string; // 선택지 서브 설명 (기대 효과·리스크 10~20자) — 클라 라벨 아래 병기
+    /**
+     * [A-1] 이 선택지에 걸린 판돈 (1~3). CHOICE 판정 룰
+     * (choice-challenge.core)이 2 이상을 주사위 대상으로 본다.
+     * 저작 이벤트 선택지의 payload.riskLevel과 같은 축 — 동적 선택지에는
+     * 그 필드가 없어서 라벨이 아무리 위험해도 무판정으로 떨어지던 갭을 메운다
+     * (버그 9fc337c9). nano는 이미 비동기 경로라 턴 지연 증가 없음.
+     */
+    riskLevel: 1 | 2 | 3;
   }>;
 }
 
@@ -247,11 +255,23 @@ export function sanitizeChoiceLabelNpcTokensCore(
   return out;
 }
 
+/**
+ * [A-1] nano riskLevel 서버 검증 — 1~3 정수로 clamp.
+ * 결측·비수치·범위 밖은 1(판돈 없음)로 떨어뜨린다. 무판정 쪽이 기본값인 이유는
+ * 이 값이 주사위를 **추가로 켜는** 신호이기 때문 — nano 실패가 판정 인플레로
+ * 번지지 않게 한다. spec이 직접 import (복제 drift 방지 — export 정본 원칙).
+ */
+export function clampRiskLevel(raw: unknown): 1 | 2 | 3 {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 1;
+  const r = Math.round(raw);
+  return r >= 3 ? 3 : r === 2 ? 2 : 1;
+}
+
 const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
 직전 맥락과 플레이어 선택을 보고, 이번 턴의 이벤트 컨셉을 JSON으로 생성하라.
 
 출력 형식 (JSON만, 다른 텍스트 금지):
-{"npc":"NPC 표시명","npcId":"NPC_ID 또는 null","concept":"30~60자 상황 묘사","tone":"분위기 3~6자","opening":"감각 묘사 첫 문장 15~30자","npcGesture":"NPC 행동 10~20자","fact":"FACT_ID 또는 null","factRevealed":true/false,"factDelivery":"direct|indirect|observe","avoid":["금지1","금지2"],"choices":[{"label":"선택지1","affordance":"TALK","hint":"기대 효과 10~20자","npcId":"NPC_ID"},{"label":"선택지2","affordance":"INVESTIGATE","hint":"기대 효과 10~20자","npcId":null},{"label":"선택지3","affordance":"OBSERVE","hint":"기대 효과 10~20자","npcId":"NPC_ID"}]}
+{"npc":"NPC 표시명","npcId":"NPC_ID 또는 null","concept":"30~60자 상황 묘사","tone":"분위기 3~6자","opening":"감각 묘사 첫 문장 15~30자","npcGesture":"NPC 행동 10~20자","fact":"FACT_ID 또는 null","factRevealed":true/false,"factDelivery":"direct|indirect|observe","avoid":["금지1","금지2"],"choices":[{"label":"선택지1","affordance":"TALK","hint":"기대 효과 10~20자","npcId":"NPC_ID","riskLevel":1},{"label":"선택지2","affordance":"INVESTIGATE","hint":"기대 효과 10~20자","npcId":null,"riskLevel":2},{"label":"선택지3","affordance":"OBSERVE","hint":"기대 효과 10~20자","npcId":"NPC_ID","riskLevel":1}]}
 
 규칙:
 1. npc 선택 (중요):
@@ -275,6 +295,12 @@ const SYSTEM_PROMPT = `당신은 텍스트 RPG의 이벤트 감독이다.
    - 선택지는 플레이어(외부에서 온 조사자) 시점의 능동 행동만. 플레이어가 사건의 범인/당사자인 것처럼 시인·자백하는 선택지 금지.
    - affordance는 라벨의 행동과 일치시킬 것: 물러남/거리두기/관찰=OBSERVE, 질문/대화=TALK, 금전 제안=BRIBE, 단서 조사=INVESTIGATE.
    - hint: 그 행동의 기대 효과나 리스크를 10~20자로 (예: "신뢰를 얻을 수 있다", "들키면 적대할 위험"). 라벨 반복 금지.
+   - riskLevel: 이 행동에 **결과가 갈릴 여지**가 있는가 (1~3 정수).
+     1 = 결과가 뻔하다. 잡담·인사·대답·눈에 보이는 것 훑기.
+     2 = 상대가 숨기거나 거부할 수 있다. 감춰진 정보를 캐묻기, 경계 대상 조사,
+         꺼리는 주제 꺼내기, 남의 물건·기록 들여다보기.
+     3 = 발각·적대·손실 위험이 실재한다.
+     ※ 상대가 순순히 답할 리 없는 질문은 affordance가 TALK여도 2 이상.
 5. opening: "당신은" 금지. 직전과 다른 감각(시각/청각/후각/촉각/시간). 15~30자.
 6. avoid: 직전 서술에서 반복된 표현 2~3개.
 7. affordance: INVESTIGATE, PERSUADE, SNEAK, BRIBE, THREATEN, HELP, STEAL, FIGHT, OBSERVE, TRADE, TALK, SEARCH 중 선택.
@@ -313,7 +339,9 @@ export class NanoEventDirectorService {
             { role: 'user', content: userMsg },
           ],
           // 400: choices[].hint 3개(각 10~20자) 추가분 — 300이면 JSON 꼬리 절단 위험
-          maxTokens: 400,
+          // 430: choices[].riskLevel 3개 추가분 (A-1). 꼬리 절단 = 선택지 전체
+          // 유실이라 마진을 남긴다.
+          maxTokens: 430,
           temperature: 0.8,
           model: lightConfig.model,
           timeoutMs: lightConfig.timeoutMs,
@@ -584,6 +612,9 @@ export class NanoEventDirectorService {
                 typeof c.hint === 'string' && c.hint.trim()
                   ? c.hint.trim().slice(0, 40)
                   : undefined,
+              // [A-1] 서버 검증 — 1~3 정수로 clamp, 결측/이상치는 1(판돈 없음).
+              // 불변식 1: nano 제안은 서버 허용 범위 안에서만 유효하다.
+              riskLevel: clampRiskLevel(c.riskLevel),
             }))
           : [],
       };
@@ -732,6 +763,7 @@ export class NanoEventDirectorService {
         label: '주변을 살핀다',
         affordance: 'OBSERVE',
         npcId: null,
+        riskLevel: 1, // 패딩 선택지는 판돈 없음
       });
     }
 
