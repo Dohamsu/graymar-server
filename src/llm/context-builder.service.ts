@@ -49,6 +49,15 @@ export interface RecentTurnEntry {
    * 없어 rawInput 이 비어 있으므로 이력 렌더링을 "선택" 대신 이동 표기로 바꾼다.
    */
   moveArrival?: string;
+  /**
+   * [arch/79 §11.5] narrative 가 실제 LLM 서술이 아니라 요약 폴백인가.
+   *   워커는 턴 커밋 **이후** 프롬프트를 만들기 때문에, 생성 중인 현재 턴은
+   *   llmOutput 이 아직 없어 `summary.short`("플레이어가 X을 시도하여 …했다")로
+   *   채워진다. 이 값이 `직전 장면(이어쓸 지점)` 으로 주입되면 라벨은 "직전"인데
+   *   내용은 "현재"이고, 모델이 이번 턴 행동을 이미 지난 일로 읽어 그 지점을
+   *   건너뛸 수 있다. LLM 실패 턴(llmOutput null)도 같은 취급이 맞다.
+   */
+  narrativeIsPlaceholder?: boolean;
 }
 
 /** selectRecentTurnEntries 입력 — recentTurns 조회 컬럼 (DB 행 shape) */
@@ -95,6 +104,7 @@ export function selectRecentTurnEntries(
         resolveOutcome: (sr?.ui as Record<string, unknown> | undefined)
           ?.resolveOutcome as string | undefined,
         narrative: t.llmOutput ?? sr?.summary?.short ?? '',
+        ...(t.llmOutput ? {} : { narrativeIsPlaceholder: true }),
         ...(moveArrival ? { moveArrival } : {}),
       };
     })
@@ -1469,8 +1479,11 @@ export class ContextBuilderService {
       }
 
       // 2. 세부 위치: 진행 중인 장면에서는 sceneFrame 대신 직전 내러티브 마지막 문장 활용
+      // [arch/79 §11.5] 요약 폴백은 "이어쓸 지점"이 될 수 없다 — 생성 중인
+      // 현재 턴이 여기 섞이면 라벨(직전)과 내용(현재)이 어긋난다.
       const ongoingNarrativeTurns = locationSessionTurns.filter(
-        (t) => t.narrative && t.narrative.length > 0,
+        (t) =>
+          t.narrative && t.narrative.length > 0 && !t.narrativeIsPlaceholder,
       );
       if (ongoingNarrativeTurns.length >= 2 && !isShopPurchaseTurn) {
         // 2턴 이상 진행: sceneFrame 완전 무시, 직전 내러티브의 마지막 150자로 장면 파악
@@ -1953,6 +1966,7 @@ export class ContextBuilderService {
           resolveOutcome: (sr?.ui as Record<string, unknown>)
             ?.resolveOutcome as string | undefined,
           narrative: t.llmOutput ?? sr?.summary?.short ?? '',
+          ...(t.llmOutput ? {} : { narrativeIsPlaceholder: true }),
         };
       },
     );
